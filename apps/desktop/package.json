@@ -1,0 +1,19 @@
+{
+  "name": "@automix/desktop",
+  "version": "0.3.13",
+  "private": true,
+  "description": "MORA — музыка с AutoMix-переходами для Windows",
+  "author": "MORA",
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "dev": "node scripts/build.mjs --dev && electron .",
+    "build": "node scripts/build.mjs",
+    "package": "node scripts/package.mjs",
+    "package:dir": "node scripts/package.mjs --dir"
+  },
+  "devDependencies": {
+    "electron": "44.9.2",
+    "electron-builder": "26.15.3"
+  }
+}

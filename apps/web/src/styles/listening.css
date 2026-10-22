@@ -1,0 +1,45 @@
+/* Old text leaves outside the flow: its line count never holds the new title open. */
+.yandex-likes-import { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 12px; }
+.yandex-likes-import > div:first-child { display: flex; align-items: center; gap: 10px; }
+.yandex-likes-import h3 { font-size: 18px; font-weight: 600; letter-spacing: -.025em; }
+.yandex-likes-import > p { line-height: 1.65; margin: 12px 0 16px; max-width: 64ch; }
+.likes-import-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.likes-import-progress { margin: 16px 0; }
+.likes-import-progress progress { display: block; width: 100%; height: 5px; margin: 12px 0; accent-color: var(--accent-soft); }
+.full-player .swap { position: relative; }
+.full-player .swap-out { position: absolute; inset: 0; }
+.fp-art-stage { position: relative; }
+.fp-art-stage > .fp-art { transition: opacity .35s ease, scale .5s cubic-bezier(.22, 1, .36, 1), filter .35s ease; }
+.fp-art-stage.shows-lyrics > .fp-art { opacity: 0; scale: .92; filter: blur(8px); pointer-events: none; }
+.fp-lyrics-layer { position: absolute; inset: 0; display: flex; align-items: center; opacity: 0; transform: translateY(16px) scale(.98); transition: opacity .32s ease, transform .48s cubic-bezier(.22, 1, .36, 1); pointer-events: none; }
+.shows-lyrics .fp-lyrics-layer { opacity: 1; transform: none; pointer-events: auto; }
+@starting-style { .shows-lyrics .fp-lyrics-layer { opacity: 0; transform: translateY(16px) scale(.98); } }
+.lyrics-stage { position: relative; width: 100%; height: clamp(320px, 54vh, 580px); display: flex; flex-direction: column; min-height: 0; border-radius: 24px; background: rgba(3, 12, 8, .86); border: 1px solid rgba(222, 246, 232, .12); box-shadow: 0 24px 70px -28px #020905; overflow: hidden; }
+.lyrics-stage .queue-head { flex: none; padding: 16px 20px 8px; border: 0; align-items: center; }
+.lyrics-stage .section-title { font-family: var(--font-ui); font-size: 13px; font-weight: 600; color: #c4d6cb; }
+.lyrics-stage .lyrics-tools { flex: none; padding: 0 16px 8px; font-size: 11px; flex-wrap: wrap; }
+.lyrics-stage .lyrics-scroll { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 32px 24px 48%; scrollbar-width: thin; scrollbar-color: #78998755 transparent; scroll-padding-block: 32px; mask-image: linear-gradient(transparent, #000 24px, #000 calc(100% - 28px), transparent); }
+.lyrics-stage .lyrics-line { display: block; width: 100%; text-align: left; font-family: var(--font-ui); font-size: clamp(22px, 2.3vw, 32px); line-height: 1.38; font-weight: 700; letter-spacing: -.025em; padding: 10px 0; color: #c1cdc6; opacity: 1; transition: color .32s ease, transform .42s cubic-bezier(.22, 1, .36, 1); transform-origin: left center; }
+.lyrics-stage .lyrics-line.past { color: #a2b4a9; opacity: 1; }
+.lyrics-stage .lyrics-line.now { color: #f5fff9; transform: translateX(5px); text-shadow: 0 0 32px #c1ffdf28; }
+.lyrics-stage .lyrics-line:hover { color: #fff; opacity: 1; }
+.lyrics-stage .lyrics-line:focus-visible { outline: 2px solid var(--accent-soft); outline-offset: 4px; border-radius: 4px; }
+.lyrics-stage .lyrics-plain { color: #e0ebe4; font-size: clamp(19px, 1.8vw, 25px); line-height: 1.65; font-weight: 500; }
+.lyrics-stage .lyrics-empty { padding: 24px 0; color: #cfddd4; line-height: 1.6; }
+.lyrics-follow { align-self: flex-start; flex: none; margin: 0 16px 8px; }
+.lyrics-loading-line { display: block; height: 24px; max-width: 85%; border-radius: 6px; background: #b5e0c811; margin-bottom: 18px; animation: lyrics-breathe 1.4s ease-in-out infinite alternate; }
+.lyrics-loading-line:nth-child(2) { width: 65%; animation-delay: .1s; }
+.lyrics-loading-line:nth-child(3) { width: 76%; animation-delay: .2s; }
+@keyframes lyrics-breathe { to { opacity: .35; } }
+@media (max-width: 767px) {
+  .lyrics-stage { height: 100%; min-height: 280px; border-radius: 18px; }
+  .lyrics-stage .lyrics-scroll { padding: 24px 20px 45%; }
+  .lyrics-stage .lyrics-line { font-size: clamp(21px, 5.5vw, 27px); }
+  .fp-art-stage.shows-lyrics { min-height: 320px; }
+}
+@media (prefers-reduced-motion: reduce) {
+:root:not([data-motion="full"]) { 
+  .fp-art-stage > .fp-art, .fp-lyrics-layer, .lyrics-stage .lyrics-line, .lyrics-stage .lyrics-word { transition: none; }
+  .lyrics-loading-line { animation: none; }
+ }
+}

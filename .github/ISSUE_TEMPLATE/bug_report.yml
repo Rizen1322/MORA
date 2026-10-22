@@ -1,0 +1,31 @@
+name: Ошибка
+description: Сообщить о проблеме MORA для Windows
+title: "[Ошибка] "
+body:
+  - type: markdown
+    attributes:
+      value: "Не прикладывайте токены, базы медиатеки и личные файлы. Проверьте логи перед публикацией."
+  - type: input
+    id: version
+    attributes:
+      label: Версия MORA и Windows
+      placeholder: MORA 0.3.13, Windows 11 x64
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как повторить
+      description: Действия, ожидаемое поведение и что произошло вместо него.
+    validations:
+      required: true
+  - type: textarea
+    id: automix
+    attributes:
+      label: Если проблема с AutoMix
+      description: Пара треков, место перехода, настройки и что слышно. Саму музыку загружать не нужно.
+  - type: textarea
+    id: details
+    attributes:
+      label: Дополнительные сведения
+      description: Снимок экрана или фрагмент лога без личных данных.

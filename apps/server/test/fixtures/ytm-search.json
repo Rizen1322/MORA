@@ -1,0 +1,353 @@
+{
+ "contents": {
+  "tabbedSearchResultsRenderer": {
+   "tabs": [
+    {
+     "tabRenderer": {
+      "content": {
+       "sectionListRenderer": {
+        "contents": [
+         {
+          "musicShelfRenderer": {
+           "contents": [
+            {
+             "musicResponsiveListItemRenderer": {
+              "playlistItemData": {
+               "videoId": "fAbCGcOZNFo"
+              },
+              "flexColumns": [
+               {
+                "musicResponsiveListItemFlexColumnRenderer": {
+                 "text": {
+                  "runs": [
+                   {
+                    "text": "Верить"
+                   }
+                  ]
+                 }
+                }
+               },
+               {
+                "musicResponsiveListItemFlexColumnRenderer": {
+                 "text": {
+                  "runs": [
+                   {
+                    "text": "Yanix",
+                    "navigationEndpoint": {
+                     "browseEndpoint": {
+                      "browseId": "UCOd9uX6JP374Wgu9c0m4qlw",
+                      "browseEndpointContextSupportedConfigs": {
+                       "browseEndpointContextMusicConfig": {
+                        "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "text": " • "
+                   },
+                   {
+                    "text": "Пока рэп не разлучит нас",
+                    "navigationEndpoint": {
+                     "browseEndpoint": {
+                      "browseId": "MPREb_Br5t7blIZ0N",
+                      "browseEndpointContextSupportedConfigs": {
+                       "browseEndpointContextMusicConfig": {
+                        "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "text": " • "
+                   },
+                   {
+                    "text": "3:29"
+                   }
+                  ]
+                 }
+                }
+               }
+              ],
+              "badges": [
+               {
+                "musicInlineBadgeRenderer": {
+                 "trackingParams": "CPICEKHtAhgDIhMIxNWS5MjJlwMV44T0Bx2I6Bzi",
+                 "icon": {
+                  "iconType": "MUSIC_EXPLICIT_BADGE"
+                 },
+                 "accessibilityData": {
+                  "accessibilityData": {
+                   "label": "Контент сексуального характера"
+                  }
+                 }
+                }
+               }
+              ],
+              "thumbnail": {
+               "musicThumbnailRenderer": {
+                "thumbnail": {
+                 "thumbnails": [
+                  {
+                   "url": "https://yt3.googleusercontent.com/mq2qHP-KXbSG1rK0P9artGFeLJC4feR9GePkzPNCv0P2eopUEenksWfMVy7N02G1jpb8X1tsFM7eL3pC=w60-h60-l90-rj",
+                   "width": 60,
+                   "height": 60
+                  },
+                  {
+                   "url": "https://yt3.googleusercontent.com/mq2qHP-KXbSG1rK0P9artGFeLJC4feR9GePkzPNCv0P2eopUEenksWfMVy7N02G1jpb8X1tsFM7eL3pC=w120-h120-l90-rj",
+                   "width": 120,
+                   "height": 120
+                  }
+                 ]
+                },
+                "thumbnailCrop": "MUSIC_THUMBNAIL_CROP_UNSPECIFIED",
+                "thumbnailScale": "MUSIC_THUMBNAIL_SCALE_ASPECT_FIT",
+                "trackingParams": "CIMDEIS_AiITCMTVkuTIyZcDFeOE9AcdiOgc4g=="
+               }
+              }
+             }
+            },
+            {
+             "musicResponsiveListItemRenderer": {
+              "playlistItemData": {
+               "videoId": "pGkx-HavKV4"
+              },
+              "flexColumns": [
+               {
+                "musicResponsiveListItemFlexColumnRenderer": {
+                 "text": {
+                  "runs": [
+                   {
+                    "text": "Доказал"
+                   }
+                  ]
+                 }
+                }
+               },
+               {
+                "musicResponsiveListItemFlexColumnRenderer": {
+                 "text": {
+                  "runs": [
+                   {
+                    "text": "Voskresenskii",
+                    "navigationEndpoint": {
+                     "browseEndpoint": {
+                      "browseId": "UCJ36E2_NqdBazeDyvWwwG8w",
+                      "browseEndpointContextSupportedConfigs": {
+                       "browseEndpointContextMusicConfig": {
+                        "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "text": " и "
+                   },
+                   {
+                    "text": "Yanix",
+                    "navigationEndpoint": {
+                     "browseEndpoint": {
+                      "browseId": "UCOd9uX6JP374Wgu9c0m4qlw",
+                      "browseEndpointContextSupportedConfigs": {
+                       "browseEndpointContextMusicConfig": {
+                        "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "text": " • "
+                   },
+                   {
+                    "text": "BROKE LIVES MATTER",
+                    "navigationEndpoint": {
+                     "browseEndpoint": {
+                      "browseId": "MPREb_DG8OCTG8uBw",
+                      "browseEndpointContextSupportedConfigs": {
+                       "browseEndpointContextMusicConfig": {
+                        "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "text": " • "
+                   },
+                   {
+                    "text": "2:05"
+                   }
+                  ]
+                 }
+                }
+               }
+              ],
+              "badges": [
+               {
+                "musicInlineBadgeRenderer": {
+                 "trackingParams": "CN8CEKHtAhgDIhMIxNWS5MjJlwMV44T0Bx2I6Bzi",
+                 "icon": {
+                  "iconType": "MUSIC_EXPLICIT_BADGE"
+                 },
+                 "accessibilityData": {
+                  "accessibilityData": {
+                   "label": "Контент сексуального характера"
+                  }
+                 }
+                }
+               }
+              ],
+              "thumbnail": {
+               "musicThumbnailRenderer": {
+                "thumbnail": {
+                 "thumbnails": [
+                  {
+                   "url": "https://yt3.googleusercontent.com/PMnLc1rmUrO8XHk0PzixRGc4bLpep1pfUT_7xCTC8zXjkG2-QPqK-GzXr2qZuOh_ok-NZMX-olrA_i3U=w60-h60-l90-rj",
+                   "width": 60,
+                   "height": 60
+                  },
+                  {
+                   "url": "https://yt3.googleusercontent.com/PMnLc1rmUrO8XHk0PzixRGc4bLpep1pfUT_7xCTC8zXjkG2-QPqK-GzXr2qZuOh_ok-NZMX-olrA_i3U=w120-h120-l90-rj",
+                   "width": 120,
+                   "height": 120
+                  }
+                 ]
+                },
+                "thumbnailCrop": "MUSIC_THUMBNAIL_CROP_UNSPECIFIED",
+                "thumbnailScale": "MUSIC_THUMBNAIL_SCALE_ASPECT_FIT",
+                "trackingParams": "CPACEIS_AiITCMTVkuTIyZcDFeOE9AcdiOgc4g=="
+               }
+              }
+             }
+            },
+            {
+             "musicResponsiveListItemRenderer": {
+              "playlistItemData": {
+               "videoId": "KuJYfAs0GzA"
+              },
+              "flexColumns": [
+               {
+                "musicResponsiveListItemFlexColumnRenderer": {
+                 "text": {
+                  "runs": [
+                   {
+                    "text": "Сколько ещё?"
+                   }
+                  ]
+                 }
+                }
+               },
+               {
+                "musicResponsiveListItemFlexColumnRenderer": {
+                 "text": {
+                  "runs": [
+                   {
+                    "text": "Thomas Mraz",
+                    "navigationEndpoint": {
+                     "browseEndpoint": {
+                      "browseId": "UC_lbR4tLvC7t-Ylri5xzGFA",
+                      "browseEndpointContextSupportedConfigs": {
+                       "browseEndpointContextMusicConfig": {
+                        "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "text": " и "
+                   },
+                   {
+                    "text": "Yanix",
+                    "navigationEndpoint": {
+                     "browseEndpoint": {
+                      "browseId": "UCOd9uX6JP374Wgu9c0m4qlw",
+                      "browseEndpointContextSupportedConfigs": {
+                       "browseEndpointContextMusicConfig": {
+                        "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "text": " • "
+                   },
+                   {
+                    "text": "Сколько ещё?",
+                    "navigationEndpoint": {
+                     "browseEndpoint": {
+                      "browseId": "MPREb_xsdu46MLXPO",
+                      "browseEndpointContextSupportedConfigs": {
+                       "browseEndpointContextMusicConfig": {
+                        "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "text": " • "
+                   },
+                   {
+                    "text": "2:38"
+                   }
+                  ]
+                 }
+                }
+               }
+              ],
+              "badges": [
+               {
+                "musicInlineBadgeRenderer": {
+                 "trackingParams": "CMwCEKHtAhgDIhMIxNWS5MjJlwMV44T0Bx2I6Bzi",
+                 "icon": {
+                  "iconType": "MUSIC_EXPLICIT_BADGE"
+                 },
+                 "accessibilityData": {
+                  "accessibilityData": {
+                   "label": "Контент сексуального характера"
+                  }
+                 }
+                }
+               }
+              ],
+              "thumbnail": {
+               "musicThumbnailRenderer": {
+                "thumbnail": {
+                 "thumbnails": [
+                  {
+                   "url": "https://yt3.googleusercontent.com/Ammud9-eIZvRhMAv_z7Y3BlVRxnYPY7HpSvfqOdvIIhOUhfBWvp68F2DDfvYy9IhCw9FXFrVFs2KUsA=w60-h60-l90-rj",
+                   "width": 60,
+                   "height": 60
+                  },
+                  {
+                   "url": "https://yt3.googleusercontent.com/Ammud9-eIZvRhMAv_z7Y3BlVRxnYPY7HpSvfqOdvIIhOUhfBWvp68F2DDfvYy9IhCw9FXFrVFs2KUsA=w120-h120-l90-rj",
+                   "width": 120,
+                   "height": 120
+                  }
+                 ]
+                },
+                "thumbnailCrop": "MUSIC_THUMBNAIL_CROP_UNSPECIFIED",
+                "thumbnailScale": "MUSIC_THUMBNAIL_SCALE_ASPECT_FIT",
+                "trackingParams": "CN0CEIS_AiITCMTVkuTIyZcDFeOE9AcdiOgc4g=="
+               }
+              }
+             }
+            }
+           ]
+          }
+         }
+        ]
+       }
+      }
+     }
+    }
+   ]
+  }
+ }
+}

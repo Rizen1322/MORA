@@ -1,0 +1,38 @@
+name: Desktop checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Prepare FFmpeg for audio tests
+        shell: pwsh
+        run: |
+          node apps/desktop/scripts/fetch-ffmpeg.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "FFMPEG_PATH=$env:GITHUB_WORKSPACE/apps/desktop/vendor/ffmpeg/ffmpeg.exe" >> $env:GITHUB_ENV
+          "FFPROBE_PATH=$env:GITHUB_WORKSPACE/apps/desktop/vendor/ffmpeg/ffprobe.exe" >> $env:GITHUB_ENV
+          "$env:GITHUB_WORKSPACE/apps/desktop/vendor/ffmpeg" >> $env:GITHUB_PATH
+      - run: npm run demo:tracks
+      - run: npm run typecheck
+      - run: npm test -- --maxWorkers=2
+      - run: npm run build

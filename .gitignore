@@ -1,0 +1,37 @@
+# Dependencies and generated output
+node_modules/
+dist/
+build/
+vendor/
+.vite/
+coverage/
+*.tsbuildinfo
+__pycache__/
+*.pyc
+
+# Local libraries, credentials, caches and reports
+.env
+.env.*
+!.env.example
+data/
+data-*/
+tools/.cache/
+examples/library/
+examples/broken/
+examples/transitions/
+*.log
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.pem
+*.key
+*.pfx
+*.p12
+
+# Local editor / agent state
+.claude/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

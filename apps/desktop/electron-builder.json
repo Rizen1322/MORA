@@ -1,0 +1,31 @@
+{
+  "appId": "ru.mora.desktop",
+  "productName": "MORA",
+  "copyright": "MORA",
+  "directories": { "output": "dist", "buildResources": "assets" },
+  "files": ["src/**", "assets/**", "package.json"],
+  "extraResources": [
+    { "from": "build/backend", "to": "backend" },
+    { "from": "build/web", "to": "web" },
+    { "from": "build/tools", "to": "tools" },
+    { "from": "build/ffmpeg", "to": "ffmpeg" },
+    { "from": "build/yt-dlp", "to": "yt-dlp" },
+    { "from": "build/vocal", "to": "vocal" },
+    { "from": "THIRD_PARTY.md", "to": "THIRD_PARTY.md" }
+  ],
+  "asar": true,
+  "npmRebuild": false,
+  "electronLanguages": ["ru", "en-US"],
+  "win": {
+    "target": [{ "target": "nsis", "arch": ["x64"] }],
+    "icon": "assets/icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false,
+    "shortcutName": "MORA",
+    "artifactName": "MORA-Setup-${version}.exe"
+  }
+}

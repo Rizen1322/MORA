@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>MORA</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid; place-items: center; background: radial-gradient(60% 50% at 0% 0%, rgba(40,110,78,.22), transparent 70%), #050d0a;
+    color: #ecf5ee; font: 15px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+  .drag { position: fixed; inset: 0 0 auto; height: 40px; -webkit-app-region: drag; }
+  .card { max-width: 440px; padding: 32px; border-radius: 24px; background: #0a1712; box-shadow: inset 0 0 0 1px rgba(196,240,214,.08); }
+  h1 { margin: 0 0 8px; font-size: 22px; font-weight: 650; }
+  p { margin: 0 0 20px; color: #b3c9bb; }
+  button {
+    font: inherit; font-weight: 600; color: #04150d; background: #4ade9a; border: 0; border-radius: 14px; padding: 10px 20px; cursor: pointer;
+    transition: transform 140ms cubic-bezier(.2,.8,.2,1), background 140ms;
+  }
+  button:hover { background: #93f2c0; }
+  button:active { transform: scale(.97); }
+  button:focus-visible { outline: 2px solid #93f2c0; outline-offset: 3px; }
+  button[disabled] { opacity: .6; cursor: default; }
+</style>
+</head>
+<body>
+<div class="drag"></div>
+<main class="card" role="alert">
+  <h1>MORA не запустилась</h1>
+  <p>Не удалось подготовить медиатеку. Ваши треки и настройки не изменены. Попробуйте ещё раз — если ошибка повторится, перезапустите приложение.</p>
+  <button id="retry" autofocus>Повторить</button>
+</main>
+<script>
+  const b = document.getElementById('retry');
+  b.onclick = async () => {
+    b.disabled = true; b.textContent = 'Запускаем…';
+    try { await window.automixDesktop.restartBackend(); } finally { b.disabled = false; b.textContent = 'Повторить'; }
+  };
+</script>
+</body>
+</html>

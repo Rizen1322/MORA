@@ -1,0 +1,34 @@
+{
+  "name": "automix",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AutoMix: музыкальное приложение с интеллектуальными DJ-переходами",
+  "type": "module",
+  "workspaces": [
+    "packages/core",
+    "apps/server",
+    "apps/web",
+    "apps/desktop"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "node tools/dev.mjs",
+    "build": "npm run build -w @automix/web",
+    "start": "npm run start -w @automix/server",
+    "test": "node tools/test.mjs",
+    "typecheck": "tsc -p packages/core && tsc -p apps/server && tsc -p apps/web && tsc -p apps/desktop",
+    "desktop:dev": "npm run dev -w @automix/desktop",
+    "desktop:package": "npm run package -w @automix/desktop",
+    "demo:tracks": "tsx tools/gen-demo-tracks.ts",
+    "demo:transitions": "tsx tools/render-examples.ts",
+    "eval:transitions": "tsx tools/eval-transitions.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
