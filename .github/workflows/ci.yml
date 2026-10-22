@@ -18,8 +18,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '24'
           cache: npm
@@ -34,5 +34,6 @@ jobs:
           "$env:GITHUB_WORKSPACE/apps/desktop/vendor/ffmpeg" >> $env:GITHUB_PATH
       - run: npm run demo:tracks
       - run: npm run typecheck
-      - run: npm test -- --maxWorkers=2
+      # Offline rendering of eight tracks can exceed 60s on shared runners.
+      - run: npm test -- --maxWorkers=2 --testTimeout=180000
       - run: npm run build
