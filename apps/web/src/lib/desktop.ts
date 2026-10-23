@@ -1,6 +1,20 @@
 /** Bridge to the Windows shell (apps/desktop/src/preload.cjs); null in a browser. */
 export interface ResolverStatus { selected: string; latest: string | null; canRollback: boolean; busy: boolean }
+export interface AppUpdateStatus {
+  phase: 'disabled' | 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'error';
+  currentVersion: string;
+  version: string | null;
+  size: number | null;
+  percent: number;
+  error: string | null;
+}
 export interface DesktopBridge {
+  appUpdateStatus(): Promise<AppUpdateStatus>;
+  appUpdateCheck(): Promise<AppUpdateStatus>;
+  appUpdateDownload(): Promise<AppUpdateStatus>;
+  appUpdateCancel(): Promise<AppUpdateStatus>;
+  appUpdateInstall(): Promise<AppUpdateStatus>;
+  onAppUpdate(cb: (status: AppUpdateStatus) => void): () => void;
   resolverStatus(): Promise<ResolverStatus>;
   resolverCheck(): Promise<ResolverStatus>;
   resolverInstall(): Promise<ResolverStatus>;

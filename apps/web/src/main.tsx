@@ -9,7 +9,7 @@ import './styles/desktop.css';
 import './styles/search.css';
 import './styles/listening.css';
 import { App } from './App.tsx';
-import { controller, trackOf } from './store/app.ts';
+import { controller, trackOf, useApp } from './store/app.ts';
 import { desktop } from './lib/desktop.ts';
 
 // handle for debugging from the browser console: automix.state
@@ -18,6 +18,16 @@ import { desktop } from './lib/desktop.ts';
 if (desktop) {
   document.documentElement.classList.add('desktop');
   desktop.onCompact((on) => document.documentElement.classList.toggle('compact', on));
+  let updateNotice = '';
+  desktop.onAppUpdate?.((state) => {
+    if (state.phase !== 'available' && state.phase !== 'downloaded') return;
+    const key = `${state.phase}:${state.version}`;
+    if (key === updateNotice) return;
+    updateNotice = key;
+    useApp.getState().toast(state.phase === 'downloaded'
+      ? `MORA ${state.version} готова к установке. Откройте настройки приложения, когда закончите слушать.`
+      : `Доступна MORA ${state.version}. Обновление — в настройках приложения.`);
+  });
   // Tray, taskbar and sleep commands go to the one existing controller.
   desktop.onCommand((cmd) => {
     if (cmd === 'toggle') controller.toggle();

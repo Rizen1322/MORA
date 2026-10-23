@@ -7,6 +7,7 @@ import { useApp } from '../store/app.ts';
 import { ConfirmModal, Switch } from '../components/common.tsx';
 import { TransitionSummary } from '../components/TransitionSummary.tsx';
 import { PlaylistBackup } from '../components/PlaylistBackup.tsx';
+import { AppUpdates } from '../components/AppUpdates.tsx';
 
 function Row({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
   return (
@@ -170,6 +171,7 @@ function DesktopSettings() {
         </button>
       </Row>
       <Row title="Версия" desc={`MORA ${info.version} для Windows`}><span /></Row>
+      <AppUpdates />
       <Row title="Источники YouTube и SoundCloud" desc={`Компонент yt-dlp: ${resolver?.selected === 'bundled' ? 'из комплекта MORA' : resolver?.selected ?? 'проверяем'}. Обновление с официального GitHub, с проверкой файла. Музыка продолжит играть.`}>
         <button className="btn btn-ghost btn-sm" disabled={updating} onClick={() => void resolverAction('check')}>{updating ? 'Подождите…' : 'Проверить обновление'}</button>
         {resolver?.latest && resolver.latest !== resolver.selected && <button className="btn btn-secondary btn-sm" disabled={updating} onClick={() => void resolverAction('install')}>Обновить до {resolver.latest}</button>}

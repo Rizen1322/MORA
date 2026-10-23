@@ -15,6 +15,7 @@
   ],
   "asar": true,
   "npmRebuild": false,
+  "publish": [{ "provider": "github", "owner": "Rizen1322", "repo": "MORA", "releaseType": "release" }],
   "electronLanguages": ["ru", "en-US"],
   "win": {
     "target": [{ "target": "nsis", "arch": ["x64"] }],

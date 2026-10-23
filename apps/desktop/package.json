@@ -1,6 +1,6 @@
 {
   "name": "@automix/desktop",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "private": true,
   "description": "MORA — музыка с AutoMix-переходами для Windows",
   "author": "MORA",
@@ -15,5 +15,8 @@
   "devDependencies": {
     "electron": "44.9.2",
     "electron-builder": "26.15.3"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
   }
 }

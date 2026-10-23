@@ -10,6 +10,8 @@ import { placeWindow } from './bounds.mjs';
 import { proxyFromPac } from './public-network.mjs';
 import { publishLibrary } from './publish.mjs';
 import { ResolverUpdater } from './resolver-update.mjs';
+import electronUpdater from 'electron-updater';
+import { AppUpdates } from './app-update.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const resources = app.isPackaged ? process.resourcesPath : path.join(here, '..', 'build');
@@ -36,6 +38,8 @@ let origin = null;
 let crashTimes = [];
 let backendState = 'starting';
 let player = { playing: false, title: '', artist: '' };
+let appUpdates;
+let updateConfirmation = false;
 
 const userData = app.getPath('userData');
 const settingsFile = path.join(userData, 'desktop.json');
@@ -357,6 +361,27 @@ function handle(channel, fn) {
 }
 
 function registerIpc() {
+  handle('app-update:status', () => appUpdates.status());
+  handle('app-update:check', () => appUpdates.check());
+  handle('app-update:download', () => appUpdates.download());
+  handle('app-update:cancel', () => appUpdates.cancel());
+  handle('app-update:install', async () => {
+    if (updateConfirmation || quitting) return appUpdates.status();
+    if (backendState === 'importing') throw new Error('Дождитесь окончания переноса медиатеки');
+    if (appUpdates.status().phase !== 'downloaded') throw new Error('Сначала скачайте обновление');
+    updateConfirmation = true;
+    try {
+      const answer = await dialog.showMessageBox(win, { type: 'question',
+        title: 'Обновление MORA', message: `Установить MORA ${appUpdates.status().version}?`,
+        detail: 'Музыка остановится, MORA закроется и запустится после установки. Медиатека и настройки сохранятся.',
+        buttons: ['Установить и перезапустить', 'Позже'], defaultId: 1, cancelId: 1 });
+      if (answer.response === 0 && !quitting) {
+        if (backendState === 'importing') throw new Error('Дождитесь окончания переноса медиатеки');
+        return appUpdates.install();
+      }
+      return appUpdates.status();
+    } finally { updateConfirmation = false; }
+  });
   handle('resolver:status', () => resolverUpdater.status());
   handle('resolver:check', () => resolverUpdater.check());
   handle('resolver:install', () => resolverUpdater.install());
@@ -488,6 +513,10 @@ async function main() {
   app.on('gpu-info-update',()=>log(`graphics ${JSON.stringify(app.getGPUFeatureStatus())}`));
   Menu.setApplicationMenu(null);
   await app.whenReady();
+  appUpdates = new AppUpdates({ updater: electronUpdater.autoUpdater, currentVersion: app.getVersion(),
+    enabled: app.isPackaged && process.platform === 'win32', onChange: (state) => {
+      if (win && !win.isDestroyed()) win.webContents.send('automix:app-update', state);
+    } });
   log(`start ${app.getVersion()} electron ${process.versions.electron} data ${dataDir}`);
   hardenSessions();
   registerIpc();
@@ -508,7 +537,8 @@ async function main() {
   // Stop music before Windows sleeps; never resume on wake by itself.
   powerMonitor.on('suspend', () => command('pause'));
 
-  app.on('before-quit', () => { quitting = true; });
+  appUpdates.start();
+  app.on('before-quit', () => { quitting = true; appUpdates.dispose(); });
   let stopped = false;
   app.on('will-quit', (e) => {
     if (stopped) return;

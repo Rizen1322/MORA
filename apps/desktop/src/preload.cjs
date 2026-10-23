@@ -11,6 +11,12 @@ const subscribe = (channel, check) => (cb) => {
 
 contextBridge.exposeInMainWorld('automixDesktop', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
+  appUpdateStatus: () => ipcRenderer.invoke('app-update:status'),
+  appUpdateCheck: () => ipcRenderer.invoke('app-update:check'),
+  appUpdateDownload: () => ipcRenderer.invoke('app-update:download'),
+  appUpdateCancel: () => ipcRenderer.invoke('app-update:cancel'),
+  appUpdateInstall: () => ipcRenderer.invoke('app-update:install'),
+  onAppUpdate: subscribe('automix:app-update', (v) => v && typeof v.phase === 'string' && typeof v.currentVersion === 'string'),
   resolverStatus: () => ipcRenderer.invoke('resolver:status'),
   resolverCheck: () => ipcRenderer.invoke('resolver:check'),
   resolverInstall: () => ipcRenderer.invoke('resolver:install'),
