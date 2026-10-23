@@ -59,7 +59,7 @@ export class AppUpdates {
   }
 
   async download() {
-    if (this.pending) { await this.pending; return this.download(); }
+    if (this.pending) return this.pending;
     if (this.state.phase !== 'available') return this.status();
     if (!this.token || this.token.cancelled) {
       await this.check();

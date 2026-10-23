@@ -64,6 +64,7 @@ describe('MORA application updates', () => {
       finish = () => { f.updater.emit('update-downloaded', f.info); resolve(['late.exe']); };
     }));
     const downloading = f.updates.download();
+    const duplicate = f.updates.download();
     f.updater.emit('download-progress', { percent: 23.8 });
     expect(f.updates.status().percent).toBe(23);
     f.updates.cancel();
@@ -71,6 +72,9 @@ describe('MORA application updates', () => {
     expect(f.updates.status().percent).toBe(23);
     finish();
     expect((await downloading).phase).toBe('available');
+    expect((await duplicate).phase).toBe('available');
+    expect(f.updater.downloadUpdate).toHaveBeenCalledTimes(1);
+    expect(f.updater.checkForUpdates).toHaveBeenCalledTimes(1);
     expect(() => f.updates.install()).toThrow();
     const nextToken = { cancelled: false, cancel() { this.cancelled = true; } };
     f.updater.checkForUpdates.mockResolvedValueOnce({ isUpdateAvailable: true, updateInfo: f.info, cancellationToken: nextToken });
