@@ -33,6 +33,16 @@ it('keeps only valid, full-length public tracks and bounds output', () => {
   expect(() => parseSoundCloudSearch({ broken: [] }, 15)).toThrow('формат');
 });
 
+it('drops records whose every transcoding is DRM-encrypted', () => {
+  const tc = (protocol: string) => ({ url: 'https://api-v2.soundcloud.com/media/x', format: { protocol, mime_type: 'audio/mp4; codecs="mp4a.40.2"' } });
+  expect(parseSoundCloudSearch({ collection: [
+    { ...entry, id: 1, media: { transcodings: [tc('cbc-encrypted-hls'), tc('ctr-encrypted-hls')] } },
+    { ...entry, id: 2, media: { transcodings: [tc('ctr-encrypted-hls'), tc('hls')] } },
+    { ...entry, id: 3 },
+    { ...entry, id: 4, media: { transcodings: [] } },
+  ] }, 15).map((t) => t.id)).toEqual(['2', '3']);
+});
+
 it('exposes only numeric SoundCloud user IDs paired with a valid permalink slug', () => {
   const valid = { ...entry, user: { ...entry.user, id: 456, permalink: 'yanix-official' } };
   const invalid = { ...entry, id: 124, user: { ...entry.user, id: 'bad', permalink: '../yanix' } };

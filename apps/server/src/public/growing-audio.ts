@@ -12,8 +12,9 @@ const wait = () => new Promise<void>((resolve) => setTimeout(resolve, 40));
 const STREAMABLE = /\.(webm|mp3|opus|ogg|flac|wav)$/i;
 
 /** Reads the writer's existing bytes once, waits for new bytes and ends only after verification. */
-export async function growingAudioInput(state: GrowingAudio): Promise<string | Readable> {
+export async function growingAudioInput(state: GrowingAudio, signal?: AbortSignal): Promise<string | Readable> {
   while (!state.done) {
+    signal?.throwIfAborted();
     const files = await fs.readdir(state.staging).catch(() => []);
     for (const name of files) {
       if (!STREAMABLE.test(name)) continue; // MP4/M4A may need a moov atom at the end: use the complete file.

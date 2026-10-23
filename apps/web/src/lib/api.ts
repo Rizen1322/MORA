@@ -171,6 +171,7 @@ export interface AppSettings {
   wave: { mood: 'calm' | 'normal' | 'energetic'; diversity: 'familiar' | 'balanced' | 'discover'; mode?: 'normal' | 'mix'; yandexSeeds?: string[] };
   ui: { showDiagnostics: boolean; motion?: 'system'|'full'|'reduced'; graphics?: 'auto'|'canvas' };
   sound: SoundSettings;
+  yandex: { syncLikes: boolean; syncDislikes: boolean; importLikes: boolean; waveFeedback: boolean };
 }
 
 export interface WavePick {

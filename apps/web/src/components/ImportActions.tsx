@@ -24,7 +24,7 @@ export function ImportActions({ compact = false }: { compact?: boolean }) {
     }
   };
   return (
-    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+    <div className="import-actions" style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
       <button className={`btn btn-primary ${compact ? 'btn-sm' : ''}`} onClick={() => files.current?.click()}>
         <UploadSimple size={18} weight="bold" /> Выбрать файлы
       </button>

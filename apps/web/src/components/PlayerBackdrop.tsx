@@ -61,6 +61,7 @@ export function PlayerBackdrop({ cover, next = null, k = 0 }: { cover: string | 
         if (url) {
           const img = new Image();
           img.crossOrigin = 'anonymous';
+          img.referrerPolicy = 'no-referrer';
           img.onload = () => {
             if (disposed || textures.get(key) !== t) return;
             const small = Object.assign(document.createElement('canvas'), { width: 24, height: 24 });

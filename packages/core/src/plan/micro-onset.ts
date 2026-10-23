@@ -1,5 +1,6 @@
 import type { AutoMixSettings,BeatGrid,TrackAnalysis,TransitionPlan } from '../types.ts';
 import { firstVoice } from './first-words.ts';
+import { voiceUnknown } from './fullmix.ts';
 import { integrateTempo,outputTimeAt,pointValue } from './timing.ts';
 
 const median=(xs:number[])=>{const a=[...xs].sort((x,y)=>x-y),i=Math.floor(a.length/2);return a.length%2?a[i]:(a[i-1]+a[i])/2;};
@@ -12,8 +13,12 @@ export function withMicroOnset(p:TransitionPlan,A:TrackAnalysis|null,B:TrackAnal
     ||p.method!=='beatmatch_blend'||!p.beatAlign||p.beatAlign.regions||p.loopA||p.tapeStopA||p.voiceEcho||p.duration<3
     ||!A||!B||!trusted(A.beat)||!trusted(B.beat)||A.structure?.gridCheck?.periodHint||B.structure?.gridCheck?.periodHint)return p;
   const ga=A.beat!,gb=B.beat!;
+  // P8: an unknown voice (no map) no longer blocks the correction, but its full-mix path is stricter:
+  // 6 agreeing kicks and 2 ms residual. Only B's entry moves; A, which is already playing, never does.
+  const full=voiceUnknown(A,s)||voiceUnknown(B,s);
   for(const [an,cue] of [[A,p.aExit],[B,p.bEntry]] as const){
-    if(cue<an.audibleStart+.025||firstVoice(an,cue-.025,cue+.18)!==Infinity)return p;
+    const voice=cue<an.audibleStart+.025?0:firstVoice(an,cue-.025,cue+.18);
+    if(voice!==Infinity&&!(full&&voice===null))return p;
   }
   const shifts:number[]=[],until=Math.min(p.duration,6);
   let previous=-1;
@@ -35,13 +40,13 @@ export function withMicroOnset(p:TransitionPlan,A:TrackAnalysis|null,B:TrackAnal
     if(!Number.isFinite(ra)||!Number.isFinite(rb)||ra<.8||ra>1.2||rb<.8||rb>1.2)return p;
     shifts.push((gb.beats[j]-predicted)+ob/1000-oa/1000*rb/ra);
   }
-  if(shifts.length<4)return p;
+  if(shifts.length<(full?6:4))return p;
   const shift=median(shifts),residual=Math.max(...shifts.map(x=>Math.abs(x-shift)));
-  if(Math.abs(shift)<.002||Math.abs(shift)>.015||residual>.003)return p;
+  if(Math.abs(shift)<.002||Math.abs(shift)>.015||residual>(full?.002:.003))return p;
   const entry=Math.round((p.bEntry+shift)*1e6)/1e6;
   if(entry<B.audibleStart||entry+integrateTempo(p.tempoB,p.duration)>B.audibleEnd)return p;
   return {...p,id:`${p.id}_onset_${Math.round(shift*1e6)}`,bEntry:entry,
     entrySelection:p.entrySelection?{...p.entrySelection,skippedSeconds:Math.max(0,p.entrySelection.skippedSeconds+shift)}:undefined,
     reasons:[...p.reasons,`атаки бочки уточнены по ${shifts.length} измеренным долям: ${Math.round(shift*1000)} мс`],
-    debug:{...p.debug,microOnset:{policy:'lf-attack-1',shiftMs:Math.round(shift*1e6)/1000,pairs:shifts.length,residualMs:Math.round(residual*1e6)/1000}}};
+    debug:{...p.debug,microOnset:{policy:full?'lf-attack-fullmix-1':'lf-attack-1',shiftMs:Math.round(shift*1e6)/1000,pairs:shifts.length,residualMs:Math.round(residual*1e6)/1000}}};
 }

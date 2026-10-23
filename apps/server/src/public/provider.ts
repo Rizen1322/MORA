@@ -208,14 +208,16 @@ export class PublicMusic {
     return transfer && (!transfer.done || transfer.finalHash === contentHash) ? transfer.pcmKey : contentHash.replace(/[^a-zA-Z0-9]/g, '_');
   }
 
-  async playbackInput(trackId: string) {
+  /** With a signal, the decode is one more listener of the transfer: when it leaves and nobody
+   * else listens (offline download, analysis), the download stops too. */
+  async playbackInput(trackId: string, signal?: AbortSignal) {
     const src = this.lib.sources(trackId).find((s) => s.kind === 'remote' && ['youtube', 'soundcloud'].includes(s.provider));
-    if (!src) return this.lib.resolveMediaPath(trackId);
+    if (!src) return this.lib.resolveMediaPath(trackId, signal);
     const ready = this.cachedAudio(src);
     if (ready) return ready;
-    this.fetchAudio(src).catch(() => {});
+    this.fetchAudio(src, signal).catch(() => {});
     const transfer = this.transfers.get(trackId);
-    return transfer ? growingAudioInput(transfer) : this.lib.resolveMediaPath(trackId);
+    return transfer ? growingAudioInput(transfer, signal) : this.lib.resolveMediaPath(trackId, signal);
   }
 
   /** Look ahead only over audio already on disk; never starts a transfer. */

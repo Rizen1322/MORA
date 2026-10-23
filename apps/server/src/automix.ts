@@ -3,11 +3,16 @@ import {
   ANALYZER_VERSION,
   DEFAULT_AUTOMIX_SETTINGS,
   PLANNER_VERSION,
+  chooseByRender,
+  finalistSpans,
   fnv1a,
+  planFinalistsSteps,
   planSkip,
   planTransition,
   planRequestedTransition,
+  stepAsync,
   type AutoMixSettings,
+  type PcmSpan,
   type PlannerTrack,
   type TransitionPlan,
   type TransitionRating,
@@ -23,6 +28,15 @@ export interface AppSettings {
   wave: { mood: 'calm' | 'normal' | 'energetic'; diversity: 'familiar' | 'balanced' | 'discover'; mode: 'normal' | 'mix'; yandexSeeds?: string[] };
   ui: { showDiagnostics: boolean; motion?: 'system'|'full'|'reduced'; graphics?: 'auto'|'canvas' };
   sound: SoundSettings;
+  yandex: YandexIntegrationSettings;
+}
+
+/** What the connected Yandex Music account is used for. Every switch defaults to on. */
+export interface YandexIntegrationSettings {
+  syncLikes: boolean;
+  syncDislikes: boolean;
+  importLikes: boolean;
+  waveFeedback: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -30,6 +44,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   wave: { mood: 'normal', diversity: 'balanced', mode: 'normal' },
   ui: { showDiagnostics: false },
   sound: sanitizeSound(undefined),
+  yandex: { syncLikes: true, syncDislikes: true, importLikes: true, waveFeedback: true },
 };
 
 const vocalKeys = new WeakMap<object, string>();
@@ -55,6 +70,8 @@ export function getSettings(db: Db): AppSettings {
     ui: { ...DEFAULT_SETTINGS.ui, motion: process.env.AUTOMIX_DESKTOP === '1' ? 'full' : 'system', ...(s.ui ?? {}) },
     // Older settings have no sound section: flat and bypassed.
     sound: sanitizeSound(s.sound),
+    // Older settings predate the integration switches: everything stays enabled.
+    yandex: { ...DEFAULT_SETTINGS.yandex, ...(s.yandex ?? {}) },
   };
 }
 
@@ -80,6 +97,46 @@ export class AutoMixService {
   }
 
   plan(fromId: string, toId: string): { plan: TransitionPlan; cached: boolean; pending: string[] } {
+    const r = this.prepare(fromId, toId);
+    if ('plan' in r) return r;
+    const plan = planTransition(r.pa, r.pb, r.settings);
+    if (!r.pending.length) this.store(r.key, plan, r.a.content_hash, r.b.content_hash);
+    return { plan, cached: false, pending: r.pending };
+  }
+
+  /** P10: a full-mix pair (a voice unknown) renders its finalists on PCM that is already decoding and
+   * keeps the planner's choice unless it fails technically. Without that PCM the planner's choice is
+   * cached marked as unchecked and checked by a later request; other pairs behave exactly like plan(). */
+  async planChecked(fromId: string, toId: string, read: (trackId: string, from: number, to: number) => Promise<PcmSpan | null>): Promise<{ plan: TransitionPlan; cached: boolean; pending: string[] }> {
+    const cached = this.prepare(fromId, toId);
+    const unchecked = 'plan' in cached && !!(cached.plan.debug.renderCheck as { skipped?: string } | undefined)?.skipped;
+    if ('plan' in cached && !unchecked) return cached;
+    const r = unchecked ? this.prepare(fromId, toId, true) : cached;
+    if ('plan' in r) return r;
+    // stepped: the iPhone app's in-process server keeps answering PCM reads while this plans
+    const finalists = r.pending.length ? [planTransition(r.pa, r.pb, r.settings)] : await stepAsync(planFinalistsSteps(r.pa, r.pb, r.settings));
+    if (finalists.length < 2) {
+      if (!r.pending.length) this.store(r.key, finalists[0], r.a.content_hash, r.b.content_hash);
+      return { plan: finalists[0], cached: false, pending: r.pending };
+    }
+    const spans = finalistSpans(finalists);
+    // iPhone hot or in Low Power Mode (set by apps/mobile): the 2-5 renders wait like missing PCM does
+    const saver = process.env.MORA_POWER_SAVER === '1';
+    const [sa, sb] = saver ? [null, null] : await Promise.all([read(fromId, ...spans.a), read(toId, ...spans.b)]).catch(() => [null, null]);
+    if (!sa || !sb || sa.pcm.sampleRate !== sb.pcm.sampleRate) {
+      if (unchecked) return cached as { plan: TransitionPlan; cached: true; pending: string[] };
+      const skipped = { ...finalists[0], debug: { ...finalists[0].debug, renderCheck: { policy: 'render-finalists-2', skipped: 'pcm-not-ready' } } };
+      this.store(r.key, skipped, r.a.content_hash, r.b.content_hash);
+      return { plan: skipped, cached: false, pending: r.pending };
+    }
+    let plan = finalists[0];
+    try { plan = await chooseByRender(finalists, sa, sb); } catch { /* a failed check keeps the planner's choice */ }
+    this.store(r.key, plan, r.a.content_hash, r.b.content_hash);
+    return { plan, cached: false, pending: r.pending };
+  }
+
+  private prepare(fromId: string, toId: string, ignoreCache = false): { plan: TransitionPlan; cached: true; pending: string[] }
+    | { a: TrackRow; b: TrackRow; pa: PlannerTrack; pb: PlannerTrack; settings: AutoMixSettings; key: string; pending: string[] } {
     const a = this.lib.get(fromId);
     const b = this.lib.get(toId);
     if (!a || !b) throw new Error('трек не найден');
@@ -96,25 +153,18 @@ export class AutoMixService {
         vocalKey(pa.analysis?.vocalActivity),vocalKey(pb.analysis?.vocalActivity)].join('|'),
     );
     const row = q(this.db, 'SELECT plan FROM transition_cache WHERE key = ?').get(key) as { plan: string } | undefined;
-    if (row) {
+    if (row && !ignoreCache) {
       q(this.db, 'UPDATE transition_cache SET used_at = ? WHERE key = ?').run(Date.now(), key);
-      return { plan: JSON.parse(row.plan), cached: true, pending };
+      return { plan: JSON.parse(row.plan) as TransitionPlan, cached: true, pending };
     }
-    const plan = planTransition(pa, pb, settings);
-    // only plans built on finished analysis are worth caching
-    if (!pending.length) {
-      q(this.db, 'INSERT OR REPLACE INTO transition_cache(key, plan_id, from_hash, to_hash, plan, created_at, used_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-        key,
-        plan.id,
-        a.content_hash,
-        b.content_hash,
-        JSON.stringify(plan),
-        Date.now(),
-        Date.now(),
-      );
-      this.prune();
-    }
-    return { plan, cached: false, pending };
+    return { a, b, pa, pb, settings, key, pending };
+  }
+
+  /** Only plans built on finished analysis are worth caching. */
+  private store(key: string, plan: TransitionPlan, fromHash: string, toHash: string): void {
+    q(this.db, 'INSERT OR REPLACE INTO transition_cache(key, plan_id, from_hash, to_hash, plan, created_at, used_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      key, plan.id, fromHash, toHash, JSON.stringify(plan), Date.now(), Date.now());
+    this.prune();
   }
 
   skip(fromId: string, toId: string, position: number): TransitionPlan {

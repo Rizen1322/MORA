@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.ts';
-import { q } from '../src/db.ts';
+import { kvSet, q } from '../src/db.ts';
 
 type App = Awaited<ReturnType<typeof createApp>>;
 type SeenRequest = { path: string; method: string; body: string; authorization: string | undefined };
@@ -282,5 +282,78 @@ describe('Yandex reaction synchronization through local API fixtures', () => {
     await until(() => a.services.yandexReactions.status(trackId).status === 'synced', 'connecting did not resume the paused reaction');
     expect(liked.has('100:10')).toBe(true);
     expect(localValue()).toBe(1);
+  });
+
+  it('integration switches round-trip through the settings API', async () => {
+    const saved = await a.app.inject({ method: 'PUT', url: '/api/settings', payload: { yandex: { syncLikes: false, waveFeedback: false } } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json().yandex).toEqual({ syncLikes: false, syncDislikes: true, importLikes: true, waveFeedback: false });
+    expect((await a.app.inject('/api/settings')).json().yandex).toEqual({ syncLikes: false, syncDislikes: true, importLikes: true, waveFeedback: false });
+  });
+
+  it('a like with likes sync off stays local: kept, never sent', async () => {
+    kvSet(a.services.db, 'settings', { yandex: { syncLikes: false }, version: 2 });
+    const response = await react(1);
+    expect(response.json()).toMatchObject({ value: 1, sync: { status: 'local' } });
+    expect(localValue()).toBe(1);
+    expect(outbox()).toMatchObject({ value: 1, status: 'synced' });
+    await a.services.yandexReactions.flush(true);
+    expect(seen.filter((r) => r.path !== '/account/status')).toEqual([]);
+    expect(liked.has('100:10')).toBe(false);
+  });
+
+  it('a dislike with dislikes sync off stays local', async () => {
+    kvSet(a.services.db, 'settings', { yandex: { syncDislikes: false }, version: 2 });
+    const response = await react(-1);
+    expect(response.json()).toMatchObject({ value: -1, sync: { status: 'local' } });
+    expect(localValue()).toBe(-1);
+    await a.services.yandexReactions.flush(true);
+    expect(mutations()).toEqual([]);
+  });
+
+  it('a like with dislikes sync off never touches the remote dislike list', async () => {
+    disliked.add('100:10');
+    kvSet(a.services.db, 'settings', { yandex: { syncDislikes: false }, version: 2 });
+    await react(1);
+    await a.services.yandexReactions.flush(true);
+    expect(operations()).toEqual(['likes/tracks/add-multiple']);
+    expect(liked.has('100:10')).toBe(true);
+    expect(disliked.has('100:10')).toBe(true);
+    // Removing the like cleans only the managed likes list.
+    await react(0);
+    await a.services.yandexReactions.flush(true);
+    expect(operations()).toEqual(['likes/tracks/add-multiple', 'likes/tracks/remove']);
+    expect(liked.has('100:10')).toBe(false);
+    expect(disliked.has('100:10')).toBe(true);
+  });
+
+  it('a change queued before its switch was turned off waits instead of sending', async () => {
+    // Keep the queue frozen until the switch is off, so no background flush wins the race.
+    await a.services.yandexReactions.stop();
+    const response = await react(1);
+    expect(response.statusCode, response.body).toBe(200);
+    kvSet(a.services.db, 'settings', { yandex: { syncLikes: false }, version: 2 });
+    a.services.yandexReactions.start();
+    await a.services.yandexReactions.flush(true);
+    expect(mutations()).toEqual([]);
+    expect(outbox()).toMatchObject({ status: 'pending', value: 1 });
+    expect(outbox()!.error).toContain('Синхронизация лайков');
+    kvSet(a.services.db, 'settings', { yandex: { syncLikes: true }, version: 2 });
+    a.services.yandexReactions.connectionChanged();
+    await until(() => a.services.yandexReactions.status(trackId).status === 'synced', 're-enabling did not send the queued like');
+    expect(liked.has('100:10')).toBe(true);
+  });
+
+  it('wave feedback off answers ok without contacting Yandex', async () => {
+    const event = { type: 'skip', trackId: '100:10' } as const;
+    kvSet(a.services.db, 'settings', { yandex: { waveFeedback: false }, version: 2 });
+    const off = await a.app.inject({ method: 'POST', url: '/api/providers/yandex/feedback', payload: { sessionId: 'radio-', batchId: null, event } });
+    expect(off.statusCode, off.body).toBe(200);
+    expect(off.json()).toEqual({ ok: true });
+    expect(seen.filter((r) => r.path.startsWith('/rotor/'))).toEqual([]);
+    kvSet(a.services.db, 'settings', { yandex: { waveFeedback: true }, version: 2 });
+    const on = await a.app.inject({ method: 'POST', url: '/api/providers/yandex/feedback', payload: { sessionId: 'radio-', batchId: null, event } });
+    expect(on.statusCode, on.body).toBe(502);
+    expect(seen.some((r) => r.path.startsWith('/rotor/'))).toBe(true);
   });
 });

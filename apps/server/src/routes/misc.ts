@@ -76,6 +76,7 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
       }
     }
     const a = { ...cur.automix, ...(b.automix ?? {}) };
+    const y = { ...cur.yandex, ...(b.yandex ?? {}) };
     const next: AppSettings = {
       automix: {
         enabled: !!a.enabled,
@@ -105,6 +106,12 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
         motion: b.ui?.motion === 'full' || b.ui?.motion === 'reduced' || b.ui?.motion === 'system' ? b.ui.motion : cur.ui.motion ?? 'system',
         graphics: b.ui?.graphics === 'canvas' || b.ui?.graphics === 'auto' ? b.ui.graphics : cur.ui.graphics ?? 'auto' },
       sound: b.sound ? sanitizeSound({ ...cur.sound, ...b.sound }) : cur.sound,
+      yandex: {
+        syncLikes: !!y.syncLikes,
+        syncDislikes: !!y.syncDislikes,
+        importLikes: !!y.importLikes,
+        waveFeedback: !!y.waveFeedback,
+      },
     };
     kvSet(db, 'settings', { ...next, version: 2 });
     return next;
@@ -227,6 +234,8 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
     '/api/providers/yandex/feedback',
     async (req, reply) => {
       try {
+        // The wave keeps playing without feedback; the toggle only stops sending it.
+        if (!getSettings(db).yandex.waveFeedback) return { ok: true };
         await providers.yandex.feedback(req.body.sessionId, req.body.batchId, req.body.event);
         return { ok: true };
       } catch (e) {

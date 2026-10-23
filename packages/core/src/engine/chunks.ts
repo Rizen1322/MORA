@@ -11,6 +11,17 @@ export class ChunkStore implements PcmSource {
     return Math.ceil(this.totalFrames / CHUNK_FRAMES);
   }
 
+  /** Takes the decoder's exact length. Returns chunks to fetch again: the one that ended at the old
+   * estimate was cut short there (growth), and none beyond the new end are kept (shrink). */
+  resize(totalFrames: number): number[] {
+    const grew = totalFrames > this.totalFrames, edge = Math.floor((this.totalFrames - 1) / CHUNK_FRAMES);
+    this.totalFrames = totalFrames;
+    for (const k of this.chunks.keys()) if (k >= this.chunkCount) this.chunks.delete(k);
+    if (!grew || edge < 0) return [];
+    this.chunks.delete(edge);
+    return [edge];
+  }
+
   put(index: number, L: Float32Array, R: Float32Array): void {
     if (index < 0 || index >= this.chunkCount) return;
     this.chunks.set(index, { L, R });

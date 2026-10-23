@@ -107,6 +107,9 @@ function tempoAt(points: [number, number][], time: number): number {
   return points[points.length - 1][1];
 }
 
+/** The server could not render-check this full-mix plan yet: B's PCM was not decoding (P10). */
+const renderSkipped = (plan: TransitionPlan) => !!(plan.debug.renderCheck as { skipped?: string } | undefined)?.skipped;
+
 function consumedSource(points: [number, number][], time: number): number {
   const knots = [0, ...points.map(([t]) => t).filter((t) => t > 0 && t < time), Math.max(0, time)];
   let source = 0;
@@ -115,6 +118,10 @@ function consumedSource(points: [number, number][], time: number): number {
 }
 
 let seq = 0;
+/** iPhone app (mora-mobile, set by its bridge before this module runs): the phone's buttons set the
+ * volume, so the app has no volume control and plays at full level. */
+export const systemVolume = typeof document !== 'undefined' && document.documentElement.classList.contains('mora-mobile');
+
 const uid = () => `${Date.now().toString(36)}-${(++seq).toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
 export function gainFromSummary(a: AnalysisSummary | undefined, target: number | null): number {
@@ -185,7 +192,7 @@ export class PlayerController {
     repeat: 'off',
     position: 0,
     duration: 0,
-    volume: 0.9,
+    volume: systemVolume ? 1 : 0.9,
     muted: false,
     ratio: 1,
     limiterDb: 0,
@@ -256,7 +263,9 @@ export class PlayerController {
 
   private async createEngine(): Promise<void> {
     if (this.ctx && this.node) {
-      if (this.ctx.state === 'suspended') await this.ctx.resume();
+      // Safari also has 'interrupted' (call, Siri, another app's audio)
+      // WebKit settles resume() from 'interrupted' only when the interruption ends: never block Play on it.
+      if (this.ctx.state !== 'running' && this.ctx.state !== 'closed') await Promise.race([this.ctx.resume(), new Promise((r) => setTimeout(r, 1500))]);
       return;
     }
     const ctx = new AudioContext({ latencyHint: .15 });
@@ -268,6 +277,13 @@ export class PlayerController {
     node.connect(analyser);
     analyser.connect(ctx.destination);
     node.port.onmessage = (ev: MessageEvent<MixerEvent>) => this.onEngine(ev.data);
+    // The system, not the listener, stopped the context: playing stays playing, so pick up again
+    // (WebKit settles a resume() from 'interrupted' once the interruption ends).
+    const keepRunning = () => {
+      if (ctx.state !== 'running' && ctx.state !== 'closed' && (this.state.status === 'playing' || this.state.status === 'buffering')) void ctx.resume().catch(() => {});
+    };
+    ctx.onstatechange = keepRunning;
+    document.addEventListener('visibilitychange', keepRunning);
     this.ctx = ctx;
     this.node = node;
     this.analyser = analyser;
@@ -417,6 +433,17 @@ export class PlayerController {
   }
 
   /** Decode first, then publish the whole range together when its cue is ready. */
+  /** Replaces the metadata duration estimate with the decoder's exact length. */
+  private setLength(slot: Slot, totalFrames: number): void {
+    if (!Number.isSafeInteger(totalFrames) || totalFrames <= 0 || totalFrames === slot.totalFrames) return;
+    const edge = Math.floor((Math.min(slot.totalFrames, totalFrames) - 1) / CHUNK_FRAMES);
+    slot.totalFrames = totalFrames;
+    for (const c of slot.fed) if (c >= edge) slot.fed.delete(c);
+    const deck = this.slots.indexOf(slot);
+    if (deck >= 0) this.post({ cmd: 'length', deck, token: slot.token, totalFrames });
+    if (slot === this.current) this.set({ duration: totalFrames / this.sr });
+  }
+
   private async readChunks(slot: Slot, run: number[], part: PcmPart = 'original'): Promise<BufferedChunk[]> {
     if (!run.length) return [];
     const start = run[0] * CHUNK_FRAMES;
@@ -445,6 +472,8 @@ export class PlayerController {
         vocalStream.revision = revision;
       }
     }
+    // only a finished decode knows the real end; a short answer from a running one is not EOF
+    if (part === 'original' && res.headers?.get('X-Complete') === '1') this.setLength(slot, Number(res.headers.get('X-Total-Frames')));
     const floating = part === 'vocals' || res.headers?.get('X-PCM-Format') === 'f32le';
     const pcm = floating ? new Float32Array(buf, 0, Math.floor(buf.byteLength / 8) * 2) : new Int16Array(buf, 0, Math.floor(buf.byteLength / 4) * 2);
     const got = pcm.length / 2;
@@ -1358,6 +1387,9 @@ export class PlayerController {
     // That completion had no prepared pair to refresh yet; revisit it now.
     if (resourceRevision !== (this.resourceRevisions.get(cur.trackId) ?? 0) + (this.resourceRevisions.get(entry.trackId) ?? 0)) {
       this.onAnalysisDone(entry.trackId);
+    } else if (renderSkipped(plan)) {
+      // P10: the server planned before B's PCM was decoding; B's deck is loading it now
+      this.refreshPlan(cur, this.next, 1);
     }
   }
 
@@ -1444,8 +1476,14 @@ export class PlayerController {
         this.post({ cmd: 'gain', deck: cur.deck, gainDb: track?.mixingAllowed === false ? 0 : gainFromSummary(track?.analysis, this.loudnessTarget) });
       }
     }
-    if (!nx || !cur || (trackId !== cur.trackId && trackId !== nx.entry.trackId) || this.state.transition?.active ||
-      this.nextRequest || nx.plan.debug.requested === true) return;
+    if (!nx || !cur || (trackId !== cur.trackId && trackId !== nx.entry.trackId)) return;
+    this.refreshPlan(cur, nx);
+  }
+
+  /** Asks the server for the pair's plan again and re-arms it while the transition is still ahead.
+   * `renderAttempt` > 0: a retry of a plan whose render check waited for B's PCM (P10). */
+  private refreshPlan(cur: Slot, nx: NextPrep, renderAttempt = 0): void {
+    if (this.state.transition?.active || this.nextRequest || nx.plan.debug.requested === true) return;
     const preparedPlan = nx.plan;
     const generation = this.generation;
     const revision = this.preparationRevision;
@@ -1458,6 +1496,11 @@ export class PlayerController {
         revision === this.preparationRevision && refresh === this.analysisRevision && !this.state.transition?.active && !this.nextRequest &&
         preparedPlan.aExit - this.state.position > 0.15;
       if (!r || !isRelevant()) return;
+      if (renderAttempt && renderSkipped(r.plan) && r.plan.id === preparedPlan.id) {
+        // B's PCM can still be decoding (the iPhone decodes whole files): try the check a little later
+        if (renderAttempt < 3) setTimeout(() => { if (isRelevant()) this.refreshPlan(cur, nx, renderAttempt + 1); }, 3000);
+        return;
+      }
       let plan = this.fitPlan(r.plan);
       const audio = await Promise.all([this.bufferChangedCue(nx, preparedPlan, plan), this.bufferVocals(cur, nx.slot, plan)]).catch(() => null);
       if (!audio || !isRelevant()) return;
@@ -1787,7 +1830,7 @@ export class PlayerController {
         context: q.context,
         shuffle: !!q.shuffle,
         repeat: q.repeat ?? 'off',
-        volume: q.volume ?? 0.9,
+        volume: systemVolume ? 1 : q.volume ?? 0.9,
         position: this.restoredPosition,
         duration: items[index] ? this.track(items[index].trackId)?.duration ?? 0 : 0,
         status: 'idle',

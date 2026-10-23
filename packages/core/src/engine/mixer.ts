@@ -417,6 +417,15 @@ export class MixerCore {
     this.requestData(d);
   }
 
+  /** The decode finished: its exact length replaces the duration estimate given to load(). The
+   * end of the track (and 'ended') follow the real audio, not padding or a cut-off estimate. */
+  setLength(deck: number, token: string, totalFrames: number): void {
+    const d = this.decks[deck];
+    if (d.token !== token || !Number.isSafeInteger(totalFrames) || totalFrames <= 0 || totalFrames === d.store.totalFrames) return;
+    for (const c of d.store.resize(totalFrames)) d.requested.delete(c);
+    for (const c of d.vocalStore.resize(totalFrames)) d.vocalRequested.delete(c);
+  }
+
   unload(deck: number): void {
     const d = this.decks[deck];
     this.detachDeck(d, 'deck_unloaded');

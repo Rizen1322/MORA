@@ -14,7 +14,7 @@ export { estimateTempo, trackBeats, fitGrid, onsetEnvelope } from './mir/tempo.t
 export { estimateKey, camelotCompatibility, camelotOf, keyNameRu, parseCamelot } from './mir/key.ts';
 export { analyzeTrack, type AnalyzeInput, type AnalyzeOptions } from './mir/analyze.ts';
 export { detectBeatRegions } from './mir/regions.ts';
-export { planTransition, planRequestedTransition, planSkip, skipPlanFrom, tempoRelation, normalizationGain, fnv1a } from './plan/planner.ts';
+export { planTransition, planFinalists, planFinalistsSteps, planRequestedTransition, planSkip, skipPlanFrom, tempoRelation, normalizationGain, fnv1a } from './plan/planner.ts';
 export { fallbackWithoutVocalStems } from './plan/first-words.ts';
 export { MixerCore, evalPoints, LANE_INDEX, type ArmedTransition, type MixerEvent, type DeckSnapshot } from './engine/mixer.ts';
 export { ChunkStore, CHUNK_FRAMES } from './engine/chunks.ts';
@@ -32,3 +32,5 @@ export {
 } from './rec/wave.ts';
 export { AnalysisAccumulator, analyzePcm } from './mir/analyzePcm.ts';
 export { synthesize, toAnalysisMono, type SynthSpec, type SynthResult, type SynthStyle } from './synth/synth.ts';
+export { fullMixCost, fullMixPair, voiceUnknown, type FullMixCost } from './plan/fullmix.ts';
+export { chooseByRender, finalistSpans, renderMetrics, stepAsync, type PcmSpan, type RenderMetrics } from './engine/render-check.ts';

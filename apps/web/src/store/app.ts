@@ -3,6 +3,7 @@ import { PlayerController, type PlayerSnapshot } from '../audio/controller.ts';
 import { api, type AppSettings, type PlaylistSummary, type ProviderInfo, type Track } from '../lib/api.ts';
 import { sanitizePlayback, type PlaybackSettings, type ToneSettings } from '@automix/core';
 import { useDownloads } from './downloads.ts';
+import { throttleClock } from '../lib/clockThrottle.ts';
 
 export interface Toast {
   id: number;
@@ -123,6 +124,7 @@ export const useApp = create<AppState>((set, get) => ({
       wave: { ...cur.wave, ...(patch.wave ?? {}) },
       ui: { ...cur.ui, ...(patch.ui ?? {}) },
       sound: { ...cur.sound, ...(patch.sound ?? {}) },
+      yandex: { ...cur.yandex, ...(patch.yandex ?? {}) },
     };
     const revision = ++settingsRevision;
     set({ settings: merged });
@@ -190,7 +192,9 @@ export const controller = new PlayerController(
   () => useApp.getState().loadLibrary(),
 );
 useApp.setState({ player: controller.state });
-controller.subscribe((s) => useApp.setState({ player: s }));
+// Phone: the engine's ~20 clock ticks a second re-rendered the whole player; 5 a second is enough there.
+const phone = typeof document !== 'undefined' && document.documentElement.classList.contains('mora-mobile');
+controller.subscribe(phone ? throttleClock((s) => useApp.setState({ player: s }), () => controller.state, 200) : (s) => useApp.setState({ player: s }));
 
 export function trackOf(id: string | undefined | null): Track | undefined {
   return id ? useApp.getState().tracks.get(id) : undefined;

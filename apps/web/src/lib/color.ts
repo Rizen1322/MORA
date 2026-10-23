@@ -6,6 +6,7 @@ export async function artColors(url: string): Promise<[number, number, number][]
   if (hit) return hit;
   const img = new Image();
   img.decoding = 'async';
+  img.referrerPolicy = 'no-referrer';
   img.src = url;
   await img.decode();
   const c = document.createElement('canvas');

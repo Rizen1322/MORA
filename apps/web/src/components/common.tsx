@@ -8,8 +8,9 @@ import { useApp } from '../store/app.ts';
 export function Cover({ url, seed, alt = '', className = '', round = false, size }: { url: string | null | undefined; seed: string; alt?: string; className?: string; round?: boolean; size?: number }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [url]);
+  // YouTube Music artwork (googleusercontent) refuses requests that carry a foreign Referer.
   if (url && !failed) {
-    return <img className={`cover ${round ? 'round' : ''} ${className}`} src={url} alt={alt} loading="lazy" decoding="async" onError={() => setFailed(true)} style={size ? { width: size, height: size } : undefined} />;
+    return <img className={`cover ${round ? 'round' : ''} ${className}`} src={url} alt={alt} referrerPolicy="no-referrer" loading="lazy" decoding="async" onError={() => setFailed(true)} style={size ? { width: size, height: size } : undefined} />;
   }
   const [a, b] = seedColors(seed);
   return (
@@ -184,13 +185,18 @@ export function Menu({ x, y, onClose, children }: { x: number; y: number; onClos
 export function useReducedMotion(): boolean {
   const preference=useApp(s=>s.settings?.ui.motion??(desktop?'full':'system'));
   const [r, setR] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches);
+  // iPhone app: a hot phone or Low Power Mode (html[data-power=saver], apps/mobile) stills the canvases
+  const saver = () => document.documentElement.dataset.power === 'saver';
+  const [s, setS] = useState(saver);
   useEffect(() => {
     const m = matchMedia('(prefers-reduced-motion: reduce)');
     const on = () => setR(m.matches);
+    const onPower = () => setS(saver());
     m.addEventListener('change', on);
-    return () => m.removeEventListener('change', on);
+    window.addEventListener('mora-power', onPower);
+    return () => { m.removeEventListener('change', on); window.removeEventListener('mora-power', onPower); };
   }, []);
-  return preference==='reduced'||preference==='system'&&r;
+  return s||preference==='reduced'||preference==='system'&&r;
 }
 
 export function Equalizer({ playing }: { playing: boolean }) {

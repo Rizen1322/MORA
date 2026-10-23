@@ -1,5 +1,23 @@
 export type TempoMap = [number, number][];
 
+/** Runs a step generator (work split for an in-process server) to completion synchronously. */
+export function drain<T>(g: Generator<void, T>): T {
+  for (;;) { const r = g.next(); if (r.done) return r.value; }
+}
+
+const linear = new WeakMap<number[], Float64Array>();
+/** 10^(dB/10) of an analysis dB curve, once per curve array: power sums spent half the planning time in Math.pow.
+ * Analysed curves are never edited in place; code that changes one must give it a new array. */
+export function linearPower(curve: number[]): Float64Array {
+  let v = linear.get(curve);
+  if (!v) {
+    v = new Float64Array(curve.length);
+    for (let i = 0; i < curve.length; i++) v[i] = Math.pow(10, curve[i] / 10);
+    linear.set(curve, v);
+  }
+  return v;
+}
+
 export function pointValue(points: TempoMap, time: number): number {
   if(!points.length)return 1;
   if(time<=points[0][0])return points[0][1];

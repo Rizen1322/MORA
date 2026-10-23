@@ -158,6 +158,12 @@ export class Library {
     return q(this.db, 'SELECT * FROM tracks WHERE content_hash = ?').all(hash) as unknown as TrackRow[];
   }
 
+  /** Tracks with a remote source of this provider and id, by index (a scan of all() did one query per track). */
+  tracksBySource(provider: string, externalId: string): TrackRow[] {
+    return (q(this.db, "SELECT DISTINCT track_id FROM track_sources WHERE provider = ? AND kind = 'remote' AND external_id = ?").all(provider, externalId) as { track_id: string }[])
+      .map((r) => this.get(r.track_id)).filter((t): t is TrackRow => !!t);
+  }
+
   sources(trackId: string): SourceRow[] {
     return q(this.db, 'SELECT * FROM track_sources WHERE track_id = ? ORDER BY id').all(trackId) as unknown as SourceRow[];
   }

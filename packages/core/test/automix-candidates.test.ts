@@ -177,22 +177,15 @@ it('does not select an automatic cut on continuous/unknown A or a rejected/local
     expect(p.method).not.toBe('phrase_cut');
   }
 });
-it('prefers a completed short utterance below the normal score margin only without extra conflicts',()=>{
+it('never offers a first-words repair lock under 10 s (v13: 4 bars at 120 BPM are 8 s)',()=>{
   for(const cue of [152,154]){
     const A=analysis(120,t=>t>=cue-.2&&t<cue+.4?.85:.01,168),B=analysis(124,t=>t<.2?0:.85,168);
     A.vocalActivity!.vocalRmsDb=Array(16800).fill(-20);
     A.vocalActivity!.accompanimentRmsDb=Array(16800).fill(-18);
     const p=planTransition(track('a',A),track('b',B),S);
-    const selection=p.debug.candidateSelection as {selected:string;margin:number;candidates:{cost:{total:number;cutA:boolean;lostB:number;voiceOverlap:number;holeDb:number}}[]};
-    const [base,short]=selection.candidates.map(x=>x.cost);
-    expect(base.total-short.total).toBeGreaterThan(0);
-    expect(base.total-short.total).toBeLessThan(selection.margin);
-    expect(short.lostB).toBeGreaterThanOrEqual(0);
-    expect(short.lostB).toBeLessThanOrEqual(base.lostB);
-    expect(short.voiceOverlap).toBeLessThanOrEqual(base.voiceOverlap);
-    expect(short.holeDb).toBeLessThanOrEqual(base.holeDb);
-    expect(selection.selected).toBe(cue===152?'short-phrase':'baseline');
-    if(cue===152){expect(base.cutA).toBe(true);expect(short.cutA).toBe(false);expect(p.aExit).toBeGreaterThan(cue+.4);}
+    const selection=p.debug.candidateSelection as {selected:string;candidates:{name:string;duration:number}[]};
+    expect(selection.candidates.every(c=>c.name==='baseline'||c.duration>=10)).toBe(true);
+    expect(p.duration).toBeGreaterThanOrEqual(10);
   }
 });
 it('leaves album continuity, disabled mixing and explicit manual transitions outside candidate selection',()=>{

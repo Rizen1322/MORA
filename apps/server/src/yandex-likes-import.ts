@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { getSettings } from './automix.ts';
 import { kvGet, kvSet, q, tx, type Db } from './db.ts';
 import type { Library } from './library.ts';
 import type { EventHub } from './events.ts';
@@ -34,6 +35,7 @@ export class YandexLikesImport {
   }
   start() {
     if (this.task || (this.job && ['paused', 'running', 'listing'].includes(this.job.state))) throw new Error('Продолжите или завершите текущий импорт');
+    if (!getSettings(this.db).yandex.importLikes) throw new Error('Импорт лайков из Яндекса выключен в настройках источников');
     const session = this.provider.reactionSession();
     if (!session) throw new Error('Подключите Яндекс Музыку');
     this.stopped = false;
@@ -51,6 +53,7 @@ export class YandexLikesImport {
   resume(retryFailed = false) {
     if (!this.job || this.task) throw new Error('Дождитесь завершения текущей операции');
     if (this.job.state === 'cancelled') throw new Error('Этот импорт завершён. Начните новый.');
+    if (!getSettings(this.db).yandex.importLikes) throw new Error('Импорт лайков из Яндекса выключен в настройках источников');
     if (this.provider.reactionSession()?.key !== this.job.account) throw new Error('Подключите тот аккаунт Яндекса, с которого начат импорт');
     if (retryFailed) q(this.db, "UPDATE yandex_likes_import_items SET state='pending' WHERE job_id=? AND state='failed'").run(this.job.id);
     this.stopped = false; this.job.state = this.job.total ? 'running' : 'listing'; this.job.message = ''; this.save(); this.launch(); return this.status();

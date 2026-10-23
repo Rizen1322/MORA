@@ -2,6 +2,7 @@ import type { TransitionPlan } from '../types.ts';
 import { CHUNK_FRAMES } from './chunks.ts';
 import { LANE_INDEX, MixerCore, type ArmedTransition, type MixerEvent } from './mixer.ts';
 import { DEFAULT_PLAYBACK, sanitizePlayback, type PlaybackSettings } from '../dsp/playback.ts';
+import { drain } from '../plan/timing.ts';
 
 /** Converts a planner TransitionPlan (seconds) to engine frames for a sample rate. */
 export function planToArmed(plan: TransitionPlan, sampleRate: number, fromToken: string, toToken: string): ArmedTransition {
@@ -72,6 +73,12 @@ export interface OfflineRender {
  * `postSeconds` of B afterwards.
  */
 export function renderTransitionOffline(a: StereoPcm, b: StereoPcm, plan: TransitionPlan, preSeconds = 8, postSeconds = 10, playback: PlaybackSettings = DEFAULT_PLAYBACK): OfflineRender {
+  return drain(renderTransitionSteps(a, b, plan, preSeconds, postSeconds, playback));
+}
+
+/** renderTransitionOffline in steps: it yields after every 32768 output frames, so an
+ * in-process caller (the iPhone app's server) can serve other requests in between. */
+export function* renderTransitionSteps(a: StereoPcm, b: StereoPcm, plan: TransitionPlan, preSeconds = 8, postSeconds = 10, playback: PlaybackSettings = DEFAULT_PLAYBACK): Generator<void, OfflineRender> {
   const sr = a.sampleRate;
   if (b.sampleRate !== sr) throw new Error('sample rates must match');
   if ((plan.vocalA?.some(([, gain]) => gain !== 1) && !a.vocals) || (plan.vocalB?.some(([, gain]) => gain !== 1) && !b.vocals)) {
@@ -108,6 +115,7 @@ export function renderTransitionOffline(a: StereoPcm, b: StereoPcm, plan: Transi
   const br = new Float32Array(block);
   let startFrame = -1;
   for (let off = 0; off < total; off += block) {
+    if (off && off % 32768 === 0) yield;
     // Model the controller's refill path too. The live core evicts distant
     // chunks, so feeding a whole track once cannot sustain a long render.
     for (const e of pending.splice(0)) {

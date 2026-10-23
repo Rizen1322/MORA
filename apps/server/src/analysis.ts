@@ -16,6 +16,8 @@ interface Running {
   item: QueueItem;
   worker: PoolWorker;
   jobId: number;
+  /** Settles once the media is resolved and the job handed to the worker (or dropped). */
+  prep?: Promise<void>;
   progress: number;
   started: number;
   /** Cancelled before the job reached the worker (audio still being fetched). */
@@ -36,6 +38,10 @@ export const PRIORITY = { background: 1, imported: 5, wave: 50, next: 90, curren
  * analyzer version, so renaming or re-importing a file never re-analyzes it,
  * and a new analyzer version re-analyzes everything automatically.
  */
+/** Longer recordings are analyzed only when they are about to play (memory, see ensure()). */
+const MAX_AUTO_SECONDS = 3 * 3600;
+const LONG_SECONDS = 20 * 60;
+
 export class AnalysisService {
   vocalActivityFor: ((hash: string) => TrackAnalysis['vocalActivity']) | null = null;
   private queue = new Map<string, QueueItem>();
@@ -59,7 +65,21 @@ export class AnalysisService {
     for (let i = 0; i < n; i++) this.pool.push(this.spawn());
     // anything that was running when the app stopped goes back to the queue
     q(this.db, "UPDATE analysis SET status = 'pending' WHERE status = 'running' AND version = ?").run(ANALYZER_VERSION);
+    this.prune();
     for (const t of this.lib.all()) this.ensure(t, PRIORITY.background);
+  }
+
+  /** Keeps per track the current analysis and the newest other finished one (comparison tools read it).
+   * Older versions were dead weight: 93 % of a long-used library database, rewritten whole on iPhone. */
+  private prune(hash?: string): void {
+    const keep = "SELECT rowid FROM (SELECT rowid, ROW_NUMBER() OVER (PARTITION BY content_hash ORDER BY updated_at DESC) AS n FROM analysis WHERE version <> ? AND status = 'done') WHERE n = 1";
+    const removed = hash
+      ? q(this.db, `DELETE FROM analysis WHERE content_hash = ? AND version <> ? AND rowid NOT IN (${keep})`).run(hash, ANALYZER_VERSION, ANALYZER_VERSION).changes
+      : q(this.db, `DELETE FROM analysis WHERE version <> ? AND rowid NOT IN (${keep})`).run(ANALYZER_VERSION, ANALYZER_VERSION).changes;
+    if (hash || !removed) return;
+    // a large one-time cleanup: give the space back (a later per-track prune reuses its free pages)
+    const pages = q(this.db, 'PRAGMA page_count').get() as { page_count: number }, free = q(this.db, 'PRAGMA freelist_count').get() as { freelist_count: number };
+    if (free.freelist_count > pages.page_count / 4) this.db.exec('VACUUM');
   }
 
   private spawn(): PoolWorker {
@@ -79,6 +99,10 @@ export class AnalysisService {
     return pw;
   }
 
+  private isLong(trackId: string): boolean {
+    return (this.lib.get(trackId)?.duration ?? 0) > LONG_SECONDS;
+  }
+
   /** Queues analysis for a track unless it is already done for this analyzer version. */
   ensure(t: TrackRow, priority: number): void {
     if (t.content_hash.startsWith('remote:') && t.provider !== 'local') {
@@ -86,6 +110,9 @@ export class AnalysisService {
       if (priority < PRIORITY.wave) return;
     }
     if (!this.lib.mixingPolicy.get(t.provider)) return;
+    if (this.cfg.backgroundAnalysis === false && priority < PRIORITY.wave) return;
+    // the analyzer keeps the whole mono PCM (~1.6 GiB for 3 h): only on request for such recordings
+    if (t.duration > MAX_AUTO_SECONDS && priority < PRIORITY.next) return;
     if (t.status === 'missing' || t.status === 'error') return;
     const row = q(this.db, 'SELECT status FROM analysis WHERE content_hash = ? AND version = ?').get(t.content_hash, ANALYZER_VERSION) as
       | { status: string }
@@ -143,7 +170,10 @@ export class AnalysisService {
     if (this.stopped) return;
     for (const pw of this.pool) {
       if (pw.busy) continue;
-      const next = [...this.queue.values()].sort((a, b) => b.priority - a.priority || a.seq - b.seq)[0];
+      // two long recordings at once would hold two full mono PCMs: they wait for each other
+      const longRunning = [...this.running.values()].some((r) => this.isLong(r.item.trackId));
+      const next = [...this.queue.values()].filter((q) => !longRunning || !this.isLong(q.trackId))
+        .sort((a, b) => b.priority - a.priority || a.seq - b.seq)[0];
       if (!next) return;
       this.queue.delete(next.hash);
       pw.busy = true;
@@ -153,9 +183,10 @@ export class AnalysisService {
       q(this.db, "UPDATE analysis SET status = 'running', updated_at = ? WHERE content_hash = ? AND version = ?").run(Date.now(), next.hash, ANALYZER_VERSION);
       this.events.emit({ type: 'analysis', trackId: next.trackId, hash: next.hash, status: 'running', progress: 0 });
       const t = this.lib.get(next.trackId);
-      this.lib
+      r.prep = this.lib
         .resolveMediaPath(next.trackId, r.abort.signal)
         .then((input) => {
+          if (this.stopped) return; // stop() owns the shutdown; the database may be closing
           if (r.abort.signal.aborted) {
             pw.busy = false;
             this.cancelled(r.item.hash, r);
@@ -165,6 +196,17 @@ export class AnalysisService {
           // remote tracks get their real content hash after download
           const fresh = this.lib.get(next.trackId);
           if (fresh && fresh.content_hash !== next.hash) {
+            // Another id resolved to the same audio: join its analysis instead of overwriting its slot.
+            const owner = this.running.get(fresh.content_hash);
+            const done = q(this.db, "SELECT 1 FROM analysis WHERE content_hash = ? AND version = ? AND status = 'done'").get(fresh.content_hash, ANALYZER_VERSION);
+            if ((owner && owner !== r) || done) {
+              if (this.running.get(next.hash) === r) this.running.delete(next.hash);
+              q(this.db, 'DELETE FROM analysis WHERE content_hash = ? AND version = ?').run(next.hash, ANALYZER_VERSION);
+              pw.busy = false;
+              this.pump();
+              return;
+            }
+            this.queue.delete(fresh.content_hash);
             this.running.delete(next.hash);
             this.running.set(fresh.content_hash, r);
             r.item = { ...next, hash: fresh.content_hash };
@@ -174,6 +216,7 @@ export class AnalysisService {
         })
         .catch((e) => {
           pw.busy = false;
+          if (this.stopped) return;
           if (r.abort.signal.aborted) this.cancelled(r.item.hash, r);
           else this.finish(r.item.hash, 'error', null, (e as Error).message);
           this.pump();
@@ -223,7 +266,7 @@ export class AnalysisService {
       `INSERT INTO analysis(content_hash, version, status, data, summary, error, elapsed_ms, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(content_hash, version) DO UPDATE SET status = excluded.status, data = excluded.data, summary = excluded.summary, error = excluded.error, elapsed_ms = excluded.elapsed_ms, updated_at = excluded.updated_at`,
     ).run(hash, ANALYZER_VERSION, status, a ? JSON.stringify(a) : null, summary, error, r ? Date.now() - r.started : null, Date.now());
-    if (a) this.remember(hash, a);
+    if (a) { this.remember(hash, a); this.prune(hash); }
     if (status === 'error' && r) {
       const t = this.lib.get(r.item.trackId);
       if (t && /декод|ffmpeg|Invalid|звука|corrupt/i.test(error ?? '')) this.lib.setStatus(t.id, 'error', `Файл не удалось прочитать: ${error}`);
@@ -271,7 +314,15 @@ export class AnalysisService {
   async stop(): Promise<void> {
     this.stopped = true;
     this.memo.clear();
-    for (const r of this.running.values()) r.worker.w.postMessage({ type: 'cancel', jobId: r.jobId });
+    const running = [...this.running.values()];
+    for (const r of running) {
+      r.abort.abort();
+      Atomics.store(r.worker.cancel, 0, r.jobId);
+      r.worker.w.postMessage({ type: 'cancel', jobId: r.jobId });
+    }
+    // Wait for media resolution to settle before the caller closes the database; a source that
+    // ignores the abort (shortcut: Yandex downloads do) gets 3 s, its late callback then does nothing.
+    await Promise.race([Promise.all(running.map((r) => r.prep)), new Promise((r) => setTimeout(r, 3000))]);
     await new Promise((r) => setTimeout(r, 100));
     await Promise.all(this.pool.map((p) => p.w.terminate()));
   }

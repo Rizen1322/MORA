@@ -143,7 +143,9 @@ describe('measured transition techniques', () => {
   });
 
   it('maps a phrase bass handoff through the actual tempo glide', () => {
+    // measured instrumental songs: the stem path; full mixes (unknown voices) choose cues by fullmix.ts
     const a = song('a', 120, { voice: false }), b = song('b', 126, { voice: false });
+    for (const x of [a, b]) x.analysis!.vocalActivity = { rate: 10, values: new Array(1800).fill(0.03), source: 'demucs', model: 'measured-test' };
     b.analysis!.curves.lowDb.fill(-8); b.analysis!.curves.rmsDb.fill(-10); b.analysis!.bodyRmsDb = -10;
     const control = planTransition(a, b, S);
     const midpoint = control.bEntry + integrateTempo(control.tempoB, control.swapAt);
@@ -238,8 +240,9 @@ describe('planner v7: lyric-preserving entry, grid trust, bass-swap rise', () =>
     b.analysis!.phrases.push(phrase);
     expect(planTransition(a, b, S).debug.bassSwap).toBeDefined();
     // B's bass is 10 dB hotter exactly between the phrase and the default swap
-    b.analysis!.curves.lowDb.fill(2, Math.floor((phrase - 0.3) * 20), Math.ceil((control.bEntry + control.swapAt - 0.3) * 20));
-    b.analysis!.curves.rmsDb.fill(0, Math.floor((phrase - 0.3) * 20), Math.ceil((control.bEntry + control.swapAt - 0.3) * 20));
+    // new arrays: the planner caches the linear power of each analysed curve
+    const span = [Math.floor((phrase - 0.3) * 20), Math.ceil((control.bEntry + control.swapAt - 0.3) * 20)] as const;
+    b.analysis!.curves = { ...b.analysis!.curves, lowDb: [...b.analysis!.curves.lowDb].fill(2, ...span), rmsDb: [...b.analysis!.curves.rmsDb].fill(0, ...span) };
     const p = planTransition(a, b, S);
     expect(p.debug.bassSwap).toBeUndefined();
     expect(p.automation.filter(l => l.lane === 'low')).toEqual(control.automation.filter(l => l.lane === 'low'));

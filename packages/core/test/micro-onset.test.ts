@@ -44,7 +44,13 @@ it('does not trim a cue word, move a manual/loop transition or infer silence fro
   for(const side of ['a','b']){
     const x=track(side==='a'?0:10);x.vocalActivity!.values[20]=.8;
     expect(withMicroOnset(p,side==='a'?x:a,side==='b'?x:b,S)).toBe(p);
-    delete x.vocalActivity;expect(withMicroOnset(p,side==='a'?x:a,side==='b'?x:b,S)).toBe(p);
+    // P8: an unknown map is not silence, it takes the stricter full-mix path (6 kicks, 2 ms residual)
+    delete x.vocalActivity;const q=withMicroOnset(p,side==='a'?x:a,side==='b'?x:b,S);
+    expect(q.debug.microOnset).toMatchObject({policy:'lf-attack-fullmix-1',shiftMs:10});expect(q.aExit).toBe(p.aExit);
+    const loose=track(10);delete loose.vocalActivity;loose.beat!.attacks!.offsetsMs=loose.beat!.attacks!.offsetsMs.map((_,i)=>i%2?14.5:10);
+    expect(withMicroOnset(p,a,loose,S)).toBe(p);
+    const few=track(10);delete few.vocalActivity;few.beat!.attacks!.strength.fill(0);few.beat!.attacks!.strength.fill(.95,4,9);
+    expect(withMicroOnset(p,a,few,S)).toBe(p);
   }
   expect(withMicroOnset(p,a,b,S,2)).toBe(p);
   const loop={...p,loopA:{start:2,end:3,until:8,crossfade:.006}};

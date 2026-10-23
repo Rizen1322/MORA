@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import fs from 'node:fs';
-import { TRANSITION_RATING_REASONS, type TransitionPlan, type TransitionRatingReason, type WaveDiversity, type WaveMood } from '@automix/core';
+import { TRANSITION_RATING_REASONS, type PcmSpan, type TransitionPlan, type TransitionRatingReason, type WaveDiversity, type WaveMood } from '@automix/core';
 import type { Services } from '../app.ts';
 import { PRIORITY } from '../analysis.ts';
 import { getSettings } from '../automix.ts';
@@ -19,7 +19,7 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
     const caps = providers.caps(t.provider);
     if (!caps?.playback) throw Object.assign(new Error('источник не поддерживает воспроизведение'), { statusCode: 409 });
     const key = s.publicMusic.pcmKey(t.id, t.content_hash);
-    const entry = pcm.open(key, sr, () => s.publicMusic.playbackInput(t.id), t.duration, caps.caching !== 'persistent');
+    const entry = pcm.open(key, sr, (signal) => s.publicMusic.playbackInput(t.id, signal), t.duration, caps.caching !== 'persistent');
     return { t, key, entry };
   };
 
@@ -152,9 +152,28 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
     }catch(e){const error=e as Error&{statusCode?:number};return reply.code(error.statusCode??502).send({error:error.message});}
   });
 
+  /** PCM for the full-mix render check (P10): only a recording the player is already decoding, never a
+   * new decode; a span the decoder has not reached within 1.5 s is skipped rather than awaited. */
+  const readSpan = async (trackId: string, from: number, to: number): Promise<PcmSpan | null> => {
+    const t = lib.media(trackId);
+    if (!t) return null;
+    const key = s.publicMusic.pcmKey(t.id, t.content_hash);
+    const sr = [48000, 44100, 96000, 88200, 32000, 22050].find(rate => { const st = pcm.status(key, rate); return st && !st.error; });
+    if (!sr) return null;
+    const { entry } = pcmEntry(trackId, sr);
+    const start = Math.floor(from * sr), frames = Math.ceil((to - from) * sr);
+    const r = await pcm.read(entry, start, frames, 1500);
+    const n = Math.floor(r.data.length / 8);
+    // a span may run past the end of the recording: the render then ends where the file does
+    if (n < Math.min(frames, r.totalFrames - start) * 0.98) return null;
+    const L = new Float32Array(n), R = new Float32Array(n);
+    for (let i = 0; i < n; i++) { L[i] = r.data.readFloatLE(i * 8); R[i] = r.data.readFloatLE(i * 8 + 4); }
+    return { pcm: { L, R, sampleRate: sr }, start: start / sr };
+  };
+
   app.get<{ Querystring: { from: string; to: string } }>('/api/automix/plan', async (req, reply) => {
     try {
-      const r = automix.plan(lib.mediaId(req.query.from), lib.mediaId(req.query.to));
+      const r = await automix.planChecked(lib.mediaId(req.query.from), lib.mediaId(req.query.to), readSpan);
       return { ...r, plan: relabel(r.plan, req.query.from, req.query.to) };
     } catch (e) {
       return reply.code(404).send({ error: (e as Error).message });

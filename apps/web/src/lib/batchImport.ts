@@ -13,9 +13,10 @@ export interface BatchDeps {
   cancelled(): boolean;
 }
 
-export async function addBatch(items: BatchItem[], like: boolean, deps: BatchDeps, concurrency = 2): Promise<{ added: string[]; liked: number; failed: number }> {
+export async function addBatch(items: BatchItem[], like: boolean, deps: BatchDeps, concurrency = 2): Promise<{ added: string[]; liked: number; failed: number; error?: string }> {
   const added: (string | undefined)[] = new Array(items.length);
   let next = 0, done = 0, failed = 0, liked = 0;
+  let error: string | undefined;
   const worker = async () => {
     while (next < items.length && !deps.cancelled()) {
       const index = next++;
@@ -24,12 +25,13 @@ export async function addBatch(items: BatchItem[], like: boolean, deps: BatchDep
         const id = item.trackId ?? await deps.importOne(item);
         if (like && !(await deps.isLiked(id))) { await deps.like(id); liked++; }
         added[index] = id;
-      } catch {
+      } catch (e) {
         failed++;
+        error ??= (e as Error)?.message;
       }
       deps.onProgress({ done: ++done, total: items.length, failed });
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
-  return { added: added.filter((id): id is string => !!id), liked, failed };
+  return { added: added.filter((id): id is string => !!id), liked, failed, error };
 }

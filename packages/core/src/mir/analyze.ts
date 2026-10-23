@@ -37,6 +37,8 @@ export interface AnalyzeInput {
   loudness: LoudnessInfo;
   /** Duration of the original file, seconds. */
   duration: number;
+  /** Mean power of the side channel per CURVE_RATE window: total and below 150 Hz. */
+  side?: { power: Float32Array; low: Float32Array };
 }
 
 export interface AnalyzeOptions {
@@ -87,6 +89,23 @@ function chromaMean(sp: SpectralData, t0: number, a: number, b: number): number[
   const n = Math.max(1, i1 - i0);
   for (let k = 0; k < 12; k++) out[k] /= n;
   return out;
+}
+
+/** Per-second local key (8 s chroma window, the existing FFT) and onset peak density (2 s).
+ * A window key is a local profile, not a calibrated probability; low confidence stays ''. */
+export function localFeatures(sp: SpectralData, onset: { fps: number; t0: number; env: Float32Array }, duration: number): NonNullable<TrackAnalysis['local']> {
+  const n = Math.max(1, Math.ceil(duration));
+  const camelot: string[] = [], keyConfidence: number[] = [], transients: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const k = estimateKey(chromaMean(sp, onset.t0, i + 0.5 - 4, i + 0.5 + 4));
+    camelot.push(k.confidence >= 0.15 ? k.camelot : '');
+    keyConfidence.push(Math.round(k.confidence * 100) / 100);
+    const f0 = Math.max(1, Math.floor((i - 0.5 - onset.t0) * onset.fps)), f1 = Math.min(onset.env.length - 1, Math.ceil((i + 1.5 - onset.t0) * onset.fps));
+    let peaks = 0;
+    for (let f = f0; f < f1; f++) { const v = onset.env[f]; if (v > 1.5 && v > onset.env[f - 1] && v >= onset.env[f + 1]) peaks++; }
+    transients.push(Math.round(clamp(peaks / 2 / 8) * 100) / 100);
+  }
+  return { rate: 1, camelot, keyConfidence, transients };
 }
 
 function cosine(a: number[], b: number[]): number {
@@ -148,8 +167,13 @@ export function analyzeTrack(input: AnalyzeInput, opts: AnalyzeOptions = {}): Tr
   progress(0.45, 'curves');
 
   const nCurve = sp.rmsDb.length;
-  const rmsDb = Array.from(sp.rmsDb, (v) => Math.max(-90, v));
-  const lowDb = toCurve(sp.powLow, sp.fps, nCurve, ANALYSIS_RATE, (v) => Math.max(-90, powerDb(v)));
+  // Stereo energy = mid + side power (B2). The side low band comes from a biquad, the mid one from
+  // Hann-windowed FFT bins, which read an in-band tone 1.25 dB lower: the side is scaled to match.
+  const side = input.side;
+  const plus = (dbValue: number, p: number | undefined) => (p ? powerDb(10 ** (dbValue / 10) + p) : dbValue);
+  const rmsDb = Array.from(sp.rmsDb, (v, c) => Math.max(-90, plus(v, side?.power[c])));
+  const midLow = toCurve(sp.powLow, sp.fps, nCurve, ANALYSIS_RATE);
+  const lowDb = midLow.map((v, c) => Math.max(-90, powerDb(v + (side?.low[c] ?? 0) * 0.75)));
   const midDb = toCurve(sp.powMid, sp.fps, nCurve, ANALYSIS_RATE, (v) => Math.max(-90, powerDb(v)));
   const highDb = toCurve(sp.powHigh, sp.fps, nCurve, ANALYSIS_RATE, (v) => Math.max(-90, powerDb(v)));
   const midDensityRaw = toCurve(sp.midDensity, sp.fps, nCurve);
@@ -201,6 +225,7 @@ export function analyzeTrack(input: AnalyzeInput, opts: AnalyzeOptions = {}): Tr
   progress(0.75, 'key');
   let key: KeyInfo = { tonic: -1, mode: 'unknown', name: 'unknown', camelot: '', confidence: 0 };
   if (!silent) key = estimateKey(chromaMean(sp, onset.t0, audibleStart, audibleEnd));
+  const local = silent ? undefined : localFeatures(sp, onset, duration);
 
   // ---- structure
   progress(0.85, 'structure');
@@ -301,6 +326,7 @@ export function analyzeTrack(input: AnalyzeInput, opts: AnalyzeOptions = {}): Tr
       highDb: highDb.map((v) => Math.round(v * 10) / 10),
       midDensity: midDensity.map((v) => Math.round(v * 1000) / 1000),
     },
+    ...(local ? { local } : {}),
     peaks,
     cues,
     features,

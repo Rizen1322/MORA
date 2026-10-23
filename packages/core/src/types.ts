@@ -4,8 +4,8 @@
  * sent to an AudioWorklet and, later, to a native mobile engine.
  */
 
-export const ANALYZER_VERSION = 'am-analyzer-12';
-export const PLANNER_VERSION = 'am-planner-v11-dj-8';
+export const ANALYZER_VERSION = 'am-analyzer-14';
+export const PLANNER_VERSION = 'am-planner-v13-length-1';
 
 /** Frame rate of the per-track feature curves (energy, bands, waveform). */
 export const CURVE_RATE = 20;
@@ -242,6 +242,16 @@ export interface TrackAnalysis {
      * Not a vocal detector: lead synths and guitars raise it too.
      */
     midDensity: number[];
+  };
+  /** Local harmony and attacks around each second (analyzer-13); absent in older analyses.
+   * `camelot` is '' where the 8 s window has no reliable key: modulations and harmony-poor
+   * passages stay unknown rather than inheriting the global key. */
+  local?: {
+    rate: number;
+    camelot: string[];
+    keyConfidence: number[];
+    /** Onset peaks per second over 2 s, scaled 0..1 at 8/s. Not a drum or voice detector. */
+    transients: number[];
   };
   /** Downsampled waveform peaks for drawing, 0..1, at `curves.rate`. */
   peaks: number[];

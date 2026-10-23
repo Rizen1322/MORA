@@ -1,5 +1,6 @@
+import { Biquad, BUTTERWORTH_Q, lowpass } from '../dsp/biquad.ts';
 import { Decimator2, LoudnessMeter } from '../dsp/loudness.ts';
-import type { TrackAnalysis } from '../types.ts';
+import { CURVE_RATE, type TrackAnalysis } from '../types.ts';
 import { analyzeTrack, type AnalyzeOptions } from './analyze.ts';
 
 /** Frames per stereo-cancellation decision (~1.5 s at 44100 Hz). */
@@ -20,6 +21,15 @@ export class AnalysisAccumulator {
   private pendR = new Float32Array(GUARD_WINDOW);
   private pending = 0;
   private cancellationGuard = false;
+  // Side channel (L-R)/2, never stored: its power per curve window, total and below 150 Hz.
+  // (L²+R²)/2 = mid² + side², so level and bass curves describe the stereo energy, not the mid fold
+  // a partly out-of-phase bass vanishes from (DSP audit B2). MIR itself keeps the mid signal.
+  private sideDec = new Decimator2();
+  private sideLp = [new Biquad(lowpass(22050, 150, BUTTERWORTH_Q)), new Biquad(lowpass(22050, 150, BUTTERWORTH_Q))];
+  private sideBuf = new Float32Array(GUARD_WINDOW);
+  private sideLen = 0;
+  private sidePower: number[] = [];
+  private sideLow: number[] = [];
   frames = 0;
 
   constructor(expectedSeconds = 300) {
@@ -54,6 +64,7 @@ export class AnalysisAccumulator {
     for (let i = 0; i < n; i++) {
       const mid = (L[i] + R[i]) * 0.5;
       this.tmp[i] = mid;
+      this.sideBuf[i] = (L[i] - R[i]) * 0.5;
       monoPower += mid * mid;
       leftPower += L[i] * L[i];
       rightPower += R[i] * R[i];
@@ -63,7 +74,16 @@ export class AnalysisAccumulator {
     if (monoPower < Math.max(leftPower, rightPower) * 0.05 && Math.max(leftPower, rightPower) > 1e-12) {
       this.tmp.set((leftPower >= rightPower ? L : R).subarray(0, n));
       this.cancellationGuard = true;
+      // that one channel already carries the whole energy: no side on top
+      this.sideBuf.fill(0, 0, n);
     }
+    this.sideDec.push(this.sideBuf, n, (v) => {
+      let low = v;
+      for (const f of this.sideLp) low = f.process(low);
+      const c = Math.floor((this.sideLen++ * CURVE_RATE) / 22050);
+      this.sidePower[c] = (this.sidePower[c] ?? 0) + v * v;
+      this.sideLow[c] = (this.sideLow[c] ?? 0) + low * low;
+    });
     this.meter.push([L, R], n);
     this.dec.push(this.tmp, n, (v) => {
       if (this.len >= this.mono.length) {
@@ -78,7 +98,10 @@ export class AnalysisAccumulator {
   finish(opts?: AnalyzeOptions): TrackAnalysis {
     this.flush();
     const loud = this.meter.result();
-    const analysis = analyzeTrack({ mono: this.mono.subarray(0, this.len), loudness: loud, duration: this.frames / 44100 }, opts);
+    // mean power per window, with the same window edges as the mid curves (spectral.ts)
+    const per = (sums: number[]) => Float32Array.from(sums, (s, c) => (s ?? 0) / Math.max(1, Math.floor(((c + 1) * 22050) / CURVE_RATE) - Math.floor((c * 22050) / CURVE_RATE)));
+    const side = { power: per(this.sidePower), low: per(this.sideLow) };
+    const analysis = analyzeTrack({ mono: this.mono.subarray(0, this.len), loudness: loud, duration: this.frames / 44100, side }, opts);
     if (this.cancellationGuard) analysis.warnings.push('stereo-cancellation-guard');
     return analysis;
   }

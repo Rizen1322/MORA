@@ -23,6 +23,8 @@ interface Entry {
   session: boolean;
   readers: number;
   cancelled: boolean;
+  /** Tells the input (a remote transfer) that this decode no longer wants it. */
+  abort: AbortController;
 }
 
 /**
@@ -79,7 +81,7 @@ export class PcmCache {
         lastUse: st.mtimeMs,
         estimatedFrames: st.size / BYTES_PER_FRAME,
         session: false,
-        readers: 0, cancelled: false,
+        readers: 0, cancelled: false, abort: new AbortController(),
       });
     }
   }
@@ -114,7 +116,7 @@ export class PcmCache {
   }
 
   /** Opens (and if needed starts decoding) the PCM for a content hash. */
-  open(hash: string, sampleRate: number, input: () => Promise<string | Readable>, durationHint: number, session = false): Entry {
+  open(hash: string, sampleRate: number, input: (signal: AbortSignal) => Promise<string | Readable>, durationHint: number, session = false): Entry {
     const key = `${hash}_${sampleRate}`;
     let e = this.entries.get(key);
     if (e && !e.error && !e.cancelled) {
@@ -135,7 +137,7 @@ export class PcmCache {
       lastUse: Date.now(),
       estimatedFrames: Math.round(durationHint * sampleRate),
       session,
-      readers: 0, cancelled: false,
+      readers: 0, cancelled: false, abort: new AbortController(),
     };
     this.entries.set(key, e);
     if (this.stopped) this.fail(e, 'кэш остановлен');
@@ -143,11 +145,11 @@ export class PcmCache {
     return e;
   }
 
-  private async startDecode(e: Entry, input: () => Promise<string | Readable>): Promise<void> {
+  private async startDecode(e: Entry, input: (signal: AbortSignal) => Promise<string | Readable>): Promise<void> {
     const part = e.part;
     let src: string | Readable;
     try {
-      src = await input();
+      src = await input(e.abort.signal);
     } catch (err) {
       this.fail(e, (err as Error).message);
       return;
@@ -267,6 +269,7 @@ export class PcmCache {
 
   private cancelEntry(e: Entry): void {
     e.cancelled = true;
+    e.abort.abort();
     e.proc?.kill('SIGKILL');
     this.fail(e, 'декодирование отменено');
   }

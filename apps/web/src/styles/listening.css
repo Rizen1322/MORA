@@ -1,4 +1,7 @@
 /* Old text leaves outside the flow: its line count never holds the new title open. */
+.yandex-integration { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 12px; }
+.yandex-integration h3 { font-size: 18px; font-weight: 600; letter-spacing: -.025em; }
+.yandex-integration .setting:last-child { border-bottom: none; padding-bottom: 4px; }
 .yandex-likes-import { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 12px; }
 .yandex-likes-import > div:first-child { display: flex; align-items: center; gap: 10px; }
 .yandex-likes-import h3 { font-size: 18px; font-weight: 600; letter-spacing: -.025em; }

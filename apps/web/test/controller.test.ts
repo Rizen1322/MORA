@@ -171,6 +171,35 @@ describe('playback preparation and queue changes', () => {
     expect(postMessage.mock.calls.map(([command]) => command)).toEqual([{ cmd: 'pause', paused: true }]);
   });
 
+  it('resumes an AudioContext the system interrupted while playing, never one the listener paused', async () => {
+    const { controller, h } = setup();
+    const resume = vi.fn(async () => {});
+    const ctx = { state: 'running', sampleRate: 48000, onstatechange: null as null | (() => void), resume, destination: {},
+      audioWorklet: { addModule: async () => {} }, createAnalyser: () => ({ connect: vi.fn() }) };
+    vi.stubGlobal('AudioContext', vi.fn(function () { return ctx; }));
+    vi.stubGlobal('AudioWorkletNode', vi.fn(function () { return { connect: vi.fn(), port: { postMessage: vi.fn(), onmessage: null } }; }));
+    vi.stubGlobal('document', { addEventListener: vi.fn() });
+    (h as unknown as { ctx: null }).ctx = null;
+    await h.ensureEngine();
+    ctx.state = 'interrupted';
+    ctx.onstatechange!();
+    expect(resume).toHaveBeenCalledTimes(1);
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    controller.pause();
+    ctx.onstatechange!();
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+
+  it('takes the exact PCM length of a finished decode instead of padding the estimate', async () => {
+    const { h, postMessage, slot } = setup();
+    const samples = new Float32Array(20).fill(0.25);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, headers: new Headers({ 'X-Total-Frames': '10', 'X-Complete': '1', 'X-PCM-Format': 'f32le' }), arrayBuffer: async () => samples.buffer })));
+    const chunks = await (h as unknown as { readChunks(s: unknown, run: number[]): Promise<{ L: Float32Array }[]> }).readChunks(slot, [0]);
+    expect(slot.totalFrames).toBe(10);
+    expect(chunks[0].L.length).toBe(10);
+    expect(postMessage.mock.calls.map(([c]) => c)).toContainEqual({ cmd: 'length', deck: 0, token: slot.token, totalFrames: 10 });
+  });
+
   it('does not advance automatically when a load fails after Pause', async () => {
     const { controller, h } = setup();
     const loading = deferred<typeof h.current>();
@@ -514,6 +543,18 @@ describe('playback preparation and queue changes', () => {
     await first;
     expect(h.next!.plan).toBe(prepared);
     expect(postMessage.mock.calls.some(([command]) => command.cmd === 'arm')).toBe(false);
+  });
+
+  it('asks again for a plan whose render check waited for the next track PCM', async () => {
+    const { h } = setup();
+    const unchecked = pair('b');
+    unchecked.plan = { ...unchecked.plan, debug: { ...unchecked.plan.debug, renderCheck: { policy: 'render-finalists-1', skipped: 'pcm-not-ready' } } };
+    const checked = pair('b');
+    checked.plan = { ...checked.plan, id: `${checked.plan.id}_render`, debug: { ...checked.plan.debug, renderCheck: { policy: 'render-finalists-1', selected: 'baseline' } } };
+    vi.mocked(api.plan).mockResolvedValueOnce(unchecked).mockResolvedValueOnce(checked);
+    await h.prepareNext();
+    await vi.waitFor(() => expect(h.next!.plan.id).toBe(checked.plan.id));
+    expect(api.plan).toHaveBeenCalledTimes(2);
   });
 
   it('keeps an analysis refresh from superseding a requested transition in flight', async () => {

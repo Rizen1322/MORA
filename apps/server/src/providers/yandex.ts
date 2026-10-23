@@ -292,7 +292,7 @@ export class YandexProvider implements Provider {
     const artist = external.artist;
     const albumId = t.albums?.[0]?.id;
     const yandexId = albumId ? `${t.id}:${albumId}` : String(t.id);
-    const remote = this.lib.all().find((r) => r.provider === this.id && this.lib.sources(r.id).some((s) => s.external_id === yandexId));
+    const remote = this.lib.tracksBySource(this.id, yandexId).find((r) => r.provider === this.id);
     const matched = m.get(this.matchKey(artist, external.title));
     const local = matched ? this.lib.get(matched) : null;
     const matchingDuration = local && external.duration > 0 && Math.abs(local.duration - external.duration) <= Math.max(1, external.duration * 0.02);
@@ -469,7 +469,7 @@ export class YandexProvider implements Provider {
   }
 
   private async importOne(id: string): Promise<string> {
-    const found = this.lib.all().find((t) => t.provider === this.id && this.lib.sources(t.id).some((s) => s.external_id === id));
+    const found = this.lib.tracksBySource(this.id, id).find((t) => t.provider === this.id);
     if (found) return found.id;
     // Trust server-side metadata, not the title/duration/URLs supplied by a browser.
     const [track] = await this.call<YTrack[]>('POST', '/tracks', { 'track-ids': id }, this.token(), true);
@@ -479,7 +479,7 @@ export class YandexProvider implements Provider {
     const ext = this.external(track, requestedAlbumId);
     if (!ext.playable || !(ext.duration > 0)) throw new Error('Этот трек недоступен вашему аккаунту');
     const canonicalId = this.checkedId(ext.externalId);
-    const canonical = this.lib.all().find((t) => t.provider === this.id && this.lib.sources(t.id).some((s) => s.external_id === canonicalId));
+    const canonical = this.lib.tracksBySource(this.id, canonicalId).find((t) => t.provider === this.id);
     if (canonical) return canonical.id;
     const media = await this.audio.prepare(canonicalId, ext.duration);
     const cover = ext.coverUrl ? await this.audio.cover(ext.coverUrl) : null;

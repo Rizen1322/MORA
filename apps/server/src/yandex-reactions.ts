@@ -1,4 +1,5 @@
 import type { ReactionSync, ReactionValue } from '@automix/core';
+import { getSettings } from './automix.ts';
 import { q, type Db } from './db.ts';
 import type { EventHub } from './events.ts';
 import type { Library } from './library.ts';
@@ -24,6 +25,9 @@ interface SyncRow {
 
 const RETRY_ERROR = 'Оценка сохранена здесь. Не удалось обновить Яндекс Музыку; повторим позже.';
 const ACCOUNT_ERROR = 'Оценка сохранена здесь. Для отправки подключите исходный аккаунт Яндекс Музыки.';
+const LIKES_OFF = 'Оценка сохранена здесь. Синхронизация лайков с Яндексом выключена в настройках';
+const DISLIKES_OFF = 'Оценка сохранена здесь. Синхронизация дизлайков с Яндексом выключена в настройках';
+const SYNC_OFF = 'Оценка сохранена здесь. Синхронизация с Яндексом выключена в настройках';
 
 /** A durable, serial, last-write-wins outbox. Only an explicit local reaction queues writes. */
 export class YandexReactionSync {
@@ -80,16 +84,22 @@ export class YandexReactionSync {
   enqueueExternal(externalId: string, value: ReactionValue, trackId?: string): ReactionSync {
     if (!isYandexTrackId(externalId)) throw new Error('Некорректный ID трека Яндекса');
     const previous = this.rowExternal(externalId), session = this.provider.reactionSession();
-    const matchedTrackId = trackId ?? this.lib.all().find((track) => this.externalId(track.id) === externalId)?.id ?? null;
+    // A switch turned off in the integration settings keeps the reaction local: the outbox
+    // only ever holds writes the user asked to be sent. Value 0 clears whatever list(s) are still managed.
+    const yandex = getSettings(this.db).yandex;
+    const remote = value === 1 ? yandex.syncLikes : value === -1 ? yandex.syncDislikes : yandex.syncLikes || yandex.syncDislikes;
+    const matchedTrackId = trackId ?? this.lib.tracksBySource('yandex', externalId).find((track) => this.externalId(track.id) === externalId)?.id ?? null;
     const key = session?.key ?? previous?.account_key ?? null;
     const uid = previous?.account_key === key ? previous?.account_uid ?? null : null;
     q(this.db, `INSERT INTO yandex_reaction_sync(track_id,external_id,value,revision,status,attempts,next_attempt_at,account_key,account_uid,error,updated_at)
-      VALUES (?,?,?,1,'pending',0,0,?,?,NULL,?) ON CONFLICT(external_id) DO UPDATE SET
+      VALUES (?,?,?,1,?,0,0,?,?,NULL,?) ON CONFLICT(external_id) DO UPDATE SET
       track_id=excluded.track_id,value=excluded.value,revision=yandex_reaction_sync.revision+1,
-      status='pending',attempts=0,next_attempt_at=0,account_key=excluded.account_key,account_uid=excluded.account_uid,error=NULL,updated_at=excluded.updated_at`)
-      .run(matchedTrackId, externalId, value, key, uid, Date.now());
+      status=excluded.status,attempts=0,next_attempt_at=0,account_key=excluded.account_key,account_uid=excluded.account_uid,error=NULL,updated_at=excluded.updated_at`)
+      // Sync off: the row still holds the value (catalog tracks have no other home) and replaces
+      // any older unsent one, but is never sent ('synced' rows are not drained).
+      .run(matchedTrackId, externalId, value, remote ? 'pending' : 'synced', key, uid, Date.now());
     if (matchedTrackId) this.writeLocal(matchedTrackId, value);
-    return { status: 'pending' };
+    return { status: remote ? 'pending' : 'local' };
   }
 
   status(trackId: string): ReactionSync {
@@ -172,6 +182,7 @@ export class YandexReactionSync {
   }
 
   private async drain(force: boolean): Promise<void> {
+    const yandex = getSettings(this.db).yandex;
     const seen = new Set<string>();
     for (let turn = 0; turn < 32 && !this.stopped; turn++) {
       const rows = q(this.db, `SELECT * FROM yandex_reaction_sync WHERE status!='synced' AND attempts<? AND (? OR next_attempt_at<=?) ORDER BY updated_at LIMIT 64`)
@@ -180,6 +191,9 @@ export class YandexReactionSync {
       if (!row) return;
       seen.add(`${row.external_id}:${row.revision}`);
       if (!isYandexTrackId(row.external_id) || (row.track_id && this.externalId(row.track_id) !== row.external_id)) { this.update(row, 'error', this.maxAttempts, 0, 'Оценка сохранена здесь. Источник трека не подтверждён'); continue; }
+      // Queued before the switch was turned off: wait for it instead of sending.
+      const off = row.value === 1 ? !yandex.syncLikes : row.value === -1 ? !yandex.syncDislikes : !yandex.syncLikes && !yandex.syncDislikes;
+      if (off) { this.update(row, 'pending', row.attempts, Date.now() + 60000, row.value === 1 ? LIKES_OFF : row.value === -1 ? DISLIKES_OFF : SYNC_OFF); continue; }
       const session = this.provider.reactionSession();
       if (!session) { this.update(row, 'pending', row.attempts, Date.now() + 60000, 'Подключите аккаунт Яндекс Музыки, чтобы отправить оценку'); continue; }
       try {
@@ -194,6 +208,8 @@ export class YandexReactionSync {
           ? [['dislikes', 'remove'], ['likes', 'add-multiple']]
           : row.value === -1 ? [['likes', 'remove'], ['dislikes', 'add-multiple']] : [['likes', 'remove'], ['dislikes', 'remove']];
         for (const [kind, action] of steps) {
+          // An off switch means the remote list is not ours to manage, not even to clean up.
+          if ((kind === 'likes' && !yandex.syncLikes) || (kind === 'dislikes' && !yandex.syncDislikes)) continue;
           if (!this.current(row) || !session.current()) break;
           await session.write(uid, kind, action, row.external_id);
         }

@@ -27,6 +27,8 @@ export interface AppConfig {
   pcmCacheBytes: number;
   stemsCacheBytes?: number;
   analysisWorkers: number;
+  /** false: analyze only what is about to play (phone: whole-library analysis heats it up). */
+  backgroundAnalysis?: boolean;
   webDist: string;
   jamendoClientId: string | null;
   audiusApiKey: string | null;

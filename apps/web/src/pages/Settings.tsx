@@ -9,6 +9,9 @@ import { TransitionSummary } from '../components/TransitionSummary.tsx';
 import { PlaylistBackup } from '../components/PlaylistBackup.tsx';
 import { AppUpdates } from '../components/AppUpdates.tsx';
 
+// iPhone app: no vocal separation model, so no vocal switch (the phone keeps stemMixing on, see apps/mobile worker).
+const noStems = typeof document !== 'undefined' && document.documentElement.classList.contains('mora-mobile');
+
 function Row({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
   return (
     <div className="setting">
@@ -300,9 +303,9 @@ export function SettingsPage() {
         <Row title="Обмен басом и EQ" desc="Бас двух треков не звучит одновременно, середина приглушается при конфликте мелодий.">
           <Switch checked={a.eqHandoff} disabled={!a.enabled} onChange={(v) => set({ eqHandoff: v })} label="Обмен басом и EQ" />
         </Row>
-        <Row title="DJ-передача вокала" desc="После подготовки вокал меняется отдельно от инструментала. Локальная модель выделяет партии заранее; готовый результат сохраняется для следующих переходов.">
+        {!noStems && <Row title="DJ-передача вокала" desc="После подготовки вокал меняется отдельно от инструментала. Локальная модель выделяет партии заранее; готовый результат сохраняется для следующих переходов.">
           <Switch checked={a.stemMixing ?? true} disabled={!a.enabled} onChange={(v) => set({ stemMixing: v })} label="DJ-передача вокала" />
-        </Row>
+        </Row>}
           <Row title="DJ-подводки" desc="Фильтр, передача баса на сильной доле и короткое эхо перед измеренным вступлением. Применяется только там, где подводка не режет вокальную фразу.">
             <Switch checked={a.djPhrasing ?? true} disabled={!a.enabled || !a.eqHandoff || a.stemMixing === false} onChange={v => set({ djPhrasing: v })} label="DJ-подводки" />
           </Row>
@@ -312,7 +315,7 @@ export function SettingsPage() {
           <Row title="Инструментальные петли" desc="Поддерживать ритм затухающего финала повтором подходящего такта. Только при надёжной сетке и низком измеренном уровне вокала.">
           <Switch checked={a.loopBridges ?? true} disabled={!a.enabled || !a.eqHandoff || a.stemMixing === false} onChange={v => set({ loopBridges: v })} label="Инструментальные петли" />
         </Row>
-        {(a.stemMixing ?? true) && <VocalPreparation stems={health?.stems} offline={healthOffline} loading={!health} onChange={() => void api.health().then(setHealth, () => {})} />}
+        {!noStems && (a.stemMixing ?? true) && <VocalPreparation stems={health?.stems} offline={healthOffline} loading={!health} onChange={() => void api.health().then(setHealth, () => {})} />}
         </>}
 
         {tab === 'view' && <>

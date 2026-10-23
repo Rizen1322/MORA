@@ -20,6 +20,7 @@ describe('batch add of provider tracks', () => {
     }));
     expect(result.added).toEqual(['new', 'middle', 'old']);
     expect(result.failed).toBe(1);
+    expect(result.error).toBe('reaction failed');
   });
   it('keeps at most two downloads in flight and imports each track once', async () => {
     let active = 0, peak = 0;

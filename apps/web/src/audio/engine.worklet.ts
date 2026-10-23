@@ -17,6 +17,7 @@ const audioNow = typeof performance !== 'undefined' ? performance.now.bind(perfo
 
 export type EngineCommand =
   | { cmd: 'load'; deck: number; token: string; totalFrames: number; gainDb: number; cueFrame: number }
+  | { cmd: 'length'; deck: number; token: string; totalFrames: number }
   | { cmd: 'unload'; deck: number }
   | { cmd: 'feed'; deck: number; token: string; chunk: number; L: Float32Array; R: Float32Array }
   | { cmd: 'feedVocal'; deck: number; token: string; chunk: number; L: Float32Array; R: Float32Array }
@@ -52,6 +53,9 @@ class AutoMixProcessor extends AudioWorkletProcessor {
     switch (m.cmd) {
       case 'load':
         c.load(m.deck, m.token, m.totalFrames, m.gainDb, m.cueFrame);
+        break;
+      case 'length':
+        c.setLength(m.deck, m.token, m.totalFrames);
         break;
       case 'unload':
         c.unload(m.deck);

@@ -7,6 +7,7 @@ import { controller, useApp } from '../store/app.ts';
 import { Cover } from '../components/common.tsx';
 import { ImportActions } from '../components/ImportActions.tsx';
 import { YandexLikesImport } from '../components/YandexLikesImport.tsx';
+import { YandexIntegrationSettings } from '../components/YandexIntegrationSettings.tsx';
 
 const STATUS: Record<ProviderInfo['status'], { label: string; cls: string }> = {
   connected: { label: 'Подключено', cls: 'ok' },
@@ -66,6 +67,7 @@ export function SourcesPage() {
 function SourceCard({ p }: { p: ProviderInfo }) {
   const toast = useApp((s) => s.toast);
   const load = useApp((s) => s.loadProviders);
+  const importLikes = useApp((s) => s.settings?.yandex.importLikes !== false);
   const [form, setForm] = useState<Record<string, string>>(() => ({ ...p.config }));
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -184,7 +186,8 @@ function SourceCard({ p }: { p: ProviderInfo }) {
         </form>
       )}
       {p.status === 'connected' && p.id === 'yandex' && <a className="btn btn-primary" href="#/yandex">Открыть каталог Яндекса</a>}
-      {p.status === 'connected' && p.id === 'yandex' && <YandexLikesImport />}
+      {p.status === 'connected' && p.id === 'yandex' && <YandexIntegrationSettings />}
+      {p.status === 'connected' && p.id === 'yandex' && importLikes && <YandexLikesImport />}
       {p.status === 'connected' && p.capabilities.search && p.id !== 'local' && <ProviderBrowser p={p} />}
     </article>
   );
@@ -237,7 +240,7 @@ function ProviderBrowser({ p }: { p: ProviderInfo }) {
     setSelected(new Set());
     await useApp.getState().loadLibrary();
     const what = like ? `в Любимое: ${r.added.length}` : `в медиатеку: ${r.added.length}`;
-    toast(`Добавлено ${what}${r.failed ? `, не удалось: ${r.failed}` : ''}${cancel.current ? ' (остановлено)' : ''}${orderError}`, r.failed || orderError ? 'error' : 'success');
+    toast(`Добавлено ${what}${r.failed ? `, не удалось: ${r.failed}${r.error ? ` (${r.error})` : ''}` : ''}${cancel.current ? ' (остановлено)' : ''}${orderError}`, r.failed || orderError ? 'error' : 'success');
   };
   const search = async (query: string) => {
     const revision = ++searchRevision.current;

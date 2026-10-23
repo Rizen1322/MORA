@@ -63,6 +63,13 @@ const object = (v: unknown): Json => v && typeof v === 'object' && !Array.isArra
 const image = (v: unknown): string | null => typeof v === 'string' && /^https:\/\/i\d?\.sndcdn\.com\/[^\s]+$/.test(v)
   ? v.replace(/-large\.(jpg|png)(\?.*)?$/, '-t500x500.$1$2') : null;
 
+/** False when every published transcoding is DRM-encrypted (cbc/ctr-encrypted-hls): such a record cannot be downloaded. */
+export function hasOpenStream(track: unknown): boolean {
+  const list = object(object(track).media).transcodings;
+  if (!Array.isArray(list)) return true; // no media listing: let the resolver decide
+  return list.some((t) => !/encrypted/.test(String(object(object(t).format).protocol ?? '')));
+}
+
 /** Returns the same metadata shape as yt-dlp's flat SoundCloud entries. */
 export function parseSoundCloudSearch(value: unknown, limit: number): Json[] {
   const collection = object(value).collection;
@@ -73,7 +80,7 @@ export function parseSoundCloudSearch(value: unknown, limit: number): Json[] {
     const id = String(x.id ?? '').replace(/^soundcloud:tracks:/, '');
     const title = typeof x.title === 'string' ? x.title.trim() : '';
     if (!/^\d{1,20}$/.test(id) || !title || seen.has(id) || x.kind && x.kind !== 'track') return [];
-    if (x.streamable === false || x.sharing === 'private' || x.policy === 'BLOCK' || x.policy === 'SNIP') return [];
+    if (x.streamable === false || x.sharing === 'private' || x.policy === 'BLOCK' || x.policy === 'SNIP' || !hasOpenStream(x)) return [];
     const duration = Number(x.duration) / 1000;
     if (!Number.isFinite(duration) || duration < 30 || duration > 10800) return [];
     seen.add(id);

@@ -28,7 +28,8 @@ import {
 } from '@phosphor-icons/react';
 import { desktop } from '../lib/desktop.ts';
 import { setSleep, sleepEndOfTrack, sleepLeft, sleepMinutes, useSleep } from '../lib/sleepTimer.ts';
-import type { PlayerSnapshot } from '../audio/controller.ts';
+import { useSwipe } from '../lib/swipe.ts';
+import { systemVolume, type PlayerSnapshot } from '../audio/controller.ts';
 import { artColors } from '../lib/color.ts';
 import { fmtTime, methodShort } from '../lib/format.ts';
 import { trackAlbumHref, go } from '../lib/router.ts';
@@ -205,6 +206,7 @@ export function AutoMixStatus({ p }: { p: PlayerSnapshot }) {
 }
 
 function Volume({ p }: { p: PlayerSnapshot }) {
+  if (systemVolume) return null;
   const v = p.muted ? 0 : p.volume;
   const Icon = v === 0 ? SpeakerSlash : v < 0.5 ? SpeakerLow : SpeakerHigh;
   return (
@@ -360,12 +362,13 @@ export function MiniPlayer() {
   const p = useApp((s) => s.player);
   const setFull = useApp((s) => s.setFullPlayer);
   const t = trackOf(p.queue[p.index]?.trackId);
-  if (!t) return null;
-  const playing = p.status === 'playing' || p.status === 'buffering';
   // In the desktop mini-player the cover brings the full window back.
   const open = () => (document.documentElement.classList.contains('compact') ? void desktop?.setCompact(false) : setFull(true));
+  const swipe = useSwipe(() => ({ left: () => void controller.nextTrack(), right: () => void controller.prevTrack(), up: open }));
+  if (!t) return null;
+  const playing = p.status === 'playing' || p.status === 'buffering';
   return (
-    <div className="mini-player">
+    <div className="mini-player" {...swipe}>
       <button onClick={open} aria-label="Открыть плеер">
         <Swap k={t.id}><Cover url={t.coverUrl} seed={t.album || t.id} size={44} /></Swap>
       </button>
@@ -447,7 +450,19 @@ export function FullPlayer() {
   const next = trackOf(plan?.toTrackId ?? p.queue[p.index + 1]?.trackId);
   const blend = useBlend(p);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   useDialogFocus(dialogRef, () => setFull(false));
+  // Swipe down closes only from the top, so it never fights scrolling back up.
+  const atTop = () => (bodyRef.current?.scrollTop ?? 0) <= 0 && (dialogRef.current?.scrollTop ?? 0) <= 0;
+  // Phone layout: slide down (.is-closing in apps/mobile), then unmount.
+  const close = () => {
+    const el = dialogRef.current;
+    if (reduced || !el || !document.documentElement.classList.contains('mora-mobile')) { setFull(false); return; }
+    el.classList.add('is-closing');
+    setTimeout(() => setFull(false), 240);
+  };
+  const swipeTop = useSwipe(() => (atTop() ? { down: close } : {}));
+  const swipeCover = useSwipe(() => ({ left: () => void controller.nextTrack(), right: () => void controller.prevTrack(), ...(atTop() ? { down: close } : {}) }));
   const reduced = useReducedMotion();
   const [showQueue, setShowQueue] = useState(false);
   const [showLyrics, setShowLyrics] = useState(false);
@@ -483,8 +498,8 @@ export function FullPlayer() {
   return (
     <div className="full-player" role="dialog" aria-modal="true" aria-label="Сейчас играет" ref={dialogRef}>
       <PlayerBackdrop cover={t.coverUrl} next={blend.to?.coverUrl ?? null} k={blend.k} />
-      <div className="fp-top">
-        <button className="icon-btn" aria-label="Свернуть" onClick={() => setFull(false)}>
+      <div className="fp-top" {...swipeTop}>
+        <button className="icon-btn" aria-label="Свернуть" onClick={close}>
           <CaretDown size={24} />
         </button>
         <div className="small fp-source">
@@ -496,9 +511,9 @@ export function FullPlayer() {
         </button>
       </div>
       {showQueue && <QueuePanel className="fp-queue" onClose={() => setShowQueue(false)} />}
-      <div className="fp-body">
+      <div className="fp-body" ref={bodyRef}>
         <div className={`fp-art-stage ${showLyrics ? 'shows-lyrics' : ''}`}>
-          <div className={`fp-art ${p.transition?.active ? 'is-mixing' : ''} ${p.status === 'playing' ? 'is-playing' : ''}`} inert={showLyrics} aria-hidden={showLyrics} onPointerMove={tilt} onPointerLeave={untilt}>
+          <div className={`fp-art ${p.transition?.active ? 'is-mixing' : ''} ${p.status === 'playing' ? 'is-playing' : ''}`} inert={showLyrics} aria-hidden={showLyrics} onPointerMove={tilt} onPointerLeave={untilt} {...(showLyrics ? {} : swipeCover)}>
             <div className="fp-vinyl" aria-hidden="true" />
             <CoverStack current={t} from={blend.from} to={blend.to} k={blend.k} />
           </div>

@@ -93,4 +93,16 @@ describe('durable complete Yandex likes import', () => {
     expect(f.job.status()!.id).not.toBe(first);
     expect(f.a.services.lib.all()).toHaveLength(2);
   });
+
+  it('refuses to start or resume while likes import is switched off in the integration settings', async () => {
+    const f = await fixture(2);
+    kvSet(f.a.services.db, 'settings', { yandex: { importLikes: false }, version: 2 });
+    expect(() => f.job.start()).toThrow('выключен в настройках источников');
+    expect(f.job.status()).toBeNull();
+    kvSet(f.a.services.db, 'settings', { yandex: { importLikes: true }, version: 2 });
+    f.job.start(); await f.job.settled();
+    expect(f.job.status()).toMatchObject({ state: 'done', done: 2 });
+    kvSet(f.a.services.db, 'settings', { yandex: { importLikes: false }, version: 2 });
+    expect(() => f.job.resume()).toThrow('выключен в настройках источников');
+  });
 });

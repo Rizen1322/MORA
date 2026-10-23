@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { WifiSlash } from '@phosphor-icons/react';
 import { useRoute } from './lib/router.ts';
 import { connectEvents, controller, trackOf, useApp } from './store/app.ts';
+import { systemVolume } from './audio/controller.ts';
 import { DropTarget, Sidebar, TabBar, TitleBar, Toasts, UploadCard } from './components/Layout.tsx';
 import { desktop } from './lib/desktop.ts';
 import { FullPlayer, MiniPlayer, PlayerBar } from './components/Player.tsx';
@@ -106,19 +107,20 @@ function useShortcuts() {
           else controller.seek(p.position - 5);
           break;
         case 'ArrowUp':
-          if (e.altKey) return;
+          if (e.altKey || systemVolume) return;
           e.preventDefault();
           controller.setVolume(p.volume + 0.05);
           break;
         case 'ArrowDown':
-          if (e.altKey) return;
+          if (e.altKey || systemVolume) return;
           e.preventDefault();
           controller.setVolume(p.volume - 0.05);
           break;
         case 'm':
         case 'M':
         case 'ь':
-          controller.toggleMute();
+          // the phone has no in-app volume control to unmute with
+          if (!systemVolume) controller.toggleMute();
           break;
         case 'l':
         case 'L':
