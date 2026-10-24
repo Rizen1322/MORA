@@ -127,6 +127,8 @@ export const systemVolume = typeof document !== 'undefined' && document.document
 const POSITION_SAVE_MS = systemVolume ? 30_000 : 5000;
 /** Paused or stopped this long: the AudioContext is suspended until the next Play. */
 const IDLE_SUSPEND_MS = 3 * 60_000;
+/** Next tracks that fail to load in a row before preparation stops instead of eating the queue. */
+const MAX_SKIPS = 3;
 
 const uid = () => `${Date.now().toString(36)}-${(++seq).toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -155,6 +157,7 @@ export class PlayerController {
   private next: NextPrep | null = null;
   private preparing: Promise<void> | null = null;
   private preparationRevision = 0;
+  private skipStreak = 0;
   private analysisRevision = 0;
   private resourceRevisions = new Map<string, number>();
   private vocalRevisions = new Map<string, string>();
@@ -589,7 +592,7 @@ export class PlayerController {
       this.post({ cmd: 'disarm' });
       this.releaseSlot(slot);
       this.removeIndexSilently(idx);
-      void this.prepareNext();
+      if (this.keepPreparing(msg)) void this.prepareNext();
     } else if (this.current === slot) {
       this.notify(`Не удалось воспроизвести «${t?.title ?? 'трек'}»: ${msg}`, 'error');
       const generation = this.generation;
@@ -753,6 +756,7 @@ export class PlayerController {
     this.post({ cmd: 'start', deck: slot.deck, token: slot.token, frame: Math.round(seconds * this.sr) });
     if (paused) this.post({ cmd: 'pause', paused: true });
     this.current = slot;
+    this.skipStreak = 0;
     if (prev && prev !== slot) this.retireSlot(prev, 120);
     this.maxPos = seconds;
     this.set({ status: paused ? 'paused' : 'playing' });
@@ -890,6 +894,7 @@ export class PlayerController {
     const request = { current: cur, generation: this.generation, revision: this.preparationRevision,
       quick: this.instantNext || reason === 'dislike' || this.next?.plan.debug.requested === true || this.next?.plan.method === 'skip_fade' };
     this.nextRequest = request;
+    this.skipStreak = 0;
     const isRelevant = () => this.nextRequest === request && this.current === cur && request.generation === this.generation &&
       request.revision === this.preparationRevision && !this.state.transition?.active;
     try {
@@ -1356,8 +1361,23 @@ export class PlayerController {
     setTimeout(() => { if (isRelevant() && !this.next) void this.prepareNext(manual); }, 3000);
   }
 
+  /** Drops a next track that failed to load: the first skip is announced, a streak stops preparation with one error. */
+  private skipNext(index: number, msg: string): void {
+    this.removeIndexSilently(index);
+    if (!this.keepPreparing(msg)) return;
+    if (this.skipStreak === 1) this.notify(`Пропущен следующий трек: ${msg}`, 'error');
+    this.preparationRevision++;
+  }
+
+  /** Counts a skipped next track; false once too many failed in a row (until a track starts or the listener presses Next). */
+  private keepPreparing(msg: string): boolean {
+    if (++this.skipStreak < MAX_SKIPS) return true;
+    if (this.skipStreak === MAX_SKIPS) this.notify(`Подряд не загрузились ${MAX_SKIPS} следующих трека, подготовка остановлена: ${msg}`, 'error');
+    return false;
+  }
+
   private async doPrepare(manual = false): Promise<void> {
-    if (!this.current || this.next || this.startingGeneration === this.generation) return;
+    if (!this.current || this.next || this.startingGeneration === this.generation || this.skipStreak >= MAX_SKIPS) return;
     const cur = this.current;
     const gen = this.generation;
     const revision = this.preparationRevision;
@@ -1389,10 +1409,7 @@ export class PlayerController {
     } catch (e) {
       if (!isRelevant()) return;
       if (unreachable(e)) return this.retryPrepare(manual, isRelevant);
-      this.notify(`Пропущен следующий трек: ${(e as Error).message}`, 'error');
-      this.removeIndexSilently(n);
-      this.preparationRevision++;
-      return;
+      return this.skipNext(n, (e as Error).message);
     }
     if (!isRelevant()) {
       this.releaseSlot(slot);
@@ -1410,10 +1427,7 @@ export class PlayerController {
       if (!isRelevant()) return;
       this.releaseSlot(slot);
       if (unreachable(e)) return this.retryPrepare(manual, isRelevant);
-      this.notify(`Пропущен следующий трек: ${(e as Error).message}`, 'error');
-      this.removeIndexSilently(n);
-      this.preparationRevision++;
-      return;
+      return this.skipNext(n, (e as Error).message);
     }
     if (!isRelevant() || slot.abort.signal.aborted) {
       this.releaseSlot(slot);
@@ -1421,9 +1435,7 @@ export class PlayerController {
     }
     if (slot.failed) {
       this.releaseSlot(slot);
-      this.removeIndexSilently(n);
-      this.preparationRevision++;
-      return;
+      return this.skipNext(n, slot.failed);
     }
     plan = this.fitPlan(vocals.plan);
     this.next = { entry, index: n, slot, plan, pending };
@@ -1587,6 +1599,7 @@ export class PlayerController {
     this.pendingEndReason = 'transition';
     this.prevSlot = this.current;
     this.current = nx.slot;
+    this.skipStreak = 0;
     this.maxPos = position;
     const end = nx.plan.tempoB[nx.plan.tempoB.length - 1]?.[0] ?? 0;
     this.recovering = end > nx.plan.duration && nx.plan.tempoB.some(([, rate]) => Math.abs(rate - 1) > 0.001)

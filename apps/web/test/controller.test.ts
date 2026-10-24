@@ -104,6 +104,24 @@ describe('playback preparation and queue changes', () => {
     expect(postMessage).toHaveBeenCalledWith({cmd:'gain',deck:0,gainDb:-7.1}, []);
     expect(api.plan).not.toHaveBeenCalled();
   });
+  it('stops preparing after three next tracks fail in a row and reports it once', async () => {
+    const { controller, h } = setup();
+    const notify = (controller as unknown as { notify: ReturnType<typeof vi.fn> }).notify;
+    const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
+    controller.state = { ...controller.state, queue: ids.map((id) => ({ entryId: `${id}-entry`, trackId: id, origin: 'user' })) };
+    const load = vi.spyOn(h as typeof h & { loadSlot(): Promise<never> }, 'loadSlot').mockRejectedValue(new Error('bie.Readable.from is not a function'));
+    await h.prepareNext();
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(3));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(load).toHaveBeenCalledTimes(3);
+    expect(controller.state.queue.map((e) => e.trackId)).toEqual(['a', 'e', 'f']);
+    expect(notify.mock.calls.map(([msg]) => msg)).toEqual([
+      'Пропущен следующий трек: bie.Readable.from is not a function',
+      'Подряд не загрузились 3 следующих трека, подготовка остановлена: bie.Readable.from is not a function',
+    ]);
+    await h.prepareNext();
+    expect(load).toHaveBeenCalledTimes(3);
+  });
   it('does not let background preparation replace the deck of an unfinished manual load', async () => {
     const { controller, h, slot } = setup();
     const transport = h as typeof h & { loadSlot(): Promise<typeof h.current>; waitFed(): Promise<void> };

@@ -3,7 +3,7 @@
 //   + analysis-worker.js + sql.js WASM + mobile.css.
 import { build as esbuild } from 'esbuild';
 import { build as viteBuild } from 'vite';
-import { copyFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,7 +12,8 @@ const repo = resolve(here, '../..');
 const out = join(here, 'www');
 const src = join(here, 'src');
 const shim = (n) => join(src, 'worker', 'shims', `${n}.ts`);
-const mod = (n) => join(repo, 'node_modules', n);
+// Own node_modules first: the root may hold an older hoisted copy (readable-stream 2.x from electron-builder has no Readable.from).
+const mod = (n) => [join(here, 'node_modules', n), join(repo, 'node_modules', n)].find((p) => existsSync(p));
 const dev = process.argv.includes('--dev');
 
 // 1. The web app, unchanged.
