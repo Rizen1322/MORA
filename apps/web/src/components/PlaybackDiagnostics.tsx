@@ -52,12 +52,12 @@ export function PlaybackDiagnostics() {
   const probeActive = !!controls?.probeActive;
   return <section className="pref-card playback-diagnostics" aria-label="Диагностика управления iOS">
     <h2>Управление на экране блокировки · диагностическая сборка</h2>
-    <p>Версия 1.0.15: загрузка и подготовка следующих песен работают вне WebView; микшер AutoMix — на Swift. Журнал записывается постоянно,
+    <p>Версия 1.0.16: исправлены длительность, перемотка и состояние обложек у нативных треков. Журнал записывается постоянно,
       метка сохраняет предыдущие события.</p>
     <div className="pref-card" style={{ padding: 14 }}>
       <h3>Нативный плеер · ваша музыка</h3>
-      <p>Включите альбом или плейлист и дождитесь сообщения «Очередь передана iPhone для фоновой подготовки».
-        После этого загрузка, анализ и планирование следующих переходов продолжаются при заблокированном экране.
+      <p>Включите альбом или плейлист. Здесь можно проверить состояние фоновой подготовки перед блокировкой экрана.
+        Загрузка, анализ и планирование следующих переходов выполняются вне WebView.
         Одновременно плеер держит готовыми две следующие песни и пополняет этот запас сам.
         Для «Волны» передаётся уже подобранная очередь; подбор новых рекомендаций пока требует открытого приложения.</p>
       <label className="pref-row">
@@ -69,6 +69,7 @@ export function PlaybackDiagnostics() {
       {controls?.mixActive && mixState && <>
         <p role="status">Песня {mixState.index + 1}/{mixState.count ?? '?'} · {mixState.failed ? 'ошибка — экспортируйте журнал' : mixState.playing ? 'играет' : mixState.ended ? 'очередь закончилась' : 'пауза'} · {mixState.position.toFixed(1)} / {mixState.duration.toFixed(1)} с · пропуски звука: {mixState.underruns ?? 0}</p>
         {mixState.preparation && <p role="status">Фоновая подготовка: {({ idle: 'ожидание', waiting: 'запас готов', downloading: 'загрузка', decoding: 'декодирование', analyzing: 'анализ', planning: 'планирование', complete: 'очередь подготовлена', failed: 'ошибка — экспортируйте журнал', cancelled: 'отменена' } as Record<string, string>)[mixState.preparation.state] ?? mixState.preparation.state} · подготовлено после передачи: {mixState.preparation.ready} · ошибок: {mixState.preparation.failedCount ?? 0}</p>}
+        {mixState.preparation && <p>Осталось подготовить: {mixState.preparation.remaining} · на этапе: {(mixState.preparation.stageSeconds ?? 0).toFixed(1)} с · причина: {mixState.preparation.reason ?? 'none'}. Сохраните JSON после остановки, прежде чем запускать новую очередь.</p>}
         <div className="playback-diagnostics-actions">
           <button className="btn" disabled={busy || mixState.transitionStart === undefined} onClick={() => void run(async () => {
             controller.seek(Math.max(0, (mixState.transitionStart ?? 0) - 8));
