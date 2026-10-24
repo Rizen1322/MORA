@@ -21,17 +21,20 @@ final class NativeDSPRenderer {
     private let context: JSContext
     private var runtime: JSValue?
     private var exception: String?
+    /// Valid timeline indices; the host updates it together with the queue.
+    var trackCount: Int
 
-    init(script: String, files: [URL], config: [String: Any]) throws {
+    init(script: String, folder: URL, config: [String: Any]) throws {
         guard let vm = JSVirtualMachine(), let context = JSContext(virtualMachine: vm) else {
             throw Failure.invalid("JavaScriptCore unavailable")
         }
         self.context = context
+        trackCount = (config["tracks"] as? [Any])?.count ?? 0
         context.exceptionHandler = { [weak self] _, value in self?.exception = value?.toString() ?? "JavaScript exception" }
-        let reader: @convention(block) (Int32, Int32) -> String = { deck, chunk in
-            guard (0..<files.count).contains(Int(deck)), chunk >= 0 else { return "" }
+        let reader: @convention(block) (Int32, Int32) -> String = { key, chunk in
+            guard key >= 0, chunk >= 0 else { return "" }
             do {
-                let file = try FileHandle(forReadingFrom: files[Int(deck)])
+                let file = try FileHandle(forReadingFrom: folder.appendingPathComponent("\(key).f32le"))
                 defer { try? file.close() }
                 try file.seek(toOffset: UInt64(chunk) * 32768 * 8)
                 return try file.read(upToCount: 32768 * 8)?.base64EncodedString() ?? ""
@@ -61,6 +64,11 @@ final class NativeDSPRenderer {
         // Copy immediately: the borrowed JSC pointer cannot survive another JS API call.
         return Data(bytes: bytes, count: count)
     }
+    func update(from: Int, tracks: [[String: Any]]) throws -> Bool {
+        let accepted = runtime?.invokeMethod("update", withArguments: [from, tracks])?.toBool() ?? false
+        try check()
+        return accepted
+    }
     func render() throws -> NativeMixBlock {
         let result = runtime?.invokeMethod("render", withArguments: [])
         try check()
@@ -72,7 +80,7 @@ final class NativeDSPRenderer {
         let marks = try raw.map { mark -> NativeMixMark in
             guard let frame = mark["offset"] as? Int64, let index = mark["index"] as? Int,
                   let position = mark["position"] as? Double, position.isFinite,
-                  (0...1).contains(index), frame >= 0, frame <= left.count / 4 else {
+                  (0..<trackCount).contains(index), frame >= 0, frame <= left.count / 4 else {
                 throw Failure.invalid("Invalid timeline mark")
             }
             return NativeMixMark(frame: frame, index: index, position: position)

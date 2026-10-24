@@ -326,11 +326,18 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
   const mix = createNativeMix(MoraAudio, {
     artwork: src => artworkBase64(src, apiFetch),
     async prepare() {
-      controls.mixActive = true; await ownership.prepare();
+      // After a page reload `ready` already isolated WebKit for the running native queue.
+      const recovered = controls.probeActive && controls.mixActive;
+      controls.mixActive = true;
+      if (!recovered) await ownership.prepare();
     },
     restore() { controls.mixActive = false; ownership.restore(); },
   });
-  controls.mix = { ...mix, start: (prepare, signal) => claim(() => mix.start(prepare, signal)),
+  // The A/B probe and native playback exclude each other; native playback reuses its own session.
+  const owned = <T>(work: () => Promise<T>) => controls.mixActive ? work() : claim(work);
+  controls.mix = { ...mix,
+    upload: (file, offset, bytes, signal) => owned(() => mix.upload(file, offset, bytes, signal)),
+    start: (config, signal) => owned(() => mix.start(config, signal)),
     async stop() { if (controls.probeActive && !controls.mixActive) throw new Error('Остановите тест A/B'); await mix.stop(); } };
   // WebContent can reload independently while the native player continues.
   // Recover the guard before allowing a new WebAudio session in that page.

@@ -2,15 +2,27 @@ import type { ArmedTransition } from '@automix/core/engine/mixer.ts';
 import type { ToneSettings } from '@automix/core/dsp/tone.ts';
 import type { NativeProbeState } from './playback-trace.ts';
 
+export interface NativeMixTrack {
+  title: string;
+  artist: string;
+  totalFrames: number;
+  gainDb: number;
+  /** Uploaded PCM file key; defaults to the track's index. */
+  file?: number;
+  entryId?: string;
+  /** DJ transition from the previous track into this one. */
+  transition?: ArmedTransition;
+  coverUrl?: string;
+  artwork?: { base64: string; mime: string };
+}
 export interface NativeMixConfig {
   sampleRate: number;
-  tracks: { title: string; artist: string; totalFrames: number; gainDb: number;
-    coverUrl?: string; artwork?: { base64: string; mime: string } }[];
-  transition?: ArmedTransition;
+  tracks: NativeMixTrack[];
   tone?: ToneSettings;
   preDb?: number;
   position: number;
   index?: number;
+  paused?: boolean;
 }
 export interface NativeMixState extends NativeProbeState {
   preparing?: boolean;
@@ -22,9 +34,18 @@ export interface NativeMixState extends NativeProbeState {
   failed?: boolean;
   transitionStart?: number;
   artworkReady?: boolean;
+  entryId?: string;
+  count?: number;
+  /** The last prepared track played to its end. */
+  ended?: boolean;
 }
 export interface NativeMix {
-  start(prepare: (put: (index: number, offset: number, bytes: ArrayBuffer) => Promise<void>) => Promise<NativeMixConfig>, signal?: AbortSignal): Promise<NativeMixState>;
+  /** Isolates WebKit audio on first use, then appends PCM to a native file. */
+  upload(file: number, offset: number, bytes: ArrayBuffer, signal?: AbortSignal): Promise<void>;
+  /** (Re)starts native playback of uploaded files. */
+  start(config: NativeMixConfig, signal?: AbortSignal): Promise<NativeMixState>;
+  /** Replaces the tracks from `from` onwards without interrupting the audible one. */
+  update(from: number, tracks: NativeMixTrack[]): Promise<NativeMixState>;
   stop(): Promise<void>;
   state(): Promise<NativeMixState>;
   command(action: MediaSessionAction, seekTime?: number): Promise<NativeMixState>;

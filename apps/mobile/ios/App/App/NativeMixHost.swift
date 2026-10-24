@@ -3,8 +3,10 @@ import Foundation
 import MediaPlayer
 import UIKit
 
-/// Experimental finite, fully prepared pair. All mutable engine/JSC/file state is
-/// confined to work; the audio completion only dispatches a small notification.
+/// Native MORA playback of a queue of fully uploaded tracks. The page appends tracks
+/// while it runs; the queue keeps playing (with its DJ transitions) while the page is
+/// suspended. All mutable engine/JSC/file state is confined to work; the audio
+/// completion only dispatches a small notification.
 final class NativeMixHost {
     private let work = DispatchQueue(label: "ru.mora.native-mix", qos: .userInitiated)
     private let lock = NSLock()
@@ -13,7 +15,7 @@ final class NativeMixHost {
     var active: Bool { snapshot["active"] as? Bool == true }
     private var folder: URL?
     private var id = ""
-    private var bytes = [0, 0]
+    private var bytes: [Int: Int] = [:]
     private var config: [String: Any] = [:]
     private var tracks: [[String: Any]] = []
     private var artworks: [MPMediaItemArtwork?] = []
@@ -35,19 +37,23 @@ final class NativeMixHost {
     private var wantsPlaying = false
     private var resumeAfterInterruption = false
     private var done = false
+    private var ended = false
     private var preparing = false
     private var ownsSession = false
     private var failed = false
     private var underruns = 0
     private var maxRenderMs = 0.0
     private var lastLogFrame: Int64 = -1
+    private var prunedIndex = -1
+    private var newestKey = -1
     // Main queue only. Do not remove WebKit's or the baseline probe's targets.
     private var targets: [(MPRemoteCommand, Any)] = []
     private enum Failure: Error { case invalid, playback }
     typealias Reply = (Result<[String: Any], Error>) -> Void
 
     private var sr: Double { config["sampleRate"] as? Double ?? 48000 }
-    private var files: [URL] { guard let folder else { return [] }; return [0, 1].map { folder.appendingPathComponent("\($0).f32le") } }
+    private func file(_ key: Int) -> URL? { folder?.appendingPathComponent("\(key).f32le") }
+    private static func key(_ track: [String: Any], _ i: Int) -> Int { track["file"] as? Int ?? i }
     private func reply(_ completion: @escaping Reply, _ result: Result<[String: Any], Error>) {
         DispatchQueue.main.async { completion(result) }
     }
@@ -57,21 +63,23 @@ final class NativeMixHost {
             "preparing": preparing, "index": index, "position": position, "duration": duration,
             "renderedFrames": rendered, "queuedFrames": queued, "presentedFrames": presented,
             "epoch": epoch, "ownership": ownershipRevision, "underruns": underruns, "maxRenderMs": maxRenderMs, "failed": failed,
-            "artworkReady": artworks.indices.contains(index) && artworks[index] != nil]
+            "artworkReady": artworks.indices.contains(index) && artworks[index] != nil, "count": tracks.count, "ended": ended,
+            "entryId": tracks.indices.contains(index) ? tracks[index]["entryId"] as? String ?? "" : ""]
         var result = state
-        if let plan = config["transition"] as? [String: Any], let start = plan["triggerFrame"] as? Double { result["transitionStart"] = start / sr }
+        if tracks.indices.contains(index + 1), let plan = tracks[index + 1]["transition"] as? [String: Any],
+           let start = plan["triggerFrame"] as? Double { result["transitionStart"] = start / sr }
         lock.lock(); cached = result; lock.unlock()
     }
     func begin(_ completion: @escaping Reply) {
         work.async {
             do {
-                guard self.folder == nil else { throw Failure.invalid }
+                if self.folder != nil { self.reply(completion, .success(["id": self.id])); return }
                 let root = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                     .appendingPathComponent("MORA/native-mix", isDirectory: true)
                 self.id = UUID().uuidString
                 let folder = root.appendingPathComponent(self.id, isDirectory: true)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                self.folder = folder; self.bytes = [0, 0]; self.preparing = true; self.failed = false
+                self.folder = folder; self.bytes = [:]; self.preparing = true; self.failed = false
                 self.ownershipRevision += 1
                 self.epoch += 1; self.save()
                 self.reply(completion, .success(["id": self.id]))
@@ -81,72 +89,127 @@ final class NativeMixHost {
     func append(id: String, track: Int, offset: Int, base64: String, completion: @escaping Reply) {
         work.async {
             do {
-                guard self.preparing, id == self.id, (0...1).contains(track), offset == self.bytes[track],
+                guard self.folder != nil, id == self.id, (0..<1_000_000).contains(track), offset == self.bytes[track, default: 0],
                       base64.count <= 400000, let data = Data(base64Encoded: base64), !data.isEmpty,
                       data.count <= 32768 * 8, data.count % 8 == 0,
-                      self.bytes.reduce(0, +) + data.count <= 384 * 1024 * 1024 else { throw Failure.invalid }
-                let url = self.files[track]
+                      self.bytes.values.reduce(0, +) + data.count <= 768 * 1024 * 1024, let url = self.file(track) else { throw Failure.invalid }
                 if offset == 0 { guard FileManager.default.createFile(atPath: url.path, contents: nil) else { throw Failure.invalid } }
                 let file = try FileHandle(forWritingTo: url)
                 defer { try? file.close() }
                 try file.seekToEnd(); try file.write(contentsOf: data)
-                self.bytes[track] += data.count
+                self.bytes[track, default: 0] += data.count
                 self.reply(completion, .success([:]))
             } catch { self.reply(completion, .failure(error)) }
+        }
+    }
+    private func validated(_ tracks: [[String: Any]], from: Int) throws -> [[String: Any]] {
+        guard tracks.count + from <= 10_000 else { throw Failure.invalid }
+        return try tracks.enumerated().map { offset, track in
+            guard let count = track["totalFrames"] as? Int, count > 0, count * 8 == bytes[Self.key(track, from + offset)],
+                  let gain = track["gainDb"] as? Double, gain.isFinite, abs(gain) <= 36 else { throw Failure.invalid }
+            // Keep encoded images/URLs out of the DSP context, including on seek/skip.
+            var copy = track; copy.removeValue(forKey: "artwork"); copy.removeValue(forKey: "coverUrl"); return copy
+        }
+    }
+    private func artwork(_ track: [String: Any]) -> MPMediaItemArtwork? {
+        guard let artwork = track["artwork"] as? [String: Any], let base64 = artwork["base64"] as? String,
+              let image = NativeArtworkImage.decode(base64) else { return nil }
+        let thumbnail = UIImage(cgImage: image)
+        return MPMediaItemArtwork(boundsSize: thumbnail.size) { requested in
+            let size = CGSize(width: max(1, min(thumbnail.size.width, requested.width.isFinite ? requested.width : 512)),
+                              height: max(1, min(thumbnail.size.height, requested.height.isFinite ? requested.height : 512)))
+            let format = UIGraphicsImageRendererFormat(); format.scale = 1
+            return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                thumbnail.draw(in: CGRect(origin: .zero, size: size))
+            }
+        }
+    }
+    /// Keeps the files of the previous, audible and upcoming tracks; older ones cannot be selected again.
+    /// A file uploaded after every queued one may still be on its way into the queue and is kept.
+    private func prune() {
+        prunedIndex = index
+        let keys = tracks.enumerated().map { Self.key($0.element, $0.offset) }
+        newestKey = max(newestKey, keys.max() ?? -1)
+        let used = Set(keys.enumerated().filter { $0.offset >= index - 1 }.map { $0.element })
+        for key in bytes.keys where !used.contains(key) && key <= newestKey {
+            if let url = file(key) { try? FileManager.default.removeItem(at: url) }
+            bytes.removeValue(forKey: key)
         }
     }
     func start(id: String, config: [String: Any], completion: @escaping Reply) {
         work.async {
             do {
-                guard self.preparing, id == self.id, let sr = config["sampleRate"] as? Double,
-                      [44100.0, 48000.0].contains(sr), let tracks = config["tracks"] as? [[String: Any]], tracks.count == 2,
+                guard self.folder != nil, id == self.id, let sr = config["sampleRate"] as? Double,
+                      [44100.0, 48000.0].contains(sr), let raw = config["tracks"] as? [[String: Any]], !raw.isEmpty,
                       let position = config["position"] as? Double, position.isFinite, position >= 0 else { throw Failure.invalid }
-                for i in 0...1 {
-                    guard let count = tracks[i]["totalFrames"] as? Int, count > 0, count * 8 == self.bytes[i],
-                          let gain = tracks[i]["gainDb"] as? Double, gain.isFinite, abs(gain) <= 36 else { throw Failure.invalid }
+                let start = config["index"] as? Int ?? 0
+                guard raw.indices.contains(start), self.engine == nil || sr == self.sr else { throw Failure.invalid }
+                let metadata = try self.validated(raw, from: 0)
+                if self.script.isEmpty {
+                    guard let url = Bundle.main.url(forResource: "native-mixer", withExtension: "js", subdirectory: "public") else { throw Failure.invalid }
+                    self.script = try String(contentsOf: url, encoding: .utf8)
                 }
-                guard let url = Bundle.main.url(forResource: "native-mixer", withExtension: "js", subdirectory: "public") else { throw Failure.invalid }
-                self.script = try String(contentsOf: url, encoding: .utf8)
-                self.artworks = tracks.map { track in
-                    guard let artwork = track["artwork"] as? [String: Any], let base64 = artwork["base64"] as? String,
-                          let image = NativeArtworkImage.decode(base64) else { return nil }
-                    let thumbnail = UIImage(cgImage: image)
-                    return MPMediaItemArtwork(boundsSize: thumbnail.size) { requested in
-                        let size = CGSize(width: max(1, min(thumbnail.size.width, requested.width.isFinite ? requested.width : 512)),
-                                          height: max(1, min(thumbnail.size.height, requested.height.isFinite ? requested.height : 512)))
-                        let format = UIGraphicsImageRendererFormat(); format.scale = 1
-                        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
-                            thumbnail.draw(in: CGRect(origin: .zero, size: size))
-                        }
-                    }
-                }
-                // Keep encoded images/URLs out of the DSP context, including on seek/skip.
-                let metadata = tracks.map { track -> [String: Any] in
-                    var copy = track; copy.removeValue(forKey: "artwork"); copy.removeValue(forKey: "coverUrl"); return copy
-                }
+                self.artworks = raw.map { self.artwork($0) }
                 self.config = config; self.config["tracks"] = metadata; self.tracks = metadata
-                let session = AVAudioSession.sharedInstance()
-                try session.setCategory(.playback, mode: .default, options: [])
-                try session.setActive(true); self.ownsSession = true
-                self.format = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 2)
-                let engine = AVAudioEngine(), player = AVAudioPlayerNode()
-                self.engine = engine; self.player = player
-                engine.attach(player); engine.connect(player, to: engine.mainMixerNode, format: self.format)
-                self.preparing = false; self.underruns = 0; self.maxRenderMs = 0
-                try self.select(index: 0, position: position, playing: true)
-                self.installTargets()
+                if self.engine == nil {
+                    let session = AVAudioSession.sharedInstance()
+                    try session.setCategory(.playback, mode: .default, options: [])
+                    try session.setActive(true); self.ownsSession = true
+                    self.format = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 2)
+                    let engine = AVAudioEngine(), player = AVAudioPlayerNode()
+                    self.engine = engine; self.player = player
+                    engine.attach(player); engine.connect(player, to: engine.mainMixerNode, format: self.format)
+                    self.underruns = 0; self.maxRenderMs = 0
+                }
+                self.preparing = false; self.failed = false
+                try self.select(index: start, position: position, playing: config["paused"] as? Bool != true)
+                self.prune()
+                if self.targets.isEmpty { self.installTargets() }
                 self.reply(completion, .success(self.snapshot))
-            } catch { self.fail(); self.reply(completion, .failure(error)) }
+            } catch {
+                // Invalid replacement data keeps the queue that is already playing.
+                if case Failure.invalid = error, self.engine != nil {} else { self.fail() }
+                self.reply(completion, .failure(error))
+            }
+        }
+    }
+    func update(id: String, from: Int, tracks raw: [[String: Any]], completion: @escaping Reply) {
+        work.async {
+            do {
+                guard self.folder != nil, !self.preparing, !self.failed, id == self.id,
+                      from > self.index, from <= self.tracks.count else { throw Failure.invalid }
+                let added = try self.validated(raw, from: from)
+                let next = Array(self.tracks.prefix(from)) + added
+                // An exhausted renderer is replaced by select() below.
+                if !self.done, let renderer = self.renderer {
+                    let count = renderer.trackCount
+                    renderer.trackCount = max(count, next.count)
+                    guard try renderer.update(from: from, tracks: added) else { renderer.trackCount = count; throw Failure.invalid }
+                    renderer.trackCount = next.count
+                }
+                self.tracks = next; self.config["tracks"] = next
+                self.artworks = Array(self.artworks.prefix(from)) + raw.map { self.artwork($0) }
+                self.prune()
+                MoraPlaybackJournal.record("native.mix.update", ["from": from, "count": next.count])
+                if self.done && self.ended && self.tracks.indices.contains(self.index + 1) {
+                    try self.select(index: self.index + 1, position: 0, playing: true)
+                } else { self.publish("update") }
+                self.reply(completion, .success(self.snapshot))
+            } catch {
+                switch error { case Failure.invalid: break; default: self.fail() }
+                self.reply(completion, .failure(error))
+            }
         }
     }
     private func select(index: Int, position: Double, playing: Bool) throws {
         epoch += 1; wantsPlaying = false
         player?.stop(); engine?.pause()
-        pending = 0; rendered = 0; queued = 0; completed = 0; presented = 0; marks.removeAll(); done = false
+        pending = 0; rendered = 0; queued = 0; completed = 0; presented = 0; marks.removeAll(); done = false; ended = false
         lastLogFrame = -1
         self.index = index; self.position = position
         var next = config; next["index"] = index; next["position"] = position
-        renderer = try NativeDSPRenderer(script: script, files: files, config: next)
+        guard let folder else { throw Failure.invalid }
+        renderer = try NativeDSPRenderer(script: script, folder: folder, config: next)
         wantsPlaying = playing
         try fill()
         if playing { try engine?.start(); player?.play() }
@@ -186,7 +249,11 @@ final class NativeMixHost {
         if wantsPlaying {
             if pending == 0 && !done { underruns += 1; MoraPlaybackJournal.record("native.mix.starved") }
             do { try fill() } catch { fail(); return }
-            if done && pending == 0 { wantsPlaying = false; player?.pause(); engine?.pause(); publish("ended"); return }
+            if done && pending == 0 {
+                // The page appended a track after the renderer finished: continue without a blend.
+                if tracks.indices.contains(index + 1) { do { try select(index: index + 1, position: 0, playing: true) } catch { fail() }; return }
+                wantsPlaying = false; ended = true; player?.pause(); engine?.pause(); publish("ended"); return
+            }
         }
         if presented - lastLogFrame >= Int64(sr / 2) { publish("tick"); lastLogFrame = presented }
         else { save() }
@@ -213,6 +280,7 @@ final class NativeMixHost {
     }
     private func publish(_ reason: String) {
         updatePosition(); save()
+        if index != prunedIndex { prune() }
         let state = snapshot, generation = epoch
         let title = tracks.indices.contains(index) ? tracks[index]["title"] as? String ?? "MORA" : "MORA"
         let artist = tracks.indices.contains(index) ? tracks[index]["artist"] as? String ?? "" : ""
@@ -220,13 +288,13 @@ final class NativeMixHost {
             MPMediaItemPropertyPersistentID: NSNumber(value: index + 1), MPMediaItemPropertyPlaybackDuration: state["duration"] ?? 0,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: position, MPNowPlayingInfoPropertyPlaybackRate: wantsPlaying ? 1.0 : 0.0,
             MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0, MPNowPlayingInfoPropertyIsLiveStream: false,
-            MPNowPlayingInfoPropertyPlaybackQueueIndex: index, MPNowPlayingInfoPropertyPlaybackQueueCount: 2]
+            MPNowPlayingInfoPropertyPlaybackQueueIndex: index, MPNowPlayingInfoPropertyPlaybackQueueCount: tracks.count]
         if artworks.indices.contains(index), let artwork = artworks[index] { info[MPMediaItemPropertyArtwork] = artwork }
         let publishedInfo = info
         DispatchQueue.main.async { [weak self] in
             guard let self, self.active, self.snapshot["epoch"] as? Int == generation else { return }
             MPNowPlayingInfoCenter.default().nowPlayingInfo = publishedInfo
-            MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = (state["index"] as? Int ?? 0) < 1
+            MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = (state["index"] as? Int ?? 0) + 1 < (state["count"] as? Int ?? 0)
         }
         MoraPlaybackJournal.record("native.mix.state", ["reason": reason, "seq": index, "position": position,
             "playing": wantsPlaying, "renderedFrames": rendered, "queuedFrames": queued, "presentedFrames": presented,
@@ -266,8 +334,8 @@ final class NativeMixHost {
                         else { self.wantsPlaying = true; try self.fill(); try self.engine?.start(); self.player?.play() }
                     }
                 case "nexttrack":
-                    guard self.index == 0 else { throw Failure.invalid }
-                    try self.select(index: 1, position: 0, playing: self.wantsPlaying)
+                    guard self.tracks.indices.contains(self.index + 1) else { throw Failure.invalid }
+                    try self.select(index: self.index + 1, position: 0, playing: self.wantsPlaying)
                 case "previoustrack":
                     try self.select(index: self.position > 3 ? self.index : max(0, self.index - 1), position: 0, playing: self.wantsPlaying)
                 case "seekto":
@@ -320,8 +388,8 @@ final class NativeMixHost {
                 if self.ownsSession { try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation); self.ownsSession = false }
                 // folder is created only under our private cache with a native-generated UUID.
                 if let folder = self.folder { try? FileManager.default.removeItem(at: folder) }
-                self.folder = nil; self.preparing = false; self.engine = nil; self.player = nil
-                self.marks.removeAll(); self.artworks.removeAll(); self.save()
+                self.folder = nil; self.preparing = false; self.engine = nil; self.player = nil; self.bytes = [:]; self.newestKey = -1
+                self.marks.removeAll(); self.artworks.removeAll(); self.tracks.removeAll(); self.config = [:]; self.save()
                 DispatchQueue.main.async {
                     for (command, target) in self.targets { command.isEnabled = false; command.removeTarget(target) }
                     self.targets.removeAll(); MPNowPlayingInfoCenter.default().nowPlayingInfo = nil

@@ -7,9 +7,9 @@ var all: [[String: Any]] = []
 var output = Data()
 var maxMs = 0.0
 for config in configs {
-    let renderer = try NativeDSPRenderer(script: script, files: [0, 1].map { directory.appendingPathComponent("\($0).f32le") }, config: config)
+    let renderer = try NativeDSPRenderer(script: script, folder: directory, config: config)
     var blocks: [[String: Any]] = []
-    for _ in 0..<160 {
+    for _ in 0..<240 {
         let began = ProcessInfo.processInfo.systemUptime
         let block = try renderer.render()
         maxMs = max(maxMs, (ProcessInfo.processInfo.systemUptime - began) * 1000)
@@ -19,7 +19,7 @@ for config in configs {
             "events": block.events.map { $0["type"] as? String ?? "unknown" }])
         if block.done { break }
     }
-    guard blocks.last?["done"] as? Bool == true else { fatalError("Native pair did not end") }
+    guard blocks.last?["done"] as? Bool == true else { fatalError("Native queue did not end") }
     all.append(["blocks": blocks])
 }
 try output.write(to: directory.appendingPathComponent("actual.f32le"))

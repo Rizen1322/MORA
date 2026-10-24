@@ -5,6 +5,8 @@ import type { EngineCommand, EngineEvent } from './engine.worklet.ts';
 import { nativePlaybackControls, playbackDiagnostics, tracePlayback } from '../lib/playback-trace.ts';
 import { api, ApiError, type AnalysisSummary, type Track } from '../lib/api.ts';
 import { uploadNativePcm } from '../lib/native-pcm-preparation.ts';
+import type { ArmedTransition } from '@automix/core/engine/mixer.ts';
+import type { NativeMixState, NativeMixTrack } from '../lib/native-mix.ts';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 export type Origin = 'user' | 'wave' | 'context' | 'yandex';
@@ -132,6 +134,15 @@ const IDLE_SUSPEND_MS = 3 * 60_000;
 /** Next tracks that fail to load in a row before preparation stops instead of eating the queue. */
 const MAX_SKIPS = 3;
 
+/** iPhone: music plays in the app's native audio engine; Diagnostics can switch back to WebKit (after a restart). */
+export const NATIVE_PLAYBACK_KEY = 'mora.nativePlayback';
+const nativeWanted = (() => { try { return localStorage.getItem(NATIVE_PLAYBACK_KEY) !== 'off'; } catch { return true; } })();
+const NATIVE_SR = 48000;
+/** Tracks kept prepared after the audible one, so the queue (with its blends) survives a suspended page.
+ * Each is a whole PCM file, about 23 MB per minute. */
+const NATIVE_AHEAD = 2;
+type NativeItem = NativeMixTrack & { entryId: string; trackId: string; file: number };
+
 const uid = () => `${Date.now().toString(36)}-${(++seq).toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
 export function gainFromSummary(a: AnalysisSummary | undefined, target: number | null): number {
@@ -257,53 +268,218 @@ export class PlayerController {
     return this.state.queue[this.state.index] ?? null;
   }
 
-  private nativePreparation?: AbortController;
-  cancelNativePreparation(): void { this.nativePreparation?.abort(); }
-  async startNativeMix(progress: (message: string) => void): Promise<import('../lib/native-mix.ts').NativeMixState> {
-    const controls = nativePlaybackControls();
-    await controls?.ready;
-    if (!controls?.mix) throw new Error('Нужна новая диагностическая IPA');
-    if (this.playback.speed !== 1 || this.playback.semitones !== 0) throw new Error('Для первого нативного теста установите скорость 1× и тональность 0');
-    const entries = this.state.queue.slice(this.state.index, this.state.index + 2);
-    const pair = entries.map(entry => this.track(entry.trackId));
-    if (pair.length !== 2 || pair.some(t => !t || !(t.duration! > 0))) throw new Error('Выберите трек с ещё одной песней после него в очереди');
-    const [a, b] = pair as [Track, Track];
-    const position = this.state.position;
-    const abort = new AbortController(); this.nativePreparation = abort;
-    const hidden = () => { if (document.hidden) abort.abort(); };
-    document.addEventListener('visibilitychange', hidden);
+  // ------------------------------------------------------------ native (iPhone)
+
+  /** The native host plays the queue: whole tracks are uploaded to it with their planned blends. */
+  get native(): boolean { return nativeWanted && !!nativePlaybackControls()?.mix; }
+  private nativeFiles = new Map<string, { file: number; frames: number }>();
+  private nativeFileSeq = 0;
+  private nativeTracks: NativeItem[] = [];
+  /** Index of the audible track in nativeTracks; -1 while a new queue starts. */
+  private nativeAt = -1;
+  private nativeRevision = 0;
+  private nativeAbort = new AbortController();
+  private nativeSyncing: Promise<void> | null = null;
+  private nativeSyncAgain = false;
+  private nativeTimer: ReturnType<typeof setInterval> | null = null;
+  private nativePolledAt = 0;
+  private nativeSkip = false;
+  private nativeSpeedNotice = false;
+  private get nativeMix() { return nativePlaybackControls()!.mix!; }
+
+  private async nativeFile(trackId: string, signal: AbortSignal): Promise<{ file: number; frames: number }> {
+    const cached = this.nativeFiles.get(trackId);
+    if (cached) return cached;
+    const t = this.track(trackId);
+    if (!t) throw new Error('трек не найден в медиатеке');
+    if (t.status === 'missing') throw new ApiError(t.error ?? 'файл не найден', 410);
+    // candidate starts no new stem/model job; native blends use the original full mix.
+    await api.prepare(trackId, NATIVE_SR, 'candidate');
+    const file = ++this.nativeFileSeq;
+    const frames = await uploadNativePcm(start => fetch(`/api/tracks/${encodeURIComponent(trackId)}/pcm?sr=${NATIVE_SR}&start=${start}&frames=${CHUNK_FRAMES}&format=f32le`,
+      { signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]) }),
+    (offset, bytes) => this.nativeMix.upload(file, offset, bytes, signal), signal);
+    const prepared = { file, frames };
+    this.nativeFiles.set(trackId, prepared);
+    return prepared;
+  }
+
+  private nativeItem(entry: QueueEntry, f: { file: number; frames: number }, transition?: ArmedTransition): NativeItem {
+    const t = this.track(entry.trackId);
+    return { title: t?.title ?? '', artist: t?.artist ?? '', totalFrames: f.frames, file: f.file, entryId: entry.entryId, trackId: entry.trackId,
+      gainDb: t?.mixingAllowed === false ? 0 : gainFromSummary(t?.analysis, this.loudnessTarget),
+      ...(t?.coverUrl ? { coverUrl: t.coverUrl } : {}), ...(transition ? { transition } : {}) };
+  }
+
+  /** A blend the native store can play, or none (the next track then follows gaplessly). */
+  private async nativePlan(from: NativeItem, to: QueueEntry, frames: number): Promise<ArmedTransition | undefined> {
     try {
-      return await controls.mix.start(async put => {
-        const lengths: number[] = [];
-        for (let i = 0; i < 2; i++) {
-          const track = pair[i]!;
-          abort.signal.throwIfAborted();
-          progress(`Подготовка ${i + 1}/2: ${track.title}`);
-          // candidate starts no new stem/model job; the native pair uses original full mixes.
-          await api.prepare(track.id, 48000, 'candidate');
-          lengths.push(await uploadNativePcm(start => fetch(`/api/tracks/${encodeURIComponent(track.id)}/pcm?sr=48000&start=${start}&frames=${CHUNK_FRAMES}&format=f32le`,
-            { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(60000)]) }),
-          (offset, bytes) => put(i, offset, bytes), abort.signal,
-          frames => progress(`Подготовка ${i + 1}/2: ${Math.round(frames / 48000)} с`)));
-        }
-        progress('Подготовка DJ-перехода');
-        const result = await api.plan(a.id, b.id);
-        abort.signal.throwIfAborted();
-        const plan = fallbackWithoutVocalStems(result.plan);
-        if (position >= plan.aExit || plan.aExit * 48000 >= lengths[0] || plan.bEntry * 48000 >= lengths[1]) {
-          throw new Error('Для этой пары начните первый трек заново и повторите тест');
-        }
-        return { sampleRate: 48000, position, tracks: [a, b].map((track, i) => ({
-          title: track.title, artist: track.artist, totalFrames: lengths[i],
-          coverUrl: this.track(track.id)?.coverUrl ?? track.coverUrl ?? undefined,
-          gainDb: track.mixingAllowed === false ? 0 : gainFromSummary(this.track(track.id)?.analysis, this.loudnessTarget),
-        })), transition: planToArmed(plan, 48000, 'A', 'B'),
-        ...(this.tone ? { tone: this.tone, preDb: preampFor(this.tone, 48000) } : {}) };
-      }, abort.signal);
-    } finally {
-      document.removeEventListener('visibilitychange', hidden);
-      if (this.nativePreparation === abort) this.nativePreparation = undefined;
+      const plan = fallbackWithoutVocalStems((await api.plan(from.trackId, to.trackId)).plan);
+      if (plan.aExit * NATIVE_SR >= from.totalFrames || plan.bEntry * NATIVE_SR >= frames) return undefined;
+      return planToArmed(plan, NATIVE_SR, 'A', 'B');
+    } catch { return undefined; }
+  }
+
+  /** Native files of tracks before the previous one are deleted by the host. */
+  private pruneNativeFiles(): void {
+    const kept = new Set(this.nativeTracks.slice(Math.max(0, this.nativeAt - 1)).map(t => t.file));
+    for (const [id, f] of this.nativeFiles) if (!kept.has(f.file)) this.nativeFiles.delete(id);
+  }
+
+  private async nativeStartAt(index: number, seconds: number, endReason: string, startPaused: boolean): Promise<void> {
+    const entry = this.state.queue[index];
+    if (!entry) return;
+    const revision = ++this.nativeRevision;
+    this.nativeAbort.abort();
+    const abort = this.nativeAbort = new AbortController();
+    this.finishPlay(endReason);
+    this.nativeAt = -1;
+    this.set({ index, status: startPaused ? 'paused' : 'loading', position: seconds, duration: this.track(entry.trackId)?.duration ?? 0,
+      transition: null, nextPlan: null, nextPending: [], error: null });
+    this.focusAnalysis();
+    if (!this.nativeSpeedNotice && (this.playback.speed !== 1 || this.playback.semitones !== 0)) {
+      this.nativeSpeedNotice = true;
+      this.notify('Скорость и тональность пока не применяются в нативном плеере iPhone', 'info');
     }
+    try {
+      const f = await this.nativeFile(entry.trackId, abort.signal);
+      if (revision !== this.nativeRevision) return;
+      // Previous stays available to the lock screen when its file is still uploaded.
+      const prev = this.state.queue[index - 1], pf = prev && this.nativeFiles.get(prev.trackId);
+      const tracks = [...(prev && pf ? [this.nativeItem(prev, pf)] : []), this.nativeItem(entry, f)];
+      // Pause pressed while the track was loading keeps it paused.
+      const paused = startPaused || this.state.status === 'paused';
+      const s = await this.nativeMix.start({ sampleRate: NATIVE_SR, position: seconds, index: tracks.length - 1, paused, tracks,
+        ...(this.tone ? { tone: this.tone, preDb: preampFor(this.tone, NATIVE_SR) } : {}) }, abort.signal);
+      if (revision !== this.nativeRevision) return;
+      this.nativeTracks = tracks;
+      this.nativeAt = tracks.length - 1;
+      this.pruneNativeFiles();
+      this.skipStreak = 0;
+      this.maxPos = seconds;
+      this.set({ status: paused ? 'paused' : 'playing', duration: s.duration || this.state.duration });
+      this.beginPlay(entry);
+      this.nativePoll();
+      void this.nativeSync();
+      this.scheduleSave();
+    } catch (e) {
+      // A failed first start releases the native session together with its files.
+      if (!nativePlaybackControls()?.mixActive) { this.nativeFiles.clear(); this.nativeTracks = []; }
+      if (revision !== this.nativeRevision) return;
+      if (unreachable(e)) {
+        this.set({ status: startPaused ? 'paused' : 'buffering' });
+        setTimeout(() => { if (revision === this.nativeRevision && this.state.status !== 'paused') void this.nativeStartAt(index, seconds, endReason, false); }, 2000);
+        return;
+      }
+      this.notify(`Не удалось воспроизвести: ${(e as Error).message}`, 'error');
+      this.set({ status: 'idle' });
+      if (this.isWave() || this.state.queue.length > index + 1) {
+        setTimeout(() => { if (revision === this.nativeRevision && this.state.status !== 'paused') void this.advanceAfterFailure(); }, 600);
+      }
+    }
+  }
+
+  /** Aligns the native tracks after the audible one with the page queue (one sync at a time). */
+  private nativeSync(): Promise<void> {
+    this.nativeSyncAgain = true;
+    return this.nativeSyncing ??= (async () => {
+      try {
+        while (this.nativeSyncAgain) { this.nativeSyncAgain = false; await this.nativeSyncOnce(); }
+      } finally { this.nativeSyncing = null; }
+    })();
+  }
+
+  private async nativeSyncOnce(): Promise<void> {
+    const revision = this.nativeRevision, at = this.nativeAt;
+    if (at < 0) return;
+    if (this.isWave()) await this.topUpWave();
+    const wanted: QueueEntry[] = [];
+    for (let i = this.state.index; wanted.length < NATIVE_AHEAD;) {
+      const n = this.nextIndex(false, i);
+      if (n === null) break;
+      wanted.push(this.state.queue[n]); i = n;
+    }
+    let same = 0;
+    while (same < wanted.length && this.nativeTracks[at + 1 + same]?.entryId === wanted[same].entryId) same++;
+    let from = at + 1 + same;
+    if (same === wanted.length && from === this.nativeTracks.length) return;
+    try {
+      if (same === wanted.length) {
+        await this.nativeMix.update(from, []);
+        this.nativeTracks = this.nativeTracks.slice(0, from);
+        return;
+      }
+      for (const entry of wanted.slice(same)) {
+        const f = await this.nativeFile(entry.trackId, this.nativeAbort.signal);
+        if (revision !== this.nativeRevision) return;
+        const item = this.nativeItem(entry, f, await this.nativePlan(this.nativeTracks[from - 1], entry, f.frames));
+        if (revision !== this.nativeRevision) return;
+        // Publish each track at once: the native queue may need it while the page sleeps.
+        await this.nativeMix.update(from, [item]);
+        if (revision !== this.nativeRevision) return;
+        this.nativeTracks = [...this.nativeTracks.slice(0, from), item];
+        from++;
+      }
+    } catch (e) {
+      if (revision !== this.nativeRevision || this.nativeAbort.signal.aborted) return;
+      if (unreachable(e)) { setTimeout(() => { if (revision === this.nativeRevision) void this.nativeSync(); }, 3000); return; }
+      // The track already blending in cannot be replaced; the queue realigns after it.
+      // Its file may also be gone: upload it again next time.
+      if (e instanceof Error && /Native playback operation failed/.test(e.message)) {
+        const trackId = wanted[from - at - 1]?.trackId;
+        if (trackId && !this.nativeTracks.some(t => t.trackId === trackId)) this.nativeFiles.delete(trackId);
+        return;
+      }
+      const index = this.state.queue.findIndex(q => q.entryId === wanted[from - at - 1]?.entryId);
+      if (index > this.state.index) { this.skipNext(index, (e as Error).message); this.nativeSyncAgain = this.skipStreak < MAX_SKIPS; }
+    }
+  }
+
+  private nativePoll(): void {
+    if (this.nativeTimer) return;
+    let polling = false;
+    this.nativeTimer = setInterval(() => {
+      // A hidden page (if iOS keeps it running) checks less often.
+      if (polling || (document.hidden && performance.now() - this.nativePolledAt < 2000)) return;
+      polling = true; this.nativePolledAt = performance.now();
+      void this.nativeMix.state().then(s => this.onNativeState(s), () => {}).finally(() => { polling = false; });
+    }, 500);
+  }
+
+  private onNativeState(s: NativeMixState): void {
+    if (this.nativeAt < 0) return;
+    if (!s.active || s.failed) {
+      this.nativeAt = -1;
+      this.nativeFiles.clear();
+      this.nativeTracks = [];
+      this.finishPlay('error');
+      this.set({ status: 'idle' });
+      if (s.failed) this.notify('Нативное воспроизведение остановилось с ошибкой. Нажмите Play, чтобы продолжить.', 'error');
+      return;
+    }
+    if (s.index !== this.nativeAt && this.nativeTracks[s.index]) {
+      this.finishPlay(!this.nativeSkip && s.index === this.nativeAt + 1 ? 'transition' : 'skip');
+      this.nativeSkip = false;
+      this.nativeAt = s.index;
+      const entryId = this.nativeTracks[s.index].entryId, index = this.state.queue.findIndex(e => e.entryId === entryId);
+      if (index >= 0) this.set({ index });
+      this.maxPos = 0;
+      if (index >= 0) this.beginPlay(this.state.queue[index]);
+      this.pruneNativeFiles();
+      this.focusAnalysis();
+      this.scheduleSave();
+      void this.nativeSync();
+    }
+    const status = s.playing ? 'playing' : s.ended ? 'idle' : 'paused';
+    this.maxPos = Math.max(this.maxPos, s.position);
+    this.set({ position: s.position, duration: s.duration || this.state.duration, status });
+    if (status === 'playing') void this.topUpWave();
+    if (s.ended) void this.nativeSync();
+    if (performance.now() - this.lastSaved > POSITION_SAVE_MS && status === 'playing') this.scheduleSave(true);
+  }
+
+  private nativeCommand(action: MediaSessionAction, seekTime?: number): void {
+    if (this.nativeAt >= 0) void this.nativeMix.command(action, seekTime).catch(() => {});
   }
 
   // ------------------------------------------------------------------ engine
@@ -320,6 +496,7 @@ export class PlayerController {
 
   private async ensureEngine(): Promise<void> {
     await nativePlaybackControls()?.ready;
+    if (this.native) return;
     if (nativePlaybackControls()?.probeActive) throw new Error('Остановите нативный тест в диагностике перед запуском музыки');
     if (this.engineStarting) return this.engineStarting;
     this.engineStarting = this.createEngine().finally(() => { this.engineStarting = null; });
@@ -808,6 +985,7 @@ export class PlayerController {
 
   /** Starts queue[index] from `seconds`, cutting (with a short fade) whatever plays now. */
   async startAt(index: number, seconds: number, endReason: string = 'skip', startPaused = false): Promise<void> {
+    if (this.native) { ++this.previewRevision; return this.nativeStartAt(index, seconds, endReason, startPaused); }
     const intent = ++this.previewRevision;
     const entry = this.state.queue[index];
     if (!entry) return;
@@ -890,7 +1068,8 @@ export class PlayerController {
   pause(): void {
     this.traceAction('pause');
     this.previewRevision++;
-    this.post({ cmd: 'pause', paused: true });
+    if (this.native) this.nativeCommand('pause');
+    else this.post({ cmd: 'pause', paused: true });
     this.set({ status: 'paused' });
     this.scheduleSave(true);
   }
@@ -899,6 +1078,11 @@ export class PlayerController {
     this.traceAction('play');
     const intent = ++this.previewRevision;
     if (this.radioPlay) this.radioPlay.tick = performance.now();
+    if (this.native) {
+      if (this.nativeAt >= 0) { this.nativeCommand('play'); this.set({ status: 'playing' }); }
+      else if (this.state.index >= 0 && this.state.queue[this.state.index]) await this.startAt(this.state.index, this.restoredPosition || 0);
+      return;
+    }
     if (!this.current && this.waveExhausted && (this.isWave() || this.state.context?.type === 'online-radio')) {
       const next = this.nextIndex();
       if (next !== null) { this.waveExhausted = false; await this.startAt(next, 0, 'finished'); }
@@ -920,6 +1104,12 @@ export class PlayerController {
     this.previewRevision++;
     this.nextRequest = null;
     this.recovering = null;
+    if (this.native && this.nativeAt >= 0) {
+      const s = Math.max(0, Math.min(seconds, this.state.duration));
+      this.nativeCommand('seekto', s);
+      this.set({ position: s });
+      return;
+    }
     if (!this.current) {
       this.restoredPosition = seconds;
       this.set({ position: seconds });
@@ -958,6 +1148,15 @@ export class PlayerController {
   async nextTrack(reason: 'skip' | 'dislike' = 'skip'): Promise<void> {
     this.traceAction('nexttrack');
     const intent = ++this.previewRevision;
+    if (this.native) {
+      let n = this.nextIndex(true);
+      if (n === null && this.isWave()) { await this.topUpWave(); if (intent !== this.previewRevision) return; n = this.nextIndex(true); }
+      if (n === null) return;
+      if (this.nativeAt >= 0 && this.nativeTracks[this.nativeAt + 1]?.entryId === this.state.queue[n].entryId) {
+        this.nativeSkip = true; this.nativeCommand('nexttrack');
+      } else await this.startAt(n, 0, reason, this.state.status === 'paused');
+      return;
+    }
     if (this.state.status === 'paused') {
       const next = this.nextIndex(true);
       if (next !== null) await this.startAt(next, 0, reason, true);
@@ -1139,14 +1338,18 @@ export class PlayerController {
       this.seek(0);
       return;
     }
+    if (this.native && this.nativeAt > 0 && this.nativeTracks[this.nativeAt - 1]?.entryId === this.state.queue[this.state.index - 1]?.entryId) {
+      this.nativeSkip = true; this.nativeCommand('previoustrack');
+      return;
+    }
     await this.startAt(this.state.index - 1, 0, 'skip', this.state.status === 'paused');
   }
 
   // ------------------------------------------------------------------- queue
 
   /** Index of the entry that plays after the current one. */
-  private nextIndex(manual = false): number | null {
-    const { queue, index, repeat } = this.state;
+  private nextIndex(manual = false, index = this.state.index): number | null {
+    const { queue, repeat } = this.state;
     if (!queue.length) return null;
     if (repeat === 'one' && !manual) return index;
     if (index + 1 < queue.length) return index + 1;
@@ -1290,6 +1493,7 @@ export class PlayerController {
         this.set({ queue: [...this.state.queue.slice(trim), ...added], index: this.state.index - trim });
         this.focusAnalysis();
         this.scheduleSave();
+        if (this.nativeAt >= 0) void this.nativeSync();
         // Preparing the immediate pair must not wait for subsequent downloads.
         if (this.current && !this.next && !this.preparing) void this.prepareNext();
       }
@@ -1409,6 +1613,12 @@ export class PlayerController {
   private onQueueChanged(): void {
     this.scheduleSave();
     this.preparationRevision++;
+    if (this.native) {
+      if (this.nativeAt >= 0) void this.nativeSync();
+      this.focusAnalysis();
+      if (this.isWave()) void this.topUpWave();
+      return;
+    }
     if (this.state.transition?.active) {
       const nx = this.next;
       if (nx) {

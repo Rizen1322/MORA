@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { nativePlaybackControls, playbackDiagnostics, type NavigationRoute, type NativeProbeState } from '../lib/playback-trace.ts';
 import type { NativeMixState } from '../lib/native-mix.ts';
 import { controller } from '../store/app.ts';
+import { NATIVE_PLAYBACK_KEY } from '../audio/controller.ts';
 
 export function PlaybackDiagnostics() {
   const [diagnostics, setDiagnostics] = useState(playbackDiagnostics);
@@ -10,7 +11,7 @@ export function PlaybackDiagnostics() {
   const [route, setRoute] = useState<NavigationRoute>('webkit');
   const [probeState, setProbeState] = useState<NativeProbeState | null>(null);
   const [mixState, setMixState] = useState<NativeMixState | null>(null);
-  const [preparing, setPreparing] = useState('');
+  const [nativePlayback, setNativePlayback] = useState(() => { try { return localStorage.getItem(NATIVE_PLAYBACK_KEY) !== 'off'; } catch { return true; } });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -36,14 +37,14 @@ export function PlaybackDiagnostics() {
       } catch { /* Older shell has no native baseline. */ }
     };
     void update();
-    const timer = setInterval(() => { if (nativePlaybackControls()?.probeActive) void update(); }, 2000);
+    const timer = setInterval(() => { if (nativePlaybackControls()?.probeActive) void update(); }, 1000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [diagnostics]);
   if (!diagnostics) return null;
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true); setError('');
     try { await fn(); setReport(await diagnostics.report()); }
-    catch (e) { setError(e instanceof Error ? (e.name === 'AbortError' ? 'Подготовка отменена. Держите приложение открытым до запуска.' : e.message) : 'Не удалось выполнить действие.'); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Не удалось выполнить действие.'); }
     finally { setRoute(nativePlaybackControls()?.route ?? 'webkit'); setBusy(false); }
   };
   const events = Array.isArray(report?.events) ? report.events : [];
@@ -51,37 +52,30 @@ export function PlaybackDiagnostics() {
   const probeActive = !!controls?.probeActive;
   return <section className="pref-card playback-diagnostics" aria-label="Диагностика управления iOS">
     <h2>Управление на экране блокировки · диагностическая сборка</h2>
-    <p>Версия 1.0.12: исправлен запуск длинных переходов, добавлены обложки нативной пары. Журнал записывается постоянно,
+    <p>Версия 1.0.13: обычный плеер и вся очередь играют в нативном движке. Журнал записывается постоянно,
       метка сохраняет предыдущие события.</p>
     <div className="pref-card" style={{ padding: 14 }}>
-      <h3>Нативный AutoMix · ваша музыка</h3>
-      <p>Подготовит текущую и следующую песню. Дождитесь запуска, не сворачивая приложение.
-        После подготовки звук, DJ-переход и кнопки работают в нативном движке.
-        Первый режим ограничен двумя песнями, скоростью 1× и исходной тональностью, без разделения вокала.</p>
-      <div className="playback-diagnostics-actions">
-        <button className="btn btn-primary" disabled={busy || probeActive || !controls?.mix} onClick={() => void run(async () => {
-          try { setMixState(await controller.startNativeMix(setPreparing)); await diagnostics.mark(); }
-          finally { setPreparing(''); }
-        })}>Запустить пару из очереди</button>
-        <button className="btn" disabled={busy || !controls?.mixActive} onClick={() => void run(async () => {
-          await controls!.mix!.stop(); setMixState(await controls!.mix!.state());
-        })}>Остановить AutoMix</button>
-        {preparing && <button className="btn" onClick={() => controller.cancelNativePreparation()}>Отменить подготовку</button>}
-      </div>
-      {preparing && <p role="status">{preparing}</p>}
+      <h3>Нативный плеер · ваша музыка</h3>
+      <p>Музыка, AutoMix-переходы и экран блокировки работают в нативном движке iPhone. Плеер заранее готовит
+        текущую и две следующие песни: на экране блокировки они переключаются и смешиваются без приложения.
+        Следующие песни готовятся, пока приложение может работать; если iOS его приостановила, очередь продолжится
+        после того, как вы снова откроете MORA.</p>
+      <label className="pref-row">
+        <input type="checkbox" checked={nativePlayback} onChange={e => {
+          try { localStorage.setItem(NATIVE_PLAYBACK_KEY, e.target.checked ? 'on' : 'off'); } catch { /* private storage */ }
+          setNativePlayback(e.target.checked);
+        }} /> Нативное воспроизведение (выключите, чтобы вернуться к WebKit; применяется после перезапуска)
+      </label>
       {controls?.mixActive && mixState && <>
-        <p role="status">Песня {mixState.index + 1}/2 · {mixState.failed ? 'ошибка — остановите тест и экспортируйте журнал' : mixState.playing ? 'играет' : 'пауза'} · {mixState.position.toFixed(1)} / {mixState.duration.toFixed(1)} с</p>
+        <p role="status">Песня {mixState.index + 1}/{mixState.count ?? '?'} · {mixState.failed ? 'ошибка — экспортируйте журнал' : mixState.playing ? 'играет' : mixState.ended ? 'очередь закончилась' : 'пауза'} · {mixState.position.toFixed(1)} / {mixState.duration.toFixed(1)} с · пропуски звука: {mixState.underruns ?? 0}</p>
         <div className="playback-diagnostics-actions">
-          {([['previoustrack', 'Предыдущая'], ['pause', 'Пауза'], ['play', 'Play'], ['nexttrack', 'Следующая']] as const).map(([action, label]) =>
-            <button className="btn" key={action} disabled={busy || (action === 'nexttrack' && mixState.index === 1)} onClick={() => void run(async () => {
-              setMixState(await controls.mix!.command(action));
-            })}>{label}</button>)}
-          <button className="btn" disabled={busy || mixState.index !== 0 || mixState.transitionStart === undefined} onClick={() => void run(async () => {
-            setMixState(await controls.mix!.command('seekto', Math.max(0, (mixState.transitionStart ?? 0) - 8)));
+          <button className="btn" disabled={busy || mixState.transitionStart === undefined} onClick={() => void run(async () => {
+            controller.seek(Math.max(0, (mixState.transitionStart ?? 0) - 8));
           })}>За 8 с до DJ-перехода</button>
+          <button className="btn" disabled={busy} onClick={() => void run(async () => {
+            await controls!.mix!.stop(); setMixState(await controls!.mix!.state());
+          })}>Остановить нативный плеер</button>
         </div>
-        <p>Заблокируйте экран: проверьте Next/Previous, Pause/Play и перемотку. Затем сохраните JSON.
-          Основной плеер приложения остаётся на паузе; в этом режиме управляйте музыкой здесь или с экрана блокировки.</p>
       </>}
     </div>
     <div className="pref-card" style={{ padding: 14 }}>

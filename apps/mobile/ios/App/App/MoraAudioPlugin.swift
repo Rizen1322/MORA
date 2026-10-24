@@ -54,6 +54,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativeMixBegin", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixAppend", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixStart", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeMixUpdate", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixStop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixCommand", returnType: CAPPluginReturnPromise),
@@ -340,13 +341,13 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         { result in
             switch result {
             case .success(let state): call.resolve(state)
-            case .failure: call.reject("Native mix operation failed. Export diagnostics after stopping the test.")
+            case .failure: call.reject("Native playback operation failed")
             }
         }
     }
     @objc func nativeMixBegin(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
-            guard MoraPlaybackJournal.enabled, !self.nativeProbe.active else { call.reject("Stop native probe first"); return }
+            guard !self.nativeProbe.active else { call.reject("Stop native probe first"); return }
             self.nativeMix.begin(self.mixReply(call))
         }
     }
@@ -359,11 +360,16 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         guard let id = call.getString("id"), let config = call.getObject("config") else { call.reject("Invalid native mix"); return }
         nativeMix.start(id: id, config: config, completion: mixReply(call))
     }
+    @objc func nativeMixUpdate(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), let from = call.getInt("from"),
+              let tracks = call.getArray("tracks") as? [[String: Any]] else { call.reject("Invalid native queue"); return }
+        nativeMix.update(id: id, from: from, tracks: tracks, completion: mixReply(call))
+    }
     @objc func nativeMixStop(_ call: CAPPluginCall) { nativeMix.stop(mixReply(call)) }
     @objc func nativeMixState(_ call: CAPPluginCall) { call.resolve(nativeMix.snapshot) }
     @objc func nativeMixCommand(_ call: CAPPluginCall) {
         guard let action = call.getString("action") else { call.reject("Invalid command"); return }
-        nativeMix.command(action, time: call.getDouble("seekTime"), source: "test", completion: mixReply(call))
+        nativeMix.command(action, time: call.getDouble("seekTime"), source: "page", completion: mixReply(call))
     }
 }
 

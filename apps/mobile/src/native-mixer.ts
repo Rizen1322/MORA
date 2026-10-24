@@ -21,50 +21,84 @@ function decode(s: string): Float32Array {
   return new Float32Array(out.buffer);
 }
 export interface NativeMark { offset: number; index: number; position: number }
+type Track = NativeMixConfig['tracks'][number];
 
-/** App-process producer only; this is never evaluated from an audio callback. */
+/** App-process producer only; this is never evaluated from an audio callback.
+ * Track i plays on deck i % 2 with token `T${i}`; `current` is the outgoing/main track. */
 export class NativeMixerRuntime {
   private core: MixerCore;
   private needs: Extract<MixerEvent, { type: 'need' }>[] = [];
   private events: Exclude<MixerEvent, { type: 'tick' } | { type: 'need' }>[] = [];
+  private tracks: Track[];
+  private current: number;
   private advance = false;
+  private promote = false;
+  private endedLast = false;
   private done = false;
   private tail = -1;
-  constructor(private config: NativeMixConfig, private read: (index: number, chunk: number) => string) {
-    if (![44100, 48000].includes(config.sampleRate) || config.tracks.length !== 2) throw new Error('Invalid native pair');
+  constructor(private config: NativeMixConfig, private read: (file: number, chunk: number) => string) {
+    if (![44100, 48000].includes(config.sampleRate) || !config.tracks.length) throw new Error('Invalid native queue');
+    this.tracks = [...config.tracks];
     this.core = new MixerCore(config.sampleRate, event => {
       if (event.type === 'need') this.needs.push(event);
       else if (event.type !== 'tick') {
         if (event.type === 'underrun') throw new Error('Native PCM underrun');
         this.events.push(event);
-        if (event.type === 'ended') {
-          if (event.deck === 0 && this.core.main === 0) this.advance = true;
-          if (event.deck === 1 && this.core.main === 1) this.tail = Math.ceil(config.sampleRate * .1 / 128) * 128;
+        if (event.type === 'transitionEnd') this.promote = true;
+        if (event.type === 'ended' && event.deck === this.current % 2 && this.core.main === event.deck) {
+          if (this.current + 1 < this.tracks.length) this.advance = true;
+          else { this.endedLast = true; this.tail = Math.ceil(config.sampleRate * .1 / 128) * 128; }
         }
       }
     });
     // MixerCore's transition admission needs up to 3 s * 1.15 + 4096 frames.
     // requestData adds 10%; four seconds covers that gate even before chunk rounding.
     this.core.aheadSeconds = 4;
-    config.tracks.forEach((track, i) => this.core.load(i, i ? 'B' : 'A', track.totalFrames, track.gainDb,
-      i === 1 ? config.transition?.entryFrame ?? 0 : 0));
-    const index = config.index === 1 ? 1 : 0;
-    const position = Math.max(0, Math.min(config.position, config.tracks[index].totalFrames / config.sampleRate));
-    this.core.start(index, index ? 'B' : 'A', Math.round(position * config.sampleRate));
+    const index = Math.max(0, Math.min(this.tracks.length - 1, config.index ?? 0));
+    this.current = index;
+    const position = Math.max(0, Math.min(config.position, this.tracks[index].totalFrames / config.sampleRate));
+    this.loadTrack(index, 0);
+    this.core.start(index % 2, `T${index}`, Math.round(position * config.sampleRate));
     if (config.tone) this.core.setTone(config.tone, config.preDb);
-    const plan = config.transition;
-    if (index === 0 && plan && position * config.sampleRate < plan.triggerFrame) {
-      if (plan.vocalA || plan.vocalB || plan.voiceEchoDelayFrames) throw new Error('Native pair requires full-mix plan');
-      this.core.arm({ ...plan, fromToken: 'A', toToken: 'B' });
-    }
+    this.loadNext();
     this.supply();
+  }
+  private loadTrack(i: number, cue: number) {
+    const t = this.tracks[i];
+    this.core.load(i % 2, `T${i}`, t.totalFrames, t.gainDb, cue);
+  }
+  /** Loads the track after `current` on the free deck and arms its transition when still ahead. */
+  private loadNext() {
+    this.core.disarm('queue');
+    const n = this.current + 1, next = this.tracks[n];
+    if (!next) { this.core.unload(n % 2); return; }
+    const plan = next.transition;
+    this.loadTrack(n, plan?.entryFrame ?? 0);
+    // Stem plans need vocal PCM the native store does not hold: play those gaplessly.
+    if (plan && !plan.vocalA && !plan.vocalB && !plan.voiceEchoDelayFrames
+      && this.core.decks[this.current % 2].position() < plan.triggerFrame) {
+      this.core.arm({ ...plan, fromToken: `T${this.current}`, toToken: `T${n}` });
+    }
+  }
+  /** Replaces tracks from `from`; false while that track is already audible or blending in. */
+  update(from: number, tracks: Track[]): boolean {
+    const blending = this.core.isTransitionActive() || this.promote || this.core.main !== this.current % 2;
+    if (this.done || from <= this.current || (from === this.current + 1 && blending)) return false;
+    this.tracks.splice(from, Infinity, ...tracks);
+    if (from === this.current + 1) {
+      this.loadNext();
+      if (this.endedLast && this.tracks[from]) { this.endedLast = false; this.tail = -1; this.advance = true; }
+    }
+    return true;
   }
   private supply() {
     for (const need of this.needs.splice(0)) {
       if (need.part === 'vocals') throw new Error('Native stems are not prepared');
+      const i = Number(need.token.slice(1)), track = this.tracks[i];
+      if (!track || need.deck !== i % 2) continue;
       for (const chunk of need.chunks) {
-        const input = decode(this.read(need.deck, chunk));
-        const expected = Math.min(CHUNK_FRAMES, this.config.tracks[need.deck].totalFrames - chunk * CHUNK_FRAMES);
+        const input = decode(this.read(track.file ?? i, chunk));
+        const expected = Math.min(CHUNK_FRAMES, track.totalFrames - chunk * CHUNK_FRAMES);
         if (input.length !== expected * 2) throw new Error('Short native PCM');
         const left = new Float32Array(expected), right = new Float32Array(expected);
         for (let i = 0; i < expected; i++) {
@@ -78,11 +112,18 @@ export class NativeMixerRuntime {
   render() {
     const left = new Float32Array(4096), right = new Float32Array(4096);
     const marks: NativeMark[] = [];
-    const mark = (offset: number) => marks.push({ offset, index: this.core.main,
-      position: this.core.decks[this.core.main].position() / this.config.sampleRate });
+    const mark = (offset: number) => {
+      const main = this.core.main;
+      marks.push({ offset, index: main === this.current % 2 ? this.current : this.current + 1,
+        position: this.core.decks[main].position() / this.config.sampleRate });
+    };
     let length = 0;
     while (length < left.length && !this.done) {
-      if (this.advance) { this.advance = false; this.core.start(1, 'B', 0); }
+      if (this.advance) {
+        this.advance = false; this.current++;
+        this.core.start(this.current % 2, `T${this.current}`, 0); this.loadNext();
+      }
+      if (this.promote) { this.promote = false; this.current++; this.loadNext(); }
       this.supply(); mark(length);
       this.core.process(left.subarray(length, length + 128), right.subarray(length, length + 128), 128);
       for (let i = length; i < length + 128; i++) {
@@ -97,5 +138,5 @@ export class NativeMixerRuntime {
   }
 }
 
-declare const moraReadPcm: (index: number, chunk: number) => string;
+declare const moraReadPcm: (file: number, chunk: number) => string;
 export function create(config: NativeMixConfig) { return new NativeMixerRuntime(config, moraReadPcm); }
