@@ -5,7 +5,7 @@ import fastifyStatic from '@fastify/static';
 import { AnalysisService } from './analysis.ts';
 import { AutoMixService, getSettings } from './automix.ts';
 import { ensureDirs, loadConfig, type AppConfig } from './config.ts';
-import { openDb, type Db } from './db.ts';
+import { kvGet, kvSet, openDb, type Db } from './db.ts';
 import { EventHub } from './events.ts';
 import { FfmpegTools } from './ffmpeg.ts';
 import { Library } from './library.ts';
@@ -89,6 +89,12 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
   lib.onTrackAdded = (t) => {analysis.ensure(t, 5);yandexReactions.attachTrack(t.id);};
   const automix = new AutoMixService(db, lib, analysis);
   const wave = new WaveService(db, lib, analysis);
+  // Without a vocal model the switch has nothing to prepare; "off" would only disable phrasing, loops
+  // and master tempo, which work without stems, and the switch is hidden then.
+  if (!cfg.stemsPython) {
+    const now = kvGet<{ automix?: Record<string, unknown> }>(db, 'settings', {});
+    if (now.automix?.stemMixing === false) kvSet(db, 'settings', { ...now, automix: { ...now.automix, stemMixing: true } });
+  }
   const services: Services = { cfg, db, events, ff, lib, pcm, analysis, automix, wave, providers, stems, ffmpegVersion, yandexReactions, publicMusic, downloads, imports, yandexLikesImport };
 
   const app = Fastify({

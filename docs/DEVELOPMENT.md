@@ -5,13 +5,11 @@
 - Windows x64 для упаковки и проверки релиза.
 - Node.js ≥ 22.13; CI использует Node.js 24.
 - FFmpeg/ffprobe для анализа и аудиотестов.
-- Python 3.12 на машине сборки для создания автономного CPU-комплекта. Готовое приложение использует включённый runtime.
 
 ```powershell
 npm ci
 node apps/desktop/scripts/fetch-ffmpeg.mjs
 node apps/desktop/scripts/fetch-ytdlp.mjs
-node apps/desktop/scripts/fetch-vocals.mjs --python C:/Python312/python.exe
 ```
 
 Скрипты загрузки фиксируют версии и проверяют контрольные суммы. Vendor-файлы сохраняются локально в `apps/desktop/vendor/`, не в Git.

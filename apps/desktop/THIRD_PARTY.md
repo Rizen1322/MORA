@@ -12,9 +12,7 @@
 
 FFmpeg вызывается как отдельный процесс и подключает свои DLL динамически; его можно заменить своей сборкой той же версии API, положив файлы в `resources/ffmpeg`.
 
-Начиная с 0.3.0 входит автономный CPU-комплект: CPython 3.12.10 (PSF License), PyTorch/Torchaudio 2.7.1 (BSD), NumPy 2.2.6 (BSD) и HDEMUCS_HIGH_MUSDB_PLUS из официального выпуска Torchaudio. Лицензия Python находится в `resources/vocal/LICENSE.txt`, тексты лицензий зависимостей — в `resources/vocal/Lib/site-packages/*dist-info`. Версии и SHA-256 модели/интерпретатора находятся в `resources/vocal/pack.json`. Зависимости модели и NOTICE сохранены в комплекте. Веса получены с https://download.pytorch.org/torchaudio/models/hdemucs_high_trained.pt; архитектура Demucs — https://github.com/facebookresearch/demucs (MIT).
-
-MelBand-RoFormer, Whisper, CUDA-runtime и модели распознавания речи в этот CPU-комплект не входят. Их можно использовать отдельно через внешний Python; обычная подготовка вокала от них не зависит.
+С 0.3.17 вокальная модель (Python, PyTorch, Demucs) в сборку не входит: AutoMix планирует переходы по полному миксу.
 
 ## Онлайн-сервисы без аккаунта
 

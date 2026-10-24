@@ -51,7 +51,6 @@ export interface AppConfig {
 export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   const env = process.env;
   const dataDir = path.resolve(ROOT, env.AUTOMIX_DATA_DIR ?? 'data');
-  const bundled = bundledVocals(ROOT);
   return {
     dataDir,
     host: env.HOST ?? '127.0.0.1',
@@ -65,8 +64,9 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     audiusApiKey: env.AUDIUS_API_KEY || null,
     ffmpeg: env.FFMPEG_PATH || 'ffmpeg',
     ffprobe: env.FFPROBE_PATH || 'ffprobe',
-    stemsPython: env.STEMS_PYTHON || bundled?.python || null,
-    stemsModels: env.STEMS_PYTHON ? null : bundled?.models || null,
+    // Vocal separation only with an explicitly configured Python (development); apps ship no model.
+    stemsPython: env.STEMS_PYTHON || null,
+    stemsModels: null,
     publicProxies: { youtube: env.AUTOMIX_YOUTUBE_PROXY, soundcloud: env.AUTOMIX_SOUNDCLOUD_PROXY },
     ytdlp: env.YTDLP_PATH ?? defaultYtDlp(),
     // This process's own runtime solves yt-dlp's JS challenges: Node in the browser
@@ -77,17 +77,6 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   };
 }
 
-/** Missing/incomplete optional resources must never claim a working vocal model. */
-export function bundledVocals(root: string): { python: string; models: string } | null {
-  const pack = path.join(root, 'vocal');
-  try {
-    const manifest = JSON.parse(fs.readFileSync(path.join(pack, 'pack.json'), 'utf8'));
-    const python = path.join(pack, 'python.exe'), models = path.join(pack, 'models');
-    if (manifest.version !== 'mora-vocal-cpu-1' || !fs.statSync(python).isFile()
-      || fs.statSync(path.join(models, 'hub/torchaudio/models/hdemucs_high_trained.pt')).size !== 334697255) return null;
-    return { python, models };
-  } catch { return null; }
-}
 
 function defaultYtDlp(): string {
   const vendored = path.join(ROOT, 'apps', 'desktop', 'vendor', 'yt-dlp', process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');

@@ -220,6 +220,8 @@ export function SettingsPage() {
   const player = useApp((st) => st.player);
   const [health, setHealth] = useState<Awaited<ReturnType<typeof api.health>> | null>(null);
   const [healthOffline, setHealthOffline] = useState(false);
+  // Vocal separation needs a configured local model; the iPhone and desktop apps ship none.
+  const vocalModel = !mobileApp && !!health?.stems?.available;
   const [confirm, setConfirm] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -301,7 +303,7 @@ export function SettingsPage() {
           <Row title="Обмен басом" desc="Бас двух треков не звучит одновременно, середина приглушается при конфликте мелодий.">
             <Switch checked={a.eqHandoff} disabled={off} onChange={(v) => set({ eqHandoff: v })} label="Обмен басом и EQ" />
           </Row>
-          {!mobileApp && <Row title="Передача вокала" desc="Вокал меняется отдельно от инструментала. Партии готовятся заранее на этом компьютере.">
+          {vocalModel && <Row title="Передача вокала" desc="Вокал меняется отдельно от инструментала. Партии готовятся заранее на этом компьютере.">
             <Switch checked={a.stemMixing ?? true} disabled={off} onChange={(v) => set({ stemMixing: v })} label="DJ-передача вокала" />
           </Row>}
           <Row title="DJ-подводки" desc="Фильтр, передача баса на сильной доле и короткое эхо — только там, где не режут вокальную фразу.">
@@ -313,7 +315,7 @@ export function SettingsPage() {
           <Row title="Инструментальные петли" desc="Затухающий финал поддерживается повтором подходящего такта без вокала.">
             <Switch checked={a.loopBridges ?? true} disabled={off || !a.eqHandoff || a.stemMixing === false} onChange={(v) => set({ loopBridges: v })} label="Инструментальные петли" />
           </Row>
-          {!mobileApp && (a.stemMixing ?? true) && <VocalPreparation stems={health?.stems} offline={healthOffline} loading={!health} onChange={() => void api.health().then(setHealth, () => {})} />}
+          {vocalModel && (a.stemMixing ?? true) && <VocalPreparation stems={health?.stems} offline={healthOffline} loading={!health} onChange={() => void api.health().then(setHealth, () => {})} />}
         </Group>
 
         <Group title="Оформление">

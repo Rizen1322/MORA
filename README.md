@@ -6,13 +6,12 @@
 
 С 0.3.14 доступно обновление через GitHub Releases: автоматическая проверка, загрузка по кнопке и установка после подтверждения перезапуска. С 0.3.13 первый переход выполняется вручную. [Поведение и выпуск обновлений](docs/desktop-auto-update.md).
 
-Отдельное приложение без терминала, системных Node/Python/FFmpeg: установщик `apps/desktop/dist/MORA-Setup-0.3.8.exe` или папка `apps/desktop/dist/win-unpacked` (запуск `MORA.exe`). CPU-модель для подготовки вокала включена в установщик. Сборка:
+Отдельное приложение без терминала, системных Node/Python/FFmpeg: установщик `apps/desktop/dist/MORA-Setup-0.3.8.exe` или папка `apps/desktop/dist/win-unpacked` (запуск `MORA.exe`). С 0.3.17 вокальной модели в установщике нет: переходы строятся по полному миксу. Сборка:
 
 ```bash
 npm install
 node apps/desktop/scripts/fetch-ffmpeg.mjs
 node apps/desktop/scripts/fetch-ytdlp.mjs
-node apps/desktop/scripts/fetch-vocals.mjs --python <путь-к-Python-3.12-на-машине-сборки>
 npm run desktop:package
 ```
 
