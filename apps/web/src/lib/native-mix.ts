@@ -4,7 +4,8 @@ import type { NativeProbeState } from './playback-trace.ts';
 
 export interface NativeMixConfig {
   sampleRate: number;
-  tracks: { title: string; artist: string; totalFrames: number; gainDb: number }[];
+  tracks: { title: string; artist: string; totalFrames: number; gainDb: number;
+    coverUrl?: string; artwork?: { base64: string; mime: string } }[];
   transition?: ArmedTransition;
   tone?: ToneSettings;
   preDb?: number;
@@ -20,9 +21,10 @@ export interface NativeMixState extends NativeProbeState {
   maxRenderMs?: number;
   failed?: boolean;
   transitionStart?: number;
+  artworkReady?: boolean;
 }
 export interface NativeMix {
-  start(prepare: (put: (index: number, offset: number, bytes: ArrayBuffer) => Promise<void>) => Promise<NativeMixConfig>): Promise<NativeMixState>;
+  start(prepare: (put: (index: number, offset: number, bytes: ArrayBuffer) => Promise<void>) => Promise<NativeMixConfig>, signal?: AbortSignal): Promise<NativeMixState>;
   stop(): Promise<void>;
   state(): Promise<NativeMixState>;
   command(action: MediaSessionAction, seekTime?: number): Promise<NativeMixState>;

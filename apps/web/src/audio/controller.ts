@@ -295,10 +295,11 @@ export class PlayerController {
         }
         return { sampleRate: 48000, position, tracks: [a, b].map((track, i) => ({
           title: track.title, artist: track.artist, totalFrames: lengths[i],
+          coverUrl: this.track(track.id)?.coverUrl ?? track.coverUrl ?? undefined,
           gainDb: track.mixingAllowed === false ? 0 : gainFromSummary(this.track(track.id)?.analysis, this.loudnessTarget),
         })), transition: planToArmed(plan, 48000, 'A', 'B'),
         ...(this.tone ? { tone: this.tone, preDb: preampFor(this.tone, 48000) } : {}) };
-      });
+      }, abort.signal);
     } finally {
       document.removeEventListener('visibilitychange', hidden);
       if (this.nativePreparation === abort) this.nativePreparation = undefined;

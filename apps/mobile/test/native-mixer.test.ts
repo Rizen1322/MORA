@@ -17,6 +17,27 @@ function reader(index: number, chunk: number) {
   return Buffer.from(data.buffer).toString('base64');
 }
 describe('native prepared-pair mixer', () => {
+  it.each([44100, 48000])('starts a long DJ transition with native prefetch at %i Hz, including an 8-second lead-in seek', rate => {
+    const c = config();
+    c.sampleRate = rate; c.position = 4;
+    c.tracks = c.tracks.map(t => ({ ...t, totalFrames: rate * 32 }));
+    c.transition = { ...c.transition!, triggerFrame: rate * 12, entryFrame: rate * 6,
+      durationFrames: rate * 8, swapFrame: rate * 4, tempoB: [[0, 1.02], [rate * 8, 1]],
+      lanes: [
+        { deck: 'A', lane: 0, points: [[0, 1], [rate * 8, 0]] },
+        { deck: 'B', lane: 0, points: [[0, 0], [rate * 8, 1]] },
+      ] };
+    const r = new NativeMixerRuntime(c, (deck, chunk) => {
+      const frames = Math.min(32768, rate * 32 - chunk * 32768);
+      return Buffer.from(new Float32Array(frames * 2).fill(deck ? .12 : .2).buffer).toString('base64');
+    });
+    const events = [];
+    for (let i = 0; i < Math.ceil(rate * 18 / 4096); i++) events.push(...r.render().events);
+    expect(events.filter(e => e.type === 'fallback')).toEqual([]);
+    expect(events.filter(e => ['transitionStart', 'swap', 'transitionEnd'].includes(e.type)).map(e => e.type))
+      .toEqual(['transitionStart', 'swap', 'transitionEnd']);
+    expect(events.find(e => e.type === 'transitionStart')).toMatchObject({ late: false });
+  });
   it('renders the actual two-deck transition without WebKit and tags output time separately', () => {
     const r = new NativeMixerRuntime(config(), reader);
     const types: string[] = [];

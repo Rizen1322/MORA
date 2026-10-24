@@ -31,6 +31,10 @@ jobs:
         run: |
           swiftc apps/mobile/ios/App/App/NativeProbeWave.swift apps/mobile/test/native-wave/main.swift -o "$RUNNER_TEMP/mora-wave-check"
           "$RUNNER_TEMP/mora-wave-check"
+      - name: Test native artwork thumbnail decoder
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeArtworkImage.swift apps/mobile/test/native-artwork/main.swift -o "$RUNNER_TEMP/mora-artwork-check"
+          "$RUNNER_TEMP/mora-artwork-check"
       - name: Build unsigned device IPA
         run: sh apps/mobile/scripts/ios-mac.sh --ipa
       - name: Compare AutoMix DSP with native JavaScriptCore

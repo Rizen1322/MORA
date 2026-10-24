@@ -51,7 +51,7 @@ export function PlaybackDiagnostics() {
   const probeActive = !!controls?.probeActive;
   return <section className="pref-card playback-diagnostics" aria-label="Диагностика управления iOS">
     <h2>Управление на экране блокировки · диагностическая сборка</h2>
-    <p>Версия 1.0.11: нативный AutoMix для пары из вашей очереди. Журнал записывается постоянно,
+    <p>Версия 1.0.12: исправлен запуск длинных переходов, добавлены обложки нативной пары. Журнал записывается постоянно,
       метка сохраняет предыдущие события.</p>
     <div className="pref-card" style={{ padding: 14 }}>
       <h3>Нативный AutoMix · ваша музыка</h3>

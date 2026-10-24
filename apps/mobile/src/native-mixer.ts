@@ -43,7 +43,9 @@ export class NativeMixerRuntime {
         }
       }
     });
-    this.core.aheadSeconds = 2;
+    // MixerCore's transition admission needs up to 3 s * 1.15 + 4096 frames.
+    // requestData adds 10%; four seconds covers that gate even before chunk rounding.
+    this.core.aheadSeconds = 4;
     config.tracks.forEach((track, i) => this.core.load(i, i ? 'B' : 'A', track.totalFrames, track.gainDb,
       i === 1 ? config.transition?.entryFrame ?? 0 : 0));
     const index = config.index === 1 ? 1 : 0;

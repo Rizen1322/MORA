@@ -381,8 +381,9 @@ enum MoraPlaybackJournal {
         return Array(rows.suffix(1200))
     }()
     private static var write: DispatchWorkItem?
-    private static let numeric: Set<String> = ["seq", "position", "seekTime", "clock", "peak", "monotonicMs", "duration", "rate"]
-    private static let flags: Set<String> = ["paused", "starved", "hidden", "allowed", "playing", "intentPlaying", "webAudioSession", "seekable", "node", "probeActive"]
+    private static let numeric: Set<String> = ["seq", "position", "seekTime", "clock", "peak", "monotonicMs", "duration", "rate",
+        "renderedFrames", "queuedFrames", "presentedFrames", "epoch", "maxRenderMs", "underruns"]
+    private static let flags: Set<String> = ["paused", "starved", "hidden", "allowed", "playing", "intentPlaying", "webAudioSession", "seekable", "node", "probeActive", "artworkReady", "late"]
     private static let codes: Set<String> = ["id", "action", "command", "status", "context", "source", "reason", "outcome", "route", "kind", "mediaState"]
 
     static func record(_ stage: String, _ fields: [String: Any] = [:]) {

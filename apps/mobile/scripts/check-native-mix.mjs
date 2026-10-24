@@ -24,8 +24,8 @@ try {
   await Promise.all(sources.map((bytes, i) => writeFile(join(dir, `${i}.f32le`), bytes)));
   const config = { sampleRate: sr, position: .1, tracks: [0, 1].map(i => ({ title: `fixture ${i}`, artist: '', totalFrames: count, gainDb: -1 })),
     transition: { planId: 'native-files', method: 'beatmatch_blend', fromToken: 'A', toToken: 'B', triggerFrame: sr * .35,
-      entryFrame: sr, durationFrames: sr * .4, gapFrames: 0, swapFrame: sr * .2, tempoB: [[0, 1.02], [sr * .4, 1]],
-      lanes: [{ deck: 'A', lane: 0, points: [[0, 1], [sr * .4, 0]] }, { deck: 'B', lane: 0, points: [[0, 0], [sr * .4, 1]] }] } };
+      entryFrame: sr, durationFrames: sr * 2.5, gapFrames: 0, swapFrame: sr * 1.25, tempoB: [[0, 1.02], [sr * 2.5, 1]],
+      lanes: [{ deck: 'A', lane: 0, points: [[0, 1], [sr * 2.5, 0]] }, { deck: 'B', lane: 0, points: [[0, 0], [sr * 2.5, 1]] }] } };
   const configs = [config, { ...config, index: 1, position: 2.5 }];
   await writeFile(join(dir, 'configs.json'), JSON.stringify(configs));
   await build({ entryPoints: [resolve(root, 'apps/mobile/src/native-mixer.ts')], outfile: join(dir, 'mixer.js'),
@@ -45,6 +45,7 @@ try {
     expected.push({ blocks: JSON.parse(JSON.stringify(blocks)) });
   }
   assert.ok(expected[0].blocks.flatMap(b => b.events).includes('transitionEnd'));
+  assert.ok(!expected[0].blocks.flatMap(b => b.events).includes('fallback'), 'Native transition fell back');
   if (process.argv.includes('--reference-only')) { console.log('Prepared-pair Node reference passed'); }
   else {
     assert.equal(process.platform, 'darwin', 'Requires macOS');

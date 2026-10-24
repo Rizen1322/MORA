@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import MediaPlayer
+import UIKit
 
 /// Experimental finite, fully prepared pair. All mutable engine/JSC/file state is
 /// confined to work; the audio completion only dispatches a small notification.
@@ -15,6 +16,7 @@ final class NativeMixHost {
     private var bytes = [0, 0]
     private var config: [String: Any] = [:]
     private var tracks: [[String: Any]] = []
+    private var artworks: [MPMediaItemArtwork?] = []
     private var script = ""
     private var renderer: NativeDSPRenderer?
     private var engine: AVAudioEngine?
@@ -54,7 +56,8 @@ final class NativeMixHost {
         let state: [String: Any] = ["active": folder != nil, "playing": wantsPlaying && !failed,
             "preparing": preparing, "index": index, "position": position, "duration": duration,
             "renderedFrames": rendered, "queuedFrames": queued, "presentedFrames": presented,
-            "epoch": epoch, "ownership": ownershipRevision, "underruns": underruns, "maxRenderMs": maxRenderMs, "failed": failed]
+            "epoch": epoch, "ownership": ownershipRevision, "underruns": underruns, "maxRenderMs": maxRenderMs, "failed": failed,
+            "artworkReady": artworks.indices.contains(index) && artworks[index] != nil]
         var result = state
         if let plan = config["transition"] as? [String: Any], let start = plan["triggerFrame"] as? Double { result["transitionStart"] = start / sr }
         lock.lock(); cached = result; lock.unlock()
@@ -104,7 +107,24 @@ final class NativeMixHost {
                 }
                 guard let url = Bundle.main.url(forResource: "native-mixer", withExtension: "js", subdirectory: "public") else { throw Failure.invalid }
                 self.script = try String(contentsOf: url, encoding: .utf8)
-                self.config = config; self.tracks = tracks
+                self.artworks = tracks.map { track in
+                    guard let artwork = track["artwork"] as? [String: Any], let base64 = artwork["base64"] as? String,
+                          let image = NativeArtworkImage.decode(base64) else { return nil }
+                    let thumbnail = UIImage(cgImage: image)
+                    return MPMediaItemArtwork(boundsSize: thumbnail.size) { requested in
+                        let size = CGSize(width: max(1, min(thumbnail.size.width, requested.width.isFinite ? requested.width : 512)),
+                                          height: max(1, min(thumbnail.size.height, requested.height.isFinite ? requested.height : 512)))
+                        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+                        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                            thumbnail.draw(in: CGRect(origin: .zero, size: size))
+                        }
+                    }
+                }
+                // Keep encoded images/URLs out of the DSP context, including on seek/skip.
+                let metadata = tracks.map { track -> [String: Any] in
+                    var copy = track; copy.removeValue(forKey: "artwork"); copy.removeValue(forKey: "coverUrl"); return copy
+                }
+                self.config = config; self.config["tracks"] = metadata; self.tracks = metadata
                 let session = AVAudioSession.sharedInstance()
                 try session.setCategory(.playback, mode: .default, options: [])
                 try session.setActive(true); self.ownsSession = true
@@ -140,7 +160,8 @@ final class NativeMixHost {
             let block = try autoreleasepool { try renderer.render() }
             maxRenderMs = max(maxRenderMs, (ProcessInfo.processInfo.systemUptime - began) * 1000)
             for event in block.events {
-                MoraPlaybackJournal.record("native.mix.renderEvent", ["reason": event["type"] as? String ?? "unknown", "clock": rendered])
+                MoraPlaybackJournal.record("native.mix.renderEvent", ["kind": event["type"] as? String ?? "unknown",
+                    "reason": event["reason"] as? String ?? "none", "late": event["late"] as? Bool ?? false, "clock": rendered])
             }
             done = block.done
             guard block.frames > 0 else { break }
@@ -195,19 +216,22 @@ final class NativeMixHost {
         let state = snapshot, generation = epoch
         let title = tracks.indices.contains(index) ? tracks[index]["title"] as? String ?? "MORA" : "MORA"
         let artist = tracks.indices.contains(index) ? tracks[index]["artist"] as? String ?? "" : ""
-        let info: [String: Any] = [MPMediaItemPropertyTitle: title, MPMediaItemPropertyArtist: artist,
+        var info: [String: Any] = [MPMediaItemPropertyTitle: title, MPMediaItemPropertyArtist: artist,
             MPMediaItemPropertyPersistentID: NSNumber(value: index + 1), MPMediaItemPropertyPlaybackDuration: state["duration"] ?? 0,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: position, MPNowPlayingInfoPropertyPlaybackRate: wantsPlaying ? 1.0 : 0.0,
             MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0, MPNowPlayingInfoPropertyIsLiveStream: false,
             MPNowPlayingInfoPropertyPlaybackQueueIndex: index, MPNowPlayingInfoPropertyPlaybackQueueCount: 2]
+        if artworks.indices.contains(index), let artwork = artworks[index] { info[MPMediaItemPropertyArtwork] = artwork }
+        let publishedInfo = info
         DispatchQueue.main.async { [weak self] in
             guard let self, self.active, self.snapshot["epoch"] as? Int == generation else { return }
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = publishedInfo
             MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = (state["index"] as? Int ?? 0) < 1
         }
         MoraPlaybackJournal.record("native.mix.state", ["reason": reason, "seq": index, "position": position,
             "playing": wantsPlaying, "renderedFrames": rendered, "queuedFrames": queued, "presentedFrames": presented,
-            "epoch": epoch, "maxRenderMs": maxRenderMs, "underruns": underruns])
+            "epoch": epoch, "maxRenderMs": maxRenderMs, "underruns": underruns,
+            "artworkReady": artworks.indices.contains(index) && artworks[index] != nil])
     }
     private func fail() {
         wantsPlaying = false; failed = true; epoch += 1
@@ -297,7 +321,7 @@ final class NativeMixHost {
                 // folder is created only under our private cache with a native-generated UUID.
                 if let folder = self.folder { try? FileManager.default.removeItem(at: folder) }
                 self.folder = nil; self.preparing = false; self.engine = nil; self.player = nil
-                self.marks.removeAll(); self.save()
+                self.marks.removeAll(); self.artworks.removeAll(); self.save()
                 DispatchQueue.main.async {
                     for (command, target) in self.targets { command.isEnabled = false; command.removeTarget(target) }
                     self.targets.removeAll(); MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
