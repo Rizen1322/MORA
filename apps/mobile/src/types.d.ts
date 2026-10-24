@@ -95,3 +95,6 @@ declare module 'mora-server/db' {
   export function kvGet<T>(db: unknown, key: string, fallback: T): T;
   export function kvSet(db: unknown, key: string, value: unknown): void;
 }
+declare module 'mora-server/native-sources' {
+  export function registerNativeSources(app: unknown, services: unknown): void;
+}

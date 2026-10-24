@@ -45,6 +45,12 @@ final class NativeMixHost {
     private var lastLogFrame: Int64 = -1
     private var prunedIndex = -1
     private var newestKey = -1
+    private var preparation: NativeQueuePreparation?
+    private var sourceBytes: [Int: Int] = [:]
+    private var pendingUploads: Set<Int> = []
+    private var preparedFileKey = 500000
+    private var sourceKey = 0
+    private var continueWhenPrepared = false
     // Main queue only. Do not remove WebKit's or the baseline probe's targets.
     private var targets: [(MPRemoteCommand, Any)] = []
     private enum Failure: Error { case invalid, playback }
@@ -63,8 +69,10 @@ final class NativeMixHost {
             "renderedFrames": rendered, "queuedFrames": queued, "presentedFrames": presented,
             "epoch": epoch, "ownership": ownershipRevision, "underruns": underruns, "maxRenderMs": maxRenderMs, "failed": failed,
             "artworkReady": artworks.indices.contains(index) && artworks[index] != nil, "count": tracks.count, "ended": ended,
+            "waitingForPreparation": continueWhenPrepared && ended,
             "entryId": tracks.indices.contains(index) ? tracks[index]["entryId"] as? String ?? "" : ""]
         var result = state
+        if let preparation { result["preparation"] = preparation.snapshot }
         if tracks.indices.contains(index + 1), let plan = tracks[index + 1]["transition"] as? [String: Any],
            let start = plan["triggerFrame"] as? Double { result["transitionStart"] = start / sr }
         lock.lock(); cached = result; lock.unlock()
@@ -78,7 +86,8 @@ final class NativeMixHost {
                 self.id = UUID().uuidString
                 let folder = root.appendingPathComponent(self.id, isDirectory: true)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                self.folder = folder; self.bytes = [:]; self.preparing = true; self.failed = false
+                self.folder = folder; self.bytes = [:]; self.sourceBytes = [:]; self.pendingUploads = []; self.preparedFileKey = 500000; self.sourceKey = 0
+                self.preparing = true; self.failed = false
                 self.ownershipRevision += 1
                 self.epoch += 1; self.save()
                 self.reply(completion, .success(["id": self.id]))
@@ -92,7 +101,10 @@ final class NativeMixHost {
                       base64.count <= 400000, let data = Data(base64Encoded: base64), !data.isEmpty,
                       data.count <= 32768 * 8, data.count % 8 == 0,
                       self.bytes.values.reduce(0, +) + data.count <= 768 * 1024 * 1024, let url = self.file(track) else { throw Failure.invalid }
-                if offset == 0 { guard FileManager.default.createFile(atPath: url.path, contents: nil) else { throw Failure.invalid } }
+                if offset == 0 {
+                    guard FileManager.default.createFile(atPath: url.path, contents: nil) else { throw Failure.invalid }
+                    self.pendingUploads.insert(track)
+                }
                 let file = try FileHandle(forWritingTo: url)
                 defer { try? file.close() }
                 try file.seekToEnd(); try file.write(contentsOf: data)
@@ -130,7 +142,7 @@ final class NativeMixHost {
         let keys = tracks.enumerated().map { Self.key($0.element, $0.offset) }
         newestKey = max(newestKey, keys.max() ?? -1)
         let used = Set(keys.enumerated().filter { $0.offset >= index - 1 }.map { $0.element })
-        for key in bytes.keys where !used.contains(key) && key <= newestKey {
+        for key in bytes.keys where !used.contains(key) && !pendingUploads.contains(key) {
             if let url = file(key) { try? FileManager.default.removeItem(at: url) }
             bytes.removeValue(forKey: key)
         }
@@ -144,8 +156,14 @@ final class NativeMixHost {
                 let start = config["index"] as? Int ?? 0
                 guard raw.indices.contains(start), self.engine == nil || sr == self.sr else { throw Failure.invalid }
                 let metadata = try self.validated(raw, from: 0)
+                self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false
+                if let folder = self.folder {
+                    for key in self.sourceBytes.keys { try? FileManager.default.removeItem(at: folder.appendingPathComponent("source-\(key).media")) }
+                    self.sourceBytes.removeAll()
+                }
                 self.artworks = raw.map { self.artwork($0) }
                 self.config = config; self.config["tracks"] = metadata; self.tracks = metadata
+                for (i, track) in metadata.enumerated() { self.pendingUploads.remove(Self.key(track, i)) }
                 if self.engine == nil {
                     let session = AVAudioSession.sharedInstance()
                     try session.setCategory(.playback, mode: .default, options: [])
@@ -168,6 +186,127 @@ final class NativeMixHost {
             }
         }
     }
+    func sourceAppend(id: String, key: Int, offset: Int, base64: String, completion: @escaping Reply) {
+        work.async {
+            do {
+                guard id == self.id, let folder = self.folder, (0..<1_000_000).contains(key),
+                      offset == self.sourceBytes[key, default: 0], base64.count <= 400000,
+                      let data = Data(base64Encoded: base64), !data.isEmpty, data.count <= 262144,
+                      offset + data.count <= 128 * 1024 * 1024,
+                      self.sourceBytes.values.reduce(0, +) + data.count <= 512 * 1024 * 1024 else { throw Failure.invalid }
+                let url = folder.appendingPathComponent("source-\(key).media")
+                if offset == 0 { guard FileManager.default.createFile(atPath: url.path, contents: nil) else { throw Failure.invalid } }
+                let file = try FileHandle(forWritingTo: url); defer { try? file.close() }
+                try file.seekToEnd(); try file.write(contentsOf: data); self.sourceBytes[key, default: 0] += data.count
+                self.reply(completion, .success([:]))
+            } catch { self.reply(completion, .failure(error)) }
+        }
+    }
+    func reserveSources(id: String, count: Int, completion: @escaping Reply) {
+        work.async {
+            guard id == self.id, self.folder != nil, count >= 0, count <= 1000, self.sourceKey + count < 500000 else { self.reply(completion, .failure(Failure.invalid)); return }
+            let first = self.sourceKey; self.sourceKey += count
+            self.reply(completion, .success(["keys": (first..<self.sourceKey).map { $0 }]))
+        }
+    }
+    /// Replaces the known future queue, then native playback callbacks release preparation permits.
+    func prepareQueue(id: String, manifest: [String: Any], completion: @escaping Reply) {
+        work.async {
+            do {
+                guard id == self.id, let folder = self.folder, self.engine != nil, !self.failed,
+                      let requestedFrom = manifest["from"] as? Int, requestedFrom > 0,
+                      let items = manifest["items"] as? [[String: Any]], items.count <= 1000,
+                      manifest["previous"] is [String: Any], manifest["settings"] is [String: Any],
+                      let scriptURL = Bundle.main.url(forResource: "native-preparation", withExtension: "js", subdirectory: "public") else { throw Failure.invalid }
+                let script = try String(contentsOf: scriptURL, encoding: .utf8)
+                for item in items {
+                    guard let key = item["file"] as? Int, (0..<1_000_000).contains(key), item["source"] is [String: Any] else { throw Failure.invalid }
+                }
+                var configuration = manifest, future = items
+                var previous = manifest["previous"] as! [String: Any]
+                // Address resolution can outlive a blend. Rebase on the track actually heard now.
+                if requestedFrom <= self.index {
+                    let current = self.tracks[self.index]["entryId"] as? String
+                    guard let consumed = future.firstIndex(where: { ($0["entryId"] as? String) == current }) else { throw Failure.invalid }
+                    previous = future[consumed]; future.removeFirst(consumed + 1)
+                }
+                var from = self.index + 1
+                while !future.isEmpty, self.tracks.indices.contains(from),
+                      future[0]["entryId"] as? String == self.tracks[from]["entryId"] as? String {
+                    previous = future.removeFirst(); from += 1
+                }
+                configuration["from"] = from; configuration["items"] = future; configuration["previous"] = previous
+                if !self.done, let renderer = self.renderer, !(try renderer.update(from: from, tracks: [])) { throw Failure.invalid }
+                self.preparation?.cancel()
+                let referenced = Set((items + (manifest["loopItems"] as? [[String: Any]] ?? [])).compactMap { item -> Int? in
+                    guard let source = item["source"] as? [String: Any], source["kind"] as? String == "local" else { return nil }
+                    return source["file"] as? Int
+                })
+                // A replacement owns these source leases; obsolete uploads stop counting
+                // against the budget. Repeat/duplicate references keep their shared file.
+                for key in self.sourceBytes.keys where !referenced.contains(key) {
+                    try? FileManager.default.removeItem(at: folder.appendingPathComponent("source-\(key).media")); self.sourceBytes.removeValue(forKey: key)
+                }
+                self.tracks = Array(self.tracks.prefix(from)); self.artworks = Array(self.artworks.prefix(from)); self.config["tracks"] = self.tracks
+                if future.isEmpty && (manifest["loopItems"] as? [[String: Any]] ?? []).isEmpty {
+                    self.preparation = nil; self.continueWhenPrepared = false; self.prune(); self.publish("handoff"); self.reply(completion, .success(self.viewState())); return
+                }
+                let job = NativeQueuePreparation(index: self.index); self.preparation = job
+                let seed = self.tracks[from - 1]
+                self.prune(); self.publish("handoff")
+                MoraPlaybackJournal.record("native.preparation.handoff", ["from": from, "count": items.count])
+                Task.detached(priority: .utility) { [weak self] in
+                    await job.run(folder: folder, manifest: configuration, seed: seed, script: script, allocate: { [weak self] in
+                        guard let self else { return nil }
+                        return await withCheckedContinuation { continuation in
+                            self.work.async {
+                                guard self.preparation === job, !job.ticket.cancelled, self.preparedFileKey < 999999 else { continuation.resume(returning: nil); return }
+                                self.preparedFileKey += 1; continuation.resume(returning: self.preparedFileKey)
+                            }
+                        }
+                    }, accept: { [weak self] at, track in
+                        guard let self else { return false }
+                        return await withCheckedContinuation { continuation in
+                            self.work.async {
+                                guard self.preparation === job, !job.ticket.cancelled, at == self.tracks.count else { continuation.resume(returning: false); return }
+                                let key = Self.key(track, at)
+                                do {
+                                    guard let frames = track["totalFrames"] as? Int, let url = self.file(key),
+                                          (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) == frames * 8,
+                                          self.bytes.values.reduce(0, +) + frames * 8 <= 768 * 1024 * 1024 else { throw Failure.invalid }
+                                    self.bytes[key] = frames * 8
+                                    let added = try self.validated([track], from: at)
+                                    if !self.done, let renderer = self.renderer, !(try renderer.update(from: at, tracks: added)) { throw Failure.invalid }
+                                    self.tracks += added; self.config["tracks"] = self.tracks; self.artworks.append(self.artwork(track))
+                                    if self.done && self.ended && self.continueWhenPrepared { try self.select(index: at, position: 0, playing: true) }
+                                    else { self.publish("prepared") }
+                                    self.prune(); continuation.resume(returning: true)
+                                } catch {
+                                    self.bytes.removeValue(forKey: key)
+                                    MoraPlaybackJournal.record("native.preparation.failed", ["reason": "commit"])
+                                    continuation.resume(returning: false)
+                                }
+                            }
+                        }
+                    }, event: { [weak self] kind, reason in
+                        self?.work.async { [weak self] in
+                            guard let self, self.preparation === job else { return }
+                            self.save(); MoraPlaybackJournal.record("native.preparation.\(kind)", ["reason": reason])
+                        }
+                    })
+                }
+                self.reply(completion, .success(self.viewState()))
+            } catch { self.reply(completion, .failure(error)) }
+        }
+    }
+    private func viewState() -> [String: Any] {
+        var result = snapshot
+        if let preparation { result["preparation"] = preparation.snapshot }
+        if tracks.indices.contains(index) { result["currentTrack"] = tracks[index] }
+        if tracks.indices.contains(index + 1) { result["nextTrack"] = tracks[index + 1] }
+        return result
+    }
+    func state(_ completion: @escaping Reply) { work.async { self.reply(completion, .success(self.viewState())) } }
     func update(id: String, from: Int, tracks raw: [[String: Any]], completion: @escaping Reply) {
         work.async {
             do {
@@ -180,6 +319,7 @@ final class NativeMixHost {
                     guard try renderer.update(from: from, tracks: added) else { throw Failure.invalid }
                 }
                 self.tracks = next; self.config["tracks"] = next
+                for (i, track) in added.enumerated() { self.pendingUploads.remove(Self.key(track, from + i)) }
                 self.artworks = Array(self.artworks.prefix(from)) + raw.map { self.artwork($0) }
                 self.prune()
                 MoraPlaybackJournal.record("native.mix.update", ["from": from, "count": next.count])
@@ -252,6 +392,9 @@ final class NativeMixHost {
             if done && pending == 0 {
                 // The page appended a track after the renderer finished: continue without a blend.
                 if tracks.indices.contains(index + 1) { do { try select(index: index + 1, position: 0, playing: true) } catch { fail() }; return }
+                let preparationState = preparation?.snapshot
+                continueWhenPrepared = (preparationState?["remaining"] as? Int ?? 0) > 0
+                    && !["failed", "cancelled", "complete"].contains(preparationState?["state"] as? String ?? "complete")
                 wantsPlaying = false; ended = true; player?.pause(); engine?.pause(); publish("ended"); return
             }
         }
@@ -280,6 +423,7 @@ final class NativeMixHost {
     }
     private func publish(_ reason: String) {
         updatePosition(); save()
+        preparation?.gate.advance(index)
         if index != prunedIndex { prune() }
         let state = snapshot, generation = epoch
         let title = tracks.indices.contains(index) ? tracks[index]["title"] as? String ?? "MORA" : "MORA"
@@ -302,6 +446,7 @@ final class NativeMixHost {
             "artworkReady": artworks.indices.contains(index) && artworks[index] != nil])
     }
     private func fail() {
+        preparation?.cancel(); preparation = nil; continueWhenPrepared = false
         wantsPlaying = false; failed = true; epoch += 1
         player?.stop(); engine?.pause(); renderer = nil
         save(); MoraPlaybackJournal.record("native.mix.failed")
@@ -324,13 +469,19 @@ final class NativeMixHost {
                 self.updatePosition()
                 if source != "interruption" { self.resumeAfterInterruption = false }
                 switch action {
-                case "pause": self.wantsPlaying = false; self.player?.pause(); self.engine?.pause()
+                case "pause": self.continueWhenPrepared = false; self.wantsPlaying = false; self.player?.pause(); self.engine?.pause()
                 case "play", "toggle":
                     if action == "toggle" && self.wantsPlaying {
+                        self.continueWhenPrepared = false
                         self.wantsPlaying = false; self.player?.pause(); self.engine?.pause()
                     } else {
                         try AVAudioSession.sharedInstance().setActive(true)
-                        if self.done && self.pending == 0 { try self.select(index: self.index, position: 0, playing: true) }
+                        if self.done && self.pending == 0 {
+                            if self.tracks.indices.contains(self.index + 1) { try self.select(index: self.index + 1, position: 0, playing: true) }
+                            else if (self.preparation?.snapshot["remaining"] as? Int ?? 0) > 0 {
+                                self.continueWhenPrepared = true; self.wantsPlaying = false
+                            } else { try self.select(index: self.index, position: 0, playing: true) }
+                        }
                         else { self.wantsPlaying = true; try self.fill(); try self.engine?.start(); self.player?.play() }
                     }
                 case "nexttrack":
@@ -381,6 +532,7 @@ final class NativeMixHost {
     }
     func stop(_ completion: @escaping Reply) {
         work.async {
+            self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false
             guard self.folder != nil || self.ownsSession else { self.reply(completion, .success(self.snapshot)); return }
             self.epoch += 1; self.wantsPlaying = false; self.resumeAfterInterruption = false
             self.player?.stop(); self.engine?.stop(); self.renderer = nil
@@ -403,7 +555,7 @@ final class NativeMixHost {
         let options = (notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? NSNumber)?.uintValue ?? 0
         work.async {
             if type == AVAudioSession.InterruptionType.began.rawValue {
-                self.resumeAfterInterruption = self.wantsPlaying; self.wantsPlaying = false
+                self.resumeAfterInterruption = self.wantsPlaying || self.continueWhenPrepared; self.wantsPlaying = false; self.continueWhenPrepared = false
                 self.player?.pause(); self.engine?.pause(); self.publish("interruption")
             } else if type == AVAudioSession.InterruptionType.ended.rawValue {
                 let resume = self.resumeAfterInterruption && AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume)

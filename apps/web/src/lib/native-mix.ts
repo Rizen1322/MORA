@@ -4,6 +4,8 @@ import type { PlaybackSettings } from '@automix/core/dsp/playback.ts';
 import type { NativeProbeState } from './playback-trace.ts';
 
 export interface NativeMixTrack {
+  trackId?: string;
+  plan?: import('@automix/core').TransitionPlan;
   title: string;
   artist: string;
   totalFrames: number;
@@ -28,6 +30,10 @@ export interface NativeMixConfig {
   paused?: boolean;
 }
 export interface NativeMixState extends NativeProbeState {
+  preparation?: { state: string; ready: number; remaining: number; reason?: string; failedCount?: number };
+  currentTrack?: NativeMixTrack;
+  nextTrack?: NativeMixTrack;
+  waitingForPreparation?: boolean;
   preparing?: boolean;
   renderedFrames?: number;
   queuedFrames?: number;
@@ -43,6 +49,8 @@ export interface NativeMixState extends NativeProbeState {
   ended?: boolean;
 }
 export interface NativeMix {
+  prepareQueue?(from: number, entries: { trackId: string; entryId: string }[], previousId: string,
+    loopEntries?: { trackId: string; entryId: string }[], signal?: AbortSignal): Promise<NativeMixState>;
   /** Isolates WebKit audio on first use, then appends PCM to a native file. */
   upload(file: number, offset: number, bytes: ArrayBuffer, signal?: AbortSignal): Promise<void>;
   /** (Re)starts native playback of uploaded files. */

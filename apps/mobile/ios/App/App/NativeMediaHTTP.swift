@@ -34,6 +34,7 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
         let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1; queue.qualityOfService = .utility; return queue
     }()
     private let allowLoopback: Bool
+    private let allowedHTTPHosts: Set<String>
     private var transfers: [Int: Transfer] = [:] // delegateQueue only
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -41,11 +42,14 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
         config.httpCookieStorage = nil; config.urlCache = nil; config.httpMaximumConnectionsPerHost = 3
         return URLSession(configuration: config, delegate: self, delegateQueue: delegateQueue)
     }()
-    init(allowLoopback: Bool = false) { self.allowLoopback = allowLoopback; super.init() }
+    init(allowLoopback: Bool = false, allowedHTTPHosts: Set<String> = []) {
+        self.allowLoopback = allowLoopback; self.allowedHTTPHosts = allowedHTTPHosts; super.init()
+    }
     func invalidate() { delegateQueue.addOperation { self.session.invalidateAndCancel() } }
     private func valid(_ url: URL) -> Bool {
         guard url.user == nil, url.password == nil, let host = url.host, !host.isEmpty else { return false }
-        return url.scheme == "https" || (allowLoopback && url.scheme == "http" && ["127.0.0.1", "localhost", "::1"].contains(host))
+        return url.scheme == "https" || (url.scheme == "http" && (allowedHTTPHosts.contains(host)
+            || (allowLoopback && ["127.0.0.1", "localhost", "::1"].contains(host))))
     }
     func download(_ url: URL, to destination: URL, headers: [String: String] = [:], limit: Int = 128 * 1024 * 1024,
                   ticket: NativePreparationTicket) async throws {

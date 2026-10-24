@@ -324,6 +324,12 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
   controls.probe = { ...probe, start: () => claim(() => probe.start()),
     async stop() { if (controls.mixActive) throw new Error('Остановите AutoMix'); await probe.stop(); } };
   const mix = createNativeMix(MoraAudio, {
+    async sources(entries, previousId, signal) {
+      const response = await apiFetch('/api/mobile/native-sources', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entries, previousId }), signal });
+      if (!response.ok) throw Error('Не удалось передать источники очереди. Держите приложение открытым и повторите.');
+      return response.json();
+    },
+    sourceFile: (trackId, start, signal) => apiFetch(`/api/mobile/native-file?id=${encodeURIComponent(trackId)}&start=${start}`, { signal }),
     artwork: src => artworkBase64(src, apiFetch),
     async prepare() {
       // After a page reload `ready` already isolated WebKit for the running native queue.

@@ -96,6 +96,11 @@ export class YandexProvider implements Provider {
   private token(): string | null {
     return this.store.load(this.id).secret.token || null;
   }
+  async nativeSource(src: SourceRow): Promise<import('@automix/core/native-preparation.ts').NativeMediaSource> {
+    const token = this.token();
+    if (!token) throw new Error('Подключите Яндекс Музыку');
+    return { kind: 'yandex', externalId: String(src.external_id), token, apiBase: this.base };
+  }
 
   private reactionKey(token = this.token()): string | null {
     return token ? createHash('sha256').update(token).digest('hex') : null;

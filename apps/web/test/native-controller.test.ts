@@ -34,6 +34,30 @@ beforeEach(() => {
   vi.stubGlobal('navigator', {});
 });
 afterEach(() => { timer?.(); vi.unstubAllGlobals(); });
+it('hands off the full album once and follows native progress beyond the third track without page PCM preparation', async () => {
+  const mix = { upload: vi.fn(async () => {}), start: vi.fn(async () => state()), update: vi.fn(async () => state()),
+    prepareQueue: vi.fn(async () => state()), settings: vi.fn(async () => {}), stop: vi.fn(), state: vi.fn(async () => state()), command: vi.fn(async () => state()) } satisfies NativeMix;
+  vi.stubGlobal('window', { moraNativePlayback: { route: 'webkit', mix } });
+  const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+  const tracks = new Map(ids.map(id => [id, { id, title: id, artist: '', duration: seconds, status: 'ok', analysis: {} } as Track]));
+  const controller = new PlayerController(id => tracks.get(id), vi.fn());
+  const h = controller as unknown as { nativeSyncing: Promise<void> | null; nativeTimer: ReturnType<typeof setInterval>; onNativeState(s: NativeMixState): void; saveTimer: ReturnType<typeof setTimeout> | null };
+  timer = () => { clearInterval(h.nativeTimer); if (h.saveTimer) clearTimeout(h.saveTimer); };
+  await controller.playTracks(ids, 0, { type: 'album', label: 'album' });
+  await h.nativeSyncing;
+  expect(mix.prepareQueue).toHaveBeenCalledOnce();
+  expect(mix.prepareQueue.mock.calls[0][1].map(e => e.trackId)).toEqual(ids.slice(1));
+  expect(api.prepare).toHaveBeenCalledTimes(1);
+  expect(mix.update).not.toHaveBeenCalled();
+  const entries = controller.state.queue;
+  h.onNativeState(state({ index: 4, position: 3, entryId: entries[4].entryId,
+    currentTrack: { title: 'e', artist: '', totalFrames: frames, gainDb: 0, file: 500004, entryId: entries[4].entryId } }));
+  await h.nativeSyncing;
+  expect(controller.state.index).toBe(4);
+  expect(controller.state.position).toBe(3);
+  expect(mix.prepareQueue).toHaveBeenCalledOnce();
+  expect(api.prepare).toHaveBeenCalledTimes(1);
+});
 
 it('plays the queue natively: uploads tracks with their blends ahead and follows the audible track', async () => {
   const mix = { upload: vi.fn(async () => {}), start: vi.fn(async () => state()), update: vi.fn(async () => state()), settings: vi.fn(async () => {}),

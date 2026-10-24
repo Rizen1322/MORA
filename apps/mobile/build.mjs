@@ -28,6 +28,8 @@ const common = { define: { __MORA_DEV__: String(dev) }, bundle: true, platform: 
 
 // 2. Page side.
 await esbuild({ ...common, entryPoints: [join(src, 'bridge/index.ts')], outfile: join(out, 'mora-bridge.js'), format: 'iife' });
+// Preparation is app-process work; it cannot depend on a suspended WebContent worker.
+await esbuild({ ...common, platform: 'neutral', entryPoints: [join(src, 'native-preparation-core.ts')], outfile: join(out, 'native-preparation.js'), format: 'iife', globalName: 'MoraPreparation' });
 // The native producer evaluates this in JavaScriptCore, outside WebContent.
 
 // 3. The server in a worker: Node modules → shims; ffmpeg/yt-dlp classes → in-app replacements.
@@ -47,6 +49,7 @@ const alias = {
   'orig-ytdlp': join(repo, 'apps/server/src/public/ytdlp.ts'),
   'orig-soundcloud': join(repo, 'apps/server/src/public/soundcloud.ts'),
   'mora-server/app': join(repo, 'apps/server/src/app.ts'),
+  'mora-server/native-sources': join(repo, 'apps/server/src/native-sources.ts'),
   'mora-server/db': join(repo, 'apps/server/src/db.ts'),
 };
 const serverSrc = join(repo, 'apps/server/src');

@@ -252,6 +252,7 @@ export class PlayerController {
   onSettingsChanged(target: number | null): void {
     this.previewRevision++;
     this.loudnessTarget = target;
+    if (this.native && this.nativeAt >= 0) { this.nativeManifestKey = ''; void this.nativeSync(); return; }
     if (this.state.transition?.active) {
       this.deferredLoudnessChange = true;
       return;
@@ -283,6 +284,7 @@ export class PlayerController {
   private nativeSyncAgain = false;
   private nativeTimer: ReturnType<typeof setInterval> | null = null;
   private nativePolledAt = 0;
+  private nativeManifestKey = '';
   private nativeSkip = false;
   /** Plans behind each native track's blend (page-side only, for the player UI). */
   private nativePlans = new WeakMap<NativeItem, TransitionPlan>();
@@ -353,6 +355,7 @@ export class PlayerController {
       if (revision !== this.nativeRevision) return;
       this.nativeTracks = tracks;
       this.nativeAt = tracks.length - 1;
+      this.nativeManifestKey = '';
       this.pruneNativeFiles();
       this.skipStreak = 0;
       this.maxPos = seconds;
@@ -392,6 +395,27 @@ export class PlayerController {
     const revision = this.nativeRevision, at = this.nativeAt;
     if (at < 0) return;
     if (this.isWave()) await this.topUpWave();
+    if (this.nativeMix.prepareQueue) {
+      const key = JSON.stringify([this.queueRevision, this.state.queue.map(e => e.entryId), this.state.repeat, this.state.shuffle, this.loudnessTarget]);
+      if (key === this.nativeManifestKey) return;
+      const current = this.state.queue[this.state.index];
+      if (!current) return;
+      const entries = this.state.repeat === 'one' ? [] : this.state.queue.slice(this.state.index + 1);
+      const loop = this.state.repeat === 'one' ? [current] : this.state.repeat === 'all' ? this.state.queue : [];
+      this.set({ nextPending: ['Подготовка очереди для фонового воспроизведения'] });
+      try {
+        await this.nativeMix.prepareQueue(at + 1, entries.map(e => ({ trackId: e.trackId, entryId: e.entryId })), current.trackId,
+          loop.map(e => ({ trackId: e.trackId, entryId: e.entryId })), this.nativeAbort.signal);
+        if (revision !== this.nativeRevision) return;
+        this.nativeManifestKey = key; this.set({ nextPending: [], error: null });
+        tracePlayback('native.queue.handoff', { outcome: 'accepted' });
+      } catch {
+        if (revision !== this.nativeRevision || this.nativeAbort.signal.aborted) return;
+        this.set({ error: 'Очередь ещё не передана для фонового воспроизведения. Откройте приложение и нажмите Play.', nextPending: [] });
+        tracePlayback('native.queue.handoff', { outcome: 'rejected' });
+      }
+      return;
+    }
     const wanted: QueueEntry[] = [];
     for (let i = this.state.index; wanted.length < NATIVE_AHEAD;) {
       const n = this.nextIndex(false, i);
@@ -461,11 +485,17 @@ export class PlayerController {
       if (s.failed) this.notify('Нативное воспроизведение остановилось с ошибкой. Нажмите Play, чтобы продолжить.', 'error');
       return;
     }
-    if (s.index !== this.nativeAt && this.nativeTracks[s.index]) {
+    for (const [i, raw] of [[s.index, s.currentTrack], [s.index + 1, s.nextTrack]] as const) {
+      if (raw?.entryId) {
+        const entry = this.state.queue.find(e => e.entryId === raw.entryId);
+        if (entry) this.nativeTracks[i] = { ...raw, file: raw.file ?? 0, entryId: entry.entryId, trackId: entry.trackId };
+      }
+    }
+    if (s.index !== this.nativeAt && (s.entryId || this.nativeTracks[s.index])) {
       this.finishPlay(!this.nativeSkip && s.index === this.nativeAt + 1 ? 'transition' : 'skip');
       this.nativeSkip = false;
       this.nativeAt = s.index;
-      const entryId = this.nativeTracks[s.index].entryId, index = this.state.queue.findIndex(e => e.entryId === entryId);
+      const entryId = s.entryId ?? this.nativeTracks[s.index]?.entryId, index = this.state.queue.findIndex(e => e.entryId === entryId);
       if (index >= 0) this.set({ index });
       this.maxPos = 0;
       if (index >= 0) this.beginPlay(this.state.queue[index]);
@@ -474,7 +504,7 @@ export class PlayerController {
       this.scheduleSave();
       void this.nativeSync();
     }
-    const status = s.playing ? 'playing' : s.ended ? 'idle' : 'paused';
+    const status = s.playing ? 'playing' : s.waitingForPreparation ? 'buffering' : s.ended ? 'idle' : 'paused';
     this.maxPos = Math.max(this.maxPos, s.position);
     this.set({ position: s.position, duration: s.duration || this.state.duration, status, ...this.nativeTransition(s) });
     if (status === 'playing') void this.topUpWave();
@@ -486,7 +516,7 @@ export class PlayerController {
   private nativeTransition(s: NativeMixState): Pick<PlayerSnapshot, 'transition' | 'nextPlan'> {
     const frame = s.position * NATIVE_SR;
     const view = (item: NativeItem | undefined, progress: number, startsIn: number | null): TransitionState | null => {
-      const plan = item && this.nativePlans.get(item);
+      const plan = item?.plan ?? (item && this.nativePlans.get(item));
       return plan ? { planId: plan.id, plan, active: startsIn === null, late: false, startsIn, progress: Math.max(0, Math.min(1, progress)), fallback: null } : null;
     };
     const incoming = this.nativeTracks[s.index], next = this.nativeTracks[s.index + 1];

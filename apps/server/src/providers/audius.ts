@@ -118,4 +118,7 @@ export class AudiusProvider implements Provider {
     await downloadTo(`${this.base}/tracks/${encodeURIComponent(String(src.external_id))}/stream?${sp}`, file);
     return file;
   }
+  async nativeSource(src: SourceRow): Promise<import('@automix/core/native-preparation.ts').NativeMediaSource> {
+    return { kind: 'direct', url: `${this.base}/tracks/${encodeURIComponent(String(src.external_id))}/stream?app_name=AutoMix` };
+  }
 }

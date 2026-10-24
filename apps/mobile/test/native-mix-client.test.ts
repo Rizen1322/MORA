@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { createNativeMix, prepareNativeMixArtwork } from '../src/bridge/native-mix.ts';
+import { DEFAULT_AUTOMIX_SETTINGS } from '@automix/core';
 const state = { active: true, playing: true, index: 0, position: 0, duration: 3 };
 const track = (i: number) => ({ title: String(i), artist: '', totalFrames: 100, gainDb: 0, file: i });
 const port = (order: string[] = []) => ({
@@ -9,6 +10,41 @@ const port = (order: string[] = []) => ({
   nativeMixUpdate: async ({ from }: { from: number }) => { order.push(`update ${from}`); return state; },
   nativeMixStop: async () => { order.push('stop'); },
   nativeMixState: async () => state, nativeMixCommand: async () => state,
+});
+it('hands off more than two upcoming sources and preserves repeat order', async () => {
+  const handoff = vi.fn(async () => state);
+  const mix = createNativeMix({ ...port(), nativeSourceReserve: async ({ count }) => ({ keys: Array.from({ length: count }, (_, i) => i) }),
+    nativeSourceAppend: vi.fn(), nativePrepareQueue: handoff }, {
+    prepare: async () => {}, restore: () => {}, sources: async entries => ({
+      items: entries.map(e => ({ ...e, title: e.trackId, artist: '', duration: 180, mixingAllowed: true,
+        source: { kind: 'direct' as const, url: 'https://audio.test/song.mp3' } })),
+      previous: { trackId: 'seed', duration: 180, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS,
+    }),
+  });
+  await mix.start({ sampleRate: 48000, position: 0, tracks: [track(0)] });
+  const entries = Array.from({ length: 7 }, (_, i) => ({ trackId: `track${i}`, entryId: `entry${i}` }));
+  await mix.prepareQueue!(1, entries, 'seed', entries.slice().reverse());
+  expect(handoff.mock.calls[0][0].manifest.items.map(t => t.entryId)).toEqual(entries.map(e => e.entryId));
+  expect(handoff.mock.calls[0][0].manifest.loopItems!.map(t => t.entryId)).toEqual(entries.map(e => e.entryId).reverse());
+});
+it('deduplicates local source copies and forgets leases removed by a replacement', async () => {
+  const append = vi.fn(), handoff = vi.fn(async () => state), read = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'X-Native-Length': '3' } }));
+  let seq = 0;
+  const mix = createNativeMix({ ...port(), nativeSourceReserve: async ({ count }) => ({ keys: Array.from({ length: count }, () => ++seq) }),
+    nativeSourceAppend: append, nativePrepareQueue: handoff }, {
+    prepare: async () => {}, restore: () => {}, sourceFile: read, sources: async entries => ({
+      items: entries.map(e => ({ ...e, title: '', artist: '', duration: 180, mixingAllowed: true,
+        source: { kind: 'upload' as const, trackId: 'local-same-file' } })),
+      previous: { trackId: 'seed', duration: 180, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS,
+    }),
+  });
+  await mix.start({ sampleRate: 48000, position: 0, tracks: [track(0)] });
+  const entries = [{ trackId: 'same', entryId: 'a' }, { trackId: 'same', entryId: 'b' }];
+  await mix.prepareQueue!(1, entries, 'seed'); expect(append).toHaveBeenCalledOnce();
+  const items = handoff.mock.calls[0][0].manifest.items;
+  expect(items[0].source).toEqual(items[1].source);
+  await mix.prepareQueue!(1, [], 'seed');
+  await mix.prepareQueue!(1, entries, 'seed'); expect(append).toHaveBeenCalledTimes(2);
 });
 it('prefetches both covers, strips URLs, and preserves the corresponding track artwork', async () => {
   const tracks = [0, 1].map(i => ({ ...track(i), coverUrl: `https://covers.test/${i}` }));

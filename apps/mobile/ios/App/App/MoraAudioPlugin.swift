@@ -59,6 +59,9 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativeMixStop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixCommand", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeSourceReserve", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeSourceAppend", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativePrepareQueue", returnType: CAPPluginReturnPromise),
     ]
 
     private var playing = false
@@ -368,7 +371,19 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
     @objc func nativeMixSettings(_ call: CAPPluginCall) { nativeMix.settings(call.options as? [String: Any] ?? [:], completion: mixReply(call)) }
     @objc func nativeMixStop(_ call: CAPPluginCall) { nativeMix.stop(mixReply(call)) }
-    @objc func nativeMixState(_ call: CAPPluginCall) { call.resolve(nativeMix.snapshot) }
+    @objc func nativeMixState(_ call: CAPPluginCall) { nativeMix.state(mixReply(call)) }
+    @objc func nativeSourceReserve(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), let count = call.getInt("count") else { call.reject("Invalid preparation request"); return }
+        nativeMix.reserveSources(id: id, count: count, completion: mixReply(call))
+    }
+    @objc func nativeSourceAppend(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), let key = call.getInt("key"), let offset = call.getInt("offset"), let data = call.getString("base64") else { call.reject("Invalid source chunk"); return }
+        nativeMix.sourceAppend(id: id, key: key, offset: offset, base64: data, completion: mixReply(call))
+    }
+    @objc func nativePrepareQueue(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), let manifest = call.getObject("manifest") else { call.reject("Invalid preparation queue"); return }
+        nativeMix.prepareQueue(id: id, manifest: manifest, completion: mixReply(call))
+    }
     @objc func nativeMixCommand(_ call: CAPPluginCall) {
         guard let action = call.getString("action") else { call.reject("Invalid command"); return }
         nativeMix.command(action, time: call.getDouble("seekTime"), source: "page", completion: mixReply(call))
@@ -390,7 +405,7 @@ enum MoraPlaybackJournal {
     }()
     private static var write: DispatchWorkItem?
     private static let numeric: Set<String> = ["seq", "position", "seekTime", "clock", "peak", "monotonicMs", "duration", "rate",
-        "renderedFrames", "queuedFrames", "presentedFrames", "epoch", "maxRenderMs", "underruns"]
+        "renderedFrames", "queuedFrames", "presentedFrames", "epoch", "maxRenderMs", "underruns", "from", "count", "ready", "remaining", "failedCount"]
     private static let flags: Set<String> = ["paused", "starved", "hidden", "allowed", "playing", "intentPlaying", "webAudioSession", "seekable", "node", "probeActive", "artworkReady", "late"]
     private static let codes: Set<String> = ["id", "action", "command", "status", "context", "source", "reason", "outcome", "route", "kind", "mediaState"]
 
