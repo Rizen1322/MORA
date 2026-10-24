@@ -2,6 +2,8 @@ import Foundation
 
 enum NativeMixTimeline {
     static func duration(_ track: [String: Any], sampleRate: Double) -> Double {
-        (track["totalFrames"] as? Double ?? 0) / sampleRate
+        guard let frames = (track["totalFrames"] as? NSNumber)?.doubleValue,
+              frames.isFinite, frames > 0, sampleRate.isFinite, sampleRate > 0 else { return 0 }
+        return frames / sampleRate
     }
 }

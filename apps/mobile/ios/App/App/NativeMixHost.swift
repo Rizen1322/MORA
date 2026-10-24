@@ -31,6 +31,7 @@ final class NativeMixHost {
     private var marks: [NativeMixMark] = []
     private var index = 0
     private var position = 0.0
+    private var blend: NativeMixBlend?
     private var wantsPlaying = false
     private var resumeAfterInterruption = false
     private var done = false
@@ -61,7 +62,7 @@ final class NativeMixHost {
         DispatchQueue.main.async { completion(result) }
     }
     private func save() {
-        let duration = tracks.indices.contains(index) ? (tracks[index]["totalFrames"] as? Double ?? 0) / sr : 0
+        let duration = tracks.indices.contains(index) ? NativeMixTimeline.duration(tracks[index], sampleRate: sr) : 0
         let state: [String: Any] = ["active": folder != nil, "playing": wantsPlaying && !failed,
             "preparing": preparing, "index": index, "position": position, "duration": duration,
             "renderedFrames": rendered, "queuedFrames": queued, "presentedFrames": presented,
@@ -70,6 +71,8 @@ final class NativeMixHost {
             "waitingForPreparation": continueWhenPrepared && ended,
             "entryId": tracks.indices.contains(index) ? tracks[index]["entryId"] as? String ?? "" : ""]
         var result = state
+        if let blend { result["blend"] = ["index": blend.index, "progress": blend.progress] }
+        else { result["blend"] = NSNull() }
         if let preparation { result["preparation"] = preparation.snapshot }
         if tracks.indices.contains(index + 1), let plan = tracks[index + 1]["transition"] as? [String: Any],
            let start = plan["triggerFrame"] as? Double { result["transitionStart"] = start / sr }
@@ -350,7 +353,7 @@ final class NativeMixHost {
         player?.stop(); engine?.pause()
         pending = 0; rendered = 0; queued = 0; completed = 0; presented = 0; marks.removeAll(); done = false; ended = false
         lastLogFrame = -1
-        self.index = index; self.position = position
+        self.index = index; self.position = position; self.blend = nil
         var next = config; next["index"] = index; next["position"] = position
         guard let folder else { throw Failure.invalid }
         renderer = try NativeQueueRenderer(folder: folder, config: next)
@@ -377,7 +380,7 @@ final class NativeMixHost {
             buffer.frameLength = AVAudioFrameCount(block.frames)
             block.left.withUnsafeBytes { if let base = $0.baseAddress { memcpy(channels[0], base, $0.count) } }
             block.right.withUnsafeBytes { if let base = $0.baseAddress { memcpy(channels[1], base, $0.count) } }
-            marks.append(contentsOf: block.marks.map { NativeMixMark(frame: rendered + $0.frame, index: $0.index, position: $0.position) })
+            marks.append(contentsOf: block.marks.map { NativeMixMark(frame: rendered + $0.frame, index: $0.index, position: $0.position, blend: $0.blend) })
             rendered += Int64(block.frames)
             let end = rendered
             pending += 1; queued = rendered
@@ -416,14 +419,17 @@ final class NativeMixHost {
         }
         presented = max(presented, min(queued, max(0, audible)))
         guard let at = marks.lastIndex(where: { $0.frame <= presented }) else { return }
-        let a = marks[at]; index = a.index; position = a.position
+        let a = marks[at]; index = a.index; position = a.position; blend = a.blend
         if at + 1 < marks.count {
             let b = marks[at + 1]
             if b.index == a.index && b.frame > a.frame {
                 position += (b.position - a.position) * Double(presented - a.frame) / Double(b.frame - a.frame)
             }
+            if let from = a.blend, let to = b.blend, from.index == to.index, b.frame > a.frame {
+                blend = NativeMixBlend(index: from.index, progress: from.progress + (to.progress - from.progress) * Double(presented - a.frame) / Double(b.frame - a.frame))
+            }
         }
-        position = max(0, min(position, (tracks[index]["totalFrames"] as? Double ?? 0) / sr))
+        position = max(0, min(position, NativeMixTimeline.duration(tracks[index], sampleRate: sr)))
     }
     private func publish(_ reason: String) {
         updatePosition(); save()
@@ -495,7 +501,7 @@ final class NativeMixHost {
                     try self.select(index: self.position > 3 ? self.index : max(0, self.index - 1), position: 0, playing: self.wantsPlaying)
                 case "seekto":
                     guard let time, time.isFinite else { throw Failure.invalid }
-                    let duration = (self.tracks[self.index]["totalFrames"] as? Double ?? 0) / self.sr
+                    let duration = NativeMixTimeline.duration(self.tracks[self.index], sampleRate: self.sr)
                     try self.select(index: self.index, position: max(0, min(max(0, duration - 0.001), time)), playing: self.wantsPlaying)
                 default: throw Failure.invalid
                 }

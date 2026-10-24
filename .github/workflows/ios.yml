@@ -45,6 +45,8 @@ jobs:
         run: |
           swiftc apps/mobile/ios/App/App/NativeProbeWave.swift apps/mobile/ios/App/App/NativePCMDecoder.swift apps/mobile/test/native-preparation/main.swift -o "$RUNNER_TEMP/mora-preparation-check"
           "$RUNNER_TEMP/mora-preparation-check"
+      - name: Test the real native host in a background iOS app
+        run: node apps/mobile/scripts/check-native-host.mjs
       - name: Compare the Swift AutoMix mixer with Node
         run: node apps/mobile/scripts/check-native-dsp.mjs
       - name: Test native HTTP preparation transport

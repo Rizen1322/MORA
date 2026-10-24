@@ -1202,6 +1202,10 @@ final class MixerCore {
     }
 
     var isTransitionActive: Bool { active }
+    var transitionProgress: Double? {
+        guard active, let armed else { return nil }
+        return min(1, max(0, t / max(1, armed.durationFrames)))
+    }
     var armedTransition: ArmedTransition? { armed }
 
     // ------------------------------------------------------------ commands
@@ -1665,10 +1669,15 @@ final class MixerCore {
 
 // MARK: - Native queue (port of apps/mobile/src/native-mixer.ts)
 
+struct NativeMixBlend {
+    let index: Int
+    let progress: Double
+}
 struct NativeMixMark {
     var frame: Int64
     let index: Int
     let position: Double
+    var blend: NativeMixBlend? = nil
 }
 struct NativeMixBlock {
     let left: Data
@@ -1771,7 +1780,8 @@ final class NativeQueueRenderer {
         func mark(_ offset: Int) {
             let main = core.main
             marks.append(NativeMixMark(frame: Int64(offset), index: main == current % 2 ? current : current + 1,
-                                       position: core.decks[main].position() / sampleRate))
+                                       position: core.decks[main].position() / sampleRate,
+                                       blend: core.transitionProgress.map { NativeMixBlend(index: current + 1, progress: $0) }))
         }
         var length = 0
         let block = FBuf(128, 0), blockR = FBuf(128, 0)

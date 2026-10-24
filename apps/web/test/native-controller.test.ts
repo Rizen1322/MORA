@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { DEFAULT_AUTOMIX_SETTINGS, planTransition } from '@automix/core';
+import { planToArmed } from '@automix/core/engine/arm.ts';
 import { PlayerController } from '../src/audio/controller.ts';
 import { api, type Track } from '../src/lib/api.ts';
 import type { NativeMix, NativeMixState } from '../src/lib/native-mix.ts';
@@ -40,7 +41,8 @@ it('hands off the full album once and follows native progress beyond the third t
   vi.stubGlobal('window', { moraNativePlayback: { route: 'webkit', mix } });
   const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
   const tracks = new Map(ids.map(id => [id, { id, title: id, artist: '', duration: seconds, status: 'ok', analysis: {} } as Track]));
-  const controller = new PlayerController(id => tracks.get(id), vi.fn());
+  const notify = vi.fn();
+  const controller = new PlayerController(id => tracks.get(id), notify);
   const h = controller as unknown as { nativeSyncing: Promise<void> | null; nativeTimer: ReturnType<typeof setInterval>; onNativeState(s: NativeMixState): void; saveTimer: ReturnType<typeof setTimeout> | null };
   timer = () => { clearInterval(h.nativeTimer); if (h.saveTimer) clearTimeout(h.saveTimer); };
   await controller.playTracks(ids, 0, { type: 'album', label: 'album' });
@@ -48,14 +50,24 @@ it('hands off the full album once and follows native progress beyond the third t
   expect(mix.prepareQueue).toHaveBeenCalledOnce();
   expect(mix.prepareQueue.mock.calls[0][1].map(e => e.trackId)).toEqual(ids.slice(1));
   expect(api.prepare).toHaveBeenCalledTimes(1);
+  expect(notify).not.toHaveBeenCalled();
   expect(api.focus).toHaveBeenLastCalledWith({ current: null, next: [], candidates: [] });
   expect(mix.update).not.toHaveBeenCalled();
   const entries = controller.state.queue;
-  h.onNativeState(state({ index: 4, position: 3, entryId: entries[4].entryId,
-    currentTrack: { title: 'e', artist: '', totalFrames: frames, gainDb: 0, file: 500004, entryId: entries[4].entryId } }));
+  const plan = planTransition({ id: 'd', duration: seconds, mixingAllowed: true, analysis: null },
+    { id: 'e', duration: seconds, mixingAllowed: true, analysis: null }, DEFAULT_AUTOMIX_SETTINGS);
+  const currentTrack = { title: 'e', artist: '', totalFrames: frames, gainDb: 0, file: 500004, entryId: entries[4].entryId,
+    plan, transition: { ...planToArmed(plan, 48000, 'A', 'B'), entryFrame: 5 * 48000, durationFrames: 4 * 48000, swapFrame: 2 * 48000 } };
+  h.onNativeState(state({ index: 4, position: 0, duration: 19, blend: null, entryId: entries[4].entryId, currentTrack }));
+  expect(controller.state.transition).toBeNull(); // A skip/seek must not keep the previous cover via a phantom overlap.
+  expect(controller.state.duration).toBe(19);
+  h.onNativeState(state({ index: 4, position: 6, duration: 19, blend: { index: 4, progress: .7 }, entryId: entries[4].entryId, currentTrack }));
+  expect(controller.state.transition).toMatchObject({ active: true, progress: .7 });
+  h.onNativeState(state({ index: 4, position: 8, duration: 19, blend: null, entryId: entries[4].entryId, currentTrack }));
+  expect(controller.state.transition).toBeNull();
   await h.nativeSyncing;
   expect(controller.state.index).toBe(4);
-  expect(controller.state.position).toBe(3);
+  expect(controller.state.position).toBe(8);
   expect(mix.prepareQueue).toHaveBeenCalledOnce();
   expect(api.prepare).toHaveBeenCalledTimes(1);
 });

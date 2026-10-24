@@ -408,7 +408,6 @@ export class PlayerController {
           loop.map(e => ({ trackId: e.trackId, entryId: e.entryId })), this.nativeAbort.signal);
         if (revision !== this.nativeRevision) return;
         this.nativeManifestKey = key; this.set({ nextPending: [], error: null });
-        if (entries.length || loop.length) this.notify('Очередь передана iPhone для фоновой подготовки', 'info');
         tracePlayback('native.queue.handoff', { outcome: 'accepted' });
       } catch {
         if (revision !== this.nativeRevision || this.nativeAbort.signal.aborted) return;
@@ -522,15 +521,20 @@ export class PlayerController {
       return plan ? { planId: plan.id, plan, active: startsIn === null, late: false, startsIn, progress: Math.max(0, Math.min(1, progress)), fallback: null } : null;
     };
     const incoming = this.nativeTracks[s.index], next = this.nativeTracks[s.index + 1];
+    if (s.blend) {
+      const active = view(this.nativeTracks[s.blend.index], s.blend.progress, null);
+      if (active) return { transition: active, nextPlan: active.plan };
+    }
     const into = incoming?.transition;
     // After the swap the incoming track is audible while the blend finishes.
-    if (into && frame < into.entryFrame + into.durationFrames - into.swapFrame) {
+    if (s.blend === undefined && into && frame < into.entryFrame + into.durationFrames - into.swapFrame) {
       const active = view(incoming, (frame - into.entryFrame + into.swapFrame) / into.durationFrames, null);
       if (active) return { transition: active, nextPlan: active.plan };
     }
     const out = next?.transition;
     if (!out) return { transition: null, nextPlan: null };
-    const pending = view(next, (frame - out.triggerFrame) / out.durationFrames, frame >= out.triggerFrame ? null : (out.triggerFrame - frame) / NATIVE_SR);
+    const pending = view(next, (frame - out.triggerFrame) / out.durationFrames,
+      s.blend === undefined && frame >= out.triggerFrame ? null : Math.max(0, (out.triggerFrame - frame) / NATIVE_SR));
     return { transition: pending, nextPlan: pending?.plan ?? null };
   }
 
