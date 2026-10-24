@@ -37,6 +37,10 @@ jobs:
           "$RUNNER_TEMP/mora-artwork-check"
       - name: Build unsigned device IPA
         run: sh apps/mobile/scripts/ios-mac.sh --ipa
+      - name: Test native media preparation
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeProbeWave.swift apps/mobile/ios/App/App/NativePCMDecoder.swift apps/mobile/test/native-preparation/main.swift -o "$RUNNER_TEMP/mora-preparation-check"
+          "$RUNNER_TEMP/mora-preparation-check"
       - name: Compare the Swift AutoMix mixer with Node
         run: node apps/mobile/scripts/check-native-dsp.mjs
       - name: Test the native queue on PCM files
