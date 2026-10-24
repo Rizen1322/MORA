@@ -7,6 +7,7 @@ actor PreparedQueueCheck {
     func accept(_ index: Int, _ track: [String: Any]) -> Bool {
         precondition(index == entries.count + 1)
         precondition(track["totalFrames"] as? Int == 24000)
+        precondition(track["gainDb"] as? Double != nil)
         entries.append(track["entryId"] as! String); return true
     }
     func result() -> [String] { entries }
@@ -77,6 +78,27 @@ Task.detached {
         let preparedFiles = try FileManager.default.contentsOfDirectory(atPath: folder.path)
         precondition(preparedFiles.filter { $0.hasSuffix(".f32le") }.count == 9)
         precondition(!preparedFiles.contains { $0.hasSuffix(".download") || $0.hasSuffix(".partial") || $0.hasSuffix(".analysis") })
+        // MIR/planner failure must not turn decodable songs into a three-track stop.
+        let fallbackFolder = root.appendingPathComponent("fallback")
+        try FileManager.default.createDirectory(at: fallbackFolder, withIntermediateDirectories: true)
+        try firstPCM.write(to: fallbackFolder.appendingPathComponent("0.f32le"))
+        let fallback = NativeQueuePreparation(index: 0), fallbackSink = PreparedQueueCheck()
+        let badScript = "var MoraPreparation = { analyzeJSON: function() { throw Error('fixture'); }, planJSON: function() { throw Error('fixture'); } };"
+        let fallbackItems = ["B", "C", "D", "E", "F", "G", "H"].map { id -> [String: Any] in
+            var value = item(id); value["mixingAllowed"] = true; return value
+        }
+        await fallback.run(folder: fallbackFolder, manifest: ["from": 1, "items": fallbackItems, "settings": ["enabled": true],
+            "previous": ["trackId": "A", "duration": 0.5, "mixingAllowed": true]],
+            seed: ["file": 0, "totalFrames": 24000], script: badScript,
+            allocate: { await fallbackSink.allocate() }, accept: { index, track in
+                let accepted = await fallbackSink.accept(index, track)
+                precondition(track["transition"] == nil)
+                fallback.gate.advance(index); return accepted
+            }, event: { _, _ in })
+        let fallbackEntries = await fallbackSink.result()
+        precondition(fallbackEntries == ["B", "C", "D", "E", "F", "G", "H"])
+        precondition(fallback.snapshot["running"] as? Bool == false)
+        print("Native queue: failed MIR/planner preserve seven playable future songs")
         print("Native queue: eight preparations, repeat cycles and playback permits passed without WebContent")
         print("Native HTTP: file bytes, HTTP status, transfer limit, cancelled job and cross-host auth stripping passed")
     } catch { fatalError("Native HTTP test failed: \(error)") }

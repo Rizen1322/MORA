@@ -32,7 +32,8 @@ export interface NativeMixConfig {
 export interface NativeMixState extends NativeProbeState {
   /** Audible native overlap; null explicitly means that no transition is playing. */
   blend?: { index: number; progress: number } | null;
-  preparation?: { state: string; ready: number; remaining: number; reason?: string; failedCount?: number };
+  preparation?: { state: string; ready: number; remaining: number; reason?: string; failedCount?: number;
+    running?: boolean; stageSeconds?: number; gateUpper?: number; gateWaiting?: number };
   currentTrack?: NativeMixTrack;
   nextTrack?: NativeMixTrack;
   waitingForPreparation?: boolean;

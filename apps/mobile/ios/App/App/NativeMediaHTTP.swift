@@ -19,7 +19,7 @@ final class NativePreparationTicket: @unchecked Sendable {
 /// Native file transport while the background-audio process is running. No WebView
 /// fetch, JS wake-up, page timer or finite beginBackgroundTask is involved.
 final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDelegate, @unchecked Sendable {
-    enum Failure: Error { case invalidURL, http(Int), network, cancelled, tooLarge }
+    enum Failure: Error { case invalidURL, http(Int), transport(Int), network, cancelled, tooLarge }
     private final class Transfer {
         let destination: URL, partial: URL, file: FileHandle, limit: Int, ticket: NativePreparationTicket
         let completion: (Result<Void, Error>) -> Void
@@ -117,7 +117,7 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let transfer = transfers[task.taskIdentifier], transfer.ticket.cancelled { finish(task, .failure(Failure.cancelled)) }
-        else if error != nil { finish(task, .failure(Failure.network)) }
+        else if let error { finish(task, .failure(Failure.transport((error as NSError).code))) }
         else { finish(task, .success(())) }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,

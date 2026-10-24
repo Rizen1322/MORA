@@ -405,9 +405,9 @@ enum MoraPlaybackJournal {
     }()
     private static var write: DispatchWorkItem?
     private static let numeric: Set<String> = ["seq", "position", "seekTime", "clock", "peak", "monotonicMs", "duration", "rate",
-        "renderedFrames", "queuedFrames", "presentedFrames", "epoch", "maxRenderMs", "underruns", "from", "count", "ready", "remaining", "failedCount"]
+        "renderedFrames", "queuedFrames", "presentedFrames", "epoch", "maxRenderMs", "underruns", "from", "count", "ready", "remaining", "failedCount", "gateUpper", "gateWaiting", "stageSeconds"]
     private static let flags: Set<String> = ["paused", "starved", "hidden", "allowed", "playing", "intentPlaying", "webAudioSession", "seekable", "node", "probeActive", "artworkReady", "late"]
-    private static let codes: Set<String> = ["id", "action", "command", "status", "context", "source", "reason", "outcome", "route", "kind", "mediaState"]
+    private static let codes: Set<String> = ["id", "action", "command", "status", "context", "source", "reason", "outcome", "route", "kind", "mediaState", "preparation"]
 
     static func record(_ stage: String, _ fields: [String: Any] = [:]) {
         guard enabled, stage.range(of: "^[a-zA-Z0-9_.-]{1,64}$", options: .regularExpression) != nil else { return }

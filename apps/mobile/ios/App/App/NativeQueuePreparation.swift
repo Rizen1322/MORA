@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 /// One sleeping producer, released by native audible-track changes, not by page timers.
@@ -6,6 +7,10 @@ final class NativePreparationGate: @unchecked Sendable {
     private var upper: Int
     private var stopped = false
     private var waiter: (Int, CheckedContinuation<Bool, Never>)?
+    var snapshot: [String: Int] {
+        lock.lock(); defer { lock.unlock() }
+        return ["gateUpper": upper, "gateWaiting": waiter?.0 ?? -1]
+    }
     init(index: Int) { upper = index + 2 }
     func advance(_ index: Int) {
         lock.lock(); upper = max(upper, index + 2)
@@ -34,17 +39,25 @@ final class NativeQueuePreparation: @unchecked Sendable {
     private let lock = NSLock()
     private var cached: [String: Any] = ["state": "idle", "ready": 0, "remaining": 0]
     private var failureCount = 0
-    var snapshot: [String: Any] { lock.lock(); defer { lock.unlock() }; return cached }
+    private var running = true
+    private var updated = ProcessInfo.processInfo.systemUptime
+    var snapshot: [String: Any] {
+        lock.lock(); var result = cached; result["running"] = running
+        result["stageSeconds"] = max(0, ProcessInfo.processInfo.systemUptime - updated); lock.unlock()
+        for (key, value) in gate.snapshot { result[key] = value }; return result
+    }
+    var hasRemaining: Bool { let state = snapshot; return !ticket.cancelled && state["running"] as? Bool == true && (state["remaining"] as? Int ?? 0) > 0 }
     init(index: Int) { gate = NativePreparationGate(index: index) }
     func cancel() { ticket.cancel(); gate.cancel() }
     private func state(_ code: String, ready: Int, remaining: Int, reason: String = "none") {
-        lock.lock(); if code == "failed" { failureCount += 1 }
+        lock.lock(); updated = ProcessInfo.processInfo.systemUptime; if code == "failed" { failureCount += 1 }
         cached = ["state": code, "ready": ready, "remaining": remaining, "reason": reason, "failedCount": failureCount]; lock.unlock()
     }
     func run(folder: URL, manifest: [String: Any], seed: [String: Any], script: String,
              allocate: @escaping @Sendable () async -> Int?,
              accept: @escaping @Sendable (Int, [String: Any]) async -> Bool,
              event: @escaping @Sendable (String, String) -> Void) async {
+        defer { finished() }
         guard let raw = manifest["items"] as? [[String: Any]], let from = manifest["from"] as? Int,
               let settings = manifest["settings"] as? [String: Any],
               let previous = manifest["previous"] as? [String: Any] else { return }
@@ -65,7 +78,11 @@ final class NativeQueuePreparation: @unchecked Sendable {
             if before["mixingAllowed"] as? Bool == true && (before["analysis"] == nil || before["analysis"] is NSNull) {
                 if let file = seed["file"] as? Int, let frames = seed["totalFrames"] as? Int {
                     state("analyzing", ready: produced, remaining: raw.count)
-                    before["analysis"] = try analysis(core, folder: folder, file: file, frames: frames)
+                    do { before["analysis"] = try analysis(core, folder: folder, file: file, frames: frames) }
+                    catch {
+                        if ticket.cancelled { throw error }
+                        before["analysis"] = NSNull(); event("fallback", "analysis")
+                    }
                 }
             }
             while !ticket.cancelled {
@@ -100,7 +117,11 @@ final class NativeQueuePreparation: @unchecked Sendable {
                     if next["analysis"] == nil || next["analysis"] is NSNull {
                         if item["mixingAllowed"] as? Bool == true {
                             state("analyzing", ready: produced, remaining: max(0, batch.count - cursor + 1)); event("stage", "analyzing")
-                            next["analysis"] = try analysis(core, folder: folder, file: fileKey, frames: frames)
+                            do { next["analysis"] = try analysis(core, folder: folder, file: fileKey, frames: frames) }
+                            catch {
+                                if ticket.cancelled { throw error }
+                                next["analysis"] = NSNull(); event("fallback", "analysis")
+                            }
                         } else { next["analysis"] = NSNull() }
                     }
                     if let analysis = next["analysis"] as? [String: Any] {
@@ -110,10 +131,15 @@ final class NativeQueuePreparation: @unchecked Sendable {
                     before["id"] = before["trackId"]
                     before["analysis"] = before["analysis"] ?? NSNull()
                     state("planning", ready: produced, remaining: max(0, batch.count - cursor + 1))
-                    let result = try core.plan(a: before, b: next, settings: settings, sampleRate: 48000)
+                    let result: [String: Any]
+                    do { result = try core.plan(a: before, b: next, settings: settings, sampleRate: 48000) }
+                    catch {
+                        if ticket.cancelled { throw error }
+                        result = [:]; event("fallback", "planner")
+                    }
                     var track: [String: Any] = ["file": fileKey, "totalFrames": frames,
                         "title": item["title"] ?? "", "artist": item["artist"] ?? "", "entryId": item["entryId"] ?? "",
-                        "trackId": item["trackId"] ?? "", "gainDb": result["gainDb"] ?? 0]
+                        "trackId": item["trackId"] ?? "", "gainDb": result["gainDb"] ?? 0.0]
                     if let transition = result["transition"] as? [String: Any],
                        let trigger = transition["triggerFrame"] as? Int, let entry = transition["entryFrame"] as? Int,
                        trigger < (previousPCM["totalFrames"] as? Int ?? 0), entry < frames {
@@ -139,10 +165,13 @@ final class NativeQueuePreparation: @unchecked Sendable {
                     let code: String
                     switch error {
                     case NativeMediaHTTP.Failure.http(let status): code = "http_\(status)"
+                    case NativeMediaHTTP.Failure.transport(let status): code = "network_\(status)"
                     case NativeMediaHTTP.Failure.tooLarge, NativePCMDecoder.Failure.limit: code = "size_limit"
                     case NativeMediaLoader.Failure.encrypted: code = "encrypted"
                     case NativePreparationCore.Failure.analysis: code = "analysis"
-                    default: code = "preparation"
+                    default:
+                        let native = error as NSError
+                        code = [AVFoundationErrorDomain, NSOSStatusErrorDomain].contains(native.domain) ? "decode_\(native.code)" : "preparation"
                     }
                     state("failed", ready: produced, remaining: batch.count - cursor, reason: code); event("failed", code)
                     if consecutiveFailures >= 3 { break }
@@ -154,6 +183,7 @@ final class NativeQueuePreparation: @unchecked Sendable {
             if !ticket.cancelled { state("failed", ready: produced, remaining: max(0, raw.count - processed), reason: "analysis"); event("failed", "analysis") }
         }
     }
+    private func finished() { lock.lock(); running = false; lock.unlock() }
     private func analysis(_ core: NativePreparationCore, folder: URL, file: Int, frames: Int) throws -> [String: Any] {
         let source = folder.appendingPathComponent("\(file).f32le")
         let temporary = folder.appendingPathComponent("\(UUID().uuidString).analysis")

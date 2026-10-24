@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const dir = await mkdtemp(join(tmpdir(), 'mora-native-host-'));
 const run = (command, args) => {
-  const result = spawnSync(command, args, { encoding: 'utf8', timeout: 180000 });
+  console.log('[native-host]', command, args.slice(0, 4).join(' '));
+  const result = spawnSync(command, args, { encoding: 'utf8', timeout: 180000, killSignal: 'SIGKILL' });
   assert.equal(result.status, 0, `${command}: ${result.stderr || result.stdout}`); return result.stdout.trim();
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));

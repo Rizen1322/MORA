@@ -43,7 +43,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
     private func require(_ value: Bool, _ message: String) throws { if !value { throw Failure.check(message) } }
     private func run() async throws {
         let begin = try await call { host.begin($0) }, id = begin["id"] as! String
-        let frames = 48000
+        let frames = 3 * 48000
         let pcm = (0..<frames).flatMap { i -> [Float] in
             let value = Float(sin(Double(i) * 2 * .pi * 220 / 48000) * 0.1); return [value, value]
         }.withUnsafeBytes { Data($0) }
@@ -51,25 +51,31 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
             let data = pcm.subdata(in: offset..<min(pcm.count, offset + 262144))
             _ = try await call { host.append(id: id, track: 0, offset: offset, base64: data.base64EncodedString(), completion: $0) }
         }
+        _ = try await call { host.start(id: id, config: ["sampleRate": 48000.0, "position": 0.0, "index": 0,
+            "tracks": [["file": 0, "totalFrames": frames, "gainDb": 0.0, "entryId": "E0", "trackId": "T0", "title": "Track 0"]]], completion: $0) }
+        // Production mirrors source leases after start(), which deliberately clears old leases.
         let reserved = try await call { host.reserveSources(id: id, count: 7, completion: $0) }
         let keys = reserved["keys"] as! [Int]
-        let wav = NativeProbeWave.make(track: 1, seconds: 1)
+        let wav = NativeProbeWave.make(track: 1, seconds: 3)
         var items: [[String: Any]] = []
         for (i, key) in keys.enumerated() {
             _ = try await call { host.sourceAppend(id: id, key: key, offset: 0, base64: wav.base64EncodedString(), completion: $0) }
             items.append(["file": key, "entryId": "E\(i + 1)", "trackId": "T\(i + 1)", "title": "Track \(i + 1)",
-                "artist": "Fixture", "duration": 1.0, "mixingAllowed": false, "source": ["kind": "local", "file": key]])
+                "artist": "Fixture", "duration": 3.0, "mixingAllowed": false, "source": ["kind": "local", "file": key]])
         }
-        _ = try await call { host.start(id: id, config: ["sampleRate": 48000.0, "position": 0.0, "index": 0,
-            "tracks": [["file": 0, "totalFrames": frames, "gainDb": 0.0, "entryId": "E0", "trackId": "T0", "title": "Track 0"]]], completion: $0) }
         _ = try await call { host.prepareQueue(id: id, manifest: ["from": 1, "items": items, "settings": ["enabled": false],
-            "previous": ["trackId": "T0", "duration": 1.0, "mixingAllowed": false]], completion: $0) }
+            "previous": ["trackId": "T0", "duration": 3.0, "mixingAllowed": false]], completion: $0) }
         write("ready") // Runner moves this app to the background now.
+        for _ in 0..<200 {
+            if UIApplication.shared.applicationState == .background { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        try require(UIApplication.shared.applicationState == .background, "Fixture never entered the background")
         for _ in 0..<500 {
             last = try await call { host.state($0) }
             let index = last["index"] as? Int ?? -1, count = last["count"] as? Int ?? 0
             try require(last["failed"] as? Bool != true, "Native host failed")
-            try require((last["duration"] as? Double ?? 0) == 1, "Duration disappeared")
+            try require((last["duration"] as? Double ?? 0) == 3, "Duration disappeared")
             seen.insert(index)
             if index == 7 && (last["position"] as? Double ?? 0) > 0.1 { break }
             if skip && count > index + 1 {
