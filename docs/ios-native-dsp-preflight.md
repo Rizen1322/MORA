@@ -21,6 +21,10 @@ All 534,016 scalar output samples (left/right interleaved), transport phase snap
 
 This establishes portability for the exercised paths, not complete coverage of all transition types. It is an offline numerical check, not an iPhone benchmark or an audible real-time playback test. A successful macOS run cannot establish iOS sustained throughput, GC pauses, memory use, background survival, or streaming preparation correctness.
 
+## Verified run
+
+On 2026-10-24, [GitHub Actions run 40119199046](https://github.com/Rizen1322/MORA/actions/runs/40119199046) passed for source commit `9e415b0411bc02eb1183449df3591d70598eb580` on branch `ios`, with Xcode 26.2. The log confirms execution of the compiled Swift JavaScriptCore program and comparison of every sample, phase and event within the stated tolerance. The unsigned iOS build also passed. This is a macOS offline test result; the actual iPhone DSP host is not implemented by this change.
+
 ## Next implementation boundaries
 
 Apple permits JavaScriptCore execution from Swift in the app process; a VM serializes access across threads ([JSContext](https://developer.apple.com/documentation/javascriptcore/jscontext), [JSVirtualMachine](https://developer.apple.com/documentation/javascriptcore/jsvirtualmachine)). A candidate native host should own a dedicated serial producer queue and feed bounded PCM buffers to native audio. It must never evaluate JS, allocate JS values or wait for the VM from a real-time render callback.
@@ -33,3 +37,5 @@ Before exposing this host for normal music, implement and test:
 4. Device measurement and regression checks for AutoMix continuity, starvation recovery, CPU/memory, audio route changes, long lock/pause, and real library track changes.
 
 The preflight changes only test/CI/documentation files. It does not change the installed 1.0.10 playback path or justify another IPA with identical playback behaviour.
+
+The current preparation dependency is concrete: `apps/mobile/src/worker/replace/ffmpeg.ts` delegates decoding through worker RPC, and `apps/mobile/src/bridge/index.ts` decodes using a page-side `OfflineAudioContext.decodeAudioData`. Cached PCM lives behind the worker's OPFS filesystem adapter. A native host needs a deliberate handoff/storage strategy for this data and must not treat the present page-side decoder as an independent background service.
