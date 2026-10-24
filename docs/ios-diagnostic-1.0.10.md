@@ -31,4 +31,10 @@ The 1.0.10 probe no longer registers/enables interval-skip or continuous-seek co
 
 No repeat of the long-pause test is required for this small control-configuration change unless behaviour regresses.
 
+## Result from report (6)
+
+The user confirms that track skipping works. In the latest native load session of `MORA-playback-diagnostics (6).json`, 9 Next, 6 Previous, 3 absolute seek and 1 Pause callbacks each have matching native command/applied records with acceptance. Next alternates the native A/B queue; Previous switches tracks within the restart threshold and restarts the current track after it. The snapshot enables next/previous/position and disables interval skip. This confirms the requested music-button behaviour for the independent native probe on this phone.
+
+The diagnostic export contains cumulative older sessions; counts above refer only to the latest native load. No user library or diagnostic JSON is bundled into the app or committed.
+
 Native AVAudioPlayer, the complete cached WAV files, activation/revision guards, interruption handling and WebKit isolation remain the same. The next production step is a native main transport/renderer that preserves the existing AutoMix, with independent validation of DSP timing and preparation in the background. Do not replace the working DJ mixer with a simple file player and claim the migration is complete.
