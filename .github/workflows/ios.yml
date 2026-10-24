@@ -2,7 +2,7 @@ name: iOS unsigned IPA
 
 on:
   push:
-    branches: ['codex/ios-*']
+    branches: [ios]
     paths:
       - 'apps/mobile/**'
       - 'apps/web/**'

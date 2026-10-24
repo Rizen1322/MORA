@@ -319,7 +319,7 @@ export function SettingsPage() {
         </Group>
 
         <Group title="Оформление">
-          <Row wide title="Анимации" desc="По умолчанию — как в настройках системы.">
+          <Row wide title="Анимации" desc="«Минимум движения» заменяет визуализации статичным оформлением.">
             <select className="select" aria-label="Анимации" value={s.ui.motion ?? 'system'} onChange={(e) => void save({ ui: { ...s.ui, motion: e.target.value as 'system' | 'full' | 'reduced' } })}>
               <option value="system">Как в системе</option><option value="full">Полные анимации</option><option value="reduced">Минимум движения</option>
             </select>
