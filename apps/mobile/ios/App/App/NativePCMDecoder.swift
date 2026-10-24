@@ -9,6 +9,7 @@ enum NativePCMDecoder {
         let file = try AVAudioFile(forReading: source)
         guard let input = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 32768) else { throw Failure.invalid }
         return try convert(from: file.processingFormat, to: destination, sampleRate: sampleRate, cancelled: cancelled) { requested in
+            if file.framePosition >= file.length { return nil }
             try file.read(into: input, frameCount: min(requested, input.frameCapacity))
             return input.frameLength > 0 ? input : nil
         }
