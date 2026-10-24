@@ -1,0 +1,13 @@
+.public-catalog-page .catalog-hero h1 { overflow-wrap:anywhere; }
+.public-catalog-description { max-width:66ch; white-space:pre-line; line-height:1.6; color:var(--text-2); }
+.public-catalog-credits a:hover { color:var(--accent-soft); text-decoration:underline; }
+.public-catalog-note { margin-top:18px; max-width:70ch; }
+.public-catalog-page .catalog-section:last-child { padding-bottom:24px; }
+.public-catalog-page .search-row-menu a { min-height:44px; }
+.public-track-title { text-align:left; font:inherit; color:inherit; }
+.public-track-credits a:hover, .public-track-credits a:focus-visible { color:var(--accent-soft); text-decoration:underline; }
+@media(max-width:600px) {
+  .public-catalog-page .catalog-nav { gap:12px; }
+  .public-catalog-page .catalog-card-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:22px 16px; }
+  .public-catalog-page .catalog-hero-actions { flex-wrap:wrap; }
+}

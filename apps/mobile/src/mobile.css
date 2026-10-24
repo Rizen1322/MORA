@@ -1,0 +1,139 @@
+/* MORA for iPhone: the web app's own phone layout, tuned for a native shell.
+   Loaded after the app styles; only touches html.mora-mobile (set by mora-bridge.js). */
+
+html.mora-mobile,
+html.mora-mobile body {
+  background: #050d0a;
+  overscroll-behavior: none;
+}
+html.mora-mobile {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+/* App, not a page: no text selection or link callouts on long press, except where text is the content. */
+html.mora-mobile body {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+html.mora-mobile :is(input, textarea, select, [contenteditable="true"], .lyrics-panel, .lyrics-panel *) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+html.mora-mobile img { -webkit-user-drag: none; }
+
+@media (max-width: 767px) {
+  /* Blur behind fixed bars repaints on every scroll frame in WKWebView: the same
+     solid surfaces the app already uses for "reduce transparency". */
+  html.mora-mobile :is(.wave-now, .fp-mix, .queue-panel.fp-queue, .drop-overlay, .menu, .toast, .upload-card, .panel, .tracklist-head, .catalog-playback-notice) {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--surface-2);
+  }
+  html.mora-mobile .tabbar {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: #030a07;
+  }
+
+  /* Thumb-sized targets (44 pt) where the hands live: mini player, player header, tab bar. */
+  html.mora-mobile .mini-player .icon-btn,
+  html.mora-mobile .fp-top .icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+  html.mora-mobile .tabbar a { min-height: 48px; }
+
+  /* Touch feedback instead of hover. */
+  html.mora-mobile :is(.tabbar a, .icon-btn, .play-circle, .btn, .track-row):active {
+    transform: scale(0.96);
+    transition: transform 80ms ease-out;
+  }
+
+  /* Full player, top to bottom: cover, title, seek bar, transport, then the reaction row where
+     the thumb rests (like / lyrics / dislike, spread across the width), then "up next".
+     Volume is the phone's own buttons (no in-app slider). */
+  html.mora-mobile .fp-listening-tools { order: 1; justify-content: center; }
+  html.mora-mobile .fp-reactions { width: 100%; justify-content: space-around; }
+  html.mora-mobile .fp-listening-tools .icon-btn { width: 48px; height: 48px; }
+  html.mora-mobile .fp-up-next { order: 2; }
+
+  /* Mini player: like, play/pause and Next (an AutoMix blend from here) without opening the player. */
+  html.mora-mobile .mini-player .compact-only[aria-label="Следующий"] { display: inline-grid !important; }
+  /* play/pause keeps the accent square; Next after it stays a plain icon */
+  html.mora-mobile .mini-player > div .icon-btn:last-child { background: none; color: var(--text-2) !important; margin-left: 0; }
+  html.mora-mobile .mini-player > div .icon-btn:nth-last-child(2) { border-radius: 14px; background: var(--accent-soft); color: var(--on-accent) !important; margin-left: 4px; }
+
+  /* viewport-fit=cover draws under the status bar / Dynamic Island: every page starts below it. */
+  html.mora-mobile .app { padding-top: env(safe-area-inset-top); }
+
+  /* The full player sits under the status bar / Dynamic Island and above the home indicator. */
+  html.mora-mobile .full-player {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  html.mora-mobile .fp-top {
+    padding-top: calc(env(safe-area-inset-top) + 12px);
+  }
+  /* An absolute source label was centered over the entire padded header,
+     including the Dynamic Island inset, instead of its safe content row. */
+  html.mora-mobile .fp-top > .fp-source {
+    position: static;
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+  }
+  html.mora-mobile .fp-top > button { grid-row: 1; }
+}
+
+@media (max-width: 767px) {
+  /* Motion: things that used to just appear or vanish. The app-wide reduced-motion rules
+     (system setting or Settings → motion) shorten all of these to 1 ms. */
+  html.mora-mobile .mini-player { animation: mora-rise 320ms cubic-bezier(0.23, 1, 0.32, 1); }
+  html.mora-mobile .full-player.is-closing { animation: mora-sink 240ms cubic-bezier(0.4, 0, 1, 1) forwards; pointer-events: none; }
+  html.mora-mobile .icon-btn.liked svg { animation: mora-pop 360ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+  /* play/pause icons are swapped elements: each new one pops in */
+  html.mora-mobile :is(.play-circle, .mini-player .icon-btn) svg { animation: mora-icon 200ms ease-out; }
+  html.mora-mobile .tabbar a svg { transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+  html.mora-mobile .tabbar a[aria-current='page'] svg { transform: translateY(-2px) scale(1.12); }
+  html.mora-mobile :is(.setting, .source-card, .card) { animation: mora-fade 360ms ease-out both; }
+}
+@keyframes mora-rise { from { opacity: 0; transform: translateY(24px); } }
+@keyframes mora-sink { to { opacity: 0; transform: translateY(48px); } }
+@keyframes mora-pop { 40% { transform: scale(1.35); } }
+@keyframes mora-icon { from { opacity: 0; transform: scale(0.6); } }
+@keyframes mora-fade { from { opacity: 0; transform: translateY(8px); } }
+
+/* Hot phone or Low Power Mode (data-power, set by mora-bridge.js): no looping or decorative motion. */
+html[data-power="saver"] *, html[data-power="saver"] *::before, html[data-power="saver"] *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+}
+
+/* iOS has no folder picker and no disk paths for the app: files only (Files app, iCloud Drive). */
+html.mora-native .import-actions > button:not(:first-child) { display: none; }
+
+/* Momentum scrolling everywhere content scrolls. */
+html.mora-mobile :is(main, .queue-panel, .lyrics-panel, .fp-body) { -webkit-overflow-scrolling: touch; }
+
+@media (prefers-reduced-motion: reduce) {
+  html.mora-mobile :is(.tabbar a, .icon-btn, .play-circle, .btn, .track-row):active { transform: none; }
+}
+
+.mora-boot-error {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(env(safe-area-inset-bottom) + 96px);
+  z-index: 9999;
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: #2a0f0f;
+  color: #ffd9d9;
+  font: 12px/1.45 ui-monospace, Menlo, monospace;
+  white-space: pre-wrap;
+  max-height: 40vh;
+  overflow: auto;
+}

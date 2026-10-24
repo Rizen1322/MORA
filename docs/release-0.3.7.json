@@ -1,0 +1,56 @@
+{
+  "version": "0.3.7",
+  "planner": "am-planner-v11-dj-3",
+  "tests": 718,
+  "testFiles": 75,
+  "testCommand": "npm test -- --testTimeout=120000",
+  "bytes": 480341419,
+  "sha256": "74376f07bc2631a98d3482e4617a171b34fe7788bc18b111f0c83053bed8188a",
+  "installerExit": 0,
+  "installedVersion": "0.3.7.0",
+  "tracksBefore": 296,
+  "tracksAfter": 299,
+  "missingTracks": 0,
+  "quickCheck": "ok",
+  "installedBackendMatches": true,
+  "installedWebMatches": true,
+  "integration": {
+    "runtime": "44.9.2",
+    "systemToolsOnPath": false,
+    "startedAt": "2026-10-21T21:23:09.309Z",
+    "ffmpeg": true,
+    "vocalRuntime": "bundled-cpu",
+    "playbackDefaults": {
+      "speed": 1,
+      "semitones": 0
+    },
+    "motionDefault": "full",
+    "searchMs": 441,
+    "soundcloud": {
+      "ms": 1118,
+      "count": 13,
+      "withCover": 13
+    },
+    "warmup": {
+      "ready": true,
+      "ms": 1865
+    },
+    "warmupLibraryUnchanged": true,
+    "catalogArtist": {
+      "title": "Yanix",
+      "tracks": 5,
+      "albums": 20
+    },
+    "catalogAlbum": {
+      "title": "Пока рэп не разлучит нас",
+      "tracks": 10
+    },
+    "prepareMs": 10,
+    "firstPcmMs": 982,
+    "pcmBytes": 65536,
+    "coverBytes": 56107,
+    "coverType": "image/jpeg",
+    "fullLikesRoute": 200,
+    "ok": true
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "version": "0.3.2",
+  "file": "MORA-Setup-0.3.2.exe",
+  "bytes": 480304717,
+  "sha256": "EE5B93C96FD53198D6B1FCB4C47130060F26D7317632D620332B87050EB4E6CC",
+  "tests": 640,
+  "planner": "am-planner-v8-sweep-1"
+}

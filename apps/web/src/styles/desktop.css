@@ -1,0 +1,171 @@
+/* Windows app (apps/desktop): integrated title bar. The native minimize /
+   maximize / close buttons are drawn by Windows on the right (titleBarOverlay),
+   so double-click to maximize and Snap Layouts work as in any Windows app. */
+
+.desktop {
+  --titlebar-h: 40px;
+}
+
+.desktop .app {
+  grid-template-rows: var(--titlebar-h) minmax(0, 1fr) var(--player-h);
+  grid-template-areas:
+    'title title title'
+    'side main queue'
+    'player player player';
+}
+
+.titlebar {
+  grid-area: title;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  /* Room for the caption buttons reported by Window Controls Overlay. */
+  padding: 0 calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 12px) 0 12px;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.titlebar button {
+  -webkit-app-region: no-drag;
+}
+
+.titlebar .icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+
+.titlebar .icon-btn:disabled {
+  opacity: 0.32;
+  pointer-events: none;
+}
+
+.titlebar-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  width: min(300px, 32vw);
+  margin-left: max(8px, calc(var(--sidebar-w) - 12px - 64px));
+  padding: 0 6px 0 12px;
+  border-radius: var(--radius-pill);
+  background: rgba(196, 240, 214, 0.045);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-3);
+  font-size: 13px;
+  transition:
+    background 160ms var(--ease),
+    color 160ms var(--ease),
+    transform 140ms var(--ease);
+}
+
+.titlebar-search:hover {
+  background: rgba(196, 240, 214, 0.08);
+  color: var(--text-2);
+}
+
+.titlebar-search:active {
+  transform: scale(0.985);
+}
+
+.titlebar-search kbd {
+  margin-left: auto;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 18px;
+  box-shadow: none;
+}
+
+.desktop .sidebar {
+  padding-top: 4px;
+}
+
+.desktop .main,
+.desktop .queue-panel {
+  margin-top: 0;
+}
+
+/* The full player replaces the title bar: only the native caption buttons stay,
+   and its own top row becomes the drag area. */
+.desktop .app:has(> .full-player) .titlebar {
+  display: none;
+}
+
+.desktop .fp-top {
+  min-height: var(--titlebar-h);
+  padding-top: 6px;
+  padding-bottom: 6px;
+  padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px);
+  -webkit-app-region: drag;
+}
+.desktop .fp-source { inset-inline: max(72px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 24px)); }
+
+.desktop .fp-top button,
+.desktop .fp-top a {
+  -webkit-app-region: no-drag;
+}
+
+/* Below 1280 px the queue floats; keep it under the caption buttons. */
+@media (max-width: 1280px) {
+  .desktop .queue-panel:not(.fp-queue) {
+    top: calc(var(--titlebar-h) + 4px);
+  }
+}
+
+@media (max-width: 767px) {
+  .desktop .app {
+    grid-template-rows: var(--titlebar-h) minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      'title'
+      'main'
+      'mini'
+      'tabs';
+  }
+
+  .titlebar-search {
+    margin-left: 8px;
+  }
+}
+
+/* Window heights below a browser tab's: keep the playlist block readable. */
+@media (max-height: 900px) {
+  .desktop .brand {
+    padding-bottom: 12px;
+  }
+
+  .desktop .nav a {
+    min-height: 38px;
+  }
+
+  .desktop .nav-group-label {
+    margin: 14px 12px 4px;
+  }
+
+  .desktop .side-section {
+    margin-top: 8px;
+  }
+}
+
+@media (max-height: 760px) {
+  .desktop .side-list > p {
+    display: none;
+  }
+}
+
+/* Compact mini-player: the slim drag strip with pin/expand, and the mini player. */
+.compact-only { display: none !important; }
+.compact .compact-only { display: inline-grid !important; }
+.compact .titlebar-compact { display: inline-flex !important; gap: 2px; }
+.compact .app {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 34px minmax(0, 1fr);
+  grid-template-areas: 'title' 'mini';
+}
+.compact .titlebar { padding-left: 8px; }
+.compact .titlebar > :not(.titlebar-compact), .compact .sidebar, .compact .main, .compact .queue-panel, .compact .tabbar, .compact .player-bar,
+.compact .version-panel, .compact .toasts, .compact .upload-card, .compact .full-player { display: none !important; }
+.compact .mini-player { display: grid !important; grid-area: mini; margin: 0 6px 6px; align-self: stretch; }
+/* The mobile mini player highlights its last button; here that is "Next", so move the accent to Play. */
+.compact .mini-player > div .icon-btn:last-child { width: 36px; height: 36px; margin-left: 0; background: none; color: var(--text-2) !important; }
+.compact .mini-player > div .icon-btn:nth-last-child(2) { width: 42px; height: 42px; border-radius: 14px; background: var(--accent-soft); color: var(--on-accent) !important; }

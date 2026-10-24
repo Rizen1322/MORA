@@ -1,0 +1,11 @@
+{
+  "name": "@automix/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DSP/MIR core: analysis, transition planning, mixer engine, recommendations",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  }
+}

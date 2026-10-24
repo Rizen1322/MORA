@@ -1,0 +1,15 @@
+{
+  "version": "0.3.5",
+  "planner": "am-planner-v11-dj-2",
+  "bytes": 480322887,
+  "sha256": "61ff5b8e28dbb6a4517a09c1078927f7a8e708522bff664b4394646d7fea2a8a",
+  "tests": 669,
+  "testFiles": 65,
+  "installedBackendMatches": true,
+  "installedWebMatches": true,
+  "tracksBefore": 285,
+  "tracksAfter": 285,
+  "missingTracks": 0,
+  "quickCheck": "ok",
+  "freeBytesC": 40733999104
+}

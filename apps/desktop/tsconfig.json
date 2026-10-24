@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "types": ["node", "electron"], "lib": ["ES2023"] },
+  "include": ["src/backend.ts"]
+}

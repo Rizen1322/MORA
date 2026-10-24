@@ -1,0 +1,53 @@
+/* The personal station is the centre of the room; the collection is within reach. */
+.home-page .home-heading { margin-bottom:12px; }
+.home-page .home-greeting { font-size:22px; letter-spacing:-.04em; }
+.home-page .home-heading .eyebrow { font-size:10px; margin-bottom:7px; }
+.home-page .home-featured { grid-template-columns:minmax(0,1fr); gap:16px; }
+.home-page .wave-hero { min-height:500px; padding:52px 28px 40px; display:flex; flex-direction:column; align-items:center; justify-content:center; isolation:isolate; background:radial-gradient(ellipse at 50% 40%,#234e2926,transparent 64%); border-radius:32px; border:0; }
+.home-page .home-wave-object { width:min(660px,100%); height:500px; top:50%; left:50%; right:auto; transform:translate(-50%,-58%); opacity:.7; z-index:-1; pointer-events:none; }
+.home-page .wave-hero-copy { text-align:center; width:100%; display:flex; flex-direction:column; align-items:center; }
+.home-page .wave-hero-kicker { color:var(--accent-soft); margin-bottom:21px; font-size:10px; letter-spacing:.08em; }
+.home-page .wave-hero-title { max-width:none; margin:0; font-size:clamp(42px,6.5vw,88px); line-height:1.1; letter-spacing:-.065em; text-shadow:0 4px 35px #06110bbc; }
+.home-page .wave-hero p { max-width:42ch; margin:20px 0 26px; font-size:13px; color:var(--text-2); }
+.home-page .wave-hero .hero-actions { display:flex; justify-content:center; align-items:center; gap:12px; margin-top:22px; }
+.home-page .wave-hero .btn-primary { min-height:52px; min-width:168px; border-radius:18px; box-shadow:0 8px 32px #4ade9a1a,inset 0 1px 0 #e0ffe260; }
+.home-page .home-wave-source { display:flex; gap:4px; padding:4px; border:1px solid #b6e8c519; background:#06110b99; border-radius:13px; pointer-events:auto; }
+.home-wave-source button { cursor:pointer; font:inherit; font-size:11px; border:0; border-radius:9px; padding:10px 15px; background:transparent; color:var(--text-3); transition:background .25s,color .25s; }
+.home-wave-source button[aria-pressed=true] { color:var(--text); background:#284c38; box-shadow:inset 0 1px 0 #d6ffe91c; }
+.home-wave-source button:disabled { opacity:.4; cursor:default; }
+.home-page .home-wave-signature { bottom:18px; right:24px; font-size:9px; opacity:.6; }
+.home-page .home-session { width:min(620px,100%); justify-self:center; padding:15px 19px; border-radius:18px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:9px 18px; background:#10231a80; }
+.home-page .home-session-heading { grid-column:1/-1; font-size:10px; margin:0; }
+.home-page .home-session-track { flex-direction:row; align-items:center; gap:13px; margin:0; min-width:0; }
+.home-page .home-session-track>div { min-width:0; }
+.home-page .home-session-art { width:48px; flex:0 0 48px; }
+.home-page .home-session .cover { width:48px!important; height:48px!important; border-radius:10px; transform:rotate(-3deg); }
+.home-page .home-session-title { font-size:15px; }
+.home-page .home-session-track p { font-size:11px; }
+.home-page .home-session-progress { grid-column:1/-1; grid-row:3; height:2px; margin:1px 0 0; }
+.home-page .home-session-footer { grid-column:2; grid-row:2; margin:0; }
+.home-page .home-session-footer>span { display:none; }
+.home-page .home-discover { padding:18px 22px; min-height:0; display:flex; align-items:center; gap:18px; max-width:620px; justify-self:center; }
+.home-page .home-discover h2 { font-size:17px; margin:4px 0; }.home-page .home-discover p { font-size:12px; margin:0; }
+.home-page .home-shortcuts { justify-content:center; margin:23px 0 34px; }
+.home-page .rail { grid-auto-columns:152px; gap:20px; }
+.home-page .section-title { font-size:22px; }
+.home-wave-tuning { width:min(850px,100%); background:#0d2017f2; border:1px solid #b6e8c51a; border-radius:18px; padding:22px; margin:26px 0 8px; animation:studio-arrive .3s var(--ease) both; }
+.yandex-tuning-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:22px; margin:20px 0 6px; }
+.yandex-wave-tuning .ws-segments { flex-wrap:wrap; }
+.yandex-wave-tuning .ws-segments button { flex:1 0 auto; white-space:normal; }
+.yandex-wave-tuning .ws-control legend { font-size:12px; color:var(--text-2); }
+.yandex-wave-tuning .ws-help { line-height:1.65; font-size:12px; color:var(--text-3); margin:0; }
+@media(max-width:767px) {
+  .home-page .home-greeting { font-size:20px; }.home-page .wave-hero { min-height:440px; padding:36px 10px; }
+  .home-page .home-wave-object { width:120%; height:400px; opacity:.65; }
+  .home-page .wave-hero-title { font-size:clamp(37px,10vw,58px); }
+  .home-page .wave-hero p { font-size:12px; max-width:29ch; }
+  .home-page .wave-hero .hero-actions { flex-direction:column; gap:5px; margin-top:20px; }
+  .home-page .wave-hero .btn-primary { min-height:49px; }
+  .home-page .home-wave-signature { font-size:8px; right:12px; bottom:8px; }
+  .home-page .home-session { padding:13px 14px; }.home-page .home-session-title { font-size:14px; }
+  .home-page .home-session-art { width:44px; flex-basis:44px; }.home-page .home-session .cover { width:44px!important; height:44px!important; }
+  .home-page .home-shortcuts { margin:20px 0 27px; }.home-page .rail { grid-auto-columns:135px; gap:16px; }
+  .home-wave-tuning { padding:16px; }.home-wave-source button { padding:10px 12px; font-size:10px; }
+}

@@ -1,0 +1,16 @@
+{
+  "appId": "ru.mora.player",
+  "appName": "MORA",
+  "webDir": "www",
+  "backgroundColor": "#050d0a",
+  "ios": {
+    "contentInset": "never",
+    "scheme": "MORA",
+    "backgroundColor": "#050d0a",
+    "allowsLinkPreview": false,
+    "limitsNavigationsToAppBoundDomains": false
+  },
+  "plugins": {
+    "CapacitorHttp": { "enabled": false }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "version": "0.3.6",
+  "planner": "am-planner-v11-dj-3",
+  "bytes": 480324962,
+  "sha256": "a1c03aa10e59edc224bbef968e5ab030b9adc67312a03557d71cc10d56f4bdcf",
+  "tests": 677,
+  "testFiles": 68,
+  "integration": {
+    "runtime": "44.9.2",
+    "systemToolsOnPath": false,
+    "startedAt": "2026-10-21T21:04:03.589Z",
+    "ffmpeg": true,
+    "vocalRuntime": "bundled-cpu",
+    "playbackDefaults": {
+      "speed": 1,
+      "semitones": 0
+    },
+    "motionDefault": "full",
+    "searchMs": 1029,
+    "prepareMs": 47,
+    "firstPcmMs": 2153,
+    "pcmBytes": 65536,
+    "coverBytes": 56107,
+    "coverType": "image/jpeg",
+    "fullLikesRoute": 200,
+    "ok": true
+  },
+  "tracksBefore": 289,
+  "tracksAfter": 290,
+  "missingTracks": 0,
+  "quickCheck": "ok",
+  "installedBackendMatches": true,
+  "installedWebMatches": true,
+  "installerExit": 0,
+  "installedVersion": "0.3.6.0",
+  "backendReady": true,
+  "freeBytesC": 40661749760
+}

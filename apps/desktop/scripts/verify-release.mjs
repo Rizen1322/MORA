@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { extractFile } from '@electron/asar';
+import yaml from 'js-yaml';
+
+const desktop = fileURLToPath(new URL('../', import.meta.url));
+const pkg = JSON.parse(fs.readFileSync(path.join(desktop, 'package.json'), 'utf8'));
+const dist = path.join(desktop, 'dist');
+const name = `MORA-Setup-${pkg.version}.exe`;
+const installer = path.join(dist, name);
+const resources = path.join(dist, 'win-unpacked', 'resources');
+const archive = path.join(resources, 'app.asar');
+const packaged = JSON.parse(extractFile(archive, 'package.json').toString());
+const updater = JSON.parse(extractFile(archive, path.join('node_modules', 'electron-updater', 'package.json')).toString());
+assert.equal(packaged.version, pkg.version, 'Packaged app version differs from source');
+assert.equal(updater.version, pkg.dependencies['electron-updater'], 'Packaged updater is missing or has the wrong version');
+const feed = yaml.load(fs.readFileSync(path.join(resources, 'app-update.yml'), 'utf8'));
+assert.equal(feed.provider, 'github');
+assert.equal(feed.owner, 'Rizen1322');
+assert.equal(feed.repo, 'MORA');
+assert.ok(feed.updaterCacheDirName, 'Updater cache directory is missing');
+const metadata = yaml.load(fs.readFileSync(path.join(dist, 'latest.yml'), 'utf8'));
+assert.equal(metadata.version, pkg.version, 'Update metadata has a different version');
+assert.equal(metadata.path, name, 'Update metadata points to a different installer');
+const file = metadata.files?.find((entry) => entry.url === name);
+assert.ok(file, 'Installer is absent from update metadata');
+assert.equal(file.size, fs.statSync(installer).size, 'Installer size differs from metadata');
+assert.ok(fs.statSync(`${installer}.blockmap`).size > 0, 'Blockmap is missing');
+const sha256 = crypto.createHash('sha256');
+const sha512 = crypto.createHash('sha512');
+for await (const chunk of fs.createReadStream(installer)) { sha256.update(chunk); sha512.update(chunk); }
+const digest512 = sha512.digest('base64');
+assert.equal(file.sha512, digest512, 'Installer SHA-512 differs from update metadata');
+assert.equal(metadata.sha512, digest512, 'Legacy installer SHA-512 differs from update metadata');
+const digest256 = sha256.digest('hex');
+fs.writeFileSync(`${installer}.sha256`, `${digest256}  ${name}\n`);
+console.log(JSON.stringify({ version: pkg.version, installer: name, bytes: file.size, sha256: digest256,
+  sha512: digest512, updater: updater.version, feed: `${feed.owner}/${feed.repo}` }, null, 2));

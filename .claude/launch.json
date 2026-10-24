@@ -1,0 +1,78 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "automix-test",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "tsx",
+        "apps/server/src/index.ts"
+      ],
+      "port": 4731,
+      "env": {
+        "PORT": "4731",
+        "AUTOMIX_DATA_DIR": "data-dev"
+      }
+    },
+    {
+      "name": "automix-design",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "tsx",
+        "apps/server/src/index.ts"
+      ],
+      "port": 4732,
+      "env": {
+        "PORT": "4732",
+        "AUTOMIX_DATA_DIR": "data-dev"
+      }
+    },
+    {
+      "name": "automix-algo",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "tsx",
+        "apps/server/src/index.ts"
+      ],
+      "port": 4733,
+      "env": {
+        "PORT": "4733",
+        "AUTOMIX_DATA_DIR": "data-dev"
+      }
+    },
+    {
+      "name": "automix-planner-check",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "tsx",
+        "apps/server/src/index.ts"
+      ],
+      "port": 4734,
+      "env": {
+        "PORT": "4734",
+        "AUTOMIX_DATA_DIR": "data-dev",
+        "STEMS_PYTHON": "",
+        "ANALYSIS_WORKERS": "1"
+      }
+    },
+    {
+      "name": "mora-web-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "tools/dev.mjs"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "mora-ios-harness",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "apps/mobile/dev/serve.mjs"
+      ],
+      "port": 4741,
+      "env": {
+        "PORT": "4741"
+      }
+    }
+  ]
+}

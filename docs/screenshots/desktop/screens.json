@@ -1,0 +1,82 @@
+[
+  {
+    "file": "home-min-100.png",
+    "w": 960,
+    "h": 680,
+    "dpr": 1,
+    "overflowX": false,
+    "sidebarOverflow": false
+  },
+  {
+    "file": "home-normal-100.png",
+    "w": 1264,
+    "h": 812,
+    "dpr": 1,
+    "overflowX": false,
+    "sidebarOverflow": false
+  },
+  {
+    "file": "library-normal-100.png",
+    "w": 1264,
+    "h": 812,
+    "dpr": 1,
+    "overflowX": false,
+    "sidebarOverflow": false
+  },
+  {
+    "file": "liked-normal-100.png",
+    "w": 1264,
+    "h": 812,
+    "dpr": 1,
+    "overflowX": false,
+    "sidebarOverflow": false
+  },
+  {
+    "file": "settings-normal-100.png",
+    "w": 1264,
+    "h": 812,
+    "dpr": 1,
+    "overflowX": false,
+    "sidebarOverflow": false
+  },
+  {
+    "file": "wave-normal-100.png",
+    "w": 1264,
+    "h": 812,
+    "dpr": 1,
+    "overflowX": false,
+    "sidebarOverflow": false
+  },
+  {
+    "file": "home-max-100.png",
+    "w": 2560,
+    "h": 1438,
+    "dpr": 1,
+    "overflowX": false,
+    "sidebarOverflow": false
+  },
+  {
+    "file": "home-normal-125.png",
+    "w": 1266,
+    "h": 814,
+    "dpr": 1.25,
+    "overflowX": false,
+    "sidebarOverflow": false
+  },
+  {
+    "file": "home-normal-150.png",
+    "w": 1266,
+    "h": 813,
+    "dpr": 1.5,
+    "overflowX": false,
+    "sidebarOverflow": false
+  },
+  {
+    "file": "home-normal-200.png",
+    "w": 1267,
+    "h": 814,
+    "dpr": 2,
+    "overflowX": false,
+    "sidebarOverflow": false
+  }
+]

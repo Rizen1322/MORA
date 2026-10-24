@@ -1,0 +1,20 @@
+node_modules/
+data/
+dist/
+.env
+*.log
+.vite/
+coverage/
+tools/.cache/
+__pycache__/
+data-dev/
+# local benchmark runs, rendered demo transitions and release archives
+data-bench/
+data-bench-input/
+data-bench-results/
+examples/transitions/
+*.zip
+*.zip.sha256
+# third-party design skills (own licenses) and local agent state
+skill/
+.claude/scheduled_tasks.lock
