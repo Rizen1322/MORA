@@ -45,7 +45,7 @@ let updateConfirmation = false;
 
 const userData = app.getPath('userData');
 const settingsFile = path.join(userData, 'desktop.json');
-const settings = Object.assign({ closeToTray: true, trayHintShown: false, window: null, dataDir: null, stemsPython: null }, readJson(settingsFile));
+const settings = Object.assign({ closeToTray: true, trayHintShown: false, window: null, dataDir: null }, readJson(settingsFile));
 const dataDir = settings.dataDir || path.join(userData, 'data');
 const launchToken = crypto.randomBytes(32).toString('hex');
 const resolverUpdater = new ResolverUpdater({ directory: path.join(userData, 'resolver-updates'), bundled: path.join(resources, 'yt-dlp', 'yt-dlp.exe') });
@@ -136,7 +136,8 @@ async function startBackend(port = 0) {
     FFPROBE_PATH: path.join(ff, 'ffprobe.exe'),
     // Public sources: bundled yt-dlp; its JS challenges run on this app's own Electron binary (Node mode).
     YTDLP_PATH: resolverUpdater.executable(),
-    STEMS_PYTHON: settings.stemsPython || '',
+    // No vocal separation in the desktop app: AutoMix plans without stems.
+    STEMS_PYTHON: '',
   });
   if (youtubeProxy !== undefined) env.AUTOMIX_YOUTUBE_PROXY = youtubeProxy;
   if (soundcloudProxy !== undefined) env.AUTOMIX_SOUNDCLOUD_PROXY = soundcloudProxy;

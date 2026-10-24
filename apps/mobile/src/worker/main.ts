@@ -98,9 +98,6 @@ async function boot(): Promise<void> {
   const db = svc.db;
   const saved = kvGet<{ ui?: Record<string, unknown> }>(db, 'settings', {});
   if (!saved.ui?.graphics || !saved.ui?.motion) kvSet(db, 'settings', { ...saved, ui: { ...saved.ui, graphics: saved.ui?.graphics ?? 'canvas', motion: saved.ui?.motion ?? 'reduced' } });
-  // No vocal model here: "off" would only switch off phrasing, loops and master tempo, which work without it.
-  const now = kvGet<{ automix?: Record<string, unknown> }>(db, 'settings', {});
-  if (now.automix?.stemMixing === false) kvSet(db, 'settings', { ...now, automix: { ...now.automix, stemMixing: true } });
   app = a as unknown as MiniFastify;
   services = svc;
   post({ t: 'ready' });

@@ -7,10 +7,8 @@
   "extraResources": [
     { "from": "build/backend", "to": "backend" },
     { "from": "build/web", "to": "web" },
-    { "from": "build/tools", "to": "tools" },
     { "from": "build/ffmpeg", "to": "ffmpeg" },
     { "from": "build/yt-dlp", "to": "yt-dlp" },
-    { "from": "build/vocal", "to": "vocal" },
     { "from": "THIRD_PARTY.md", "to": "THIRD_PARTY.md" }
   ],
   "asar": true,

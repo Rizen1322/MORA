@@ -37,8 +37,9 @@ try {
   };
   report.ffmpeg = !!ready.ffmpeg;
   const health = await (await request('/api/health')).json();
-  report.vocalRuntime = health.stems?.runtime;
-  if (report.vocalRuntime !== 'bundled-cpu') throw new Error('Bundled vocal model unavailable');
+  // The installer no longer ships a vocal model: the backend must start and report it as absent.
+  report.vocalRuntime = health.stems?.runtime ?? null;
+  if (health.stems?.available !== false || report.vocalRuntime !== null) throw new Error('Unexpected vocal runtime in the desktop backend');
   const saved = await (await request('/api/settings')).json();
   if (!saved.sound?.playback || saved.sound.playback.speed !== 1) throw new Error('Playback settings migration failed');
   report.playbackDefaults = saved.sound.playback;

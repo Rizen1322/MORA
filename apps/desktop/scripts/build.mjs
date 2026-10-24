@@ -1,8 +1,6 @@
 // Prepares everything the Electron shell needs in apps/desktop/build:
 //   web/      production React build (served by the backend on 127.0.0.1)
 //   backend/  bundled Fastify backend + analysis worker (run in a utility process)
-//   tools/    local vocal separation scripts
-//   vocal/    self-contained CPU Python + model, when fetched
 //   ffmpeg/   pinned LGPL FFmpeg (scripts/fetch-ffmpeg.mjs)
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -52,9 +50,8 @@ await build({
   logLevel: 'warning',
 });
 
-fs.rmSync(path.join(out, 'tools'), { recursive: true, force: true });
-fs.mkdirSync(path.join(out, 'tools'));
-for (const f of ['separate-vocals.py', 'transcribe-vocals.py']) fs.copyFileSync(path.join(root, 'tools', f), path.join(out, 'tools', f));
+// No vocal separation in the app any more: old tools/ and vocal/ outputs must not reach the installer.
+for (const old of ['tools', 'vocal']) fs.rmSync(path.join(out, old), { recursive: true, force: true });
 
 const ffSrc = process.env.AUTOMIX_FFMPEG_DIR || path.join(desktop, 'vendor/ffmpeg');
 if (!fs.existsSync(path.join(ffSrc, 'ffmpeg.exe'))) {
@@ -70,11 +67,4 @@ if (!fs.existsSync(path.join(ytSrc, 'yt-dlp.exe'))) {
 }
 fs.rmSync(path.join(out, 'yt-dlp'), { recursive: true, force: true });
 copyDir(ytSrc, path.join(out, 'yt-dlp'));
-const vocalSrc = path.join(desktop, 'vendor/vocal');
-if (!fs.existsSync(path.join(vocalSrc, 'pack.json'))) {
-  console.error('Нет вокального CPU-комплекта: node apps/desktop/scripts/fetch-vocals.mjs --python <Python 3.12>');
-  process.exit(1);
-}
-fs.rmSync(path.join(out, 'vocal'), { recursive: true, force: true });
-copyDir(vocalSrc, path.join(out, 'vocal'));
 console.log(`Сборка desktop готова: ${out}`);
