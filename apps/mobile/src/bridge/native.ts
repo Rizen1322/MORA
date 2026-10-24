@@ -3,12 +3,13 @@ import type { FetchArgs, FetchResult } from '../shared/protocol.ts';
 
 /**
  * The native side of the iOS app (ios/App/App/MoraAudioPlugin.swift):
- * Audio interruptions, route changes and power state. WebKit owns Now Playing
- * and lock-screen commands; publishing a second native player made the clock
- * and the enabled commands refer to different players.
+ * Audio interruptions, route changes, power state and remote navigation.
+ * WebKit owns Now Playing metadata; native navigation bypasses AudioContext's
+ * unsupported Next/Previous/Seek remote-command path without a second publisher.
  */
 
 interface MoraAudio {
+  setRemoteNavigation(o: { actions: MediaSessionAction[]; seekable: boolean }): Promise<void>;
   setPlaybackState(o: { playing: boolean; webAudioSession: boolean }): Promise<void>;
   addListener(ev: 'command', fn: (e: { action: MediaSessionAction; seekTime?: number }) => void): Promise<PluginListenerHandle>;
   addListener(ev: 'power', fn: (e: Power) => void): Promise<PluginListenerHandle>;
@@ -94,9 +95,28 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
   const webAudioSession = (navigator as Navigator & { audioSession?: { type: string } }).audioSession?.type === 'playback';
   const handlers = new Map<MediaSessionAction, MediaSessionActionHandler | null>();
   const registerAction = ms.setActionHandler.bind(ms);
+  const navigation = new Set<MediaSessionAction>(['nexttrack', 'previoustrack', 'seekto', 'seekforward', 'seekbackward']);
+  let nativeNavigation = true, seekable = false;
+  const syncNavigation = () => {
+    if (!nativeNavigation) return;
+    void MoraAudio.setRemoteNavigation({
+      actions: [...handlers].filter(([action, handler]) => navigation.has(action) && handler).map(([action]) => action),
+      seekable,
+    }).catch(() => {
+      // Older installed native shell: retain its WebKit path until rebuilt.
+      if (!nativeNavigation) return;
+      nativeNavigation = false;
+      for (const [action, handler] of handlers) {
+        if (navigation.has(action)) { try { registerAction(action, handler); } catch { /* unsupported */ } }
+      }
+    });
+  };
   ms.setActionHandler = (action, handler) => {
     handlers.set(action, handler);
-    try { registerAction(action, handler); } catch { /* action unsupported by this WebKit */ }
+    // Never execute navigation through both transports (two Next commands would
+    // finish/skip a transition). WebKit still owns play/pause and the metadata.
+    try { registerAction(action, nativeNavigation && navigation.has(action) ? null : handler); } catch { /* unsupported */ }
+    if (navigation.has(action)) syncNavigation();
   };
   void MoraAudio.addListener('command', ({ action, seekTime }) => {
     handlers.get(action)?.({ action, seekTime } as MediaSessionActionDetails);
@@ -110,6 +130,8 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
     try { origPos?.({ duration, position: Math.max(0, Math.min(duration, position + elapsed)), playbackRate: rate }); }
     catch { /* WebKit may reject position state during startup */ }
     publishedAt = performance.now();
+    seekable = true;
+    syncNavigation();
   };
   let current: MediaMetadata | null = null;
   const metadata = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(ms), 'metadata');
@@ -118,7 +140,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
     get: () => current,
     set: (m: MediaMetadata | null) => {
       current = m;
-      if (!m) { nowKey = ''; metadata?.set?.call(ms, null); origPos?.(); return; }
+      if (!m) { nowKey = ''; duration = 0; seekable = false; metadata?.set?.call(ms, null); origPos?.(); syncNavigation(); return; }
       // artwork in the key: a wave track's cover often arrives after its title
       const key = `${m.title}\u0000${m.artist}\u0000${m.album}\u0000${m.artwork?.[0]?.src ?? ''}`;
       if (key === nowKey) return;

@@ -1,5 +1,6 @@
 import AVFoundation
 import Capacitor
+import MediaPlayer
 import Security
 import UIKit
 import WebKit
@@ -28,13 +29,14 @@ class MoraBridgeViewController: CAPBridgeViewController {
     }
 }
 
-/// WebKit owns Now Playing and remote commands. Native code handles genuine
-/// interruptions, route changes and power notifications for the WebAudio player.
+/// WebKit owns Now Playing metadata. Native remote navigation bypasses the
+/// AudioContext path, which does not implement Next/Previous or seeking.
 @objc(MoraAudioPlugin)
 public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "MoraAudioPlugin"
     public let jsName = "MoraAudio"
     public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "setRemoteNavigation", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setPlaybackState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "power", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "secretKey", returnType: CAPPluginReturnPromise),
@@ -43,8 +45,10 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private var playing = false
     private var webAudioSession = false
     private var resumeAfterInterruption = false
+    private var remoteCommands: [(MPRemoteCommand, Any)] = []
 
     override public func load() {
+        registerNavigation()
         let nc = NotificationCenter.default
         let session = AVAudioSession.sharedInstance()
         nc.addObserver(self, selector: #selector(interruption(_:)), name: AVAudioSession.interruptionNotification, object: session)
@@ -56,8 +60,53 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         nc.addObserver(self, selector: #selector(powerChanged(_:)), name: .NSProcessInfoPowerStateDidChange, object: nil)
     }
 
-    private func send(_ action: String) {
-        notifyListeners("command", data: ["action": action])
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        for (command, target) in remoteCommands { command.removeTarget(target) }
+    }
+
+    private func send(_ action: String, seekTime: Double? = nil) {
+        var data: [String: Any] = ["action": action]
+        if let seekTime { data["seekTime"] = seekTime }
+        notifyListeners("command", data: data)
+    }
+
+    private func registerNavigation() {
+        let center = MPRemoteCommandCenter.shared()
+        let bindings: [(MPRemoteCommand, String)] = [
+            (center.nextTrackCommand, "nexttrack"),
+            (center.previousTrackCommand, "previoustrack"),
+            (center.changePlaybackPositionCommand, "seekto"),
+            (center.skipForwardCommand, "seekforward"),
+            (center.skipBackwardCommand, "seekbackward"),
+        ]
+        center.skipForwardCommand.preferredIntervals = [10]
+        center.skipBackwardCommand.preferredIntervals = [10]
+        for (command, action) in bindings {
+            command.isEnabled = false
+            let target = command.addTarget { [weak self] event in
+                guard self != nil else { return .commandFailed }
+                let time = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime
+                if action == "seekto", time == nil || time?.isFinite != true { return .commandFailed }
+                DispatchQueue.main.async { [weak self] in self?.send(action, seekTime: time) }
+                return .success
+            }
+            remoteCommands.append((command, target))
+        }
+    }
+
+    @objc func setRemoteNavigation(_ call: CAPPluginCall) {
+        let actions = Set(call.getArray("actions", String.self) ?? [])
+        let seekable = call.getBool("seekable") ?? false
+        DispatchQueue.main.async {
+            let center = MPRemoteCommandCenter.shared()
+            center.nextTrackCommand.isEnabled = actions.contains("nexttrack")
+            center.previousTrackCommand.isEnabled = actions.contains("previoustrack")
+            center.changePlaybackPositionCommand.isEnabled = seekable && actions.contains("seekto")
+            center.skipForwardCommand.isEnabled = seekable && actions.contains("seekforward")
+            center.skipBackwardCommand.isEnabled = seekable && actions.contains("seekbackward")
+            call.resolve()
+        }
     }
 
     @objc func setPlaybackState(_ call: CAPPluginCall) {

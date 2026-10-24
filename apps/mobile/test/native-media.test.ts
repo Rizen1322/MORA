@@ -2,6 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { setupNative } from '../src/bridge/native.ts';
 
 const native = vi.hoisted(() => ({
+  setRemoteNavigation: vi.fn(async (_state: any) => {}),
   setNowPlaying: vi.fn(async (_info: any) => {}), setPlaybackState: vi.fn(async (_state: any) => {}),
   clear: vi.fn(async () => {}), power: vi.fn(async () => ({ thermal: 0, lowPower: false })),
   addListener: vi.fn(async (_event: string, _fn: any) => ({ remove: async () => {} })),
@@ -40,7 +41,7 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('iPhone Now Playing bridge', () => {
-  it('registers lock-screen next/previous/seek with the real WebKit session', async () => {
+  it('routes lock-screen navigation through native commands, not AudioContext remote handlers', async () => {
     const webkitActions = ms.setActionHandler;
     setupNative(emptyFetch, () => {});
     const next = vi.fn(), previous = vi.fn(), seek = vi.fn(), pause = vi.fn();
@@ -49,17 +50,48 @@ describe('iPhone Now Playing bridge', () => {
     ms.setActionHandler('seekto', seek);
     ms.setActionHandler('pause', pause);
     expect(webkitActions).toHaveBeenCalledTimes(4);
+    expect(native.setRemoteNavigation).toHaveBeenLastCalledWith({
+      actions: ['nexttrack', 'previoustrack', 'seekto'], seekable: false,
+    });
+    const command = native.addListener.mock.calls.find(([event]) => event === 'command')![1];
     for (const action of ['nexttrack', 'previoustrack', 'seekto'] as const) {
-      const fn = webkitActions.mock.calls.find(([name]) => name === action)![1];
-      fn({ action, seekTime: 60 });
+      expect(webkitActions.mock.calls.find(([name]) => name === action)![1]).toBeNull();
+      command({ action, seekTime: 60 });
     }
     expect(next).toHaveBeenCalledOnce();
     expect(previous).toHaveBeenCalledOnce();
     expect(seek).toHaveBeenCalledExactlyOnceWith({ action: 'seekto', seekTime: 60 });
     // A genuine native interruption still reaches the controller's Pause handler.
-    const command = native.addListener.mock.calls.find(([event]) => event === 'command')![1];
     command({ action: 'pause' });
     expect(pause).toHaveBeenCalledOnce();
+  });
+
+  it('enables native scrubbing only with a duration and removes cleared actions', () => {
+    setupNative(emptyFetch, () => {});
+    const seek = vi.fn();
+    ms.setActionHandler('seekto', seek);
+    expect(native.setRemoteNavigation).toHaveBeenLastCalledWith({ actions: ['seekto'], seekable: false });
+    ms.setPositionState({ duration: 180, position: 10 });
+    expect(native.setRemoteNavigation).toHaveBeenLastCalledWith({ actions: ['seekto'], seekable: true });
+    ms.setActionHandler('seekto', null);
+    expect(native.setRemoteNavigation).toHaveBeenLastCalledWith({ actions: [], seekable: true });
+    const command = native.addListener.mock.calls.find(([event]) => event === 'command')![1];
+    command({ action: 'seekto', seekTime: 60 });
+    expect(seek).not.toHaveBeenCalled();
+    ms.metadata = null;
+    expect(native.setRemoteNavigation).toHaveBeenLastCalledWith({ actions: [], seekable: false });
+  });
+
+  it('falls back to WebKit registration when the installed native shell predates navigation', async () => {
+    native.setRemoteNavigation.mockRejectedValueOnce(new Error('not implemented'));
+    const webkitActions = ms.setActionHandler;
+    setupNative(emptyFetch, () => {});
+    const next = vi.fn();
+    ms.setActionHandler('nexttrack', next);
+    await Promise.resolve();
+    expect(webkitActions).toHaveBeenLastCalledWith('nexttrack', next);
+    ms.setActionHandler('nexttrack', null);
+    expect(webkitActions).toHaveBeenLastCalledWith('nexttrack', null);
   });
 
   it('keeps one Now Playing publisher and ignores duplicate metadata ticks', async () => {

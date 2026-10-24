@@ -1,0 +1,37 @@
+name: iOS unsigned IPA
+
+on:
+  push:
+    branches: ['codex/ios-*']
+    paths:
+      - 'apps/mobile/**'
+      - 'apps/web/**'
+      - 'apps/server/**'
+      - 'packages/**'
+      - 'package*.json'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Build unsigned device IPA
+        run: sh apps/mobile/scripts/ios-mac.sh --ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MORA-unsigned-ipa
+          path: apps/mobile/MORA-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14

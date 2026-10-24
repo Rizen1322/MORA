@@ -11,8 +11,8 @@ WKWebView (Capacitor 8)
 ├─ страница: apps/web + mora-bridge.js
 │   • /api-запросы (fetch, XHR, EventSource, <img>/<audio> src) → server worker
 │   • для worker: decodeAudioData (декодирование и ресэмплинг), внешний HTTP (CapacitorHttp)
-│   • navigator.mediaSession → WebKit (Now Playing, экран блокировки и его команды)
-│   • MoraAudio → прерывания, наушники, состояние нагрева/энергосбережения
+│   • navigator.mediaSession → WebKit (Now Playing, Play/Pause)
+│   • MoraAudio → нативные Next/Previous/Seek, прерывания, наушники, нагрев/энергосбережение
 └─ server-worker.js: apps/server без изменений маршрутов
     • node:fs → OPFS (синхронные SyncAccessHandle), node:sqlite → sql.js (файл в OPFS)
     • ffmpeg → декодирование на странице, probe через music-metadata
@@ -27,7 +27,7 @@ WKWebView (Capacitor 8)
 | `src/worker/opfs-fs.ts` | `fs` и `fs/promises` поверх OPFS |
 | `src/worker/shims/` | `fastify`, `node:sqlite`, `crypto`, `worker_threads`, `child_process` и др. |
 | `src/worker/replace/` | Замены `ffmpeg.ts` и `public/ytdlp.ts` для iOS |
-| `ios/App/App/MoraAudioPlugin.swift` | Прерывания, наушники, нагрев и запасная активация AVAudioSession; Now Playing принадлежит WebKit |
+| `ios/App/App/MoraAudioPlugin.swift` | Нативные Next/Previous/Seek, прерывания, наушники, нагрев и запасная активация AVAudioSession; метаданные Now Playing принадлежат WebKit |
 | `dev/serve.mjs` | Тот же бандл в браузере, внешний HTTP через `/__proxy` |
 
 ## Сборка на Mac
