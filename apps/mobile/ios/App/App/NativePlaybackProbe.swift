@@ -20,7 +20,13 @@ final class NativePlaybackProbe: NSObject, AVAudioPlayerDelegate {
 
     var snapshot: [String: Any] {
         ["active": active, "playing": player?.isPlaying ?? false, "index": index,
-         "position": player?.currentTime ?? 0, "duration": player?.duration ?? 0]
+         "position": player?.currentTime ?? 0, "duration": player?.duration ?? 0,
+         "commandAvailability": [
+            "next": MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled,
+            "previous": MPRemoteCommandCenter.shared().previousTrackCommand.isEnabled,
+            "position": MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled,
+            "skipForward": MPRemoteCommandCenter.shared().skipForwardCommand.isEnabled,
+            "skipBackward": MPRemoteCommandCenter.shared().skipBackwardCommand.isEnabled]]
     }
 
     func start(_ completion: @escaping (Result<[String: Any], Error>) -> Void) {
@@ -166,11 +172,13 @@ final class NativePlaybackProbe: NSObject, AVAudioPlayerDelegate {
 
     private func registerCommands() {
         let c = MPRemoteCommandCenter.shared()
-        c.skipForwardCommand.preferredIntervals = [10]; c.skipBackwardCommand.preferredIntervals = [10]
+        // Music navigation: advertise adjacent tracks, not podcast-style interval
+        // controls. Absolute position seeking remains enabled independently.
+        c.skipForwardCommand.isEnabled = false; c.skipBackwardCommand.isEnabled = false
+        c.seekForwardCommand.isEnabled = false; c.seekBackwardCommand.isEnabled = false
         let bindings: [(MPRemoteCommand, String)] = [(c.playCommand, "play"), (c.pauseCommand, "pause"),
             (c.togglePlayPauseCommand, "toggle"), (c.nextTrackCommand, "nexttrack"),
-            (c.previousTrackCommand, "previoustrack"), (c.changePlaybackPositionCommand, "seekto"),
-            (c.skipForwardCommand, "seekforward"), (c.skipBackwardCommand, "seekbackward")]
+            (c.previousTrackCommand, "previoustrack"), (c.changePlaybackPositionCommand, "seekto")]
         for (command, action) in bindings {
             command.isEnabled = true
             let target = command.addTarget { [weak self] event in
@@ -185,6 +193,7 @@ final class NativePlaybackProbe: NSObject, AVAudioPlayerDelegate {
             }
             targets.append((command, target))
         }
+        MoraPlaybackJournal.record("native.probe.controls", ["action": "nexttrack.previoustrack.seekto", "seekable": true])
     }
 
     func interruption(_ n: Notification) {
