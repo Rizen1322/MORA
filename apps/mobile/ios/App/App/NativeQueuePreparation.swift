@@ -40,14 +40,19 @@ final class NativeQueuePreparation: @unchecked Sendable {
     private var cached: [String: Any] = ["state": "idle", "ready": 0, "remaining": 0]
     private var failureCount = 0
     private var running = true
+    private var repeats = false
     private var updated = ProcessInfo.processInfo.systemUptime
     var snapshot: [String: Any] {
         lock.lock(); var result = cached; result["running"] = running
+        result["hasMore"] = running && ((cached["remaining"] as? Int ?? 0) > 0 || repeats)
         result["stageSeconds"] = max(0, ProcessInfo.processInfo.systemUptime - updated); lock.unlock()
         for (key, value) in gate.snapshot { result[key] = value }; return result
     }
-    var hasRemaining: Bool { let state = snapshot; return !ticket.cancelled && state["running"] as? Bool == true && (state["remaining"] as? Int ?? 0) > 0 }
-    init(index: Int) { gate = NativePreparationGate(index: index) }
+    var hasRemaining: Bool { !ticket.cancelled && snapshot["hasMore"] as? Bool == true }
+    init(index: Int, remaining: Int = 0, loopCount: Int = 0) {
+        gate = NativePreparationGate(index: index); repeats = loopCount > 0
+        cached = ["state": "starting", "ready": 0, "remaining": max(remaining, loopCount)]
+    }
     func cancel() { ticket.cancel(); gate.cancel() }
     private func state(_ code: String, ready: Int, remaining: Int, reason: String = "none") {
         lock.lock(); updated = ProcessInfo.processInfo.systemUptime; if code == "failed" { failureCount += 1 }
@@ -70,6 +75,7 @@ final class NativeQueuePreparation: @unchecked Sendable {
         var produced = 0, processed = 0, consecutiveFailures = 0, at = from
         var batch = raw, cursor = 0
         let loop = manifest["loopItems"] as? [[String: Any]] ?? []
+        configure(remaining: raw.count, loopCount: loop.count)
         var analyses: [String: [String: Any]] = [:]
         var before = previous, previousPCM = seed
         if let frames = seed["totalFrames"] as? Int { before["duration"] = Double(frames) / 48000 }
@@ -184,6 +190,9 @@ final class NativeQueuePreparation: @unchecked Sendable {
         }
     }
     private func finished() { lock.lock(); running = false; lock.unlock() }
+    private func configure(remaining: Int, loopCount: Int) {
+        lock.lock(); repeats = loopCount > 0; cached["remaining"] = max(remaining, loopCount); lock.unlock()
+    }
     private func analysis(_ core: NativePreparationCore, folder: URL, file: Int, frames: Int) throws -> [String: Any] {
         let source = folder.appendingPathComponent("\(file).f32le")
         let temporary = folder.appendingPathComponent("\(UUID().uuidString).analysis")

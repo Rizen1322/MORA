@@ -20,6 +20,11 @@ Task.detached {
     let client = NativeMediaHTTP(allowLoopback: true)
     defer { client.invalidate(); group.leave() }
     do {
+        let pendingStart = NativeQueuePreparation(index: 0, remaining: 6)
+        precondition(pendingStart.hasRemaining) // Before run()/JavaScriptCore is scheduled.
+        let pendingRepeat = NativeQueuePreparation(index: 0, loopCount: 1)
+        precondition(pendingRepeat.hasRemaining) // Repeat-one has no initial raw items.
+        pendingRepeat.cancel(); precondition(!pendingRepeat.hasRemaining)
         let loader = NativeMediaLoader(http: client, allowLoopback: true)
         let xml = "<download-info><host>edge.storage.yandex.net</host><path>/test/audio.mp3</path><ts>1a</ts><s>salt123</s></download-info>"
         let signed = try loader.yandexXML(xml, base: URL(string: "https://api.music.yandex.net")!)

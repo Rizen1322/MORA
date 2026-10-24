@@ -253,7 +253,8 @@ final class NativeMixHost {
                 if future.isEmpty && (manifest["loopItems"] as? [[String: Any]] ?? []).isEmpty {
                     self.preparation = nil; self.continueWhenPrepared = false; self.nextWhenPrepared = false; self.prune(); self.publish("handoff"); self.reply(completion, .success(self.viewState())); return
                 }
-                let job = NativeQueuePreparation(index: self.index); self.preparation = job
+                let job = NativeQueuePreparation(index: self.index, remaining: future.count,
+                    loopCount: (manifest["loopItems"] as? [[String: Any]] ?? []).count); self.preparation = job
                 let seed = self.tracks[from - 1]
                 self.prune(); self.publish("handoff")
                 MoraPlaybackJournal.record("native.preparation.handoff", ["from": from, "count": items.count])
@@ -446,12 +447,11 @@ final class NativeMixHost {
             MPNowPlayingInfoPropertyPlaybackQueueIndex: index, MPNowPlayingInfoPropertyPlaybackQueueCount: tracks.count]
         if artworks.indices.contains(index), let artwork = artworks[index] { info[MPMediaItemPropertyArtwork] = artwork }
         let publishedInfo = info
+        let canAdvance = tracks.indices.contains(index + 1) || preparation?.hasRemaining == true
         DispatchQueue.main.async { [weak self] in
             guard let self, self.active, self.snapshot["epoch"] as? Int == generation else { return }
             MPNowPlayingInfoCenter.default().nowPlayingInfo = publishedInfo
-            MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = (state["index"] as? Int ?? 0) + 1 < (state["count"] as? Int ?? 0)
-                || ((state["preparation"] as? [String: Any])?["running"] as? Bool == true
-                    && ((state["preparation"] as? [String: Any])?["remaining"] as? Int ?? 0) > 0)
+            MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = canAdvance
         }
         let prep = state["preparation"] as? [String: Any] ?? [:]
         MoraPlaybackJournal.record("native.mix.state", ["reason": reason, "seq": index, "position": position, "duration": state["duration"] ?? 0,
