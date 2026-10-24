@@ -195,9 +195,10 @@ export const controller = new PlayerController(
 useApp.setState({ player: controller.state });
 // Phone: the engine's ~20 clock ticks a second re-rendered the whole player; 5 a second is enough there.
 const phone = typeof document !== 'undefined' && document.documentElement.classList.contains('mora-mobile');
-// With the screen locked nobody sees the clock: hidden pages get real changes only, the latest state on return.
-controller.subscribe(phone ? throttleClock((s) => useApp.setState({ player: s }), () => controller.state, 200, () => document.hidden) : (s) => useApp.setState({ player: s }));
-if (phone) document.addEventListener('visibilitychange', () => { if (!document.hidden) useApp.setState({ player: controller.state }); });
+// With the screen locked or the window minimized nobody sees the clock: hidden pages get real changes
+// only, the latest state on return. The desktop keeps every visible tick (interval 0).
+controller.subscribe(throttleClock((s) => useApp.setState({ player: s }), () => controller.state, phone ? 200 : 0, () => typeof document !== 'undefined' && document.hidden));
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => { if (!document.hidden) useApp.setState({ player: controller.state }); });
 
 export function trackOf(id: string | undefined | null): Track | undefined {
   return id ? useApp.getState().tracks.get(id) : undefined;

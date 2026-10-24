@@ -38,6 +38,17 @@ export const TRUE_PEAK_KERNEL: readonly Float64Array[] = [1, 2, 3].map((k) => {
   return h;
 });
 
+/**
+ * The 3/4 branch mirrors the 1/4 one (k3[j] = k1[23 - j]) and the 2/4 branch is symmetric, so the
+ * detector folds the window: with s = x[j] + x[23 - j] and d = x[j] - x[23 - j] (j < 12),
+ * a = sum(P s + M d), c = sum(P s - M d), b = sum(H s). 36 instead of 72 products per channel;
+ * only the float64 summation order differs from the direct form (relative 1e-16).
+ */
+const FOLD = TP_TAPS / 2;
+const FOLD_P = Float64Array.from({ length: FOLD }, (_, j) => (TRUE_PEAK_KERNEL[0][j] + TRUE_PEAK_KERNEL[0][TP_TAPS - 1 - j]) / 2);
+const FOLD_M = Float64Array.from({ length: FOLD }, (_, j) => (TRUE_PEAK_KERNEL[0][j] - TRUE_PEAK_KERNEL[0][TP_TAPS - 1 - j]) / 2);
+const FOLD_H = Float64Array.from({ length: FOLD }, (_, j) => (TRUE_PEAK_KERNEL[1][j] + TRUE_PEAK_KERNEL[1][TP_TAPS - 1 - j]) / 2);
+
 /** |b|, or the vertex of the parabola through (a, b, c) when b is a local extremum. */
 function crest(a: number, b: number, c: number): number {
   const ab = Math.abs(b);
@@ -70,7 +81,8 @@ export class Limiter {
   private prevCR = 0;
   private readonly delayL: Float32Array;
   private readonly delayR: Float32Array;
-  private readonly reqRing: Float32Array;
+  /** Lookahead window of the min-hold, frames. */
+  private readonly win: number;
   private readonly envRing: Float32Array;
   private readonly ma1Ring: Float32Array;
   private envPos = 0;
@@ -81,8 +93,9 @@ export class Limiter {
   private env = 1;
   private envSum: number;
   private readonly relCoef: number;
-  /** Monotonic deque of indices (absolute sample counters) into reqRing. */
+  /** Monotonic deque of absolute sample counters and their required gains (stored as float32). */
   private readonly dq: Float64Array;
+  private readonly dqVal: Float32Array;
   private dqHead = 0;
   private dqTail = 0;
   private counter = 0;
@@ -101,7 +114,7 @@ export class Limiter {
     this.lookahead = L + TP_DELAY;
     this.delayL = new Float32Array(this.lookahead);
     this.delayR = new Float32Array(this.lookahead);
-    this.reqRing = new Float32Array(L + 1).fill(1);
+    this.win = L;
     this.half = Math.max(1, Math.floor(L / 2));
     this.envRing = new Float32Array(this.half).fill(1);
     this.envSum = this.half;
@@ -109,15 +122,16 @@ export class Limiter {
     this.ma1Sum = L - this.half;
     this.relCoef = 1 - Math.exp(-1 / ((sampleRate * releaseMs) / 1000));
     this.dq = new Float64Array(L + 2);
+    this.dqVal = new Float32Array(L + 2);
   }
 
   processBlock(L: Float32Array, R: Float32Array, start: number, end: number): void {
     const la = this.lookahead;
-    const ringN = this.reqRing.length;
-    const win = ringN - 1;
+    const win = this.win;
     const thr = this.threshold;
     const dqN = this.dq.length;
-    const [k1, k2, k3] = TRUE_PEAK_KERNEL;
+    const dq = this.dq;
+    const dqVal = this.dqVal;
     const hL = this.histL;
     const hR = this.histR;
     for (let i = start; i < end; i++) {
@@ -128,17 +142,18 @@ export class Limiter {
       this.histPos = tp;
       hL[tp] = hL[tp + TP_TAPS] = xl;
       hR[tp] = hR[tp + TP_TAPS] = xr;
-      let al = 0, bl = 0, cl = 0, ar = 0, br = 0, cr = 0;
-      for (let j = 0; j < TP_TAPS; j++) {
-        const vl = hL[tp + j];
-        const vr = hR[tp + j];
-        al += k1[j] * vl;
-        bl += k2[j] * vl;
-        cl += k3[j] * vl;
-        ar += k1[j] * vr;
-        br += k2[j] * vr;
-        cr += k3[j] * vr;
+      let pl = 0, ml = 0, bl = 0, pr = 0, mr = 0, br = 0;
+      for (let j = 0, q = tp + TP_TAPS - 1; j < FOLD; j++, q--) {
+        const ul = hL[tp + j], wl = hL[q], ur = hR[tp + j], wr = hR[q];
+        const sl = ul + wl, sr = ur + wr;
+        pl += FOLD_P[j] * sl;
+        ml += FOLD_M[j] * (ul - wl);
+        bl += FOLD_H[j] * sl;
+        pr += FOLD_P[j] * sr;
+        mr += FOLD_M[j] * (ur - wr);
+        br += FOLD_H[j] * sr;
       }
+      const al = pl + ml, cl = pl - ml, ar = pr + mr, cr = pr - mr;
       // Sample x[c - TP_DELAY], the three points after it and the vertices of
       // parabolas through neighbouring points: a 4x grid alone misses up to
       // 0.45 dB of a crest near 0.4 fs (the output reached -0.56 dBTP).
@@ -154,18 +169,20 @@ export class Limiter {
       this.prevSeg = seg;
       const req = peak > thr ? thr / peak : 1;
       const c = this.counter++;
-      this.reqRing[c % ringN] = req;
-      // push into monotonic deque (keep increasing values from head to tail)
-      while (this.dqTail !== this.dqHead) {
-        const lastIdx = this.dq[(this.dqTail - 1 + dqN) % dqN];
-        if (this.reqRing[lastIdx % ringN] >= req) this.dqTail = (this.dqTail - 1 + dqN) % dqN;
+      // push into monotonic deque (keep increasing values from head to tail); each entry carries its value
+      let tail = this.dqTail, head = this.dqHead;
+      while (tail !== head) {
+        const last = tail === 0 ? dqN - 1 : tail - 1;
+        if (dqVal[last] >= req) tail = last;
         else break;
       }
-      this.dq[this.dqTail] = c;
-      this.dqTail = (this.dqTail + 1) % dqN;
+      dq[tail] = c;
+      dqVal[tail] = req;
+      this.dqTail = tail + 1 === dqN ? 0 : tail + 1;
       // drop indices that left the window [c - win, c]
-      while (this.dq[this.dqHead] < c - win) this.dqHead = (this.dqHead + 1) % dqN;
-      const minReq = this.reqRing[this.dq[this.dqHead] % ringN];
+      while (dq[head] < c - win) head = head + 1 === dqN ? 0 : head + 1;
+      this.dqHead = head;
+      const minReq = dqVal[head];
 
       if (minReq < this.env) this.env = minReq;
       else this.env += (minReq - this.env) * this.relCoef;
@@ -228,7 +245,6 @@ export class Limiter {
     this.histPos = 0;
     this.prevSeg = 0;
     this.prevCL = this.prevCR = 0;
-    this.reqRing.fill(1);
     this.envRing.fill(1);
     this.envSum = this.half;
     this.envPos = 0;

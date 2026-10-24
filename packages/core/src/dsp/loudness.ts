@@ -140,20 +140,23 @@ export class Decimator2 {
       sum += this.h[i];
     }
     for (let i = 0; i < taps; i++) this.h[i] /= sum;
-    this.buf = new Float64Array(taps);
+    // stored twice, so the taps read the history oldest-first without a modulo
+    this.buf = new Float64Array(2 * taps);
   }
 
   /** Pushes samples; returns decimated output samples appended to `out`. */
   push(x: Float32Array, len: number, out: (v: number) => void): void {
     const h = this.h;
     const n = h.length;
+    const buf = this.buf;
     for (let i = 0; i < len; i++) {
-      this.buf[this.pos] = x[i];
-      this.pos = (this.pos + 1) % n;
+      buf[this.pos] = buf[this.pos + n] = x[i];
+      this.pos = this.pos + 1 === n ? 0 : this.pos + 1;
       this.phase ^= 1;
       if (this.phase === 0) {
+        const p = this.pos;
         let acc = 0;
-        for (let k = 0; k < n; k++) acc += h[k] * this.buf[(this.pos + k) % n];
+        for (let k = 0; k < n; k++) acc += h[k] * buf[p + k];
         out(acc);
       }
     }
