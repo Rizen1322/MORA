@@ -6,6 +6,8 @@ const native = vi.hoisted(() => ({
   setNowPlaying: vi.fn(async (_info: any) => {}), setPlaybackState: vi.fn(async (_state: any) => {}),
   clear: vi.fn(async () => {}), power: vi.fn(async () => ({ thermal: 0, lowPower: false })),
   addListener: vi.fn(async (_event: string, _fn: any) => ({ remove: async () => {} })),
+  diagnosticsInfo: vi.fn(async () => ({ enabled: false })),
+  diagnosticsRecord: vi.fn(async (_event: any) => {}),
 }));
 vi.mock('@capacitor/core', () => ({
   Capacitor: { isNativePlatform: () => true }, CapacitorHttp: {}, registerPlugin: () => native,
@@ -30,6 +32,7 @@ const emptyFetch = async () => new Response(null, { status: 404 });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  native.diagnosticsInfo.mockResolvedValue({ enabled: false });
   ms = new Session();
   const page = Object.assign(new EventTarget(), { automix: { subscribe(fn: typeof update) { update = fn; } } });
   vi.stubGlobal('window', page);
@@ -41,6 +44,39 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('iPhone Now Playing bridge', () => {
+  it('correlates a native event with JS execution and handler resolution', async () => {
+    native.diagnosticsInfo.mockResolvedValue({ enabled: true });
+    setupNative(emptyFetch, () => {});
+    await Promise.resolve();
+    let seen: string | undefined;
+    const pause = vi.fn(() => { seen = window.moraDiagnostics?.currentId; return Promise.resolve(); });
+    ms.setActionHandler('pause', pause);
+    const command = native.addListener.mock.calls.find(([event]) => event === 'command')![1];
+    command({ action: 'pause', id: 'native-1', source: 'remote' });
+    await Promise.resolve();
+    expect(seen).toBe('native-1');
+    expect(window.moraDiagnostics?.currentId).toBeUndefined();
+    expect(native.diagnosticsRecord.mock.calls.map(([e]) => e)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: 'js.command.received', fields: expect.objectContaining({ id: 'native-1', source: 'remote' }) }),
+      expect.objectContaining({ stage: 'js.handler.resolved', fields: expect.objectContaining({ id: 'native-1', action: 'pause' }) }),
+    ]));
+    command({ action: 'seekto', id: 'native-2' });
+    expect(native.diagnosticsRecord).toHaveBeenLastCalledWith(expect.objectContaining({ stage: 'js.command.missingHandler' }));
+  });
+
+  it('records WebKit play/pause callbacks without adding native play/pause handlers', async () => {
+    native.diagnosticsInfo.mockResolvedValue({ enabled: true });
+    const webkitActions = ms.setActionHandler;
+    setupNative(emptyFetch, () => {});
+    await Promise.resolve();
+    const pause = vi.fn();
+    ms.setActionHandler('pause', pause);
+    webkitActions.mock.calls.at(-1)![1]({ action: 'pause' });
+    expect(pause).toHaveBeenCalledOnce();
+    expect(native.diagnosticsRecord).toHaveBeenCalledWith(expect.objectContaining({
+      stage: 'js.command.received', fields: expect.objectContaining({ action: 'pause', source: 'webkit' }),
+    }));
+  });
   it('routes lock-screen navigation through native commands, not AudioContext remote handlers', async () => {
     const webkitActions = ms.setActionHandler;
     setupNative(emptyFetch, () => {});
@@ -89,7 +125,9 @@ describe('iPhone Now Playing bridge', () => {
     const next = vi.fn();
     ms.setActionHandler('nexttrack', next);
     await Promise.resolve();
-    expect(webkitActions).toHaveBeenLastCalledWith('nexttrack', next);
+    expect(webkitActions).toHaveBeenLastCalledWith('nexttrack', expect.any(Function));
+    webkitActions.mock.calls.at(-1)![1]({ action: 'nexttrack' });
+    expect(next).toHaveBeenCalledOnce();
     ms.setActionHandler('nexttrack', null);
     expect(webkitActions).toHaveBeenLastCalledWith('nexttrack', null);
   });

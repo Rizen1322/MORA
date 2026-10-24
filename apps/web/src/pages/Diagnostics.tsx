@@ -8,6 +8,7 @@ import { useRoute } from '../lib/router.ts';
 import { controller, trackOf, useApp } from '../store/app.ts';
 import { TransitionSummary, type RatingTarget } from '../components/TransitionSummary.tsx';
 import '../styles/prefs.css';
+import { PlaybackDiagnostics } from '../components/PlaybackDiagnostics.tsx';
 
 const PRE = 8;
 const POST = 8;
@@ -546,6 +547,7 @@ export function DiagnosticsPage() {
   return (
     <div className="main-inner prefs-page diag-page">
       <h1 className="page-title">Диагностика AutoMix</h1>
+      <PlaybackDiagnostics />
       <HealthSummary checks={healthChecks(health, offline, p.audioHealth, chosen?.plan, automixOn)} />
       <h2 className="pref-group-title">Переходы</h2>
       <div className="tabs diag-picker" aria-label="Какой переход показать">

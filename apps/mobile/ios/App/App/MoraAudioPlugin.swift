@@ -4,6 +4,7 @@ import MediaPlayer
 import Security
 import UIKit
 import WebKit
+import Darwin
 
 /// Web view for MORA: inline WebAudio without a tap per sound, and the MoraAudio plugin.
 class MoraBridgeViewController: CAPBridgeViewController {
@@ -40,14 +41,22 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "setPlaybackState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "power", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "secretKey", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "diagnosticsInfo", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "diagnosticsRecord", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "diagnosticsReport", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "diagnosticsClear", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "diagnosticsShare", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "diagnosticsTest", returnType: CAPPluginReturnPromise),
     ]
 
     private var playing = false
     private var webAudioSession = false
     private var resumeAfterInterruption = false
     private var remoteCommands: [(MPRemoteCommand, Any)] = []
+    private var navigationSignature = ""
 
     override public func load() {
+        MoraPlaybackJournal.record("native.load")
         registerNavigation()
         let nc = NotificationCenter.default
         let session = AVAudioSession.sharedInstance()
@@ -58,6 +67,10 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         // thermal guidance: from "serious" on, reduce CPU/GPU use, screen updates and animations).
         nc.addObserver(self, selector: #selector(powerChanged(_:)), name: ProcessInfo.thermalStateDidChangeNotification, object: nil)
         nc.addObserver(self, selector: #selector(powerChanged(_:)), name: .NSProcessInfoPowerStateDidChange, object: nil)
+        for name in [UIApplication.willResignActiveNotification, UIApplication.didEnterBackgroundNotification,
+                     UIApplication.willEnterForegroundNotification, UIApplication.didBecomeActiveNotification] {
+            nc.addObserver(self, selector: #selector(lifecycle(_:)), name: name, object: nil)
+        }
     }
 
     deinit {
@@ -65,8 +78,14 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         for (command, target) in remoteCommands { command.removeTarget(target) }
     }
 
-    private func send(_ action: String, seekTime: Double? = nil) {
+    private func send(_ action: String, seekTime: Double? = nil, id: String? = nil, source: String = "notification") {
         var data: [String: Any] = ["action": action]
+        if MoraPlaybackJournal.enabled {
+            let commandId = id ?? UUID().uuidString
+            data["id"] = commandId
+            data["source"] = source
+            MoraPlaybackJournal.record("native.send", ["id": commandId, "action": action, "source": source])
+        }
         if let seekTime { data["seekTime"] = seekTime }
         notifyListeners("command", data: data)
     }
@@ -88,7 +107,9 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
                 guard self != nil else { return .commandFailed }
                 let time = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime
                 if action == "seekto", time == nil || time?.isFinite != true { return .commandFailed }
-                DispatchQueue.main.async { [weak self] in self?.send(action, seekTime: time) }
+                let id = UUID().uuidString
+                MoraPlaybackJournal.record("native.remote.callback", ["id": id, "action": action, "seekTime": time ?? -1])
+                DispatchQueue.main.async { [weak self] in self?.send(action, seekTime: time, id: id, source: "remote") }
                 return .success
             }
             remoteCommands.append((command, target))
@@ -99,6 +120,11 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         let actions = Set(call.getArray("actions", String.self) ?? [])
         let seekable = call.getBool("seekable") ?? false
         DispatchQueue.main.async {
+            let signature = actions.sorted().joined(separator: ".") + "." + String(seekable)
+            if signature != self.navigationSignature {
+                self.navigationSignature = signature
+                MoraPlaybackJournal.record("native.navigation", ["action": actions.sorted().joined(separator: "."), "seekable": seekable])
+            }
             let center = MPRemoteCommandCenter.shared()
             center.nextTrackCommand.isEnabled = actions.contains("nexttrack")
             center.previousTrackCommand.isEnabled = actions.contains("previoustrack")
@@ -113,6 +139,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         let wasPlaying = playing
         playing = call.getBool("playing") ?? playing
         webAudioSession = call.getBool("webAudioSession") ?? webAudioSession
+        MoraPlaybackJournal.record("native.playbackState", ["playing": playing, "webAudioSession": webAudioSession])
         // WebKit owns navigator.audioSession. Re-activating its session from another
         // process while it starts playback can interrupt the sound we just started.
         if playing && !wasPlaying && !webAudioSession { MoraAudioSession.activate() }
@@ -139,6 +166,9 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc private func interruption(_ n: Notification) {
+        MoraPlaybackJournal.record("native.interruption", ["seq": n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ?? 0,
+            "reason": String(n.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt ?? 0),
+            "paused": n.userInfo?[AVAudioSessionInterruptionWasSuspendedKey] as? Bool ?? false])
         guard let raw = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
         switch type {
@@ -164,6 +194,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc private func routeChange(_ n: Notification) {
+        MoraPlaybackJournal.record("native.routeChange", ["reason": String(n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0)])
         guard let raw = n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
               let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
         // headphones unplugged / Bluetooth gone: pause instead of playing out loud
@@ -171,10 +202,125 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc private func mediaReset(_ n: Notification) {
+        MoraPlaybackJournal.record("native.mediaReset")
         if playing {
             if !webAudioSession { MoraAudioSession.activate() }
             send("play")
         }
+    }
+
+    @objc private func lifecycle(_ n: Notification) {
+        MoraPlaybackJournal.record("native.lifecycle", ["reason": n.name.rawValue])
+        if n.name == UIApplication.didEnterBackgroundNotification { MoraPlaybackJournal.flush() }
+    }
+
+    @objc func diagnosticsInfo(_ call: CAPPluginCall) { call.resolve(["enabled": MoraPlaybackJournal.enabled]) }
+    @objc func diagnosticsRecord(_ call: CAPPluginCall) {
+        MoraPlaybackJournal.record(call.getString("stage") ?? "invalid", call.getObject("fields") ?? [:])
+        call.resolve()
+    }
+    @objc func diagnosticsClear(_ call: CAPPluginCall) { MoraPlaybackJournal.clear(); call.resolve() }
+    @objc func diagnosticsReport(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { call.resolve(MoraPlaybackJournal.report()) }
+    }
+    @objc func diagnosticsShare(_ call: CAPPluginCall) {
+        guard MoraPlaybackJournal.enabled else { call.reject("Diagnostics disabled"); return }
+        DispatchQueue.main.async {
+            do {
+                let data = try JSONSerialization.data(withJSONObject: MoraPlaybackJournal.report(), options: [.prettyPrinted, .sortedKeys])
+                let url = FileManager.default.temporaryDirectory.appendingPathComponent("MORA-playback-diagnostics.json")
+                try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                guard let vc = self.bridge?.viewController, vc.presentedViewController == nil else { call.reject("Share unavailable"); return }
+                let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                sheet.popoverPresentationController?.sourceView = vc.view
+                sheet.popoverPresentationController?.sourceRect = CGRect(x: vc.view.bounds.midX, y: vc.view.bounds.midY, width: 1, height: 1)
+                vc.present(sheet, animated: true) { call.resolve() }
+            } catch { call.reject("Report export failed") }
+        }
+    }
+    @objc func diagnosticsTest(_ call: CAPPluginCall) {
+        guard MoraPlaybackJournal.enabled, let action = call.getString("action"),
+              ["play", "pause", "nexttrack", "previoustrack", "seekto", "seekforward", "seekbackward"].contains(action) else {
+            call.reject("Diagnostic action unavailable"); return
+        }
+        let time = call.getDouble("seekTime")
+        if action == "seekto", time == nil || time?.isFinite != true { call.reject("Invalid seek time"); return }
+        DispatchQueue.main.async {
+            let id = UUID().uuidString
+            MoraPlaybackJournal.record("native.test", ["id": id, "action": action])
+            self.send(action, seekTime: time, id: id, source: "test")
+            call.resolve()
+        }
+    }
+}
+
+/// Private, bounded journal. It never reads the media library or any credentials.
+/// Remote callbacks and JS delivery have separate entries: success from MPRemoteCommand
+/// only means that its callback accepted the event, not that WebContent received it.
+enum MoraPlaybackJournal {
+    static let enabled = Bundle.main.object(forInfoDictionaryKey: "MoraPlaybackDiagnostics") as? Bool == true
+    private static let queue = DispatchQueue(label: "ru.mora.playback-diagnostics")
+    private static let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("MORA/playback-diagnostics.json")
+    private static var events: [[String: Any]] = {
+        guard enabled, let data = try? Data(contentsOf: url), data.count <= 1_000_000,
+              let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+        return Array(rows.suffix(1200))
+    }()
+    private static var write: DispatchWorkItem?
+    private static let numeric: Set<String> = ["seq", "position", "seekTime", "clock", "peak", "monotonicMs"]
+    private static let flags: Set<String> = ["paused", "starved", "hidden", "allowed", "playing", "webAudioSession", "seekable", "node"]
+    private static let codes: Set<String> = ["id", "action", "command", "status", "context", "source", "reason", "outcome"]
+
+    static func record(_ stage: String, _ fields: [String: Any] = [:]) {
+        guard enabled, stage.range(of: "^[a-zA-Z0-9_.-]{1,64}$", options: .regularExpression) != nil else { return }
+        var row: [String: Any] = ["stage": stage, "time": Date().timeIntervalSince1970, "uptime": ProcessInfo.processInfo.systemUptime]
+        for (key, value) in fields {
+            if numeric.contains(key), let number = value as? NSNumber, number.doubleValue.isFinite { row[key] = number }
+            if flags.contains(key), let flag = value as? Bool { row[key] = flag }
+            if codes.contains(key), let code = value as? String,
+               code.range(of: "^[a-zA-Z0-9_.-]{1,80}$", options: .regularExpression) != nil { row[key] = code }
+        }
+        let safe = row
+        queue.async {
+            events.append(safe)
+            if events.count > 1200 { events.removeFirst(events.count - 1200) }
+            // Flush at most twice a second even during a command burst.
+            if write == nil {
+                let job = DispatchWorkItem { persist(); write = nil }
+                write = job
+                queue.asyncAfter(deadline: .now() + 0.5, execute: job)
+            }
+        }
+    }
+    private static func persist() {
+        guard let data = try? JSONSerialization.data(withJSONObject: events) else { return }
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        } catch { /* A diagnostic write must never interrupt music playback. */ }
+    }
+    static func flush() { guard enabled else { return }; queue.sync { persist() } }
+    static func clear() { guard enabled else { return }; queue.sync { events = []; persist() } }
+    // Called on the main queue to read UIKit state safely; the journal itself is serialized.
+    static func report() -> [String: Any] {
+        guard enabled else { return ["enabled": false] }
+        let session = AVAudioSession.sharedInstance(), bundle = Bundle.main
+        var size = 0
+        sysctlbyname("hw.machine", nil, &size, nil, 0)
+        var machine = [CChar](repeating: 0, count: max(1, size))
+        sysctlbyname("hw.machine", &machine, &size, nil, 0)
+        return ["schema": 1, "enabled": true, "version": bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") ?? "",
+            "build": bundle.object(forInfoDictionaryKey: "CFBundleVersion") ?? "", "sdk": bundle.object(forInfoDictionaryKey: "DTSDKName") ?? "",
+            "os": ProcessInfo.processInfo.operatingSystemVersionString, "machine": String(cString: machine),
+            "appState": UIApplication.shared.applicationState.rawValue, "category": session.category.rawValue,
+            "mode": session.mode.rawValue, "sampleRate": session.sampleRate, "ioBufferDuration": session.ioBufferDuration,
+            "outputLatency": session.outputLatency, "outputs": session.currentRoute.outputs.map { $0.portType.rawValue },
+            "nativeSessionActive": "unknown", "capacity": 1200,
+            "remoteEnabled": ["next": MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled,
+                "previous": MPRemoteCommandCenter.shared().previousTrackCommand.isEnabled,
+                "seek": MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled],
+            "events": queue.sync { events }]
     }
 }
 
@@ -214,6 +360,7 @@ enum MoraAudioSession {
     /// Music app: plays with the screen locked, ignores the silent switch, AirPlay/Bluetooth allowed.
     /// Off the main thread: setActive can block the UI (Xcode warns "can lead to UI unresponsiveness").
     static func activate() {
+        MoraPlaybackJournal.record("native.session.request")
         queue.async {
             let s = AVAudioSession.sharedInstance()
             do {
@@ -223,7 +370,9 @@ enum MoraAudioSession {
                     try s.setCategory(.playback, mode: .default, policy: .default, options: [])
                 }
                 try s.setActive(true)
+                MoraPlaybackJournal.record("native.session.activated")
             } catch {
+                MoraPlaybackJournal.record("native.session.failed")
                 NSLog("[MORA] audio session: \(error)")
             }
         }

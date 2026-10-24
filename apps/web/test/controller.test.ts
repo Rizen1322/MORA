@@ -219,7 +219,7 @@ describe('playback preparation and queue changes', () => {
   it('resumes an AudioContext the system interrupted while playing, never one the listener paused', async () => {
     const { controller, h } = setup();
     const resume = vi.fn(async () => {});
-    const ctx = { state: 'running', sampleRate: 48000, onstatechange: null as null | (() => void), resume, destination: {},
+    const ctx = { state: 'running', sampleRate: 48000, onstatechange: null as null | ((event: Event) => void), resume, destination: {},
       audioWorklet: { addModule: async () => {} }, createAnalyser: () => ({ connect: vi.fn() }) };
     vi.stubGlobal('AudioContext', vi.fn(function () { return ctx; }));
     vi.stubGlobal('AudioWorkletNode', vi.fn(function () { return { connect: vi.fn(), port: { postMessage: vi.fn(), onmessage: null } }; }));
@@ -227,12 +227,17 @@ describe('playback preparation and queue changes', () => {
     (h as unknown as { ctx: null }).ctx = null;
     await h.ensureEngine();
     ctx.state = 'interrupted';
-    ctx.onstatechange!();
+    ctx.onstatechange!(new Event('statechange'));
     expect(resume).toHaveBeenCalledTimes(1);
+    vi.stubGlobal('window', { moraDiagnostics: { allowAutoResume: false, record: vi.fn(), nextId: () => 'js-test' } });
+    ctx.onstatechange!(new Event('statechange'));
+    expect(resume).toHaveBeenCalledTimes(1);
+    await controller.resume(); // Explicit Play still resumes with diagnostic recovery disabled.
+    expect(resume).toHaveBeenCalledTimes(2);
     cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
     controller.pause();
-    ctx.onstatechange!();
-    expect(resume).toHaveBeenCalledTimes(1);
+    ctx.onstatechange!(new Event('statechange'));
+    expect(resume).toHaveBeenCalledTimes(2);
   });
 
   it('takes the exact PCM length of a finished decode instead of padding the estimate', async () => {

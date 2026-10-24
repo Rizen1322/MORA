@@ -1,5 +1,7 @@
 import { Capacitor, CapacitorHttp, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import type { FetchArgs, FetchResult } from '../shared/protocol.ts';
+import { setupDiagnostics, type NativeDiagnostics } from './diagnostics.ts';
+import { playbackDiagnostics, tracePlayback, withPlaybackId } from '../../../web/src/lib/playback-trace.ts';
 
 /**
  * The native side of the iOS app (ios/App/App/MoraAudioPlugin.swift):
@@ -8,10 +10,10 @@ import type { FetchArgs, FetchResult } from '../shared/protocol.ts';
  * unsupported Next/Previous/Seek remote-command path without a second publisher.
  */
 
-interface MoraAudio {
+interface MoraAudio extends NativeDiagnostics {
   setRemoteNavigation(o: { actions: MediaSessionAction[]; seekable: boolean }): Promise<void>;
   setPlaybackState(o: { playing: boolean; webAudioSession: boolean }): Promise<void>;
-  addListener(ev: 'command', fn: (e: { action: MediaSessionAction; seekTime?: number }) => void): Promise<PluginListenerHandle>;
+  addListener(ev: 'command', fn: (e: { action: MediaSessionAction; seekTime?: number; id?: string; source?: string }) => void): Promise<PluginListenerHandle>;
   addListener(ev: 'power', fn: (e: Power) => void): Promise<PluginListenerHandle>;
   power(): Promise<Power>;
   secretKey(): Promise<{ key: string }>;
@@ -80,6 +82,7 @@ async function artworkBase64(src: string | undefined, apiFetch: ApiFetch): Promi
 
 export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => void): void {
   if (!isNative()) return;
+  void setupDiagnostics(MoraAudio);
   // Apple: from "fair" on (and in Low Power Mode) cut animations and deferrable work.
   // html[data-power=saver] stills the canvas backdrops (useReducedMotion); the worker defers render checks.
   const power = ({ thermal, lowPower }: Power) => {
@@ -95,6 +98,22 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
   const webAudioSession = (navigator as Navigator & { audioSession?: { type: string } }).audioSession?.type === 'playback';
   const handlers = new Map<MediaSessionAction, MediaSessionActionHandler | null>();
   const registerAction = ms.setActionHandler.bind(ms);
+  const dispatch = (action: MediaSessionAction, details: MediaSessionActionDetails, source: string, nativeId?: string) => {
+    const d = playbackDiagnostics(), handler = handlers.get(action);
+    if (!d) { handler?.(details); return; }
+    const id = nativeId ?? d.nextId();
+    tracePlayback('js.command.received', { id, action, source, seekTime: details.seekTime });
+    if (!handler) { tracePlayback('js.command.missingHandler', { id, action }); return; }
+    try {
+      const result = withPlaybackId(id, () => handler(details));
+      void Promise.resolve(result).then(
+        () => tracePlayback('js.handler.resolved', { id, action }),
+        () => tracePlayback('js.handler.rejected', { id, action }),
+      );
+    } catch { tracePlayback('js.handler.threw', { id, action }); }
+  };
+  const wrapped = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => handler ?
+    (details: MediaSessionActionDetails) => dispatch(action, details, 'webkit') : null;
   const navigation = new Set<MediaSessionAction>(['nexttrack', 'previoustrack', 'seekto', 'seekforward', 'seekbackward']);
   let nativeNavigation = true, seekable = false;
   const syncNavigation = () => {
@@ -107,7 +126,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
       if (!nativeNavigation) return;
       nativeNavigation = false;
       for (const [action, handler] of handlers) {
-        if (navigation.has(action)) { try { registerAction(action, handler); } catch { /* unsupported */ } }
+        if (navigation.has(action)) { try { registerAction(action, wrapped(action, handler)); } catch { /* unsupported */ } }
       }
     });
   };
@@ -115,11 +134,12 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
     handlers.set(action, handler);
     // Never execute navigation through both transports (two Next commands would
     // finish/skip a transition). WebKit still owns play/pause and the metadata.
-    try { registerAction(action, nativeNavigation && navigation.has(action) ? null : handler); } catch { /* unsupported */ }
+    try { registerAction(action, nativeNavigation && navigation.has(action) ? null : wrapped(action, handler)); } catch { /* unsupported */ }
+    tracePlayback('js.handler.register', { action, allowed: !!handler, source: nativeNavigation && navigation.has(action) ? 'native' : 'webkit' });
     if (navigation.has(action)) syncNavigation();
   };
-  void MoraAudio.addListener('command', ({ action, seekTime }) => {
-    handlers.get(action)?.({ action, seekTime } as MediaSessionActionDetails);
+  void MoraAudio.addListener('command', ({ action, seekTime, id, source }) => {
+    dispatch(action, { action, seekTime } as MediaSessionActionDetails, source ?? 'native', id);
   });
 
   let duration = 0, position = 0, rate = 1, playing = false, nowKey = '', sentAt = 0, publishedAt = -Infinity;
@@ -176,6 +196,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
       const now = s.status === 'playing';
       if (now === playing) return;
       playing = now;
+      tracePlayback('js.playbackState', { status: s.status, playing, position: s.position, webAudioSession });
       ms.playbackState = playing ? 'playing' : 'paused';
       if (typeof s.position === 'number') position = s.position;
       sentAt = performance.now();

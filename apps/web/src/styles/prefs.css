@@ -313,3 +313,11 @@
   .diag-picker { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-inline: calc(-1 * var(--gutter)); padding-inline: var(--gutter); }
   .diag-picker .chip { flex: none; }
 }
+.playback-diagnostics { margin-bottom: 24px; padding: 18px; }
+.playback-diagnostics h2 { font-size: 18px; }
+.playback-diagnostics p { color: var(--text-2); line-height: 1.5; margin: 12px 0; }
+.playback-diagnostics-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.playback-diagnostics-option { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.playback-diagnostics-option input { width: 20px; height: 20px; accent-color: #66e9ad; }
+.playback-diagnostics summary { cursor: pointer; padding: 12px 0; }
+.playback-diagnostics-log { max-height: 350px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }

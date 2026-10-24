@@ -1,7 +1,8 @@
 import { CHUNK_FRAMES, fallbackWithoutVocalStems, planToArmed, preampFor, skipPlanFrom, type MixerEvent, type ToneSettings, type TransitionPlan, type TransitionRating, type TransitionRatingReason } from '@automix/core';
 import { DEFAULT_PLAYBACK, sanitizePlayback, type PlaybackSettings } from '@automix/core';
 import workletUrl from './engine.worklet.ts?worker&url';
-import type { EngineCommand } from './engine.worklet.ts';
+import type { EngineCommand, EngineEvent } from './engine.worklet.ts';
+import { playbackDiagnostics, tracePlayback } from '../lib/playback-trace.ts';
 import { api, ApiError, type AnalysisSummary, type Track } from '../lib/api.ts';
 
 export type RepeatMode = 'off' | 'all' | 'one';
@@ -277,10 +278,15 @@ export class PlayerController {
     if (this.ctx && this.node) {
       // Safari also has 'interrupted' (call, Siri, another app's audio)
       // WebKit settles resume() from 'interrupted' only when the interruption ends: never block Play on it.
-      if (this.ctx.state !== 'running' && this.ctx.state !== 'closed') await Promise.race([this.ctx.resume(), new Promise((r) => setTimeout(r, 1500))]);
+      if (this.ctx.state !== 'running' && this.ctx.state !== 'closed') {
+        tracePlayback('context.explicitResume.request', { id: this.diagnosticId, context: this.ctx.state });
+        await Promise.race([this.ctx.resume(), new Promise((r) => setTimeout(r, 1500))]);
+        tracePlayback('context.explicitResume.returned', { id: this.diagnosticId, context: this.ctx.state });
+      }
       return;
     }
     const ctx = new AudioContext({ latencyHint: 'interactive' });
+    tracePlayback('context.created', { id: this.diagnosticId, context: ctx.state });
     await ctx.audioWorklet.addModule(workletUrl);
     const node = new AudioWorkletNode(ctx, 'automix-engine', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
     const analyser = ctx.createAnalyser();
@@ -288,11 +294,16 @@ export class PlayerController {
     analyser.smoothingTimeConstant = 0.45;
     node.connect(analyser);
     analyser.connect(ctx.destination);
-    node.port.onmessage = (ev: MessageEvent<MixerEvent>) => this.onEngine(ev.data);
+    node.port.onmessage = (ev: MessageEvent<EngineEvent>) => this.onEngine(ev.data);
     // The system, not the listener, stopped the context: playing stays playing, so pick up again
     // (WebKit settles a resume() from 'interrupted' once the interruption ends).
-    const keepRunning = () => {
-      if (ctx.state !== 'running' && ctx.state !== 'closed' && (this.state.status === 'playing' || this.state.status === 'buffering')) void ctx.resume().catch(() => {});
+    const keepRunning = (event: Event) => {
+      tracePlayback('context.event', { reason: event.type, context: ctx.state, status: this.state.status, hidden: document.hidden });
+      if (ctx.state !== 'running' && ctx.state !== 'closed' && (this.state.status === 'playing' || this.state.status === 'buffering')) {
+        if (playbackDiagnostics()?.allowAutoResume === false) { tracePlayback('context.autoResume.suppressed', { context: ctx.state }); return; }
+        tracePlayback('context.autoResume.request', { context: ctx.state });
+        void ctx.resume().then(() => tracePlayback('context.autoResume.resolved', { context: ctx.state }), () => tracePlayback('context.autoResume.rejected', { context: ctx.state }));
+      }
     };
     ctx.onstatechange = keepRunning;
     document.addEventListener('visibilitychange', keepRunning);
@@ -347,7 +358,22 @@ export class PlayerController {
     this.post({ cmd: 'tone', settings: tone, preDb: preampFor(tone, this.sr) });
   }
 
+  private diagnosticId?: string;
+  private diagnosticSeq = 0;
+  private diagnosticTickAt = -Infinity;
+  private traceAction(action: string): void {
+    const d = playbackDiagnostics();
+    if (!d) return;
+    this.diagnosticId = d.currentId ?? d.nextId();
+    tracePlayback('controller.action', { id: this.diagnosticId, action, context: this.ctx?.state ?? 'absent', status: this.state.status, position: this.state.position });
+  }
+
   private post(cmd: EngineCommand, transfer: Transferable[] = []): void {
+    if (playbackDiagnostics() && ['start', 'seek', 'pause', 'arm', 'disarm', 'finish', 'stop'].includes(cmd.cmd)) {
+      const id = this.diagnosticId ?? playbackDiagnostics()!.nextId(), seq = ++this.diagnosticSeq;
+      tracePlayback('controller.post', { id, seq, command: cmd.cmd, paused: cmd.cmd === 'pause' ? cmd.paused : undefined, context: this.ctx?.state ?? 'absent', node: !!this.node });
+      cmd = { ...cmd, diagnostic: { id, seq } };
+    }
     this.node?.port.postMessage(cmd, transfer);
   }
 
@@ -788,6 +814,7 @@ export class PlayerController {
   }
 
   pause(): void {
+    this.traceAction('pause');
     this.previewRevision++;
     this.post({ cmd: 'pause', paused: true });
     this.set({ status: 'paused' });
@@ -795,6 +822,7 @@ export class PlayerController {
   }
 
   async resume(): Promise<void> {
+    this.traceAction('play');
     const intent = ++this.previewRevision;
     if (this.radioPlay) this.radioPlay.tick = performance.now();
     if (!this.current && this.waveExhausted && (this.isWave() || this.state.context?.type === 'online-radio')) {
@@ -814,6 +842,7 @@ export class PlayerController {
   }
 
   seek(seconds: number): void {
+    this.traceAction('seekto');
     this.previewRevision++;
     this.nextRequest = null;
     this.recovering = null;
@@ -853,6 +882,7 @@ export class PlayerController {
 
   /** User pressed "next". */
   async nextTrack(reason: 'skip' | 'dislike' = 'skip'): Promise<void> {
+    this.traceAction('nexttrack');
     const intent = ++this.previewRevision;
     if (this.state.status === 'paused') {
       const next = this.nextIndex(true);
@@ -1029,6 +1059,7 @@ export class PlayerController {
   }
 
   async prevTrack(): Promise<void> {
+    this.traceAction('previoustrack');
     this.previewRevision++;
     if (this.state.position > 3 || this.state.index <= 0) {
       this.seek(0);
@@ -1616,7 +1647,11 @@ export class PlayerController {
     this.post({ cmd: 'gain', deck: this.current.deck, gainDb: track?.mixingAllowed === false ? 0 : gainFromSummary(track?.analysis, this.loudnessTarget) });
   }
 
-  private onEngine(e: MixerEvent): void {
+  private onEngine(e: EngineEvent): void {
+    if (e.type === 'diagnostic') {
+      tracePlayback(e.stage, { id: e.id, seq: e.seq, command: e.command, paused: e.paused, clock: e.clock, peak: e.peak });
+      return;
+    }
     switch (e.type) {
       case 'audioHealth':
         this.set({ audioHealth: { ...e, pcmUnderruns: this.state.audioHealth?.pcmUnderruns ?? 0, latencyMs: (this.ctx?.baseLatency ?? 0) * 1000 } });
@@ -1747,6 +1782,10 @@ export class PlayerController {
   private prevSlot: Slot | null = null;
 
   private onTick(e: Extract<MixerEvent, { type: 'tick' }>): void {
+    if (playbackDiagnostics() && performance.now() - this.diagnosticTickAt >= 5000) {
+      this.diagnosticTickAt = performance.now();
+      tracePlayback('engine.tick', { id: this.diagnosticId, paused: e.paused, clock: e.clock, status: this.state.status, context: this.ctx?.state ?? 'absent', position: this.state.position, hidden: document.hidden });
+    }
     for (const deck of e.decks) if (deck.token && this.slotByToken(deck.token)) this.deckTelemetry.set(deck.token, deck);
     if (!this.current) return;
     const d = e.decks.find((x) => x.token === this.current!.token);
@@ -1914,10 +1953,10 @@ export class PlayerController {
   private setupMediaSession(): void {
     if (!('mediaSession' in navigator)) return;
     const ms = navigator.mediaSession;
-    ms.setActionHandler('play', () => void this.resume());
+    ms.setActionHandler('play', () => this.resume());
     ms.setActionHandler('pause', () => this.pause());
-    ms.setActionHandler('nexttrack', () => void this.nextTrack());
-    ms.setActionHandler('previoustrack', () => void this.prevTrack());
+    ms.setActionHandler('nexttrack', () => this.nextTrack());
+    ms.setActionHandler('previoustrack', () => this.prevTrack());
     ms.setActionHandler('seekto', (d) => d.seekTime !== undefined && this.seek(d.seekTime));
     ms.setActionHandler('seekforward', () => this.seek(this.state.position + 10));
     ms.setActionHandler('seekbackward', () => this.seek(this.state.position - 10));
