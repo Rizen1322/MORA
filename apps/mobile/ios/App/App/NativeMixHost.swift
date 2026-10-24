@@ -270,6 +270,7 @@ final class NativeMixHost {
                             self.work.async {
                                 guard self.preparation === job, !job.ticket.cancelled, at == self.tracks.count else { continuation.resume(returning: false); return }
                                 let key = Self.key(track, at)
+                                var appended = false
                                 do {
                                     guard let frames = track["totalFrames"] as? Int, let url = self.file(key),
                                           (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) == frames * 8,
@@ -278,10 +279,15 @@ final class NativeMixHost {
                                     let added = try self.validated([track], from: at)
                                     if !self.done, let renderer = self.renderer, !(try renderer.update(from: at, tracks: added)) { throw Failure.invalid }
                                     self.tracks += added; self.config["tracks"] = self.tracks; self.artworks.append(self.artwork(track))
+                                    appended = true
                                     if self.done && self.ended && self.continueWhenPrepared { try self.select(index: at, position: 0, playing: true) }
                                     else { self.publish("prepared") }
                                     self.prune(); continuation.resume(returning: true)
                                 } catch {
+                                    if appended {
+                                        self.fail() // Metadata already owns the file; do not delete it underneath a renderer.
+                                        continuation.resume(returning: true); return
+                                    }
                                     self.bytes.removeValue(forKey: key)
                                     MoraPlaybackJournal.record("native.preparation.failed", ["reason": "commit"])
                                     continuation.resume(returning: false)

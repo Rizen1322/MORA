@@ -51,7 +51,12 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
   return {
     prepareQueue: (from, entries, previousId, loopEntries = [], signal) => serialize(async () => {
       signal?.throwIfAborted();
-      if (!id || !hooks.sources || !port.nativeSourceReserve || !port.nativeSourceAppend || !port.nativePrepareQueue) throw Error('Нативная подготовка очереди недоступна');
+      if (!hooks.sources || !port.nativeSourceReserve || !port.nativeSourceAppend || !port.nativePrepareQueue) throw Error('Нативная подготовка очереди недоступна');
+      if (!id) {
+        if (!(await port.nativeMixState()).active) throw Error('Нативное воспроизведение не запущено');
+        await session(); // Rebind the existing owner after WebContent reload; begin is idempotent.
+      }
+      if (!id) throw Error('Нативная сессия недоступна');
       const unique = [...new Map([...entries, ...loopEntries].map(e => [e.entryId, e])).values()];
       const { keys } = await port.nativeSourceReserve({ id, count: unique.length });
       signal?.throwIfAborted();

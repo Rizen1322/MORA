@@ -65,13 +65,16 @@ try {
   });
   assert.equal(code, 0);
   const actual = JSON.parse(await readFile(join(folder, 'analysis-actual.json'), 'utf8'));
-  function compare(a, b) {
-    if (typeof a === 'number') assert.ok(Number.isFinite(b) && Math.abs(a - b) <= 2e-5 * Math.max(1, Math.abs(a)));
+  function compare(a, b, path = 'analysis') {
+    if (typeof a === 'number') assert.ok(Number.isFinite(b) && Math.abs(a - b) <= 2e-5 * Math.max(1, Math.abs(a)), `${path}: ${a} != ${b}`);
     else if (a && typeof a === 'object') {
       assert.deepEqual(Object.keys(a).sort(), Object.keys(b).sort());
-      for (const key of Object.keys(a)) compare(a[key], b[key]);
-    } else assert.equal(a, b);
+      for (const key of Object.keys(a)) compare(a[key], b[key], `${path}.${key}`);
+    } else assert.equal(a, b, path);
   }
+  // This field measures execution wall time; all acoustic fields still compare.
+  assert.ok(Number.isFinite(actual.elapsedMs) && actual.elapsedMs >= 0);
+  delete expected.elapsedMs; delete actual.elapsedMs;
   compare(expected, actual);
   console.log('App-process MIR analysis agrees with Node on the streamed fixture');
 } finally {

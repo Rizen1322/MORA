@@ -477,6 +477,7 @@ export class PlayerController {
   private onNativeState(s: NativeMixState): void {
     if (this.nativeAt < 0) return;
     if (!s.active || s.failed) {
+      this.nativeRevision++; this.nativeAbort.abort(); this.nativeManifestKey = '';
       this.nativeAt = -1;
       this.nativeFiles.clear();
       this.nativeTracks = [];

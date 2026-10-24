@@ -33,7 +33,12 @@ final class NativePreparationCore {
         return try call("analyzeJSON", ["frames": frames])
     }
     func plan(a: [String: Any], b: [String: Any], settings: [String: Any], sampleRate: Double) throws -> [String: Any] {
-        try call("planJSON", ["a": a, "b": b, "settings": settings, "sampleRate": sampleRate])
+        func track(_ value: [String: Any]) -> [String: Any] {
+            ["id": value["id"] ?? "", "duration": value["duration"] ?? 0,
+             "mixingAllowed": value["mixingAllowed"] ?? false, "analysis": value["analysis"] ?? NSNull()]
+        }
+        // No source recipe, bearer token, address or headers may reach planner debug data.
+        return try call("planJSON", ["a": track(a), "b": track(b), "settings": settings, "sampleRate": sampleRate])
     }
     private func call(_ name: String, _ input: [String: Any]) throws -> [String: Any] {
         try autoreleasepool {

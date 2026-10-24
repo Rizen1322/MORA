@@ -27,6 +27,17 @@ it('hands off more than two upcoming sources and preserves repeat order', async 
   expect(handoff.mock.calls[0][0].manifest.items.map(t => t.entryId)).toEqual(entries.map(e => e.entryId));
   expect(handoff.mock.calls[0][0].manifest.loopItems!.map(t => t.entryId)).toEqual(entries.map(e => e.entryId).reverse());
 });
+it('rebinds a running session before editing its manifest after WebContent reload', async () => {
+  const begin = vi.fn(async () => ({ id: 'existing-owner' })), handoff = vi.fn(async () => state), stop = vi.fn();
+  const mix = createNativeMix({ ...port(), nativeMixBegin: begin, nativeMixStop: stop,
+    nativeSourceReserve: async () => ({ keys: [] }), nativeSourceAppend: vi.fn(), nativePrepareQueue: handoff }, {
+    prepare: async () => {}, restore: vi.fn(), sources: async () => ({ items: [],
+      previous: { trackId: 'seed', duration: 180, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS }),
+  });
+  await mix.prepareQueue!(1, [], 'seed');
+  expect(begin).toHaveBeenCalledOnce(); expect(stop).not.toHaveBeenCalled();
+  expect(handoff.mock.calls[0][0].id).toBe('existing-owner');
+});
 it('deduplicates local source copies and forgets leases removed by a replacement', async () => {
   const append = vi.fn(), handoff = vi.fn(async () => state), read = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'X-Native-Length': '3' } }));
   let seq = 0;
