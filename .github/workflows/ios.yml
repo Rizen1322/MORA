@@ -43,6 +43,8 @@ jobs:
           "$RUNNER_TEMP/mora-preparation-check"
       - name: Compare the Swift AutoMix mixer with Node
         run: node apps/mobile/scripts/check-native-dsp.mjs
+      - name: Test native HTTP preparation transport
+        run: node apps/mobile/scripts/check-native-http.mjs
       - name: Test the native queue on PCM files
         run: node apps/mobile/scripts/check-native-mix.mjs
       - uses: actions/upload-artifact@v4

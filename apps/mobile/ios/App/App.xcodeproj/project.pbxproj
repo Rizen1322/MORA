@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B2F0C0DE2FF0000100000009 /* NativeMediaHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF000010000000A /* NativeMediaHTTP.swift */; };
 		B2F0C0DE2FF0000100000007 /* NativePCMDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF0000100000008 /* NativePCMDecoder.swift */; };
 		B2F0C0DE2FF0000100000005 /* NativeArtworkImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF0000100000006 /* NativeArtworkImage.swift */; };
 		B2F0C0DE2FF0000100000001 /* NativeDSPRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF0000100000002 /* NativeDSPRenderer.swift */; };
@@ -26,6 +27,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B2F0C0DE2FF000010000000A /* NativeMediaHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMediaHTTP.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF0000100000008 /* NativePCMDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePCMDecoder.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF0000100000006 /* NativeArtworkImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeArtworkImage.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF0000100000002 /* NativeDSPRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDSPRenderer.swift; sourceTree = "<group>"; };
@@ -88,6 +90,7 @@
 				B2F0C0DE2FF0000100000004 /* NativeMixHost.swift */,
 				B2F0C0DE2FF0000100000006 /* NativeArtworkImage.swift */,
 				B2F0C0DE2FF0000100000008 /* NativePCMDecoder.swift */,
+				B2F0C0DE2FF000010000000A /* NativeMediaHTTP.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -187,6 +190,7 @@
 				B2F0C0DE2FF0000100000003 /* NativeMixHost.swift in Sources */,
 				B2F0C0DE2FF0000100000005 /* NativeArtworkImage.swift in Sources */,
 				B2F0C0DE2FF0000100000007 /* NativePCMDecoder.swift in Sources */,
+				B2F0C0DE2FF0000100000009 /* NativeMediaHTTP.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
