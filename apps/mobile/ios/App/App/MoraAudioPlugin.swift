@@ -51,6 +51,12 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativeProbeStop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeProbeState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeProbeCommand", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeMixBegin", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeMixAppend", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeMixStart", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeMixStop", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeMixState", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeMixCommand", returnType: CAPPluginReturnPromise),
     ]
 
     private var playing = false
@@ -61,6 +67,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private var navigationRoute = "webkit"
     private var navigationEpoch = 0
     private let nativeProbe = NativePlaybackProbe()
+    private let nativeMix = NativeMixHost()
 
     override public func load() {
         MoraPlaybackJournal.record("native.load")
@@ -197,6 +204,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc private func interruption(_ n: Notification) {
         if !Thread.isMainThread { DispatchQueue.main.async { self.interruption(n) }; return }
+        if nativeMix.active { nativeMix.interruption(n); return }
         if nativeProbe.active { nativeProbe.interruption(n); return }
         MoraPlaybackJournal.record("native.interruption", ["seq": n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ?? 0,
             "reason": String(n.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt ?? 0),
@@ -227,6 +235,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc private func routeChange(_ n: Notification) {
         if !Thread.isMainThread { DispatchQueue.main.async { self.routeChange(n) }; return }
+        if nativeMix.active { nativeMix.routeChange(n); return }
         if nativeProbe.active { nativeProbe.routeChange(n); return }
         MoraPlaybackJournal.record("native.routeChange", ["reason": String(n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0)])
         guard let raw = n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
@@ -237,6 +246,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc private func mediaReset(_ n: Notification) {
         if !Thread.isMainThread { DispatchQueue.main.async { self.mediaReset(n) }; return }
+        if nativeMix.active { nativeMix.mediaReset(); return }
         if nativeProbe.active { MoraPlaybackJournal.record("native.probe.mediaReset"); return }
         MoraPlaybackJournal.record("native.mediaReset")
         if playing {
@@ -254,6 +264,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private func diagnosticReport() -> [String: Any] {
         var report = MoraPlaybackJournal.report()
         report["nativeProbe"] = nativeProbe.snapshot
+        report["nativeMix"] = nativeMix.snapshot
         return report
     }
     @objc func diagnosticsRecord(_ call: CAPPluginCall) {
@@ -297,6 +308,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func nativeProbeStart(_ call: CAPPluginCall) {
         guard MoraPlaybackJournal.enabled else { call.reject("Diagnostics disabled"); return }
         DispatchQueue.main.async {
+            guard !self.nativeMix.active else { call.reject("Stop native mix first"); return }
             self.nativeProbe.start { result in
                 switch result {
                 case .success(let snapshot): call.resolve(snapshot)
@@ -323,6 +335,35 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
                 if ok { call.resolve(self.nativeProbe.snapshot) } else { call.reject("Native command failed") }
             }
         }
+    }
+    private func mixReply(_ call: CAPPluginCall) -> NativeMixHost.Reply {
+        { result in
+            switch result {
+            case .success(let state): call.resolve(state)
+            case .failure: call.reject("Native mix operation failed. Export diagnostics after stopping the test.")
+            }
+        }
+    }
+    @objc func nativeMixBegin(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard MoraPlaybackJournal.enabled, !self.nativeProbe.active else { call.reject("Stop native probe first"); return }
+            self.nativeMix.begin(self.mixReply(call))
+        }
+    }
+    @objc func nativeMixAppend(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), let track = call.getInt("track"), let offset = call.getInt("offset"),
+              let base64 = call.getString("base64") else { call.reject("Invalid PCM chunk"); return }
+        nativeMix.append(id: id, track: track, offset: offset, base64: base64, completion: mixReply(call))
+    }
+    @objc func nativeMixStart(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), let config = call.getObject("config") else { call.reject("Invalid native mix"); return }
+        nativeMix.start(id: id, config: config, completion: mixReply(call))
+    }
+    @objc func nativeMixStop(_ call: CAPPluginCall) { nativeMix.stop(mixReply(call)) }
+    @objc func nativeMixState(_ call: CAPPluginCall) { call.resolve(nativeMix.snapshot) }
+    @objc func nativeMixCommand(_ call: CAPPluginCall) {
+        guard let action = call.getString("action") else { call.reject("Invalid command"); return }
+        nativeMix.command(action, time: call.getDouble("seekTime"), source: "test", completion: mixReply(call))
     }
 }
 

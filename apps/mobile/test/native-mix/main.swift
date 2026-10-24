@@ -1,0 +1,27 @@
+import Foundation
+
+let directory = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+let script = try String(contentsOf: directory.appendingPathComponent("mixer.js"), encoding: .utf8)
+let configs = try JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("configs.json"))) as! [[String: Any]]
+var all: [[String: Any]] = []
+var output = Data()
+var maxMs = 0.0
+for config in configs {
+    let renderer = try NativeDSPRenderer(script: script, files: [0, 1].map { directory.appendingPathComponent("\($0).f32le") }, config: config)
+    var blocks: [[String: Any]] = []
+    for _ in 0..<160 {
+        let began = ProcessInfo.processInfo.systemUptime
+        let block = try renderer.render()
+        maxMs = max(maxMs, (ProcessInfo.processInfo.systemUptime - began) * 1000)
+        output.append(block.left); output.append(block.right)
+        blocks.append(["frames": block.frames, "done": block.done,
+            "marks": block.marks.map { ["offset": $0.frame, "index": $0.index, "position": $0.position] as [String: Any] },
+            "events": block.events.map { $0["type"] as? String ?? "unknown" }])
+        if block.done { break }
+    }
+    guard blocks.last?["done"] as? Bool == true else { fatalError("Native pair did not end") }
+    all.append(["blocks": blocks])
+}
+try output.write(to: directory.appendingPathComponent("actual.f32le"))
+try JSONSerialization.data(withJSONObject: all).write(to: directory.appendingPathComponent("actual.json"))
+print("Native PCM file -> JavaScriptCore -> typed-array copy passed; max producer block \(maxMs) ms (macOS only)")

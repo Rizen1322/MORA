@@ -35,6 +35,8 @@ jobs:
         run: sh apps/mobile/scripts/ios-mac.sh --ipa
       - name: Compare AutoMix DSP with native JavaScriptCore
         run: node apps/mobile/scripts/check-native-dsp.mjs
+      - name: Test native prepared-pair PCM bridge
+        run: node apps/mobile/scripts/check-native-mix.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: MORA-unsigned-ipa

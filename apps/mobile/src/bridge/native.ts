@@ -2,6 +2,7 @@ import { Capacitor, CapacitorHttp, registerPlugin, type PluginListenerHandle } f
 import type { FetchArgs, FetchResult } from '../shared/protocol.ts';
 import { setupDiagnostics, type NativeDiagnostics } from './diagnostics.ts';
 import { createNativeProbe, type NativeProbePort } from './native-probe.ts';
+import { createNativeMix, type NativeMixPort } from './native-mix.ts';
 import { playbackDiagnostics, tracePlayback, withPlaybackId, type NativePlaybackControls, type NavigationRoute } from '../../../web/src/lib/playback-trace.ts';
 
 /**
@@ -11,7 +12,7 @@ import { playbackDiagnostics, tracePlayback, withPlaybackId, type NativePlayback
  * commands with the previous split navigation path; neither proves ownership.
  */
 
-interface MoraAudio extends NativeDiagnostics, NativeProbePort {
+interface MoraAudio extends NativeDiagnostics, NativeProbePort, NativeMixPort {
   setRemoteNavigation(o: { actions: MediaSessionAction[]; seekable: boolean; route: NavigationRoute; epoch?: number }): Promise<void>;
   setPlaybackState(o: { playing: boolean; intentPlaying: boolean; webAudioSession: boolean }): Promise<void>;
   addListener(ev: 'command', fn: (e: { action: MediaSessionAction; seekTime?: number; id?: string; source?: string; routeEpoch?: number }) => void): Promise<PluginListenerHandle>;
@@ -287,7 +288,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
 
   const audioSession = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
   let previousAudioType: string | undefined;
-  controls.probe = createNativeProbe(MoraAudio, {
+  const ownership = {
     async prepare() {
       await controls.setRoute('webkit');
       controls.probeActive = true;
@@ -311,10 +312,32 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
       ms.metadata = cached;
       tracePlayback('js.probe.restored', { context: controls.contextState, probeActive: false });
     },
+  };
+  let starting = false;
+  const claim = <T>(start: () => Promise<T>): Promise<T> => {
+    // Reject foreign ownership before entering an adapter's rollback block.
+    if (starting || controls.probeActive) return Promise.reject(new Error('Сначала остановите нативный плеер'));
+    starting = true;
+    return start().finally(() => { starting = false; });
+  };
+  const probe = createNativeProbe(MoraAudio, ownership);
+  controls.probe = { ...probe, start: () => claim(() => probe.start()),
+    async stop() { if (controls.mixActive) throw new Error('Остановите AutoMix'); await probe.stop(); } };
+  const mix = createNativeMix(MoraAudio, {
+    async prepare() {
+      controls.mixActive = true; await ownership.prepare();
+    },
+    restore() { controls.mixActive = false; ownership.restore(); },
   });
+  controls.mix = { ...mix, start: prepare => claim(() => mix.start(prepare)),
+    async stop() { if (controls.probeActive && !controls.mixActive) throw new Error('Остановите тест A/B'); await mix.stop(); } };
   // WebContent can reload independently while the native player continues.
   // Recover the guard before allowing a new WebAudio session in that page.
-  controls.ready = Promise.resolve().then(() => MoraAudio.nativeProbeState()).then(async (state) => {
+  controls.ready = Promise.resolve().then(async () => {
+    const [probe, mix] = await Promise.all([MoraAudio.nativeProbeState(), MoraAudio.nativeMixState().catch(() => null)]);
+    controls.mixActive = !!mix?.active;
+    return mix?.active ? mix : probe;
+  }).then(async (state) => {
     if (!state.active) return;
     controls.probeActive = true;
     await controls.suspend?.();

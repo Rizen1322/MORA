@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { nativePlaybackControls, playbackDiagnostics, type NavigationRoute, type NativeProbeState } from '../lib/playback-trace.ts';
+import type { NativeMixState } from '../lib/native-mix.ts';
+import { controller } from '../store/app.ts';
 
 export function PlaybackDiagnostics() {
   const [diagnostics, setDiagnostics] = useState(playbackDiagnostics);
@@ -7,6 +9,8 @@ export function PlaybackDiagnostics() {
   const [autoResume, setAutoResume] = useState(false);
   const [route, setRoute] = useState<NavigationRoute>('webkit');
   const [probeState, setProbeState] = useState<NativeProbeState | null>(null);
+  const [mixState, setMixState] = useState<NativeMixState | null>(null);
+  const [preparing, setPreparing] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -21,8 +25,14 @@ export function PlaybackDiagnostics() {
     const update = async () => {
       if (document.hidden) return;
       try {
-        const state = await nativePlaybackControls()?.probe?.state();
-        if (!cancelled && state) setProbeState(state);
+        const c = nativePlaybackControls();
+        if (c?.mixActive) {
+          const state = await c.mix?.state();
+          if (!cancelled && state) setMixState(state);
+        } else {
+          const state = await c?.probe?.state();
+          if (!cancelled && state) setProbeState(state);
+        }
       } catch { /* Older shell has no native baseline. */ }
     };
     void update();
@@ -33,7 +43,7 @@ export function PlaybackDiagnostics() {
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true); setError('');
     try { await fn(); setReport(await diagnostics.report()); }
-    catch { setError('Не удалось выполнить действие. Повторите после разблокировки iPhone.'); }
+    catch (e) { setError(e instanceof Error ? (e.name === 'AbortError' ? 'Подготовка отменена. Держите приложение открытым до запуска.' : e.message) : 'Не удалось выполнить действие.'); }
     finally { setRoute(nativePlaybackControls()?.route ?? 'webkit'); setBusy(false); }
   };
   const events = Array.isArray(report?.events) ? report.events : [];
@@ -41,8 +51,39 @@ export function PlaybackDiagnostics() {
   const probeActive = !!controls?.probeActive;
   return <section className="pref-card playback-diagnostics" aria-label="Диагностика управления iOS">
     <h2>Управление на экране блокировки · диагностическая сборка</h2>
-    <p>Версия 1.0.10: нативный плеер с переключением мелодий A/B. Журнал записывается постоянно,
+    <p>Версия 1.0.11: нативный AutoMix для пары из вашей очереди. Журнал записывается постоянно,
       метка сохраняет предыдущие события.</p>
+    <div className="pref-card" style={{ padding: 14 }}>
+      <h3>Нативный AutoMix · ваша музыка</h3>
+      <p>Подготовит текущую и следующую песню. Дождитесь запуска, не сворачивая приложение.
+        После подготовки звук, DJ-переход и кнопки работают в нативном движке.
+        Первый режим ограничен двумя песнями, скоростью 1× и исходной тональностью, без разделения вокала.</p>
+      <div className="playback-diagnostics-actions">
+        <button className="btn btn-primary" disabled={busy || probeActive || !controls?.mix} onClick={() => void run(async () => {
+          try { setMixState(await controller.startNativeMix(setPreparing)); await diagnostics.mark(); }
+          finally { setPreparing(''); }
+        })}>Запустить пару из очереди</button>
+        <button className="btn" disabled={busy || !controls?.mixActive} onClick={() => void run(async () => {
+          await controls!.mix!.stop(); setMixState(await controls!.mix!.state());
+        })}>Остановить AutoMix</button>
+        {preparing && <button className="btn" onClick={() => controller.cancelNativePreparation()}>Отменить подготовку</button>}
+      </div>
+      {preparing && <p role="status">{preparing}</p>}
+      {controls?.mixActive && mixState && <>
+        <p role="status">Песня {mixState.index + 1}/2 · {mixState.failed ? 'ошибка — остановите тест и экспортируйте журнал' : mixState.playing ? 'играет' : 'пауза'} · {mixState.position.toFixed(1)} / {mixState.duration.toFixed(1)} с</p>
+        <div className="playback-diagnostics-actions">
+          {([['previoustrack', 'Предыдущая'], ['pause', 'Пауза'], ['play', 'Play'], ['nexttrack', 'Следующая']] as const).map(([action, label]) =>
+            <button className="btn" key={action} disabled={busy || (action === 'nexttrack' && mixState.index === 1)} onClick={() => void run(async () => {
+              setMixState(await controls.mix!.command(action));
+            })}>{label}</button>)}
+          <button className="btn" disabled={busy || mixState.index !== 0 || mixState.transitionStart === undefined} onClick={() => void run(async () => {
+            setMixState(await controls.mix!.command('seekto', Math.max(0, (mixState.transitionStart ?? 0) - 8)));
+          })}>За 8 с до DJ-перехода</button>
+        </div>
+        <p>Заблокируйте экран: проверьте Next/Previous, Pause/Play и перемотку. Затем сохраните JSON.
+          Основной плеер приложения остаётся на паузе; в этом режиме управляйте музыкой здесь или с экрана блокировки.</p>
+      </>}
+    </div>
     <div className="pref-card" style={{ padding: 14 }}>
       <h3>Нативный плеер · две тестовые мелодии</h3>
       <p>Нажмите «Запустить нативный тест»: обычная музыка остановится, начнётся тихая тестовая мелодия.
@@ -53,7 +94,7 @@ export function PlaybackDiagnostics() {
         <button className="btn btn-primary" disabled={busy || probeActive || !controls?.probe} onClick={() => void run(async () => {
           setProbeState(await controls!.probe!.start()); await diagnostics.mark();
         })}>Запустить нативный тест</button>
-        <button className="btn" disabled={busy || !probeActive} onClick={() => void run(async () => {
+        <button className="btn" disabled={busy || !probeActive || controls?.mixActive} onClick={() => void run(async () => {
           await controls!.probe!.stop(); setProbeState(null); await diagnostics.mark();
         })}>Остановить тест и вернуться к музыке</button>
         <button className="btn" disabled={busy || !probeActive} onClick={() => void run(async () => {

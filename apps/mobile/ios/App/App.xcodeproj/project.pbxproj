@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B2F0C0DE2FF0000100000001 /* NativeDSPRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF0000100000002 /* NativeDSPRenderer.swift */; };
+		B2F0C0DE2FF0000100000003 /* NativeMixHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF0000100000004 /* NativeMixHost.swift */; };
 		A1F0C0DE2FF0000100000001 /* MoraAudioPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F0C0DE2FF0000100000002 /* MoraAudioPlugin.swift */; };
 		A1F0C0DE2FF0000100000003 /* NativePlaybackProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F0C0DE2FF0000100000004 /* NativePlaybackProbe.swift */; };
 		A1F0C0DE2FF0000100000005 /* NativeProbeWave.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F0C0DE2FF0000100000006 /* NativeProbeWave.swift */; };
@@ -22,6 +24,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B2F0C0DE2FF0000100000002 /* NativeDSPRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDSPRenderer.swift; sourceTree = "<group>"; };
+		B2F0C0DE2FF0000100000004 /* NativeMixHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMixHost.swift; sourceTree = "<group>"; };
 		A1F0C0DE2FF0000100000002 /* MoraAudioPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoraAudioPlugin.swift; sourceTree = "<group>"; };
 		A1F0C0DE2FF0000100000004 /* NativePlaybackProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlaybackProbe.swift; sourceTree = "<group>"; };
 		A1F0C0DE2FF0000100000006 /* NativeProbeWave.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeProbeWave.swift; sourceTree = "<group>"; };
@@ -76,6 +80,8 @@
 				A1F0C0DE2FF0000100000002 /* MoraAudioPlugin.swift */,
 				A1F0C0DE2FF0000100000004 /* NativePlaybackProbe.swift */,
 				A1F0C0DE2FF0000100000006 /* NativeProbeWave.swift */,
+				B2F0C0DE2FF0000100000002 /* NativeDSPRenderer.swift */,
+				B2F0C0DE2FF0000100000004 /* NativeMixHost.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -171,6 +177,8 @@
 				A1F0C0DE2FF0000100000001 /* MoraAudioPlugin.swift in Sources */,
 				A1F0C0DE2FF0000100000003 /* NativePlaybackProbe.swift in Sources */,
 				A1F0C0DE2FF0000100000005 /* NativeProbeWave.swift in Sources */,
+				B2F0C0DE2FF0000100000001 /* NativeDSPRenderer.swift in Sources */,
+				B2F0C0DE2FF0000100000003 /* NativeMixHost.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -312,14 +320,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.10;
+				MARKETING_VERSION = 1.0.11;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = ru.mora.player;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -334,14 +342,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.10;
+				MARKETING_VERSION = 1.0.11;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.mora.player;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";

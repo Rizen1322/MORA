@@ -4,6 +4,7 @@ import workletUrl from './engine.worklet.ts?worker&url';
 import type { EngineCommand, EngineEvent } from './engine.worklet.ts';
 import { nativePlaybackControls, playbackDiagnostics, tracePlayback } from '../lib/playback-trace.ts';
 import { api, ApiError, type AnalysisSummary, type Track } from '../lib/api.ts';
+import { uploadNativePcm } from '../lib/native-pcm-preparation.ts';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 export type Origin = 'user' | 'wave' | 'context' | 'yandex';
@@ -254,6 +255,54 @@ export class PlayerController {
 
   get currentEntry(): QueueEntry | null {
     return this.state.queue[this.state.index] ?? null;
+  }
+
+  private nativePreparation?: AbortController;
+  cancelNativePreparation(): void { this.nativePreparation?.abort(); }
+  async startNativeMix(progress: (message: string) => void): Promise<import('../lib/native-mix.ts').NativeMixState> {
+    const controls = nativePlaybackControls();
+    await controls?.ready;
+    if (!controls?.mix) throw new Error('Нужна новая диагностическая IPA');
+    if (this.playback.speed !== 1 || this.playback.semitones !== 0) throw new Error('Для первого нативного теста установите скорость 1× и тональность 0');
+    const entries = this.state.queue.slice(this.state.index, this.state.index + 2);
+    const pair = entries.map(entry => this.track(entry.trackId));
+    if (pair.length !== 2 || pair.some(t => !t || !(t.duration! > 0))) throw new Error('Выберите трек с ещё одной песней после него в очереди');
+    const [a, b] = pair as [Track, Track];
+    const position = this.state.position;
+    const abort = new AbortController(); this.nativePreparation = abort;
+    const hidden = () => { if (document.hidden) abort.abort(); };
+    document.addEventListener('visibilitychange', hidden);
+    try {
+      return await controls.mix.start(async put => {
+        const lengths: number[] = [];
+        for (let i = 0; i < 2; i++) {
+          const track = pair[i]!;
+          abort.signal.throwIfAborted();
+          progress(`Подготовка ${i + 1}/2: ${track.title}`);
+          // candidate starts no new stem/model job; the native pair uses original full mixes.
+          await api.prepare(track.id, 48000, 'candidate');
+          lengths.push(await uploadNativePcm(start => fetch(`/api/tracks/${encodeURIComponent(track.id)}/pcm?sr=48000&start=${start}&frames=${CHUNK_FRAMES}&format=f32le`,
+            { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(60000)]) }),
+          (offset, bytes) => put(i, offset, bytes), abort.signal,
+          frames => progress(`Подготовка ${i + 1}/2: ${Math.round(frames / 48000)} с`)));
+        }
+        progress('Подготовка DJ-перехода');
+        const result = await api.plan(a.id, b.id);
+        abort.signal.throwIfAborted();
+        const plan = fallbackWithoutVocalStems(result.plan);
+        if (position >= plan.aExit || plan.aExit * 48000 >= lengths[0] || plan.bEntry * 48000 >= lengths[1]) {
+          throw new Error('Для этой пары начните первый трек заново и повторите тест');
+        }
+        return { sampleRate: 48000, position, tracks: [a, b].map((track, i) => ({
+          title: track.title, artist: track.artist, totalFrames: lengths[i],
+          gainDb: track.mixingAllowed === false ? 0 : gainFromSummary(this.track(track.id)?.analysis, this.loudnessTarget),
+        })), transition: planToArmed(plan, 48000, 'A', 'B'),
+        ...(this.tone ? { tone: this.tone, preDb: preampFor(this.tone, 48000) } : {}) };
+      });
+    } finally {
+      document.removeEventListener('visibilitychange', hidden);
+      if (this.nativePreparation === abort) this.nativePreparation = undefined;
+    }
   }
 
   // ------------------------------------------------------------------ engine

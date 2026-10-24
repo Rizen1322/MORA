@@ -36,6 +36,7 @@ export async function setupDiagnostics(native: NativeDiagnostics): Promise<void>
     async share() { d.record('js.export', snapshot()); await drain(); await native.diagnosticsShare(); },
     async test(action, seekTime) {
       const controls = nativePlaybackControls();
+      if (controls?.mixActive && controls.mix) { await controls.mix.command(action, seekTime); return; }
       if (controls?.probeActive && controls.probe) { await controls.probe.command(action, seekTime); return; }
       await native.diagnosticsTest({ action, seekTime });
     },

@@ -9,6 +9,8 @@ export interface NativeProbe {
   command(action: MediaSessionAction, seekTime?: number): Promise<NativeProbeState>;
 }
 export interface NativePlaybackControls {
+  mix?: import('./native-mix.ts').NativeMix;
+  mixActive?: boolean;
   ready?: Promise<void>;
   route: NavigationRoute;
   contextState?: string;
