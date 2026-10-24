@@ -2,7 +2,7 @@ import { CHUNK_FRAMES, fallbackWithoutVocalStems, planToArmed, preampFor, skipPl
 import { DEFAULT_PLAYBACK, sanitizePlayback, type PlaybackSettings } from '@automix/core';
 import workletUrl from './engine.worklet.ts?worker&url';
 import type { EngineCommand, EngineEvent } from './engine.worklet.ts';
-import { playbackDiagnostics, tracePlayback } from '../lib/playback-trace.ts';
+import { nativePlaybackControls, playbackDiagnostics, tracePlayback } from '../lib/playback-trace.ts';
 import { api, ApiError, type AnalysisSummary, type Track } from '../lib/api.ts';
 
 export type RepeatMode = 'off' | 'all' | 'one';
@@ -295,12 +295,22 @@ export class PlayerController {
     node.connect(analyser);
     analyser.connect(ctx.destination);
     node.port.onmessage = (ev: MessageEvent<EngineEvent>) => this.onEngine(ev.data);
-    // The system, not the listener, stopped the context: playing stays playing, so pick up again
-    // (WebKit settles a resume() from 'interrupted' once the interruption ends).
+    // A WebKit remote Pause may stop only the context. Report its actual state to
+    // the native clock bridge without inventing a new user Play/Pause intent.
+    const reportContext = () => {
+      const controls = nativePlaybackControls();
+      if (!controls) return;
+      controls.contextState = ctx.state;
+      controls.snapshot = () => ({ context: ctx.state, status: this.state.status,
+        position: this.state.position, duration: this.state.duration, paused: this.diagnosticMixerPaused });
+      window.dispatchEvent(new Event('mora-context-state'));
+    };
     const keepRunning = (event: Event) => {
+      reportContext();
       tracePlayback('context.event', { reason: event.type, context: ctx.state, status: this.state.status, hidden: document.hidden });
       if (ctx.state !== 'running' && ctx.state !== 'closed' && (this.state.status === 'playing' || this.state.status === 'buffering')) {
-        if (playbackDiagnostics()?.allowAutoResume === false) { tracePlayback('context.autoResume.suppressed', { context: ctx.state }); return; }
+        const allowed = playbackDiagnostics()?.allowAutoResume ?? !nativePlaybackControls();
+        if (!allowed) { tracePlayback('context.autoResume.suppressed', { context: ctx.state }); return; }
         tracePlayback('context.autoResume.request', { context: ctx.state });
         void ctx.resume().then(() => tracePlayback('context.autoResume.resolved', { context: ctx.state }), () => tracePlayback('context.autoResume.rejected', { context: ctx.state }));
       }
@@ -310,6 +320,7 @@ export class PlayerController {
     this.ctx = ctx;
     this.node = node;
     this.analyser = analyser;
+    reportContext();
     // Locked screen / background: 4 clock ticks a second instead of 20 (fewer main-thread wake-ups),
     // and the position is stored on the way out since the periodic save is sparse on the phone.
     const onVisibility = () => {
@@ -361,6 +372,7 @@ export class PlayerController {
   private diagnosticId?: string;
   private diagnosticSeq = 0;
   private diagnosticTickAt = -Infinity;
+  private diagnosticMixerPaused?: boolean;
   private traceAction(action: string): void {
     const d = playbackDiagnostics();
     if (!d) return;
@@ -1782,6 +1794,7 @@ export class PlayerController {
   private prevSlot: Slot | null = null;
 
   private onTick(e: Extract<MixerEvent, { type: 'tick' }>): void {
+    this.diagnosticMixerPaused = e.paused;
     if (playbackDiagnostics() && performance.now() - this.diagnosticTickAt >= 5000) {
       this.diagnosticTickAt = performance.now();
       tracePlayback('engine.tick', { id: this.diagnosticId, paused: e.paused, clock: e.clock, status: this.state.status, context: this.ctx?.state ?? 'absent', position: this.state.position, hidden: document.hidden });

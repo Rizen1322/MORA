@@ -70,6 +70,30 @@ beforeEach(() => {
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); vi.unstubAllGlobals(); });
 
 describe('playback preparation and queue changes', () => {
+  it('reports native context suspension without undoing it or treating a later running state as user Play', async () => {
+    const { controller, h } = setup();
+    const resume = vi.fn(async () => {});
+    const ctx = { state: 'running', sampleRate: 48000, onstatechange: null as null | ((event: Event) => void), resume, destination: {},
+      audioWorklet: { addModule: async () => {} }, createAnalyser: () => ({ connect: vi.fn() }) };
+    const page = Object.assign(new EventTarget(), { moraNativePlayback: { route: 'webkit', contextState: 'running', snapshot: undefined as undefined | (() => any) } });
+    const changed = vi.fn(); page.addEventListener('mora-context-state', changed);
+    vi.stubGlobal('window', page);
+    vi.stubGlobal('AudioContext', vi.fn(function () { return ctx; }));
+    vi.stubGlobal('AudioWorkletNode', vi.fn(function () { return { connect: vi.fn(), port: { postMessage: vi.fn(), onmessage: null } }; }));
+    vi.stubGlobal('document', { addEventListener: vi.fn() });
+    (h as unknown as { ctx: null }).ctx = null;
+    await h.ensureEngine();
+    ctx.state = 'suspended'; ctx.onstatechange!(new Event('statechange'));
+    expect(resume).not.toHaveBeenCalled();
+    expect(page.moraNativePlayback.contextState).toBe('suspended');
+    expect(page.moraNativePlayback.snapshot!()).toMatchObject({ context: 'suspended', status: 'playing' });
+    expect(changed).toHaveBeenCalled();
+    controller.pause();
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    ctx.state = 'running'; ctx.onstatechange!(new Event('statechange'));
+    expect(controller.state.status).toBe('paused');
+    expect(resume).not.toHaveBeenCalled();
+  });
   it('bounds vocal lookahead to two distinct future tracks and follows repeat order',()=>{
     const {controller}=setup();
     const focus=controller as unknown as {focusAnalysis():void};

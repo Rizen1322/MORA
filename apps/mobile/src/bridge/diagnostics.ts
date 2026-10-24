@@ -1,4 +1,4 @@
-import { safeTraceFields, type PlaybackDiagnostics, type TraceFields } from '../../../web/src/lib/playback-trace.ts';
+import { nativePlaybackControls, safeTraceFields, type PlaybackDiagnostics, type TraceFields } from '../../../web/src/lib/playback-trace.ts';
 
 export interface NativeDiagnostics {
   diagnosticsInfo(): Promise<{ enabled: boolean }>;
@@ -16,8 +16,11 @@ export async function setupDiagnostics(native: NativeDiagnostics): Promise<void>
   const session = Date.now().toString(36);
   const pending = new Set<Promise<void>>();
   const drain = async () => { await Promise.all([...pending]); };
+  const snapshot = (): TraceFields => ({ ...nativePlaybackControls()?.snapshot?.(),
+    route: nativePlaybackControls()?.route, allowed: d.allowAutoResume,
+    hidden: document.hidden, mediaState: navigator.mediaSession?.playbackState });
   const d: PlaybackDiagnostics = {
-    allowAutoResume: true,
+    allowAutoResume: false,
     nextId: () => `js-${session}-${++counter}`,
     record(stage, fields = {}) {
       if (!/^[a-zA-Z0-9_.-]{1,64}$/.test(stage)) return;
@@ -27,13 +30,14 @@ export async function setupDiagnostics(native: NativeDiagnostics): Promise<void>
       pending.add(p);
       void p.finally(() => pending.delete(p));
     },
-    async report() { d.record('js.snapshot', { allowed: d.allowAutoResume, hidden: document.hidden, status: navigator.mediaSession?.playbackState }); await drain(); return native.diagnosticsReport(); },
-    async clear() { await drain(); await native.diagnosticsClear(); d.record('js.test.begin', { allowed: d.allowAutoResume }); },
-    async share() { d.record('js.export', { allowed: d.allowAutoResume, hidden: document.hidden, status: navigator.mediaSession?.playbackState }); await drain(); await native.diagnosticsShare(); },
+    async mark() { d.record('js.test.marker', snapshot()); await drain(); },
+    async report() { d.record('js.snapshot', snapshot()); await drain(); return native.diagnosticsReport(); },
+    async clear() { await drain(); await native.diagnosticsClear(); d.record('js.test.cleared', snapshot()); },
+    async share() { d.record('js.export', snapshot()); await drain(); await native.diagnosticsShare(); },
     test: (action, seekTime) => native.diagnosticsTest({ action, seekTime }),
     setAutoResume(enabled) { d.allowAutoResume = enabled; d.record('js.autoResume.option', { allowed: enabled }); },
   };
   window.moraDiagnostics = d;
-  d.record('js.ready', { allowed: true, hidden: document.hidden });
+  d.record('js.ready', snapshot());
   window.dispatchEvent(new Event('mora-diagnostics-ready'));
 }

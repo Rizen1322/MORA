@@ -13,6 +13,18 @@ beforeEach(() => { vi.stubGlobal('window', new EventTarget()); vi.stubGlobal('do
 afterEach(() => vi.unstubAllGlobals());
 
 describe('diagnostic journal bridge', () => {
+  it('marks a run without erasing existing events and defaults recovery off', async () => {
+    const native = adapter();
+    await setupDiagnostics(native);
+    const d = window.moraDiagnostics!;
+    expect(d.allowAutoResume).toBe(false);
+    d.record('controller.action', { action: 'play' });
+    await d.mark();
+    expect(native.diagnosticsClear).not.toHaveBeenCalled();
+    expect(native.diagnosticsRecord).toHaveBeenCalledWith(expect.objectContaining({ stage: 'js.test.marker', fields: expect.objectContaining({ allowed: false }) }));
+    expect(safeTraceFields({ duration: 180, rate: 1, mediaState: 'paused', route: 'webkit', kind: 'position', title: 'private' }))
+      .toEqual({ duration: 180, rate: 1, mediaState: 'paused', route: 'webkit', kind: 'position' });
+  });
   it('does nothing in production or an older native shell', async () => {
     const native = adapter();
     native.diagnosticsInfo.mockResolvedValueOnce({ enabled: false });
@@ -40,7 +52,7 @@ describe('diagnostic journal bridge', () => {
     window.moraDiagnostics!.setAutoResume(false);
     expect(window.moraDiagnostics!.allowAutoResume).toBe(false);
     await window.moraDiagnostics!.clear();
-    expect(native.diagnosticsRecord).toHaveBeenLastCalledWith(expect.objectContaining({ stage: 'js.test.begin', fields: expect.objectContaining({ allowed: false }) }));
+    expect(native.diagnosticsRecord).toHaveBeenLastCalledWith(expect.objectContaining({ stage: 'js.test.cleared', fields: expect.objectContaining({ allowed: false }) }));
   });
 
   it('drops track identity, credentials, raw errors, URLs, unexpected types and non-finite numbers', () => {

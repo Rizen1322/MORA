@@ -30,8 +30,8 @@ class MoraBridgeViewController: CAPBridgeViewController {
     }
 }
 
-/// WebKit owns Now Playing metadata. Native remote navigation bypasses the
-/// AudioContext path, which does not implement Next/Previous or seeking.
+/// WebKit owns metadata. Native navigation is installed only for the explicit
+/// diagnostic split route; the default route leaves WebKit targets untouched.
 @objc(MoraAudioPlugin)
 public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "MoraAudioPlugin"
@@ -54,10 +54,11 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private var resumeAfterInterruption = false
     private var remoteCommands: [(MPRemoteCommand, Any)] = []
     private var navigationSignature = ""
+    private var navigationRoute = "webkit"
+    private var navigationEpoch = 0
 
     override public func load() {
         MoraPlaybackJournal.record("native.load")
-        registerNavigation()
         let nc = NotificationCenter.default
         let session = AVAudioSession.sharedInstance()
         nc.addObserver(self, selector: #selector(interruption(_:)), name: AVAudioSession.interruptionNotification, object: session)
@@ -78,7 +79,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         for (command, target) in remoteCommands { command.removeTarget(target) }
     }
 
-    private func send(_ action: String, seekTime: Double? = nil, id: String? = nil, source: String = "notification") {
+    private func send(_ action: String, seekTime: Double? = nil, id: String? = nil, source: String = "notification", routeEpoch: Int? = nil) {
         var data: [String: Any] = ["action": action]
         if MoraPlaybackJournal.enabled {
             let commandId = id ?? UUID().uuidString
@@ -87,10 +88,12 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             MoraPlaybackJournal.record("native.send", ["id": commandId, "action": action, "source": source])
         }
         if let seekTime { data["seekTime"] = seekTime }
+        if let routeEpoch { data["routeEpoch"] = routeEpoch }
         notifyListeners("command", data: data)
     }
 
     private func registerNavigation() {
+        let epoch = navigationEpoch
         let center = MPRemoteCommandCenter.shared()
         let bindings: [(MPRemoteCommand, String)] = [
             (center.nextTrackCommand, "nexttrack"),
@@ -104,12 +107,12 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         for (command, action) in bindings {
             command.isEnabled = false
             let target = command.addTarget { [weak self] event in
-                guard self != nil else { return .commandFailed }
+                guard self?.navigationRoute == "native" else { return .commandFailed }
                 let time = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime
                 if action == "seekto", time == nil || time?.isFinite != true { return .commandFailed }
                 let id = UUID().uuidString
                 MoraPlaybackJournal.record("native.remote.callback", ["id": id, "action": action, "seekTime": time ?? -1])
-                DispatchQueue.main.async { [weak self] in self?.send(action, seekTime: time, id: id, source: "remote") }
+                DispatchQueue.main.async { [weak self] in self?.send(action, seekTime: time, id: id, source: "remote", routeEpoch: epoch) }
                 return .success
             }
             remoteCommands.append((command, target))
@@ -119,11 +122,29 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func setRemoteNavigation(_ call: CAPPluginCall) {
         let actions = Set(call.getArray("actions", String.self) ?? [])
         let seekable = call.getBool("seekable") ?? false
+        let route = call.getString("route") ?? "native" // Compatibility with the previous JS shell.
+        let epoch = call.getInt("epoch") ?? 0
+        guard route == "webkit" || route == "native" else { call.reject("Unknown route"); return }
         DispatchQueue.main.async {
+            if epoch < self.navigationEpoch { call.resolve(); return }
+            self.navigationEpoch = epoch
+            self.navigationRoute = route
+            if route == "webkit" {
+                // Remove only our own registrations. Do not write command-center
+                // flags on cold WebKit startup: WebKit manages its own capabilities.
+                for (command, target) in self.remoteCommands {
+                    command.isEnabled = false; command.removeTarget(target)
+                }
+                self.remoteCommands.removeAll()
+                self.navigationSignature = ""
+                MoraPlaybackJournal.record("native.navigation.route", ["route": route])
+                call.resolve(); return
+            }
+            if self.remoteCommands.isEmpty { self.registerNavigation() }
             let signature = actions.sorted().joined(separator: ".") + "." + String(seekable)
             if signature != self.navigationSignature {
                 self.navigationSignature = signature
-                MoraPlaybackJournal.record("native.navigation", ["action": actions.sorted().joined(separator: "."), "seekable": seekable])
+                MoraPlaybackJournal.record("native.navigation", ["action": actions.sorted().joined(separator: "."), "seekable": seekable, "route": route])
             }
             let center = MPRemoteCommandCenter.shared()
             center.nextTrackCommand.isEnabled = actions.contains("nexttrack")
@@ -137,9 +158,12 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func setPlaybackState(_ call: CAPPluginCall) {
         let wasPlaying = playing
-        playing = call.getBool("playing") ?? playing
+        let effectivePlaying = call.getBool("playing") ?? playing
+        // Preserve intent across context suspension so an interruption ending
+        // with shouldResume can still restore a previously playing track.
+        playing = call.getBool("intentPlaying") ?? effectivePlaying
         webAudioSession = call.getBool("webAudioSession") ?? webAudioSession
-        MoraPlaybackJournal.record("native.playbackState", ["playing": playing, "webAudioSession": webAudioSession])
+        MoraPlaybackJournal.record("native.playbackState", ["playing": effectivePlaying, "intentPlaying": playing, "webAudioSession": webAudioSession])
         // WebKit owns navigator.audioSession. Re-activating its session from another
         // process while it starts playback can interrupt the sound we just started.
         if playing && !wasPlaying && !webAudioSession { MoraAudioSession.activate() }
@@ -268,9 +292,9 @@ enum MoraPlaybackJournal {
         return Array(rows.suffix(1200))
     }()
     private static var write: DispatchWorkItem?
-    private static let numeric: Set<String> = ["seq", "position", "seekTime", "clock", "peak", "monotonicMs"]
-    private static let flags: Set<String> = ["paused", "starved", "hidden", "allowed", "playing", "webAudioSession", "seekable", "node"]
-    private static let codes: Set<String> = ["id", "action", "command", "status", "context", "source", "reason", "outcome"]
+    private static let numeric: Set<String> = ["seq", "position", "seekTime", "clock", "peak", "monotonicMs", "duration", "rate"]
+    private static let flags: Set<String> = ["paused", "starved", "hidden", "allowed", "playing", "intentPlaying", "webAudioSession", "seekable", "node"]
+    private static let codes: Set<String> = ["id", "action", "command", "status", "context", "source", "reason", "outcome", "route", "kind", "mediaState"]
 
     static func record(_ stage: String, _ fields: [String: Any] = [:]) {
         guard enabled, stage.range(of: "^[a-zA-Z0-9_.-]{1,64}$", options: .regularExpression) != nil else { return }
@@ -310,7 +334,7 @@ enum MoraPlaybackJournal {
         sysctlbyname("hw.machine", nil, &size, nil, 0)
         var machine = [CChar](repeating: 0, count: max(1, size))
         sysctlbyname("hw.machine", &machine, &size, nil, 0)
-        return ["schema": 1, "enabled": true, "version": bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") ?? "",
+        return ["schema": 2, "enabled": true, "version": bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") ?? "",
             "build": bundle.object(forInfoDictionaryKey: "CFBundleVersion") ?? "", "sdk": bundle.object(forInfoDictionaryKey: "DTSDKName") ?? "",
             "os": ProcessInfo.processInfo.operatingSystemVersionString, "machine": String(cString: machine),
             "appState": UIApplication.shared.applicationState.rawValue, "category": session.category.rawValue,

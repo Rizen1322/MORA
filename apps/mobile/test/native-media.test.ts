@@ -44,6 +44,59 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('iPhone Now Playing bridge', () => {
+  it('defaults to real WebKit navigation handlers and changes routes without duplicate delivery', async () => {
+    const webkit = ms.setActionHandler;
+    setupNative(emptyFetch, () => {});
+    const next = vi.fn();
+    ms.setActionHandler('nexttrack', next);
+    expect(webkit).toHaveBeenLastCalledWith('nexttrack', expect.any(Function));
+    const oldWebKitCallback = webkit.mock.calls.at(-1)![1];
+    const controls = window.moraNativePlayback!;
+    await controls.setRoute('native');
+    expect(webkit).toHaveBeenLastCalledWith('nexttrack', null);
+    expect(native.setRemoteNavigation).toHaveBeenLastCalledWith(expect.objectContaining({ route: 'native', actions: ['nexttrack'] }));
+    const command = native.addListener.mock.calls.find(([ev]) => ev === 'command')![1];
+    command({ action: 'nexttrack', source: 'remote' });
+    expect(next).toHaveBeenCalledTimes(1);
+    oldWebKitCallback({ action: 'nexttrack' });
+    expect(next).toHaveBeenCalledTimes(1);
+    await controls.setRoute('webkit');
+    command({ action: 'nexttrack', source: 'remote' }); // Late event from the old route.
+    expect(next).toHaveBeenCalledTimes(1);
+    webkit.mock.calls.at(-1)![1]({ action: 'nexttrack' });
+    expect(next).toHaveBeenCalledTimes(2);
+  });
+
+  it('freezes system time on a context pause and restores it without changing user intent or sending rate zero', () => {
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(1000);
+    const position = ms.setPositionState;
+    setupNative(emptyFetch, () => {});
+    update({ status: 'playing', position: 75 });
+    ms.setPositionState({ duration: 180, position: 75, playbackRate: 1 });
+    const controls = window.moraNativePlayback!;
+    controls.snapshot = () => ({ position: 75, status: 'playing', context: controls.contextState });
+    controls.contextState = 'suspended';
+    window.dispatchEvent(new Event('mora-context-state'));
+    expect(ms.playbackState).toBe('paused');
+    expect(native.setPlaybackState).toHaveBeenLastCalledWith({ playing: false, intentPlaying: true, webAudioSession: true });
+    clock.mockReturnValue(16000);
+    controls.contextState = 'running';
+    window.dispatchEvent(new Event('mora-context-state'));
+    expect(ms.playbackState).toBe('playing');
+    expect(position).toHaveBeenLastCalledWith({ duration: 180, position: 75, playbackRate: 1 });
+    expect(position.mock.calls.every(([p]) => !p || p.playbackRate !== 0)).toBe(true);
+  });
+
+  it('records failed position publications without claiming the seek state was accepted', async () => {
+    native.diagnosticsInfo.mockResolvedValue({ enabled: true });
+    ms.setPositionState.mockImplementationOnce(() => { throw new TypeError('private error'); });
+    setupNative(emptyFetch, () => {});
+    await Promise.resolve();
+    ms.setPositionState({ duration: 180, position: 12, playbackRate: 1 });
+    expect(native.diagnosticsRecord).toHaveBeenCalledWith(expect.objectContaining({
+      stage: 'js.media.publish', fields: expect.objectContaining({ kind: 'position', duration: 180, position: 12, rate: 1, outcome: 'rejected' }),
+    }));
+  });
   it('correlates a native event with JS execution and handler resolution', async () => {
     native.diagnosticsInfo.mockResolvedValue({ enabled: true });
     setupNative(emptyFetch, () => {});
@@ -52,12 +105,12 @@ describe('iPhone Now Playing bridge', () => {
     const pause = vi.fn(() => { seen = window.moraDiagnostics?.currentId; return Promise.resolve(); });
     ms.setActionHandler('pause', pause);
     const command = native.addListener.mock.calls.find(([event]) => event === 'command')![1];
-    command({ action: 'pause', id: 'native-1', source: 'remote' });
+    command({ action: 'pause', id: 'native-1', source: 'test' });
     await Promise.resolve();
     expect(seen).toBe('native-1');
     expect(window.moraDiagnostics?.currentId).toBeUndefined();
     expect(native.diagnosticsRecord.mock.calls.map(([e]) => e)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ stage: 'js.command.received', fields: expect.objectContaining({ id: 'native-1', source: 'remote' }) }),
+      expect.objectContaining({ stage: 'js.command.received', fields: expect.objectContaining({ id: 'native-1', source: 'test' }) }),
       expect.objectContaining({ stage: 'js.handler.resolved', fields: expect.objectContaining({ id: 'native-1', action: 'pause' }) }),
     ]));
     command({ action: 'seekto', id: 'native-2' });
@@ -86,12 +139,13 @@ describe('iPhone Now Playing bridge', () => {
     ms.setActionHandler('seekto', seek);
     ms.setActionHandler('pause', pause);
     expect(webkitActions).toHaveBeenCalledTimes(4);
+    await window.moraNativePlayback!.setRoute('native');
     expect(native.setRemoteNavigation).toHaveBeenLastCalledWith({
-      actions: ['nexttrack', 'previoustrack', 'seekto'], seekable: false,
+      actions: ['nexttrack', 'previoustrack', 'seekto'], seekable: false, route: 'native', epoch: 1,
     });
     const command = native.addListener.mock.calls.find(([event]) => event === 'command')![1];
     for (const action of ['nexttrack', 'previoustrack', 'seekto'] as const) {
-      expect(webkitActions.mock.calls.find(([name]) => name === action)![1]).toBeNull();
+      expect(webkitActions.mock.calls.filter(([name]) => name === action).at(-1)![1]).toBeNull();
       command({ action, seekTime: 60 });
     }
     expect(next).toHaveBeenCalledOnce();
@@ -102,29 +156,31 @@ describe('iPhone Now Playing bridge', () => {
     expect(pause).toHaveBeenCalledOnce();
   });
 
-  it('enables native scrubbing only with a duration and removes cleared actions', () => {
+  it('enables native scrubbing only with a duration and removes cleared actions', async () => {
     setupNative(emptyFetch, () => {});
     const seek = vi.fn();
     ms.setActionHandler('seekto', seek);
-    expect(native.setRemoteNavigation).toHaveBeenLastCalledWith({ actions: ['seekto'], seekable: false });
+    await window.moraNativePlayback!.setRoute('native');
+    expect(native.setRemoteNavigation).toHaveBeenLastCalledWith({ actions: ['seekto'], seekable: false, route: 'native', epoch: 1 });
     ms.setPositionState({ duration: 180, position: 10 });
-    expect(native.setRemoteNavigation).toHaveBeenLastCalledWith({ actions: ['seekto'], seekable: true });
+    expect(native.setRemoteNavigation).toHaveBeenLastCalledWith({ actions: ['seekto'], seekable: true, route: 'native', epoch: 1 });
     ms.setActionHandler('seekto', null);
-    expect(native.setRemoteNavigation).toHaveBeenLastCalledWith({ actions: [], seekable: true });
+    expect(native.setRemoteNavigation).toHaveBeenLastCalledWith({ actions: [], seekable: true, route: 'native', epoch: 1 });
     const command = native.addListener.mock.calls.find(([event]) => event === 'command')![1];
     command({ action: 'seekto', seekTime: 60 });
     expect(seek).not.toHaveBeenCalled();
     ms.metadata = null;
-    expect(native.setRemoteNavigation).toHaveBeenLastCalledWith({ actions: [], seekable: false });
+    expect(native.setRemoteNavigation).toHaveBeenLastCalledWith({ actions: [], seekable: false, route: 'native', epoch: 1 });
   });
 
   it('falls back to WebKit registration when the installed native shell predates navigation', async () => {
-    native.setRemoteNavigation.mockRejectedValueOnce(new Error('not implemented'));
     const webkitActions = ms.setActionHandler;
     setupNative(emptyFetch, () => {});
     const next = vi.fn();
     ms.setActionHandler('nexttrack', next);
-    await Promise.resolve();
+    native.setRemoteNavigation.mockRejectedValueOnce(new Error('not implemented'));
+    await expect(window.moraNativePlayback!.setRoute('native')).rejects.toThrow('unavailable');
+    expect(window.moraNativePlayback!.route).toBe('webkit');
     expect(webkitActions).toHaveBeenLastCalledWith('nexttrack', expect.any(Function));
     webkitActions.mock.calls.at(-1)![1]({ action: 'nexttrack' });
     expect(next).toHaveBeenCalledOnce();
@@ -141,7 +197,7 @@ describe('iPhone Now Playing bridge', () => {
     expect(ms.publications).toBe(1);
     update({ status: 'playing', position: 0 });
     expect(ms.playbackState).toBe('playing');
-    expect(native.setPlaybackState).toHaveBeenLastCalledWith({ playing: true, webAudioSession: true });
+    expect(native.setPlaybackState).toHaveBeenLastCalledWith({ playing: true, intentPlaying: true, webAudioSession: true });
     expect(native.setNowPlaying).not.toHaveBeenCalled();
   });
 
