@@ -28,7 +28,7 @@ try {
   // A queue of three files with two DJ transitions; the page appends later tracks the same way.
   const config = { sampleRate: sr, position: .1, tracks: [0, 1, 2].map(i => ({ title: `fixture ${i}`, artist: '', totalFrames: count,
     gainDb: -1, file: i, ...(i ? { transition: { ...transition, planId: `native-files-${i}` } } : {}) })) };
-  const configs = [config, { ...config, index: 1, position: 2.5 }];
+  const configs = [config, { ...config, index: 1, position: 2.5 }, { ...config, playback: { speed: 1.1, semitones: 1 }, volume: .8 }];
   await writeFile(join(dir, 'configs.json'), JSON.stringify(configs));
   await build({ entryPoints: [resolve(root, 'apps/mobile/src/native-mixer.ts')], outfile: join(dir, 'mixer.js'),
     bundle: true, platform: 'neutral', format: 'iife', globalName: 'MoraNativeMixer', target: 'es2022' });
@@ -53,7 +53,7 @@ try {
   else {
     assert.equal(process.platform, 'darwin', 'Requires macOS');
     for (const [command, args] of [
-      ['swiftc', [resolve(root, 'apps/mobile/ios/App/App/NativeDSPRenderer.swift'), resolve(root, 'apps/mobile/test/native-mix/main.swift'), '-o', join(dir, 'check')]],
+      ['swiftc', ['-O', resolve(root, 'apps/mobile/ios/App/App/NativeDSPRenderer.swift'), resolve(root, 'apps/mobile/test/native-mix/main.swift'), '-o', join(dir, 'check')]],
       [join(dir, 'check'), [dir]],
     ]) {
       const result = spawnSync(command, args, { stdio: 'inherit' });

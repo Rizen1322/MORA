@@ -1,5 +1,6 @@
 import type { ArmedTransition } from '@automix/core/engine/mixer.ts';
 import type { ToneSettings } from '@automix/core/dsp/tone.ts';
+import type { PlaybackSettings } from '@automix/core/dsp/playback.ts';
 import type { NativeProbeState } from './playback-trace.ts';
 
 export interface NativeMixTrack {
@@ -20,6 +21,8 @@ export interface NativeMixConfig {
   tracks: NativeMixTrack[];
   tone?: ToneSettings;
   preDb?: number;
+  playback?: PlaybackSettings;
+  volume?: number;
   position: number;
   index?: number;
   paused?: boolean;
@@ -46,6 +49,8 @@ export interface NativeMix {
   start(config: NativeMixConfig, signal?: AbortSignal): Promise<NativeMixState>;
   /** Replaces the tracks from `from` onwards without interrupting the audible one. */
   update(from: number, tracks: NativeMixTrack[]): Promise<NativeMixState>;
+  /** Live speed/pitch, tone and volume; later tracks keep them. */
+  settings(values: Pick<NativeMixConfig, 'tone' | 'preDb' | 'playback' | 'volume'>): Promise<void>;
   stop(): Promise<void>;
   state(): Promise<NativeMixState>;
   command(action: MediaSessionAction, seekTime?: number): Promise<NativeMixState>;

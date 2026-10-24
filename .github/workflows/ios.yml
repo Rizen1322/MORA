@@ -37,9 +37,9 @@ jobs:
           "$RUNNER_TEMP/mora-artwork-check"
       - name: Build unsigned device IPA
         run: sh apps/mobile/scripts/ios-mac.sh --ipa
-      - name: Compare AutoMix DSP with native JavaScriptCore
+      - name: Compare the Swift AutoMix mixer with Node
         run: node apps/mobile/scripts/check-native-dsp.mjs
-      - name: Test native prepared-pair PCM bridge
+      - name: Test the native queue on PCM files
         run: node apps/mobile/scripts/check-native-mix.mjs
       - uses: actions/upload-artifact@v4
         with:

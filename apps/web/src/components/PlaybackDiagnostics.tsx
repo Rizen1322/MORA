@@ -52,7 +52,7 @@ export function PlaybackDiagnostics() {
   const probeActive = !!controls?.probeActive;
   return <section className="pref-card playback-diagnostics" aria-label="Диагностика управления iOS">
     <h2>Управление на экране блокировки · диагностическая сборка</h2>
-    <p>Версия 1.0.13: обычный плеер и вся очередь играют в нативном движке. Журнал записывается постоянно,
+    <p>Версия 1.0.14: микшер AutoMix работает нативно на Swift, без JavaScriptCore. Журнал записывается постоянно,
       метка сохраняет предыдущие события.</p>
     <div className="pref-card" style={{ padding: 14 }}>
       <h3>Нативный плеер · ваша музыка</h3>

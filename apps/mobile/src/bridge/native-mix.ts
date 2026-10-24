@@ -4,6 +4,7 @@ export interface NativeMixPort {
   nativeMixAppend(o: { id: string; track: number; offset: number; base64: string }): Promise<void>;
   nativeMixStart(o: { id: string; config: NativeMixConfig }): Promise<NativeMixState>;
   nativeMixUpdate(o: { id: string; from: number; tracks: NativeMixTrack[] }): Promise<NativeMixState>;
+  nativeMixSettings(o: Pick<NativeMixConfig, 'tone' | 'preDb' | 'playback' | 'volume'>): Promise<NativeMixState>;
   nativeMixStop(): Promise<void>;
   nativeMixState(): Promise<NativeMixState>;
   nativeMixCommand(o: { action: string; seekTime?: number }): Promise<NativeMixState>;
@@ -67,6 +68,7 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
       if (!id) throw new Error('Native playback is not active');
       return port.nativeMixUpdate({ id, from, tracks: await prepareNativeMixArtwork(tracks, hooks.artwork) });
     }),
+    settings: async (values) => { if (id) await port.nativeMixSettings(values); },
     stop: () => serialize(release),
     state: () => port.nativeMixState(),
     async command(action, seekTime) {

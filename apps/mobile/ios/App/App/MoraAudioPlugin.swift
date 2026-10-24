@@ -55,6 +55,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativeMixAppend", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixStart", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixUpdate", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeMixSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixStop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixCommand", returnType: CAPPluginReturnPromise),
@@ -365,6 +366,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
               let tracks = call.getArray("tracks") as? [[String: Any]] else { call.reject("Invalid native queue"); return }
         nativeMix.update(id: id, from: from, tracks: tracks, completion: mixReply(call))
     }
+    @objc func nativeMixSettings(_ call: CAPPluginCall) { nativeMix.settings(call.options as? [String: Any] ?? [:], completion: mixReply(call)) }
     @objc func nativeMixStop(_ call: CAPPluginCall) { nativeMix.stop(mixReply(call)) }
     @objc func nativeMixState(_ call: CAPPluginCall) { call.resolve(nativeMix.snapshot) }
     @objc func nativeMixCommand(_ call: CAPPluginCall) {

@@ -1,10 +1,9 @@
 import { CHUNK_FRAMES } from '../../../../packages/core/src/engine/chunks.ts';
 import { MixerCore, type ArmedTransition, type MixerEvent } from '../../../../packages/core/src/engine/mixer.ts';
 
-// The same entry runs in bare Node VM and native JSContext, without WebKit,
-// timers, DOM, audio APIs, polyfills or a different implementation of the DSP.
+// The Node reference for the Swift port (test/native-dsp/main.swift repeats these steps).
 export function run() {
-  return [44100, 48000].flatMap(sr => ['transport', 'transition'].map(kind => {
+  return [44100, 48000].flatMap(sr => ['transport', 'transition', 'effects', 'tape'].map(kind => {
     const events: MixerEvent[] = [];
     const m = new MixerCore(sr, e => { if (e.type !== 'need') events.push(e); });
     const pcm: number[] = [];
@@ -47,6 +46,31 @@ export function run() {
       render(.25, 'speedPitch');
       m.stopAll();
       render(.06, 'stopped');
+    } else if (kind === 'effects' || kind === 'tape') {
+      // Listener tone and room on the master, a looped or tape-stopped outgoing deck, then speed/pitch.
+      source(1, 'B', 456);
+      m.setTone({ enabled: true, gains: [3, 2, 0, -1, 0, 1.5, 2, -2, 1, 0], preampDb: -1, autoHeadroom: true, balance: .2, mono: false, reverbMix: .2 });
+      const duration = Math.round(1.5 * sr);
+      const plan: ArmedTransition = {
+        planId: `native-${kind}`, method: kind === 'tape' ? 'tape_stop' : 'loop_out', fromToken: 'A', toToken: 'B',
+        triggerFrame: Math.round(.6 * sr), entryFrame: Math.round(.3 * sr),
+        durationFrames: duration, gapFrames: 0, swapFrame: Math.round(duration / 2), bDelayFrames: Math.round(.1 * sr),
+        tempoB: [[0, .985], [duration, 1]], tempoA: [[0, 1], [duration, 1.01]],
+        ...(kind === 'tape'
+          ? { tapeStopA: { start: Math.round(.9 * sr), end: Math.round(1.5 * sr), fade: Math.round(.05 * sr) } }
+          : { loopA: { start: Math.round(.5 * sr), end: sr, until: Math.round(1.5 * sr), fade: Math.round(.005 * sr) } }),
+        lanes: [
+          { deck: 'A', lane: 0, points: [[0, 1], [duration * .8, 0]] },
+          { deck: 'B', lane: 0, points: [[0, 0], [duration, 1]] },
+          { deck: 'A', lane: 3, points: [[0, 1], [duration / 2, .3]] },
+          { deck: 'B', lane: 2, points: [[0, .5], [duration, 1]] },
+          { deck: 'A', lane: 6, points: [[0, 0], [duration, -.6]] },
+        ],
+      };
+      m.arm(plan);
+      render(2.3, 'afterTransition');
+      m.setPlayback({ speed: .92, semitones: -2 });
+      render(.3, 'slower');
     } else {
       source(1, 'B', 456);
       const duration = Math.round(1.2 * sr);

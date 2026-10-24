@@ -36,7 +36,7 @@ beforeEach(() => {
 afterEach(() => { timer?.(); vi.unstubAllGlobals(); });
 
 it('plays the queue natively: uploads tracks with their blends ahead and follows the audible track', async () => {
-  const mix = { upload: vi.fn(async () => {}), start: vi.fn(async () => state()), update: vi.fn(async () => state()),
+  const mix = { upload: vi.fn(async () => {}), start: vi.fn(async () => state()), update: vi.fn(async () => state()), settings: vi.fn(async () => {}),
     stop: vi.fn(), state: vi.fn(async () => state()), command: vi.fn(async () => state()) } satisfies NativeMix;
   vi.stubGlobal('window', { moraNativePlayback: { route: 'webkit', mix } });
   const tracks = new Map(['a', 'b', 'c', 'd'].map((id) => [id, { id, title: id, artist: '', duration: seconds, status: 'ok', analysis: {} } as Track]));
@@ -52,6 +52,18 @@ it('plays the queue natively: uploads tracks with their blends ahead and follows
   // Two tracks ahead, each with the planned blend from its predecessor.
   expect(mix.update.mock.calls.map(([from, added]) => [from, added.map(t => t.title)])).toEqual([[1, ['b']], [2, ['c']]]);
   expect(mix.update.mock.calls[0][1][0].transition).toMatchObject({ fromToken: 'A', toToken: 'B' });
+  // The playing and upcoming tracks get playback/next analysis priority, not the background one.
+  expect(vi.mocked(api.prepare).mock.calls.map(c => c[2])).toEqual(['current', 'next', 'next']);
+  const blend = mix.update.mock.calls[0][1][0].transition!;
+  h.onNativeState(state({ index: 0, position: blend.triggerFrame / 48000 - 2, entryId: controller.state.queue[0].entryId }));
+  expect(controller.state.nextPlan?.toTrackId).toBe('b');
+  expect(controller.state.transition).toMatchObject({ active: false, startsIn: expect.closeTo(2, 3) });
+  h.onNativeState(state({ index: 0, position: blend.triggerFrame / 48000 + .1, entryId: controller.state.queue[0].entryId }));
+  expect(controller.state.transition?.active).toBe(true);
+  // Analysis finishing later plans the blend again.
+  controller.onAnalysisDone('b');
+  await h.nativeSyncing;
+  expect(mix.update.mock.calls.slice(-2).map(([from, added]) => [from, added.map(t => t.title)])).toEqual([[1, ['b']], [2, ['c']]]);
 
   const entries = controller.state.queue;
   h.onNativeState(state({ index: 1, position: 2, entryId: entries[1].entryId }));

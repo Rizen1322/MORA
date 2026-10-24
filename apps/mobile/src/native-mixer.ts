@@ -60,6 +60,8 @@ export class NativeMixerRuntime {
     this.loadTrack(index, 0);
     this.core.start(index % 2, `T${index}`, Math.round(position * config.sampleRate));
     if (config.tone) this.core.setTone(config.tone, config.preDb);
+    if (config.playback) this.core.setPlayback(config.playback);
+    if (config.volume !== undefined) this.core.setVolume(config.volume);
     this.loadNext();
     this.supply();
   }

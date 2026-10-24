@@ -19,8 +19,7 @@ final class NativeMixHost {
     private var config: [String: Any] = [:]
     private var tracks: [[String: Any]] = []
     private var artworks: [MPMediaItemArtwork?] = []
-    private var script = ""
-    private var renderer: NativeDSPRenderer?
+    private var renderer: NativeQueueRenderer?
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
     private var format: AVAudioFormat?
@@ -145,10 +144,6 @@ final class NativeMixHost {
                 let start = config["index"] as? Int ?? 0
                 guard raw.indices.contains(start), self.engine == nil || sr == self.sr else { throw Failure.invalid }
                 let metadata = try self.validated(raw, from: 0)
-                if self.script.isEmpty {
-                    guard let url = Bundle.main.url(forResource: "native-mixer", withExtension: "js", subdirectory: "public") else { throw Failure.invalid }
-                    self.script = try String(contentsOf: url, encoding: .utf8)
-                }
                 self.artworks = raw.map { self.artwork($0) }
                 self.config = config; self.config["tracks"] = metadata; self.tracks = metadata
                 if self.engine == nil {
@@ -182,10 +177,7 @@ final class NativeMixHost {
                 let next = Array(self.tracks.prefix(from)) + added
                 // An exhausted renderer is replaced by select() below.
                 if !self.done, let renderer = self.renderer {
-                    let count = renderer.trackCount
-                    renderer.trackCount = max(count, next.count)
-                    guard try renderer.update(from: from, tracks: added) else { renderer.trackCount = count; throw Failure.invalid }
-                    renderer.trackCount = next.count
+                    guard try renderer.update(from: from, tracks: added) else { throw Failure.invalid }
                 }
                 self.tracks = next; self.config["tracks"] = next
                 self.artworks = Array(self.artworks.prefix(from)) + raw.map { self.artwork($0) }
@@ -201,6 +193,14 @@ final class NativeMixHost {
             }
         }
     }
+    /// Speed/pitch, tone and volume change live and carry over to later selects.
+    func settings(_ values: [String: Any], completion: @escaping Reply) {
+        work.async {
+            for key in ["tone", "preDb", "playback", "volume"] { if let value = values[key] { self.config[key] = value } }
+            self.renderer?.apply(values)
+            self.reply(completion, .success(self.snapshot))
+        }
+    }
     private func select(index: Int, position: Double, playing: Bool) throws {
         epoch += 1; wantsPlaying = false
         player?.stop(); engine?.pause()
@@ -209,7 +209,7 @@ final class NativeMixHost {
         self.index = index; self.position = position
         var next = config; next["index"] = index; next["position"] = position
         guard let folder else { throw Failure.invalid }
-        renderer = try NativeDSPRenderer(script: script, folder: folder, config: next)
+        renderer = try NativeQueueRenderer(folder: folder, config: next)
         wantsPlaying = playing
         try fill()
         if playing { try engine?.start(); player?.play() }

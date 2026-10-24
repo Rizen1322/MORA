@@ -29,7 +29,6 @@ const common = { define: { __MORA_DEV__: String(dev) }, bundle: true, platform: 
 // 2. Page side.
 await esbuild({ ...common, entryPoints: [join(src, 'bridge/index.ts')], outfile: join(out, 'mora-bridge.js'), format: 'iife' });
 // The native producer evaluates this in JavaScriptCore, outside WebContent.
-await esbuild({ ...common, platform: 'neutral', entryPoints: [join(src, 'native-mixer.ts')], outfile: join(out, 'native-mixer.js'), format: 'iife', globalName: 'MoraNativeMixer' });
 
 // 3. The server in a worker: Node modules → shims; ffmpeg/yt-dlp classes → in-app replacements.
 const nodeAlias = {

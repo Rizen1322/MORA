@@ -6,7 +6,7 @@ import { nativePlaybackControls, playbackDiagnostics, tracePlayback } from '../l
 import { api, ApiError, type AnalysisSummary, type Track } from '../lib/api.ts';
 import { uploadNativePcm } from '../lib/native-pcm-preparation.ts';
 import type { ArmedTransition } from '@automix/core/engine/mixer.ts';
-import type { NativeMixState, NativeMixTrack } from '../lib/native-mix.ts';
+import type { NativeMixConfig, NativeMixState, NativeMixTrack } from '../lib/native-mix.ts';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 export type Origin = 'user' | 'wave' | 'context' | 'yandex';
@@ -284,17 +284,20 @@ export class PlayerController {
   private nativeTimer: ReturnType<typeof setInterval> | null = null;
   private nativePolledAt = 0;
   private nativeSkip = false;
-  private nativeSpeedNotice = false;
+  /** Plans behind each native track's blend (page-side only, for the player UI). */
+  private nativePlans = new WeakMap<NativeItem, TransitionPlan>();
+  /** Tracks whose analysis finished after their blend was planned: plan them again. */
+  private nativeStale = new Set<string>();
   private get nativeMix() { return nativePlaybackControls()!.mix!; }
 
-  private async nativeFile(trackId: string, signal: AbortSignal): Promise<{ file: number; frames: number }> {
+  private async nativeFile(trackId: string, signal: AbortSignal, role: 'current' | 'next'): Promise<{ file: number; frames: number }> {
     const cached = this.nativeFiles.get(trackId);
     if (cached) return cached;
     const t = this.track(trackId);
     if (!t) throw new Error('трек не найден в медиатеке');
     if (t.status === 'missing') throw new ApiError(t.error ?? 'файл не найден', 410);
-    // candidate starts no new stem/model job; native blends use the original full mix.
-    await api.prepare(trackId, NATIVE_SR, 'candidate');
+    // The role sets the analysis priority: a blend planned before analysis is only a crossfade.
+    await api.prepare(trackId, NATIVE_SR, role);
     const file = ++this.nativeFileSeq;
     const frames = await uploadNativePcm(start => fetch(`/api/tracks/${encodeURIComponent(trackId)}/pcm?sr=${NATIVE_SR}&start=${start}&frames=${CHUNK_FRAMES}&format=f32le`,
       { signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]) }),
@@ -312,11 +315,11 @@ export class PlayerController {
   }
 
   /** A blend the native store can play, or none (the next track then follows gaplessly). */
-  private async nativePlan(from: NativeItem, to: QueueEntry, frames: number): Promise<ArmedTransition | undefined> {
+  private async nativePlan(from: NativeItem, to: QueueEntry, frames: number): Promise<TransitionPlan | undefined> {
     try {
       const plan = fallbackWithoutVocalStems((await api.plan(from.trackId, to.trackId)).plan);
       if (plan.aExit * NATIVE_SR >= from.totalFrames || plan.bEntry * NATIVE_SR >= frames) return undefined;
-      return planToArmed(plan, NATIVE_SR, 'A', 'B');
+      return plan;
     } catch { return undefined; }
   }
 
@@ -337,12 +340,8 @@ export class PlayerController {
     this.set({ index, status: startPaused ? 'paused' : 'loading', position: seconds, duration: this.track(entry.trackId)?.duration ?? 0,
       transition: null, nextPlan: null, nextPending: [], error: null });
     this.focusAnalysis();
-    if (!this.nativeSpeedNotice && (this.playback.speed !== 1 || this.playback.semitones !== 0)) {
-      this.nativeSpeedNotice = true;
-      this.notify('Скорость и тональность пока не применяются в нативном плеере iPhone', 'info');
-    }
     try {
-      const f = await this.nativeFile(entry.trackId, abort.signal);
+      const f = await this.nativeFile(entry.trackId, abort.signal, 'current');
       if (revision !== this.nativeRevision) return;
       // Previous stays available to the lock screen when its file is still uploaded.
       const prev = this.state.queue[index - 1], pf = prev && this.nativeFiles.get(prev.trackId);
@@ -350,7 +349,7 @@ export class PlayerController {
       // Pause pressed while the track was loading keeps it paused.
       const paused = startPaused || this.state.status === 'paused';
       const s = await this.nativeMix.start({ sampleRate: NATIVE_SR, position: seconds, index: tracks.length - 1, paused, tracks,
-        ...(this.tone ? { tone: this.tone, preDb: preampFor(this.tone, NATIVE_SR) } : {}) }, abort.signal);
+        ...this.nativeSettings() }, abort.signal);
       if (revision !== this.nativeRevision) return;
       this.nativeTracks = tracks;
       this.nativeAt = tracks.length - 1;
@@ -400,7 +399,8 @@ export class PlayerController {
       wanted.push(this.state.queue[n]); i = n;
     }
     let same = 0;
-    while (same < wanted.length && this.nativeTracks[at + 1 + same]?.entryId === wanted[same].entryId) same++;
+    const fresh = (i: number) => !this.nativeStale.has(this.nativeTracks[i].trackId) && !this.nativeStale.has(this.nativeTracks[i - 1].trackId);
+    while (same < wanted.length && this.nativeTracks[at + 1 + same]?.entryId === wanted[same].entryId && fresh(at + 1 + same)) same++;
     let from = at + 1 + same;
     if (same === wanted.length && from === this.nativeTracks.length) return;
     try {
@@ -410,10 +410,14 @@ export class PlayerController {
         return;
       }
       for (const entry of wanted.slice(same)) {
-        const f = await this.nativeFile(entry.trackId, this.nativeAbort.signal);
+        const f = await this.nativeFile(entry.trackId, this.nativeAbort.signal, 'next');
         if (revision !== this.nativeRevision) return;
-        const item = this.nativeItem(entry, f, await this.nativePlan(this.nativeTracks[from - 1], entry, f.frames));
+        const previous = this.nativeTracks[from - 1];
+        this.nativeStale.delete(entry.trackId); this.nativeStale.delete(previous.trackId);
+        const plan = await this.nativePlan(previous, entry, f.frames);
         if (revision !== this.nativeRevision) return;
+        const item = this.nativeItem(entry, f, plan && planToArmed(plan, NATIVE_SR, 'A', 'B'));
+        if (plan) this.nativePlans.set(item, plan);
         // Publish each track at once: the native queue may need it while the page sleeps.
         await this.nativeMix.update(from, [item]);
         if (revision !== this.nativeRevision) return;
@@ -472,10 +476,35 @@ export class PlayerController {
     }
     const status = s.playing ? 'playing' : s.ended ? 'idle' : 'paused';
     this.maxPos = Math.max(this.maxPos, s.position);
-    this.set({ position: s.position, duration: s.duration || this.state.duration, status });
+    this.set({ position: s.position, duration: s.duration || this.state.duration, status, ...this.nativeTransition(s) });
     if (status === 'playing') void this.topUpWave();
     if (s.ended) void this.nativeSync();
     if (performance.now() - this.lastSaved > POSITION_SAVE_MS && status === 'playing') this.scheduleSave(true);
+  }
+
+  /** The audible blend for the player UI: the next one before its start, the incoming one until it ends. */
+  private nativeTransition(s: NativeMixState): Pick<PlayerSnapshot, 'transition' | 'nextPlan'> {
+    const frame = s.position * NATIVE_SR;
+    const view = (item: NativeItem | undefined, progress: number, startsIn: number | null): TransitionState | null => {
+      const plan = item && this.nativePlans.get(item);
+      return plan ? { planId: plan.id, plan, active: startsIn === null, late: false, startsIn, progress: Math.max(0, Math.min(1, progress)), fallback: null } : null;
+    };
+    const incoming = this.nativeTracks[s.index], next = this.nativeTracks[s.index + 1];
+    const into = incoming?.transition;
+    // After the swap the incoming track is audible while the blend finishes.
+    if (into && frame < into.entryFrame + into.durationFrames - into.swapFrame) {
+      const active = view(incoming, (frame - into.entryFrame + into.swapFrame) / into.durationFrames, null);
+      if (active) return { transition: active, nextPlan: active.plan };
+    }
+    const out = next?.transition;
+    if (!out) return { transition: null, nextPlan: null };
+    const pending = view(next, (frame - out.triggerFrame) / out.durationFrames, frame >= out.triggerFrame ? null : (out.triggerFrame - frame) / NATIVE_SR);
+    return { transition: pending, nextPlan: pending?.plan ?? null };
+  }
+
+  private nativeSettings(): Pick<NativeMixConfig, 'tone' | 'preDb' | 'playback' | 'volume'> {
+    return { playback: this.playback, volume: this.state.muted ? 0 : this.state.volume * this.fadeGain,
+      ...(this.tone ? { tone: this.tone, preDb: preampFor(this.tone, NATIVE_SR) } : {}) };
   }
 
   private nativeCommand(action: MediaSessionAction, seekTime?: number): void {
@@ -600,11 +629,13 @@ export class PlayerController {
   private playback = { ...DEFAULT_PLAYBACK };
   setPlayback(settings: PlaybackSettings): void {
     this.playback = sanitizePlayback(settings);
+    if (this.native) void nativePlaybackControls()?.mix?.settings({ playback: this.playback }).catch(() => {});
     this.post({ cmd: 'playback', settings: this.playback });
   }
   /** Listener EQ on the final mix. The curve's measured peak is computed here, off the audio thread. */
   setTone(tone: ToneSettings): void {
     this.tone = tone;
+    if (this.native) void nativePlaybackControls()?.mix?.settings({ tone, preDb: preampFor(tone, NATIVE_SR) }).catch(() => {});
     this.post({ cmd: 'tone', settings: tone, preDb: preampFor(tone, this.sr) });
   }
 
@@ -1138,6 +1169,7 @@ export class PlayerController {
     this.postVolume();
   }
   private postVolume(): void {
+    if (this.native) void nativePlaybackControls()?.mix?.settings({ volume: this.state.muted ? 0 : this.state.volume * this.fadeGain }).catch(() => {});
     this.post({ cmd: 'volume', value: this.state.muted ? 0 : this.state.volume * this.fadeGain });
   }
 
@@ -1842,6 +1874,10 @@ export class PlayerController {
   }
 
   onAnalysisDone(trackId: string): void {
+    if (this.native) {
+      if (this.nativeTracks.slice(Math.max(0, this.nativeAt)).some(t => t.trackId === trackId)) { this.nativeStale.add(trackId); void this.nativeSync(); }
+      return;
+    }
     this.resourceRevisions.set(trackId, (this.resourceRevisions.get(trackId) ?? 0) + 1);
     if (this.resourceRevisions.size > 256) this.resourceRevisions.delete(this.resourceRevisions.keys().next().value!);
     const nx = this.next;

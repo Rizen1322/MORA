@@ -1,13 +1,12 @@
 import Foundation
 
 let directory = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
-let script = try String(contentsOf: directory.appendingPathComponent("mixer.js"), encoding: .utf8)
 let configs = try JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("configs.json"))) as! [[String: Any]]
 var all: [[String: Any]] = []
 var output = Data()
 var maxMs = 0.0
 for config in configs {
-    let renderer = try NativeDSPRenderer(script: script, folder: directory, config: config)
+    let renderer = try NativeQueueRenderer(folder: directory, config: config)
     var blocks: [[String: Any]] = []
     for _ in 0..<240 {
         let began = ProcessInfo.processInfo.systemUptime
@@ -24,4 +23,4 @@ for config in configs {
 }
 try output.write(to: directory.appendingPathComponent("actual.f32le"))
 try JSONSerialization.data(withJSONObject: all).write(to: directory.appendingPathComponent("actual.json"))
-print("Native PCM file -> JavaScriptCore -> typed-array copy passed; max producer block \(maxMs) ms (macOS only)")
+print("Native PCM files -> Swift mixer queue passed; max producer block \(maxMs) ms (macOS only)")
