@@ -27,7 +27,7 @@ export async function growingAudioInput(state: GrowingAudio, signal?: AbortSigna
         // The file is opened per read, never held: the finished download is moved into the cache
         // (the iPhone's file layer waits for open handles before a move). Once moved, the rest comes
         // from the published file at the same position.
-        let position = 0, file = staged;
+        let position = 0, file = staged, published = false;
         while (!stream.destroyed) {
           if (state.error) throw state.error;
           const handle = await fs.open(file, 'r').catch((e: NodeJS.ErrnoException) => { if (e.code === 'ENOENT') return null; throw e; });
@@ -35,13 +35,20 @@ export async function growingAudioInput(state: GrowingAudio, signal?: AbortSigna
             if (file !== staged) throw new Error('файл записи пропал');
             while (!state.done) { if (state.error) throw state.error; await wait(); }
             file = await state.result;
+            published = true;
             continue;
           }
           let bytesRead = 0;
           const buffer = Buffer.allocUnsafe(256 * 1024);
           try { ({ bytesRead } = await handle.read(buffer, 0, buffer.length, position)); } finally { await handle.close().catch(() => {}); }
           if (bytesRead) { position += bytesRead; yield buffer.subarray(0, bytesRead); continue; }
-          if (state.done) { await state.result; break; }
+          if (state.done) {
+            const final = await state.result;
+            // Completion can race the EOF read above. Drain the verified file
+            // at the same offset before declaring EOF, even if its name stayed.
+            if (!published) { file = final; published = true; continue; }
+            break;
+          }
           await wait();
         }
       })());

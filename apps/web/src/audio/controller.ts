@@ -280,7 +280,7 @@ export class PlayerController {
       if (this.ctx.state !== 'running' && this.ctx.state !== 'closed') await Promise.race([this.ctx.resume(), new Promise((r) => setTimeout(r, 1500))]);
       return;
     }
-    const ctx = new AudioContext({ latencyHint: .15 });
+    const ctx = new AudioContext({ latencyHint: 'interactive' });
     await ctx.audioWorklet.addModule(workletUrl);
     const node = new AudioWorkletNode(ctx, 'automix-engine', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
     const analyser = ctx.createAnalyser();
@@ -1734,7 +1734,7 @@ export class PlayerController {
       }
       case 'underrun':
         this.set({ audioHealth: { maxRenderMs: this.state.audioHealth?.maxRenderMs ?? 0, slowBlocks: this.state.audioHealth?.slowBlocks ?? 0, latencyMs: (this.ctx?.baseLatency ?? 0) * 1000, pcmUnderruns: (this.state.audioHealth?.pcmUnderruns ?? 0) + 1 } });
-        if (this.current && e.token === this.current.token) this.set({ status: 'buffering' });
+        if (this.current && e.token === this.current.token && this.state.status === 'playing') this.set({ status: 'buffering' });
         return;
       case 'fallback':
         if (e.planId !== this.next?.plan.id) return;
@@ -1778,7 +1778,8 @@ export class PlayerController {
     }
     let status = this.state.status;
     if (status === 'buffering' && !d.starved) status = 'playing';
-    if (e.paused && status === 'playing') status = 'paused';
+    // Ticks describe an earlier audio block, not the latest Play/Pause intent.
+    // In particular a paused tick queued before Play must not relabel live audio.
     this.set({ position: pos, ratio: d.ratio, limiterDb: e.limiterDb, transition, status });
     if (status === 'playing') void this.topUpWave();
     if (performance.now() - this.lastSaved > POSITION_SAVE_MS && status === 'playing') this.scheduleSave(true);

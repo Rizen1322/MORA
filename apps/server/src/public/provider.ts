@@ -266,7 +266,7 @@ export class PublicMusic {
     }));
   }
 
-  private async download(p: AudioProvider, externalId: string, priority: Priority, opts: { onProgress?: (f: number) => void; signal?: AbortSignal } = {}, staging = path.join(this.cfg.dataDir, 'remote', '.staging', crypto.randomUUID())) {
+  private async download(p: AudioProvider, externalId: string, priority: Priority, opts: { onProgress?: (f: number) => void; signal?: AbortSignal; preserveContainer?: boolean } = {}, staging = path.join(this.cfg.dataDir, 'remote', '.staging', crypto.randomUUID())) {
     try {
       const { file, info } = await this.ytdlp.download(canonicalUrl(p, externalId), staging, { priority, ...opts });
       const probe = await this.ff.probe(file);
@@ -304,7 +304,7 @@ export class PublicMusic {
     this.transfers.set(src.track_id, transfer);
     // Completed aliases are bounded; active transfers cannot be evicted.
     if (this.transfers.size > 256) for (const [key, value] of this.transfers) { if (this.transfers.size <= 256) break; if (value.done && key !== src.track_id) this.transfers.delete(key); }
-    transfer.result = this.download(p, id, 0, { signal: transfer.abort.signal }, staging).then((fresh) => {
+    transfer.result = this.download(p, id, 0, { signal: transfer.abort.signal, preserveContainer: true }, staging).then((fresh) => {
     transfer.finalHash = fresh.hash;
     if (track && fresh.hash !== track.content_hash) {
       // A different file: the old analysis and stems belong to the old hash and stay unused.

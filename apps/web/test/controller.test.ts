@@ -189,6 +189,33 @@ describe('playback preparation and queue changes', () => {
     expect(postMessage.mock.calls.map(([command]) => command)).toEqual([{ cmd: 'pause', paused: true }]);
   });
 
+  it('does not let an older paused tick override a newer Play command', async () => {
+    const { controller, h, slot } = setup();
+    vi.spyOn(h, 'ensureEngine').mockResolvedValue(undefined);
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    controller.pause();
+    await controller.resume();
+    const tick: MixerEvent = { type: 'tick', clock: 0, paused: true, main: 0,
+      decks: [{ token: slot.token, position: 48000, totalFrames: slot.totalFrames, playing: true, starved: false, ratio: 1, bufferedAhead: 48000 }],
+      transition: null, limiterDb: 0, peak: 0 };
+    h.onEngine(tick);
+    expect(controller.state.status).toBe('playing');
+    h.onEngine({ ...tick, paused: false });
+    expect(controller.state.status).toBe('playing');
+  });
+
+  it('does not turn a queued underrun into Play after the listener pressed Pause', () => {
+    const { controller, h, slot } = setup();
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    controller.pause();
+    h.onEngine({ type: 'underrun', deck: slot.deck, token: slot.token, position: 0 });
+    expect(controller.state.status).toBe('paused');
+    h.onEngine({ type: 'tick', clock: 0, paused: false, main: 0,
+      decks: [{ token: slot.token, position: 48000, totalFrames: slot.totalFrames, playing: true, starved: false, ratio: 1, bufferedAhead: 48000 }],
+      transition: null, limiterDb: 0, peak: .1 });
+    expect(controller.state.status).toBe('paused');
+  });
+
   it('resumes an AudioContext the system interrupted while playing, never one the listener paused', async () => {
     const { controller, h } = setup();
     const resume = vi.fn(async () => {});

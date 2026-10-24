@@ -15,6 +15,15 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) if (path.dirname(dir) === root) await fs.rm(dir, { recursive: true, force: true });
 });
 
+it('keeps a progressive download in one container while the PCM decoder is reading it', async () => {
+  const yt = runner(), dir = await staging();
+  const run = vi.spyOn(yt, 'run').mockResolvedValue(await downloadResult(dir));
+  await yt.download(url(), dir, { priority: 0, preserveContainer: true });
+  const args = run.mock.calls[0][0];
+  expect(args).not.toContain('-x');
+  expect(args.slice(args.indexOf('--fixup'), args.indexOf('--fixup') + 2)).toEqual(['--fixup', 'never']);
+});
+
 it('keeps four speculative metadata results and expires them after 45 seconds', async () => {
   vi.useFakeTimers(); const yt = runner(); const run = vi.spyOn(yt, 'run').mockResolvedValue(JSON.stringify(info()));
   for (let i = 0; i < 5; i++) await yt.warmMetadata(url(`abcdefghij${i}`));
