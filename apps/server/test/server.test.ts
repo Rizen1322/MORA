@@ -197,6 +197,15 @@ describe.skipIf(!haveDemo)('server end to end (demo library)', () => {
     await a.app.inject({ method: 'PUT', url: '/api/settings', payload: settings });
   });
 
+  it('continues a finished queue as radio by default and keeps an explicit opt-out', async () => {
+    expect((await a.app.inject('/api/settings')).json().wave.continueRadio).toBe(true);
+    const saved = (await a.app.inject({ method: 'PUT', url: '/api/settings', payload: { wave: { continueRadio: false } } })).json();
+    expect(saved.wave.continueRadio).toBe(false);
+    await a.app.inject({ method: 'PUT', url: '/api/settings', payload: { wave: { mood: 'calm' } } });
+    expect((await a.app.inject('/api/settings')).json().wave).toMatchObject({ continueRadio: false, mood: 'calm' });
+    await a.app.inject({ method: 'PUT', url: '/api/settings', payload: { wave: { continueRadio: true, mood: 'normal' } } });
+  });
+
   it('reactions, history, playlists and queue persist', async () => {
     const lib = (await a.app.inject('/api/library')).json().tracks as { id: string }[];
     const [t1, t2, t3] = lib;

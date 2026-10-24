@@ -5,10 +5,8 @@
   "description": "AutoMix: музыкальное приложение с интеллектуальными DJ-переходами",
   "type": "module",
   "workspaces": [
-    "packages/core",
-    "apps/server",
-    "apps/web",
-    "apps/desktop"
+    "packages/*",
+    "apps/*"
   ],
   "engines": {
     "node": ">=22.13"
@@ -18,12 +16,16 @@
     "build": "npm run build -w @automix/web",
     "start": "npm run start -w @automix/server",
     "test": "node tools/test.mjs",
-    "typecheck": "tsc -p packages/core && tsc -p apps/server && tsc -p apps/web && tsc -p apps/desktop",
+    "typecheck": "tsc -p packages/core && tsc -p apps/server && tsc -p apps/web && tsc -p apps/desktop && tsc -p apps/ios && tsc -p apps/mobile",
     "desktop:dev": "npm run dev -w @automix/desktop",
     "desktop:package": "npm run package -w @automix/desktop",
+    "ios:prepare": "node apps/ios/scripts/prepare.mjs",
+    "ios:check": "vitest run apps/ios/test/planner-bundle.test.ts",
     "demo:tracks": "tsx tools/gen-demo-tracks.ts",
     "demo:transitions": "tsx tools/render-examples.ts",
-    "eval:transitions": "tsx tools/eval-transitions.ts"
+    "eval:transitions": "tsx tools/eval-transitions.ts",
+    "mobile:build": "npm run build -w @automix/mobile",
+    "mobile:dev": "npm run dev -w @automix/mobile"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

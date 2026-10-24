@@ -12,6 +12,9 @@ import { TrackList, react } from '../components/TrackList.tsx';
 import type { ReactionSync } from '../lib/api.ts';
 import { create } from 'zustand';
 import type { PlayContext } from '../audio/controller.ts';
+import { Radio } from '@phosphor-icons/react';
+import { LikeAllButton, likeLibraryTrack } from '../components/LikeAll.tsx';
+import { startArtistRadio } from '../lib/radio.ts';
 import '../styles/catalog.css';
 
 const RECENT_KEY = 'automix.catalog.searches';
@@ -53,6 +56,20 @@ async function catalogReact(track: CatalogTrack, value: number) {
   } finally {
     if (reactionRevisions.get(track.externalId) === revision) reactionsInFlight.delete(track.externalId);
   }
+}
+/** "Like all" on a catalog page: imported songs keep their library reaction, the rest are liked in the catalog. */
+function CatalogLikeAll({ tracks }: { tracks: CatalogTrack[] }) {
+  const library = useApp((s) => s.tracks);
+  const reactions = useReactions((s) => s.values);
+  const local = (track: CatalogTrack) => { const known = catalogPlayer.known(track); return known ? library.get(known) : undefined; };
+  const like = async (track: CatalogTrack) => {
+    const t = local(track);
+    if (t) { await likeLibraryTrack(t); return; }
+    const result = await api.catalogReact(track.externalId, 1);
+    reactionRevisions.set(track.externalId, (reactionRevisions.get(track.externalId) ?? 0) + 1);
+    useReactions.setState((s) => ({ values: { ...s.values, [track.externalId]: result } }));
+  };
+  return <LikeAllButton items={tracks} reaction={(track) => local(track)?.reaction ?? reactions[track.externalId]?.value ?? track.reaction ?? 0} like={like} />;
 }
 function stored<T>(key: string): T[] { try { const v = JSON.parse(localStorage.getItem(key) ?? '[]'); return Array.isArray(v) ? v.slice(0, 24) : []; } catch { return []; } }
 function persist(key: string, value: unknown): void { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private browsing/full storage */ } }
@@ -272,7 +289,9 @@ export function CatalogArtistPage() {
       {data.artist.genres.length > 0 && <p className="catalog-genres">{data.artist.genres.slice(0, 4).join(' · ')}</p>}
       <div className="catalog-hero-actions"><button className="btn btn-primary" disabled={!data.popularTracks.some((t) => t.playable)} onClick={() => play()}><Play size={19} weight="fill" />Слушать</button>
         <button className="btn btn-ghost" onClick={toggleSaved} aria-pressed={saved.some((a) => a.id === id)}><BookmarkSimple size={19} weight={saved.some((a) => a.id === id) ? 'fill' : 'regular'} />{saved.some((a) => a.id === id) ? 'В сохранённых' : 'Сохранить артиста'}</button>
-        <button className="icon-btn" aria-label="Слушать исполнителя вперемешку" disabled={!data.popularTracks.length} onClick={() => play(true)}><Shuffle size={22} /></button></div>
+        <button className="icon-btn" aria-label="Слушать исполнителя вперемешку" disabled={!data.popularTracks.length} onClick={() => play(true)}><Shuffle size={22} /></button>
+        <button className="btn btn-ghost" onClick={() => void startArtistRadio(data.artist.name, data.popularTracks)}><Radio size={19} />Радио по исполнителю</button>
+        {data.popularTracks.length > 0 && <CatalogLikeAll tracks={data.popularTracks} />}</div>
     </div></header>
     <Section title="Популярное">{data.popularTracks.length ? <><CatalogTracks tracks={showTracks ? data.popularTracks : data.popularTracks.slice(0, 5)} label={data.artist.name} queueTracks={data.popularTracks} context={{ type: 'artist', id, label: data.artist.name }} />{data.popularTracks.length > 5 && <button className="catalog-text-button" onClick={() => setShowTracks((v) => !v)}>{showTracks ? 'Свернуть' : 'Показать все треки'}</button>}</> : <p className="muted">У этого исполнителя пока нет доступных треков.</p>}</Section>
     {albums.length > 0 && <Section title="Дискография"><div className="catalog-card-grid">{albums.map((album) => <AlbumCard key={album.id} album={album} />)}</div>
@@ -294,7 +313,7 @@ export function CatalogAlbumPage() {
   return <div className="main-inner catalog-page"><CatalogNav />{resource.loading ? <Skeleton profile /> : resource.error ? <Failure message={resource.error} retry={resource.retry} /> : data && <>
     <header className="catalog-hero album"><Cover url={data.album.imageUrl} seed={id} /><div className="catalog-hero-content"><p className="catalog-eyebrow">{albumKind(data.album.type)}</p><h1>{data.album.title}</h1>
       <div className="catalog-album-by"><ArtistLinks artists={data.album.artists} /></div><p className="muted">{data.album.year ? `${data.album.year} · ` : ''}{tracksWord(data.tracks.length)} · {fmtTotal(data.tracks.reduce((sum, t) => sum + t.duration, 0))}</p>
-      <div className="catalog-hero-actions"><button className="btn btn-primary" disabled={!data.tracks.some((t) => t.playable)} onClick={() => play()}><Play size={19} weight="fill" />Слушать альбом</button><button className="btn btn-ghost" disabled={!data.tracks.some((t) => t.playable)} onClick={() => play(true)}><Shuffle size={19} />Вперемешку</button></div>
+      <div className="catalog-hero-actions"><button className="btn btn-primary" disabled={!data.tracks.some((t) => t.playable)} onClick={() => play()}><Play size={19} weight="fill" />Слушать альбом</button><button className="btn btn-ghost" disabled={!data.tracks.some((t) => t.playable)} onClick={() => play(true)}><Shuffle size={19} />Вперемешку</button>{data.tracks.length > 0 && <CatalogLikeAll tracks={data.tracks} />}</div>
     </div></header>
     {!data.album.available && <p className="catalog-availability">Часть записей этого релиза может быть недоступна для вашего аккаунта.</p>}
     <Section title="Треки">{data.tracks.length === 0 ? <p className="muted">Список треков пока недоступен.</p> : discs.map((disc) => <div key={disc}>{discs.length > 1 && <h3 className="catalog-disc">Диск {disc}</h3>}<CatalogTracks tracks={data.tracks.filter((t) => (t.disc ?? 1) === disc)} label={data.album.title} queueTracks={data.tracks} context={{ type: 'album', id, label: data.album.title }} artwork={false} albums={false} /></div>)}</Section>

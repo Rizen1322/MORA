@@ -101,6 +101,7 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
         mood: ['calm', 'normal', 'energetic'].includes(b.wave?.mood ?? '') ? b.wave!.mood : cur.wave.mood,
         diversity: ['familiar', 'balanced', 'discover'].includes(b.wave?.diversity ?? '') ? b.wave!.diversity : cur.wave.diversity,
         mode: b.wave?.mode === 'mix' || b.wave?.mode === 'normal' ? b.wave.mode : cur.wave.mode,
+        continueRadio: typeof b.wave?.continueRadio === 'boolean' ? b.wave.continueRadio : cur.wave.continueRadio,
       },
       ui: { showDiagnostics: b.ui?.showDiagnostics ?? cur.ui.showDiagnostics,
         motion: b.ui?.motion === 'full' || b.ui?.motion === 'reduced' || b.ui?.motion === 'system' ? b.ui.motion : cur.ui.motion ?? 'system',
@@ -112,8 +113,11 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
         importLikes: !!y.importLikes,
         waveFeedback: !!y.waveFeedback,
       },
+      downloads: { autoLiked: typeof b.downloads?.autoLiked === 'boolean' ? b.downloads.autoLiked : cur.downloads.autoLiked },
+      analysis: { onlyWhenIdle: typeof b.analysis?.onlyWhenIdle === 'boolean' ? b.analysis.onlyWhenIdle : cur.analysis.onlyWhenIdle },
     };
     kvSet(db, 'settings', { ...next, version: 2 });
+    analysis.setPower({ onlyWhenIdle: next.analysis.onlyWhenIdle });
     return next;
   });
 

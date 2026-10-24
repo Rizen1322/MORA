@@ -6,7 +6,32 @@ import type { AppConfig } from './config.ts';
 import type { FfmpegTools } from './ffmpeg.ts';
 import type { Readable } from 'node:stream';
 
-const BYTES_PER_FRAME = 8; // f32le stereo: preserve decoder/resampler overs before normalization
+/** Float frames as read() returns them: f32le stereo preserves decoder/resampler overs before normalization. */
+const FLOAT_FRAME = 8;
+/** The 16-bit store keeps 6 dB above full scale for those overs: it holds value / S16_HEADROOM. */
+const S16_HEADROOM = 2;
+
+/** f32le → headroom s16le. Decoder chunks may split a sample: the remainder waits for the next chunk. */
+function floatToS16(): (chunk: Buffer) => Buffer {
+  let carry: Buffer | null = null;
+  return (chunk) => {
+    const bytes = carry ? Buffer.concat([carry, chunk]) : chunk;
+    const n = bytes.length >> 2;
+    carry = bytes.length > n * 4 ? Buffer.from(bytes.subarray(n * 4)) : null;
+    const f = bytes.byteOffset % 4 === 0 ? new Float32Array(bytes.buffer, bytes.byteOffset, n) : new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + n * 4));
+    const out = new Int16Array(n), k = 32768 / S16_HEADROOM;
+    for (let i = 0; i < n; i++) { const v = Math.round(f[i] * k); out[i] = v > 32767 ? 32767 : v < -32768 ? -32768 : v; }
+    return Buffer.from(out.buffer);
+  };
+}
+
+function s16ToFloat(raw: Buffer): Buffer {
+  const n = raw.length >> 1;
+  const s = raw.byteOffset % 2 === 0 ? new Int16Array(raw.buffer, raw.byteOffset, n) : new Int16Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + n * 2));
+  const out = new Float32Array(n), k = S16_HEADROOM / 32768;
+  for (let i = 0; i < n; i++) out[i] = s[i] * k;
+  return Buffer.from(out.buffer);
+}
 
 interface Entry {
   key: string;
@@ -41,11 +66,18 @@ export class PcmCache {
   private focused = new Set<string>();
   private eviction: Promise<void> | null = null;
   private stopped = false;
+  private readonly s16: boolean;
+  /** Stored bytes per stereo frame: 8 (f32le) or 4 (headroom s16le). */
+  private readonly width: number;
+  private readonly ext: string;
 
   constructor(
     private readonly cfg: AppConfig,
     private readonly ff: FfmpegTools,
   ) {
+    this.s16 = cfg.pcmCacheFormat === 's16le';
+    this.width = this.s16 ? 4 : FLOAT_FRAME;
+    this.ext = this.s16 ? 's16h' : 'f32';
     this.dir = path.join(cfg.dataDir, 'cache', 'pcm');
     this.sessionDir = path.join(cfg.dataDir, 'session-cache', 'pcm');
     fs.mkdirSync(this.dir, { recursive: true });
@@ -61,9 +93,10 @@ export class PcmCache {
       // Legacy integer caches have already clipped hot decoded masters. Never
       // promote them to float; decode the original again. Retain the files until
       // their replacement is complete so an older reader can finish safely.
-      const m = /^(.+)_(\d+)\.f32$/.exec(f);
-      if (!m) {
-        const old = /^(.+)_(\d+)\.s16$/.exec(f);
+      // Files of the other store format are decoded again too and only counted until evicted.
+      const m = /^(.+)_(\d+)\.(f32|s16h)$/.exec(f);
+      if (!m || m[3] !== this.ext) {
+        const old = m ?? /^(.+)_(\d+)\.s16$/.exec(f);
         if (old) this.legacy.set(`${old[1]}_${old[2]}`, { file: full, bytes: fs.statSync(full).size });
         continue;
       }
@@ -79,7 +112,7 @@ export class PcmCache {
         proc: null,
         waiters: new Set(),
         lastUse: st.mtimeMs,
-        estimatedFrames: st.size / BYTES_PER_FRAME,
+        estimatedFrames: st.size / this.width,
         session: false,
         readers: 0, cancelled: false, abort: new AbortController(),
       });
@@ -126,7 +159,7 @@ export class PcmCache {
     const dir = session ? this.sessionDir : this.dir;
     e = {
       key,
-      file: path.join(dir, `${key}.f32`),
+      file: path.join(dir, `${key}.${this.ext}`),
       part: path.join(dir, `${key}.${randomUUID()}.part`),
       sampleRate,
       bytes: 0,
@@ -164,10 +197,13 @@ export class PcmCache {
     out.on('drain', () => proc.stdout.resume());
     let stderr = '';
     proc.stderr.on('data', (d: Buffer) => (stderr = (stderr + d.toString()).slice(-2000)));
+    const store = this.s16 ? floatToS16() : (chunk: Buffer) => chunk;
     proc.stdout.on('data', (chunk: Buffer) => {
+      const data = store(chunk);
+      if (!data.length) return;
       // count bytes only once they are flushed, so readers never see unwritten regions
-      const writable = out.write(chunk, () => {
-        e.bytes += chunk.length;
+      const writable = out.write(data, () => {
+        e.bytes += data.length;
         this.wake(e);
       });
       if (!writable) proc.stdout.pause();
@@ -180,7 +216,7 @@ export class PcmCache {
           fs.rename(part, e.file, (err) => {
             if (err) return this.fail(e, err.message);
             e.done = true;
-            e.estimatedFrames = e.bytes / BYTES_PER_FRAME;
+            e.estimatedFrames = e.bytes / this.width;
             this.wake(e);
             void this.evict().catch(() => {});
           });
@@ -214,7 +250,7 @@ export class PcmCache {
 
   private async readEntry(e: Entry, startFrame: number, frames: number, timeoutMs: number): Promise<{ data: Buffer; totalFrames: number; complete: boolean }> {
     e.lastUse = Date.now();
-    const want = (startFrame + frames) * BYTES_PER_FRAME;
+    const want = (startFrame + frames) * this.width;
     const t0 = Date.now();
     while (!e.done && e.bytes < want) {
       if (Date.now() - t0 > timeoutMs) throw new Error('timeout');
@@ -226,7 +262,7 @@ export class PcmCache {
     }
     if (e.error) throw new Error(e.error);
     const readFrom = e.done ? e.file : e.part;
-    const available = Math.max(0, Math.min(want, e.bytes) - startFrame * BYTES_PER_FRAME);
+    const available = Math.max(0, Math.min(want, e.bytes) - startFrame * this.width);
     const buf = Buffer.alloc(available);
     if (available > 0) {
       const fh = await fsp.open(readFrom, 'r').catch(error => {
@@ -236,12 +272,12 @@ export class PcmCache {
         throw error;
       });
       try {
-        await fh.read(buf, 0, available, startFrame * BYTES_PER_FRAME);
+        await fh.read(buf, 0, available, startFrame * this.width);
       } finally {
         await fh.close();
       }
     }
-    return { data: buf, totalFrames: e.done ? e.bytes / BYTES_PER_FRAME : e.estimatedFrames, complete: e.done };
+    return { data: this.s16 ? s16ToFloat(buf) : buf, totalFrames: e.done ? e.bytes / this.width : e.estimatedFrames, complete: e.done };
   }
 
   status(hash: string, sampleRate: number): { bytes: number; done: boolean; error: string | null } | null {

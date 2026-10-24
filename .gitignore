@@ -1,37 +1,20 @@
-# Dependencies and generated output
 node_modules/
+data/
 dist/
-build/
-vendor/
+.env
+*.log
 .vite/
 coverage/
-*.tsbuildinfo
-__pycache__/
-*.pyc
-
-# Local libraries, credentials, caches and reports
-.env
-.env.*
-!.env.example
-data/
-data-*/
 tools/.cache/
-examples/library/
-examples/broken/
+__pycache__/
+data-dev/
+# local benchmark runs, rendered demo transitions and release archives
+data-bench/
+data-bench-input/
+data-bench-results/
 examples/transitions/
-*.log
-*.sqlite
-*.sqlite-*
-*.db
-*.db-*
-*.pem
-*.key
-*.pfx
-*.p12
-
-# Local editor / agent state
-.claude/
-.idea/
-.vscode/
-.DS_Store
-Thumbs.db
+*.zip
+*.zip.sha256
+# third-party design skills (own licenses) and local agent state
+skill/
+.claude/scheduled_tasks.lock

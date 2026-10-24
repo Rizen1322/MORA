@@ -1,0 +1,44 @@
+// !$*UTF8*$!
+{archiveVersion = 1; classes = {}; objectVersion = 56; objects = {
+4564CD15175F863690895E90 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ArtworkCache.swift"; sourceTree = "<group>"; };
+BC6702A4DE241C7910FCEC0B = {isa = PBXBuildFile; fileRef = 4564CD15175F863690895E90; };
+474D8178A1A339A4CA38DCE4 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryView.swift"; sourceTree = "<group>"; };
+8EB47D1FA34BD4E03FD524B5 = {isa = PBXBuildFile; fileRef = 474D8178A1A339A4CA38DCE4; };
+76BE4BEE13790955860FE188 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LocalLibrary.swift"; sourceTree = "<group>"; };
+B3F67E5C366E9B0A84AB01FE = {isa = PBXBuildFile; fileRef = 76BE4BEE13790955860FE188; };
+BFCEC02887D2557108972177 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LocalTrack.swift"; sourceTree = "<group>"; };
+E34E1B063AB0642DD193A33C = {isa = PBXBuildFile; fileRef = BFCEC02887D2557108972177; };
+062237B3D79B78F8112E04B9 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MORAApp.swift"; sourceTree = "<group>"; };
+F080BC0C0F9F50E2C6314C79 = {isa = PBXBuildFile; fileRef = 062237B3D79B78F8112E04B9; };
+7E965B89D2ED7A7A4B4EB70B = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MORAStyle.swift"; sourceTree = "<group>"; };
+B9406F290DF1D1076F020551 = {isa = PBXBuildFile; fileRef = 7E965B89D2ED7A7A4B4EB70B; };
+CB0B47A06F3A1A33B3C1E915 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NativePlayer.swift"; sourceTree = "<group>"; };
+D34FA168E1126DEE95421BD4 = {isa = PBXBuildFile; fileRef = CB0B47A06F3A1A33B3C1E915; };
+4A7C0BA10CAD3F71CC64DC43 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PlannerBridge.swift"; sourceTree = "<group>"; };
+C853C568A1E4B915A76904A0 = {isa = PBXBuildFile; fileRef = 4A7C0BA10CAD3F71CC64DC43; };
+547E02536BD688307E3FC437 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PlaybackBookmark.swift"; sourceTree = "<group>"; };
+AEB69C14B23C9A1550A282B1 = {isa = PBXBuildFile; fileRef = 547E02536BD688307E3FC437; };
+3CF382B13093CE65C555497A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PlayerView.swift"; sourceTree = "<group>"; };
+53C24AB4B9BDDCB5B85BD9D5 = {isa = PBXBuildFile; fileRef = 3CF382B13093CE65C555497A; };
+4F6E18F6640BAAF7AA1CFD56 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RootView.swift"; sourceTree = "<group>"; };
+F98B6117FC29F6F527BF3D43 = {isa = PBXBuildFile; fileRef = 4F6E18F6640BAAF7AA1CFD56; };
+BCE26F7C3917961B79F28DA0 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SourceContracts.swift"; sourceTree = "<group>"; };
+DB64B60C2823CA30504B709B = {isa = PBXBuildFile; fileRef = BCE26F7C3917961B79F28DA0; };
+17317FBA5B6F5369239E8EDD = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "Resources/mora-core.js"; sourceTree = "<group>"; };
+FF47EC1FF7000B9DEB2DE9B0 = {isa = PBXBuildFile; fileRef = 17317FBA5B6F5369239E8EDD; };
+39E44FF90767180E830BC6B2 = {isa = PBXFileReference; explicitFileType = wrapper.application; path = MORA.app; sourceTree = BUILT_PRODUCTS_DIR; };
+F50065B3384B870B38535282 = {isa = PBXGroup; children = (FB2128CF476010E8FA1C6584, E449C71DBACF91E35A6B5740); sourceTree = "<group>"; };
+FB2128CF476010E8FA1C6584 = {isa = PBXGroup; path = MORA; children = (4564CD15175F863690895E90,474D8178A1A339A4CA38DCE4,76BE4BEE13790955860FE188,BFCEC02887D2557108972177,062237B3D79B78F8112E04B9,7E965B89D2ED7A7A4B4EB70B,CB0B47A06F3A1A33B3C1E915,4A7C0BA10CAD3F71CC64DC43,547E02536BD688307E3FC437,3CF382B13093CE65C555497A,4F6E18F6640BAAF7AA1CFD56,BCE26F7C3917961B79F28DA0, 17317FBA5B6F5369239E8EDD); sourceTree = "<group>"; };
+E449C71DBACF91E35A6B5740 = {isa = PBXGroup; name = Products; children = (39E44FF90767180E830BC6B2); sourceTree = "<group>"; };
+D2312BE4431236D426E15A06 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (BC6702A4DE241C7910FCEC0B,8EB47D1FA34BD4E03FD524B5,B3F67E5C366E9B0A84AB01FE,E34E1B063AB0642DD193A33C,F080BC0C0F9F50E2C6314C79,B9406F290DF1D1076F020551,D34FA168E1126DEE95421BD4,C853C568A1E4B915A76904A0,AEB69C14B23C9A1550A282B1,53C24AB4B9BDDCB5B85BD9D5,F98B6117FC29F6F527BF3D43,DB64B60C2823CA30504B709B); runOnlyForDeploymentPostprocessing = 0; };
+C86F0DD997FD54BA1BAE0F50 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (FF47EC1FF7000B9DEB2DE9B0); runOnlyForDeploymentPostprocessing = 0; };
+8E031979A3BB8F82D8DC4CD5 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+D4F26B4807CB0B6F8221CA97 = {isa = PBXNativeTarget; name = MORA; productName = MORA; productReference = 39E44FF90767180E830BC6B2; productType = "com.apple.product-type.application"; buildConfigurationList = D934AAE6E9860A0FE28AEFFB; buildPhases = (D2312BE4431236D426E15A06, 8E031979A3BB8F82D8DC4CD5, C86F0DD997FD54BA1BAE0F50); buildRules = (); dependencies = (); };
+002460A4FFF07BBAAC372235 = {isa = PBXProject; attributes = {LastUpgradeCheck = 1600; }; buildConfigurationList = 96E19CACA784C269E9CE6EB2; compatibilityVersion = "Xcode 14.0"; developmentRegion = ru; knownRegions = (ru, en, Base); mainGroup = F50065B3384B870B38535282; productRefGroup = E449C71DBACF91E35A6B5740; projectDirPath = ""; projectRoot = ""; targets = (D4F26B4807CB0B6F8221CA97); };
+7F54C8DABE680CF654CA86B6 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0; CLANG_ENABLE_MODULES = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; DEBUG_INFORMATION_FORMAT = dwarf; }; };
+1477C8EDFB69D422823D4AC4 = {isa = XCBuildConfiguration; name = Release; buildSettings = {SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0; CLANG_ENABLE_MODULES = YES; SWIFT_OPTIMIZATION_LEVEL = "-O"; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; }; };
+D9A5ADA03C327FB55B559886 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {PRODUCT_NAME = MORA; PRODUCT_BUNDLE_IDENTIFIER = ru.mora.ios; INFOPLIST_FILE = MORA/Info.plist; CODE_SIGN_STYLE = Automatic; TARGETED_DEVICE_FAMILY = "1,2"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; ENABLE_PREVIEWS = YES; }; };
+C2017DBE31C71A9AD8C13FBF = {isa = XCBuildConfiguration; name = Release; buildSettings = {PRODUCT_NAME = MORA; PRODUCT_BUNDLE_IDENTIFIER = ru.mora.ios; INFOPLIST_FILE = MORA/Info.plist; CODE_SIGN_STYLE = Automatic; TARGETED_DEVICE_FAMILY = "1,2"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; ENABLE_PREVIEWS = YES; }; };
+96E19CACA784C269E9CE6EB2 = {isa = XCConfigurationList; buildConfigurations = (7F54C8DABE680CF654CA86B6, 1477C8EDFB69D422823D4AC4); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+D934AAE6E9860A0FE28AEFFB = {isa = XCConfigurationList; buildConfigurations = (D9A5ADA03C327FB55B559886, C2017DBE31C71A9AD8C13FBF); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+}; rootObject = 002460A4FFF07BBAAC372235; }

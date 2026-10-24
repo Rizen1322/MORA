@@ -11,6 +11,7 @@ import { withVoiceAnswer } from './answer.ts';
 import { withHarmonicHandoff } from './harmonic.ts';
 import { withTapeStop } from './tape-stop.ts';
 import { planEchoOut } from './unlocked.ts';
+import { ratingBias, type RatingStats } from './feedback.ts';
 import { bodyDensity, fullMixCost, fullMixPair, localClashFraction, pickupLost, voiceUnknown, withBassShift, type FullMixCost } from './fullmix.ts';
 import {
   PLANNER_VERSION,
@@ -220,20 +221,21 @@ const LONG_LOCK_MIN_SECONDS = 12;
 /** v13 (P1): listener ratings: locks under ~10 s were heard as switches ("резко"). */
 const MIN_LOCK_SECONDS = 10;
 
-export function planTransition(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings, requestedAt?: number): TransitionPlan {
-  return drain(rankPlans(a,b,settings,requestedAt))[0];
+/** `feedback`: listener rating statistics, a soft preference between alternatives (feedback.ts). */
+export function planTransition(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings, requestedAt?: number, feedback?: RatingStats | null): TransitionPlan {
+  return drain(rankPlans(a,b,settings,requestedAt,feedback))[0];
 }
 
 /** P10 finalists for a render check: the selected plan first, up to two ranked full-mix alternatives
  * and the selected plan's bass exchange one beat earlier/later (P6). One plan unless the pair is
  * planned as a full mix (a voice unknown). */
-export function planFinalists(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings): TransitionPlan[] {
-  return drain(planFinalistsSteps(a,b,settings));
+export function planFinalists(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings, feedback?: RatingStats | null): TransitionPlan[] {
+  return drain(planFinalistsSteps(a,b,settings,feedback));
 }
 
 /** planFinalists in steps (one per built plan), for an in-process server that must keep serving PCM. */
-export function* planFinalistsSteps(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings): Generator<void, TransitionPlan[]> {
-  const ranked=yield* rankPlans(a,b,settings),top=ranked[0];
+export function* planFinalistsSteps(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings, feedback?: RatingStats | null): Generator<void, TransitionPlan[]> {
+  const ranked=yield* rankPlans(a,b,settings,undefined,feedback),top=ranked[0];
   if(!top.debug.fullMix)return [top];
   const beat=(b.analysis?.beat?.period??0.5)/pointValue(top.tempoB,top.swapAt);
   const shifted=top.method==='beatmatch_blend'||top.method==='crossfade'
@@ -241,10 +243,20 @@ export function* planFinalistsSteps(a: PlannerTrack, b: PlannerTrack, settings: 
   return [top,...ranked.slice(1,3),...shifted];
 }
 
-function* rankPlans(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings, requestedAt?: number): Generator<void, TransitionPlan[]> {
+function* rankPlans(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings, requestedAt?: number, feedback?: RatingStats | null): Generator<void, TransitionPlan[]> {
   const p=finishPlan(buildTransition(a,b,settings,requestedAt),a.analysis,b.analysis,settings,requestedAt);
-  if(requestedAt===undefined&&settings.enabled&&fullMixPair(a.analysis,b.analysis,settings)){yield;return yield* chooseFullMixPlan(p,a,b,settings);}
-  return [chooseMusicalPlan(p,a,b,settings,requestedAt)];
+  // no ratings: exactly the previous choice (no bias, no debug entry)
+  const fb=feedback&&Object.keys(feedback.features).length?feedback:undefined;
+  if(requestedAt===undefined&&settings.enabled&&fullMixPair(a.analysis,b.analysis,settings)){yield;return yield* chooseFullMixPlan(p,a,b,settings,fb);}
+  return [chooseMusicalPlan(p,a,b,settings,requestedAt,fb)];
+}
+
+/** Rating bias per candidate (0 without feedback) and its debug record. */
+function feedbackFor(fb:RatingStats|undefined,named:{name:string;plan:TransitionPlan}[],A:TrackAnalysis,B:TrackAnalysis){
+  const bias=new Map<TransitionPlan,number>();
+  if(!fb)return {bias:(_:TransitionPlan)=>0,debug:undefined};
+  const rows=named.map(({name,plan})=>{const r=ratingBias(fb,plan,A,B);bias.set(plan,r.bias);return {name,bias:r.bias,features:r.features};});
+  return {bias:(q:TransitionPlan)=>bias.get(q)??0,debug:{policy:'listener-ratings-1',version:fb.version,candidates:rows}};
 }
 
 /** P1: a full mix (a voice unknown) chooses among the baseline and at most three alternatives that
@@ -252,7 +264,7 @@ function* rankPlans(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings,
  * B from its real start. The stemless cost (fullmix.ts) judges where A really leaves, B's pickup, the
  * one-second energy path, two bass lines, possible lead overlap and local key clashes. Unknown voices
  * never score as silence; the baseline wins unless an alternative is clearly (0.1) cheaper. */
-function* chooseFullMixPlan(p:TransitionPlan,a:PlannerTrack,b:PlannerTrack,settings:AutoMixSettings):Generator<void,TransitionPlan[]> {
+function* chooseFullMixPlan(p:TransitionPlan,a:PlannerTrack,b:PlannerTrack,settings:AutoMixSettings,fb?:RatingStats):Generator<void,TransitionPlan[]> {
   const A=a.analysis,B=b.analysis,s=sanitizedSettings(settings);
   if(!A||!B||p.debug.processingAllowed===false||!['crossfade','beatmatch_blend'].includes(p.method)||p.loopA)return [p];
   const build=(alt:AutoMixSettings,fixed?:Ctx['fixed'])=>finishPlan(buildTransition(a,b,alt,undefined,undefined,fixed),A,B,alt);
@@ -286,8 +298,13 @@ function* chooseFullMixPlan(p:TransitionPlan,a:PlannerTrack,b:PlannerTrack,setti
   }
   const rated=entries.slice(0,4).map(([name,plan])=>({name,plan,cost:fullMixCost(plan,A,B,s)}));
   const base=rated[0];
-  const valid=rated.filter((c):c is typeof c&{cost:FullMixCost}=>!!c.cost).sort((x,y)=>x.cost.total-y.cost.total);
-  const winner=base.cost&&valid[0]&&valid[0].name!=='baseline'&&valid[0].cost.total<base.cost.total-0.1?valid[0]:base;
+  // listener ratings shift the soft cost only; they never lift a candidate with more measured faults than the baseline
+  const ratings=feedbackFor(fb,rated,A,B),adj=(c:{plan:TransitionPlan;cost:FullMixCost})=>c.cost.total-ratings.bias(c.plan);
+  const safe=(c:{cost:FullMixCost})=>!ratings.debug||!base.cost||c.cost.total<base.cost.total-0.1
+    ||c.cost.unsupported<=base.cost.unsupported&&c.cost.holeDb<=base.cost.holeDb+0.5&&c.cost.jumpDb<=base.cost.jumpDb+0.5;
+  const valid=rated.filter((c):c is typeof c&{cost:FullMixCost}=>!!c.cost).sort((x,y)=>adj(x)-adj(y));
+  const best=valid.find(c=>c===base||safe(c));
+  const winner=base.cost&&best&&best.name!=='baseline'&&adj(best)<adj(base as typeof best)-0.1?best:base;
   const reason=!base.cost?'полосы не измерены: исходный план':winner===base?'альтернативы полного микса не дали заметного улучшения':
     winner.name==='shorter'?'полный микс: короче общий участок, A уходит по окончании своего раздела'
     :winner.name==='neighbor-exit'?'полный микс: выход на соседней фразе, где текущий трек слышно заканчивает раздел'
@@ -296,13 +313,14 @@ function* chooseFullMixPlan(p:TransitionPlan,a:PlannerTrack,b:PlannerTrack,setti
   const debug={policy:'full-mix-1',selected:winner.name,reason,margin:0.1,
     candidates:rated.map(c=>({name:c.name,method:c.plan.method,variant:c.plan.debug.variant,duration:c.plan.duration,bEntry:c.plan.bEntry,cost:c.cost}))};
   const label=(c:typeof rated[number])=>({...c.plan,id:c===base?c.plan.id:`${c.plan.id}_${c.name}`,
-    reasons:c===winner&&c!==base?[...c.plan.reasons,reason]:c.plan.reasons,debug:{...c.plan.debug,fullMix:{...debug,selected:c===winner?winner.name:debug.selected,this:c.name}}});
+    reasons:c===winner&&c!==base?[...c.plan.reasons,reason]:c.plan.reasons,debug:{...c.plan.debug,fullMix:{...debug,selected:c===winner?winner.name:debug.selected,this:c.name},
+      ...(ratings.debug?{ratingFeedback:{...ratings.debug,selected:winner.name,margin:0.1}}:{})}});
   return [label(winner),...[...valid.map(c=>c as typeof rated[number]),...rated.filter(c=>!c.cost)].filter(c=>c!==winner).map(label)];
 }
 
 /** At most two additional metadata plans. Unknown measurements never earn a
  * zero conflict score; the prepared baseline remains immediately usable. */
-function chooseMusicalPlan(p:TransitionPlan,a:PlannerTrack,b:PlannerTrack,s:AutoMixSettings,requestedAt?:number):TransitionPlan {
+function chooseMusicalPlan(p:TransitionPlan,a:PlannerTrack,b:PlannerTrack,s:AutoMixSettings,requestedAt?:number,fb?:RatingStats):TransitionPlan {
   const A=a.analysis,B=b.analysis;
   if(requestedAt!==undefined||!s.enabled||!A||!B||p.debug.processingAllowed===false||p.loopA||p.beatAlign?.regions
     ||!['crossfade','beatmatch_blend'].includes(p.method)||!gridTrust(A).trusted||!gridTrust(B).trusted)return p;
@@ -356,17 +374,20 @@ function chooseMusicalPlan(p:TransitionPlan,a:PlannerTrack,b:PlannerTrack,s:Auto
     return {total:r3(total),cutA:!!outgoingPhraseCut(q,A),lostA:r3(lostA),lostB:r3(lostB),voiceOverlap:r3(voiceOverlap),drumOverlap:r3(drumOverlap),holeDb:r3(Math.max(0,hole))};
   };
   const rated=entries.map(([name,plan])=>({name,plan,cost:cost(plan)}));
+  // listener ratings shift the soft cost only; the measured power-hole guard below still applies
+  const ratings=feedbackFor(fb,rated,A,B),adj=(c:{plan:TransitionPlan;cost:{total:number}|null})=>c.cost!.total-ratings.bias(c.plan);
   let winner=rated[0];
   // A completed utterance breaks a close tie only without extra incoming loss or overlap.
   for(const c of rated.slice(1))if(c.cost&&winner.cost
-    &&(c.cost.total<winner.cost.total-.15||winner.cost.cutA&&!c.cost.cutA&&c.cost.total<=winner.cost.total
+    &&(adj(c)<adj(winner)-.15||winner.cost.cutA&&!c.cost.cutA&&adj(c)<=adj(winner)
       &&c.cost.lostB<=winner.cost.lostB&&c.cost.voiceOverlap<=winner.cost.voiceOverlap)
     &&c.cost.holeDb<=Math.max(3,winner.cost.holeDb+.5))winner=c;
   const reason=!known?'измерения неполны: исходный план, неизвестный вокал не оценивался как тишина':winner.name==='baseline'?'альтернативы не дали подтверждённого улучшения с запасом':'меньше потерянных фраз и конфликтов без ухудшения расчётного провала мощности';
   return {...winner.plan,id:winner.name==='baseline'?p.id:`${winner.plan.id}_${winner.name}`,
     reasons:winner.name==='baseline'?p.reasons:[...winner.plan.reasons,reason],
     debug:{...winner.plan.debug,candidateSelection:{policy:'metadata-candidates-1',baseline:'baseline',selected:winner.name,reason,
-      knownCoverage:known,margin:.15,candidates:rated.map(c=>({name:c.name,method:c.plan.method,duration:c.plan.duration,cost:c.cost}))}}};
+      knownCoverage:known,margin:.15,candidates:rated.map(c=>({name:c.name,method:c.plan.method,duration:c.plan.duration,cost:c.cost}))},
+      ...(ratings.debug?{ratingFeedback:{...ratings.debug,selected:winner.name,margin:.15}}:{})}};
 }
 
 function finishPlan(plan:TransitionPlan,A:TrackAnalysis|null,B:TrackAnalysis|null,s:AutoMixSettings,requestedAt?:number):TransitionPlan {

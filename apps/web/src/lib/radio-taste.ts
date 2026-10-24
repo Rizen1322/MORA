@@ -4,7 +4,7 @@ export type RadioTuning = AppSettings['wave'];
 type Song = Pick<Track, 'title' | 'artist'>;
 export const normalizeMusic = (s: string) => s.toLowerCase().replace(/ё/g, 'е').replace(/\b(feat|ft)\.?/g, ' ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 export const radioIdentity = (t: Song) => `${normalizeMusic(t.artist)}|${normalizeMusic(t.title)}`;
-const artistsOf = (s: string) => s.split(/,|&| feat\.? | ft\.? | featuring /i).map(normalizeMusic).filter(Boolean);
+export const artistsOf = (s: string) => s.split(/,|&| feat\.? | ft\.? | featuring /i).map(normalizeMusic).filter(Boolean);
 export function tasteSeeds(tracks: Track[], cursor = 0): Track[] {
   const likes = tracks.filter(t => t.reaction > 0 && t.status === 'ok').sort((a, b) => (b.likedAt ?? b.addedAt) - (a.likedAt ?? a.addedAt));
   const source = likes.length ? likes : tracks.filter(t => t.reaction >= 0 && t.playCount > 0 && t.status === 'ok').sort((a, b) => (b.lastPlayedAt ?? 0) - (a.lastPlayedAt ?? 0));

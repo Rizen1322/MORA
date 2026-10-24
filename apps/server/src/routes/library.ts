@@ -8,6 +8,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Services } from '../app.ts';
 import { q, tx } from '../db.ts';
 import { ImportError, listAudioFiles } from '../library.ts';
+import { getSettings } from '../automix.ts';
 import type { ReactionValue } from '@automix/core';
 
 const MAX_UPLOAD = 2 * 1024 * 1024 * 1024;
@@ -130,6 +131,10 @@ export function registerLibraryRoutes(app: FastifyInstance, s: Services): void {
     });
     // Liking a played search result keeps it: it joins the collection.
     if (v === 1 && t.saved === 0) lib.setSaved(t.id, true);
+    // Optional offline copy of liked online tracks; unliking never removes a download.
+    if (v === 1 && t.provider !== 'local' && !t.pinned && getSettings(db).downloads.autoLiked) {
+      try { s.downloads.add({ trackId: t.id }); } catch { /* the like itself is saved */ }
+    }
     events.emit({ type: 'library', reason: 'reaction', trackId: t.id });
     return { ok: true, value: v, sync: queued.status === 'local' ? queued : await s.yandexReactions.settle(t.id) };
   });

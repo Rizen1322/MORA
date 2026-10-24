@@ -1,12 +1,24 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowClockwise, MagnifyingGlass, Play, SpinnerGap, X } from '@phosphor-icons/react';
-import { api, type PublicCatalogPage as PageData } from '../lib/api.ts';
+import { api, type PublicCatalogPage as PageData, type PublicTrack } from '../lib/api.ts';
+import { useApp } from '../store/app.ts';
+import { LikeAllButton, likeLibraryTrack } from '../components/LikeAll.tsx';
 import { publicAlbumHref, publicArtistHref, useRoute } from '../lib/router.ts';
 import { publicPlayer, usePublicPlayback } from '../store/catalog.ts';
 import { Cover } from '../components/common.tsx';
 import { PublicRow, asCatalog } from './Search.tsx';
 import '../styles/catalog.css';
 import '../styles/public-catalog.css';
+
+/** "Like all" for YouTube Music and SoundCloud: a like belongs to a library song, so each one is
+ * prepared (downloaded) first, two at a time to keep the phone cool. */
+export function PublicLikeAll({ tracks }: { tracks: PublicTrack[] }) {
+  const library = useApp((s) => s.tracks);
+  const known = (t: PublicTrack) => publicPlayer.known(asCatalog(t));
+  const items = tracks.filter((t) => t.playable || known(t));
+  const reaction = (t: PublicTrack) => { const id = known(t); return id ? library.get(id)?.reaction ?? 0 : 0; };
+  return <LikeAllButton items={items} reaction={reaction} parallel={2} like={async (t) => likeLibraryTrack({ id: await publicPlayer.ensure(asCatalog(t)) })} />;
+}
 
 export function PublicCatalogPage() {
   const { parts } = useRoute(), kind = parts[1], id = parts[2] ?? '';
@@ -33,7 +45,7 @@ export function PublicCatalogPage() {
             <div className="catalog-hero-content"><p className="catalog-eyebrow">{page.type === 'artist' ? 'Исполнитель' : 'Альбом'} · YouTube Music</p><h1>{page.title}</h1>
               {page.type === 'album' && <p className="public-catalog-credits">{page.artists.map((artist, index) => <span key={artist.id}>{index > 0 && ', '}<a href={publicArtistHref(artist.id)}>{artist.name}</a></span>)}</p>}
               {page.description && <p className="public-catalog-description">{page.description}</p>}
-              <div className="catalog-hero-actions"><button className="btn btn-primary" disabled={!page.tracks.length} onClick={() => play()}><Play size={20} weight="fill" />Слушать</button><a className="btn btn-ghost" href={`#/search?${new URLSearchParams({ q: page.title, src: 'ytmusic' })}`}>Искать ещё</a></div>
+              <div className="catalog-hero-actions"><button className="btn btn-primary" disabled={!page.tracks.length} onClick={() => play()}><Play size={20} weight="fill" />Слушать</button>{page.tracks.length > 0 && <PublicLikeAll tracks={page.tracks} />}<a className="btn btn-ghost" href={`#/search?${new URLSearchParams({ q: page.title, src: 'ytmusic' })}`}>Искать ещё</a></div>
             </div>
           </header>
           {(prep.phase !== 'idle' || prep.error) && <div className="catalog-playback-notice" role={prep.error ? 'alert' : 'status'}><span>{prep.error ?? `Готовим: ${prep.title}`}</span><button className="icon-btn" aria-label="Закрыть" onClick={() => prep.error ? publicPlayer.dismissError() : publicPlayer.cancel()}><X size={18} /></button></div>}

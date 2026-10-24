@@ -168,10 +168,11 @@ export interface ExternalTrack {
 
 export interface AppSettings {
   automix: AutoMixSettings;
-  wave: { mood: 'calm' | 'normal' | 'energetic'; diversity: 'familiar' | 'balanced' | 'discover'; mode?: 'normal' | 'mix'; yandexSeeds?: string[] };
+  wave: { mood: 'calm' | 'normal' | 'energetic'; diversity: 'familiar' | 'balanced' | 'discover'; mode?: 'normal' | 'mix'; yandexSeeds?: string[]; continueRadio?: boolean };
   ui: { showDiagnostics: boolean; motion?: 'system'|'full'|'reduced'; graphics?: 'auto'|'canvas' };
   sound: SoundSettings;
   yandex: { syncLikes: boolean; syncDislikes: boolean; importLikes: boolean; waveFeedback: boolean };
+  downloads?: { autoLiked: boolean };
 }
 
 export interface WavePick {

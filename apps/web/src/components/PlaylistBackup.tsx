@@ -31,7 +31,7 @@ export function PlaylistBackup() {
     finally { setBusy(false); }
   };
   return <section className="playlist-backup" aria-labelledby="backup-heading">
-    <h2 className="section-title" id="backup-heading" style={{ marginTop: 28 }}>Ваши плейлисты с собой</h2>
+    <h2 className="section-title" id="backup-heading">Ваши плейлисты с собой</h2>
     <p className="small muted">Сохраните названия, порядок песен и ссылки на записи. Аудиофайлы и подключения аккаунтов в копию не входят.</p>
     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 16 }}>
       <a className="btn btn-secondary" href="/api/backup/playlists" download="MORA-playlists.json"><DownloadSimple size={17} /> Сохранить копию</a>

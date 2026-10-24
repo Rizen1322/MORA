@@ -1,0 +1,77 @@
+{
+  "version": "0.3.10",
+  "planner": "am-planner-v11-dj-6",
+  "analyzer": "am-analyzer-11",
+  "tests": 784,
+  "testFiles": 84,
+  "testCommand": "npm test -- --testTimeout=120000",
+  "bytes": 480368225,
+  "sha256": "dbf67954ae7abf2464d14875bfeea057fe56fe462ae3b3b191f5e5e0a3382d16",
+  "installerExit": 0,
+  "tracksBefore": 338,
+  "tracksAfter": 338,
+  "missingTracks": 0,
+  "quickCheck": "ok",
+  "installedBackendMatches": true,
+  "installedWebMatches": true,
+  "lyricsReady": {
+    "title": "В темноте",
+    "status": 200,
+    "ms": 76,
+    "wordLines": 46,
+    "words": 336
+  },
+  "integration": {
+    "runtime": "44.9.2",
+    "systemToolsOnPath": false,
+    "startedAt": "2026-10-22T03:16:12.836Z",
+    "ffmpeg": true,
+    "vocalRuntime": "bundled-cpu",
+    "playbackDefaults": {
+      "speed": 1,
+      "semitones": 0
+    },
+    "motionDefault": "full",
+    "searchMs": 564,
+    "soundcloud": {
+      "ms": 1325,
+      "count": 12,
+      "withCover": 12
+    },
+    "soundcloudArtist": {
+      "id": "597550665",
+      "title": "FACE",
+      "tracks": 25
+    },
+    "warmup": {
+      "ready": true,
+      "ms": 2556
+    },
+    "warmupLibraryUnchanged": true,
+    "catalogArtist": {
+      "title": "Yanix",
+      "tracks": 5,
+      "albums": 20
+    },
+    "catalogAlbum": {
+      "title": "Пока рэп не разлучит нас",
+      "tracks": 10
+    },
+    "prepareMs": 23,
+    "firstPcmMs": 929,
+    "pcmBytes": 65536,
+    "coverBytes": 56107,
+    "coverType": "image/jpeg",
+    "fullLikesRoute": 200,
+    "ok": true
+  },
+  "renders": {
+    "count": 6,
+    "underruns": 0,
+    "maxTruePeakDb": -2.197107666942642
+  },
+  "installedVersion": "0.3.10.0",
+  "launchedAt": "2026-10-22T03:19:32.462Z",
+  "backendReadyAt": "2026-10-22T03:19:32.740Z",
+  "devPort": 4730
+}

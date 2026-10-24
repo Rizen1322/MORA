@@ -25,6 +25,8 @@ export interface AppConfig {
   /** Required when listening on a non-loopback interface. */
   accessToken: string | null;
   pcmCacheBytes: number;
+  /** How decoded playback PCM is stored. 's16le' (phone) halves the flash writes; reads are float either way. */
+  pcmCacheFormat?: 'f32le' | 's16le';
   stemsCacheBytes?: number;
   analysisWorkers: number;
   /** false: analyze only what is about to play (phone: whole-library analysis heats it up). */

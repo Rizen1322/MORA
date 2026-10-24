@@ -1,12 +1,13 @@
 import { memo, useEffect, useMemo, useState } from 'react';
-import { Play } from '@phosphor-icons/react';
+import { CheckCircle, Info, Play, WarningCircle } from '@phosphor-icons/react';
 import { keyNameRu, type TrackAnalysis, type TransitionPlan } from '@automix/core';
-import { api, type TransitionLogItem } from '../lib/api.ts';
+import { api, type HealthStatus, type TransitionLogItem } from '../lib/api.ts';
 import { fmtDate, fmtTime, plural } from '../lib/format.ts';
 import { diagnosticBeatGrid } from '../lib/diagnostics.ts';
 import { useRoute } from '../lib/router.ts';
 import { controller, trackOf, useApp } from '../store/app.ts';
 import { TransitionSummary, type RatingTarget } from '../components/TransitionSummary.tsx';
+import '../styles/prefs.css';
 
 const PRE = 8;
 const POST = 8;
@@ -465,6 +466,49 @@ function TrackAnalysisView({ trackId }: { trackId: string }) {
   );
 }
 
+type Check = { level: 'ok' | 'info' | 'warn'; text: string };
+
+/** Plain-language checks for the top of the page; numbers stay in the details below. */
+function healthChecks(health: HealthStatus | null, offline: boolean, audio: { pcmUnderruns: number } | undefined, plan: TransitionPlan | undefined, automixOn: boolean): Check[] {
+  const out: Check[] = [];
+  if (offline) out.push({ level: 'warn', text: 'Нет связи со встроенным сервером MORA. Перезапустите приложение, если это не пройдёт.' });
+  if (health && !health.ffmpeg) out.push({ level: 'warn', text: 'Декодер звука не найден — файлы не воспроизводятся.' });
+  if (!automixOn) out.push({ level: 'info', text: 'AutoMix выключен в настройках: треки играют подряд без переходов.' });
+  if (audio) out.push(audio.pcmUnderruns > 0
+    ? { level: 'warn', text: `Звук прерывался: ${audio.pcmUnderruns} ${plural(audio.pcmUnderruns, 'раз', 'раза', 'раз')} с запуска. Обычно это нехватка памяти или медленный диск.` }
+    : { level: 'ok', text: 'Звук идёт без пропусков.' });
+  if (health) {
+    const pending = health.analysis.running + health.analysis.queued;
+    out.push(pending > 0
+      ? { level: 'info', text: `Анализируем треки: осталось ${pending}. Пока анализ не готов, переходы проще.` }
+      : { level: 'ok', text: 'Все треки проанализированы.' });
+  }
+  if (plan) out.push(plan.fallbackReason
+    ? { level: 'info', text: `Переход упрощён: ${plan.fallbackReason}` }
+    : { level: 'ok', text: `Переход рассчитан, уверенность ${Math.round(plan.confidence * 100)} %.` });
+  return out;
+}
+
+function HealthSummary({ checks }: { checks: Check[] }) {
+  const worst = checks.some((c) => c.level === 'warn') ? 'warn' : checks.some((c) => c.level === 'info') ? 'info' : 'ok';
+  const Icon = { ok: CheckCircle, info: Info, warn: WarningCircle };
+  const Big = Icon[worst];
+  return (
+    <section className={`diag-summary ${worst}`} aria-label="Итог проверки">
+      <div className="diag-summary-head">
+        <Big size={30} weight="fill" aria-hidden="true" />
+        <div>
+          <h2>{worst === 'warn' ? 'Есть что проверить' : worst === 'info' ? 'Всё работает' : 'Всё в порядке'}</h2>
+          <p>{checks.length ? 'Коротко о звуке и переходах прямо сейчас.' : 'Проверяем…'}</p>
+        </div>
+      </div>
+      {checks.length > 0 && <ul>
+        {checks.map((c) => { const I = Icon[c.level]; return <li key={c.text} className={c.level}><I size={18} weight="fill" aria-hidden="true" /><span>{c.text}</span></li>; })}
+      </ul>}
+    </section>
+  );
+}
+
 export function DiagnosticsPage() {
   const { query } = useRoute();
   const trackId = query.get('track');
@@ -473,8 +517,12 @@ export function DiagnosticsPage() {
   const [sel, setSel] = useState<string>('next');
   const [showHistory, setShowHistory] = useState(false);
   const [previewing, setPreviewing] = useState(false);
+  const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [offline, setOffline] = useState(false);
+  const automixOn = useApp((s) => s.settings?.automix.enabled !== false);
   useEffect(() => {
     void api.transitions(30).then((r) => setLog(r.items)).catch(() => {});
+    void api.health().then((h) => { setHealth(h); setOffline(false); }, () => setOffline(true));
   }, [p.lastTransition]);
   if (trackId)
     return (
@@ -496,10 +544,11 @@ export function DiagnosticsPage() {
       onRated: (rating, reason) => setLog((items) => items.map((l) => l.id === logId ? { ...l, rating, ratingReason: reason } : l)) };
   })();
   return (
-    <div className="main-inner">
+    <div className="main-inner prefs-page diag-page">
       <h1 className="page-title">Диагностика AutoMix</h1>
-      {p.audioHealth && <section className="panel" aria-label="Стабильность звука"><h2 className="section-title">Стабильность звука</h2><p className="small tnum">Нехватка PCM: {p.audioHealth.pcmUnderruns} · долгие блоки: {p.audioHealth.slowBlocks} · максимум: {p.audioHealth.maxRenderMs.toFixed(1)} мс · буфер устройства: {p.audioHealth.latencyMs.toFixed(0)} мс</p><p className="caption muted">Долгий блок показывает задержку вычисления, а не обязательно слышимый пропуск. Счётчики относятся к текущему запуску плеера.</p></section>}
-      <div className="tabs" style={{ margin: '16px 0' }}>
+      <HealthSummary checks={healthChecks(health, offline, p.audioHealth, chosen?.plan, automixOn)} />
+      <h2 className="pref-group-title">Переходы</h2>
+      <div className="tabs diag-picker" aria-label="Какой переход показать">
         <button className="chip" aria-pressed={sel === 'next'} onClick={() => setSel('next')}>
           {p.transition?.active ? 'Идёт сейчас' : livePlan ? 'Запланирован' : 'Последний'}
         </button>
@@ -523,6 +572,21 @@ export function DiagnosticsPage() {
         <p>Рассчитывает пару по текущим настройкам и начинает музыку перед переходом. Очередь заменится этими двумя треками.</p>
       </div>}
       {chosen ? <TransitionView plan={chosen.plan} outcome={chosen.outcome} active={sel==='next'&&p.transition?.active} rate={rate} /> : <div className="empty"><h2>Послушайте пару треков</h2><p>Выберите музыку в медиатеке и включите AutoMix. Здесь появятся выбранные точки входа и выхода, реальные волны и причины перехода.</p><a href="#/library" className="btn btn-primary">Открыть медиатеку</a></div>}
+      <details className="pref-more">
+        <summary>
+          <span className="pref-title">Технические подробности</span>
+          <span className="pref-desc">Счётчики звука и версии анализа</span>
+        </summary>
+        <div className="pref-card">
+          {p.audioHealth ? <>
+            <div className="pref-row"><div className="pref-text"><div className="pref-title">Нехватка звука</div><div className="pref-desc">Сколько раз плееру не хватило готового звука</div></div><div className="pref-control tnum">{p.audioHealth.pcmUnderruns}</div></div>
+            <div className="pref-row"><div className="pref-text"><div className="pref-title">Долгие блоки</div><div className="pref-desc">Задержка вычисления, не обязательно слышимая</div></div><div className="pref-control tnum">{p.audioHealth.slowBlocks} · до {p.audioHealth.maxRenderMs.toFixed(1)} мс</div></div>
+            <div className="pref-row"><div className="pref-text"><div className="pref-title">Буфер устройства</div></div><div className="pref-control tnum">{p.audioHealth.latencyMs.toFixed(0)} мс</div></div>
+          </> : <div className="pref-row"><div className="pref-text"><div className="pref-desc">Счётчики появятся после начала воспроизведения.</div></div></div>}
+          {health && <div className="pref-row"><div className="pref-text"><div className="pref-title">Анализ</div><div className="pref-desc">Анализатор {health.analyzer}, планировщик {health.planner}</div></div><div className="pref-control tnum">потоков {health.analysis.workers}</div></div>}
+        </div>
+        <p className="pref-footer">Счётчики относятся к текущему запуску плеера.</p>
+      </details>
     </div>
   );
 }

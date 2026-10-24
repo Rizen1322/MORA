@@ -1,0 +1,389 @@
+{
+  "exe": "E:\\вин\\ПРОЕКТЫ\\music\\apps\\desktop\\dist\\win-unpacked\\MORA.exe",
+  "dev": false,
+  "profile": "C:\\Users\\Rizen\\AppData\\Local\\Temp\\claude\\E--------------music\\ef4418d4-2527-4420-a3df-7c426ec485c8\\scratchpad\\profile-final",
+  "startedAt": "2026-10-20T20:43:26.460Z",
+  "machine": {
+    "cpu": "AMD Ryzen 5 9600X 6-Core Processor             ",
+    "cores": 12,
+    "ramGB": 31,
+    "os": "Windows_NT 10.0.26100"
+  },
+  "steps": {
+    "coldStart": {
+      "windowPageMs": 884,
+      "uiRenderedMs": 1229,
+      "ffmpeg": "ffmpeg version n9.0.2-29-g6dfaba896f-20261020 Copyright (c) 2000-2026 the FFmpeg developers",
+      "title": "MORA",
+      "note": "fresh profile; OS file cache may hold Electron binaries"
+    },
+    "analysisLoad": {
+      "imported": 6,
+      "unicodeFolder": "C:\\Users\\Rizen\\AppData\\Local\\Temp\\claude\\E--------------music\\ef4418d4-2527-4420-a3df-7c426ec485c8\\scratchpad\\smoke-final\\Музыка — Ёлка ♪ тест",
+      "totalWsMB": 663,
+      "totalPrivateMB": 625.9,
+      "processes": [
+        {
+          "pid": 14892,
+          "type": "main",
+          "wsMB": 95,
+          "privateMB": 68.1
+        },
+        {
+          "pid": 10224,
+          "type": "gpu-process",
+          "wsMB": 115.6,
+          "privateMB": 202
+        },
+        {
+          "pid": 28408,
+          "type": "utility:network.mojom.NetworkService",
+          "wsMB": 48.3,
+          "privateMB": 13.4
+        },
+        {
+          "pid": 2760,
+          "type": "renderer",
+          "wsMB": 113.2,
+          "privateMB": 54.4
+        },
+        {
+          "pid": 5304,
+          "type": "utility:node.mojom.NodeService",
+          "wsMB": 269.7,
+          "privateMB": 268.4
+        },
+        {
+          "pid": 15664,
+          "type": "",
+          "wsMB": 21.2,
+          "privateMB": 19.6
+        }
+      ],
+      "cpuPct": {
+        "main#14892": 6.56,
+        "gpu-process#10224": 4.06,
+        "utility:network.mojom.NetworkService#28408": 0,
+        "renderer#2760": 5.94,
+        "utility:node.mojom.NodeService#5304": 179.69
+      }
+    },
+    "idle": {
+      "totalWsMB": 638.6,
+      "totalPrivateMB": 530.3,
+      "processes": [
+        {
+          "pid": 14892,
+          "type": "main",
+          "wsMB": 96.7,
+          "privateMB": 68.4
+        },
+        {
+          "pid": 10224,
+          "type": "gpu-process",
+          "wsMB": 115.6,
+          "privateMB": 136
+        },
+        {
+          "pid": 28408,
+          "type": "utility:network.mojom.NetworkService",
+          "wsMB": 48.3,
+          "privateMB": 13.4
+        },
+        {
+          "pid": 2760,
+          "type": "renderer",
+          "wsMB": 116.2,
+          "privateMB": 55.4
+        },
+        {
+          "pid": 5304,
+          "type": "utility:node.mojom.NodeService",
+          "wsMB": 261.8,
+          "privateMB": 257.1
+        }
+      ],
+      "cpuPct": {
+        "main#14892": 0,
+        "gpu-process#10224": 3.75,
+        "utility:network.mojom.NetworkService#28408": 0,
+        "renderer#2760": 0.94,
+        "utility:node.mojom.NodeService#5304": 0
+      }
+    },
+    "firstSound": {
+      "ms": 249,
+      "note": "from playTracks() to playhead moving; includes engine init and first PCM window"
+    },
+    "playing": {
+      "totalWsMB": 708,
+      "totalPrivateMB": 547.9,
+      "processes": [
+        {
+          "pid": 14892,
+          "type": "main",
+          "wsMB": 97.3,
+          "privateMB": 66.7
+        },
+        {
+          "pid": 10224,
+          "type": "gpu-process",
+          "wsMB": 130.6,
+          "privateMB": 196.2
+        },
+        {
+          "pid": 28408,
+          "type": "utility:network.mojom.NetworkService",
+          "wsMB": 48.5,
+          "privateMB": 13.4
+        },
+        {
+          "pid": 2760,
+          "type": "renderer",
+          "wsMB": 183,
+          "privateMB": 119.4
+        },
+        {
+          "pid": 5304,
+          "type": "utility:node.mojom.NodeService",
+          "wsMB": 149.6,
+          "privateMB": 141.8
+        },
+        {
+          "pid": 1092,
+          "type": "utility:audio.mojom.AudioService",
+          "wsMB": 99,
+          "privateMB": 10.4
+        }
+      ],
+      "cpuPct": {
+        "main#14892": 0.31,
+        "gpu-process#10224": 12.5,
+        "utility:network.mojom.NetworkService#28408": 0.31,
+        "renderer#2760": 23.91,
+        "utility:node.mojom.NodeService#5304": 0.16,
+        "utility:audio.mojom.AudioService#1092": 0
+      },
+      "state": {
+        "status": "playing",
+        "position": 15.221333333333334,
+        "index": 0,
+        "queue": 6,
+        "duration": 208.666089,
+        "underruns": 0,
+        "transition": false,
+        "hidden": false
+      },
+      "steadyUnderruns": 0
+    },
+    "seekBack": {
+      "status": "playing",
+      "position": 10.458666666666666,
+      "index": 0,
+      "queue": 6,
+      "duration": 208.666089,
+      "underruns": 0,
+      "transition": false,
+      "hidden": false,
+      "ok": true
+    },
+    "transition": {
+      "status": "playing",
+      "position": 18.19875,
+      "index": 1,
+      "queue": 6,
+      "duration": 177.293044,
+      "underruns": 0,
+      "transition": true,
+      "hidden": false
+    },
+    "pauseDuringLoad": {
+      "status": "paused",
+      "position": 0,
+      "index": 0,
+      "queue": 4,
+      "duration": 137.586922,
+      "underruns": 0,
+      "transition": false,
+      "hidden": false,
+      "ok": true
+    },
+    "hiddenInTray": {
+      "before": {
+        "status": "playing",
+        "position": 2,
+        "index": 0,
+        "queue": 4,
+        "duration": 137.586922,
+        "underruns": 0,
+        "transition": false,
+        "hidden": false
+      },
+      "after": {
+        "status": "playing",
+        "position": 28.505,
+        "index": 2,
+        "queue": 4,
+        "duration": 105.195089,
+        "underruns": 0,
+        "transition": false,
+        "hidden": false
+      },
+      "advancedSeconds": 164.1,
+      "wallSeconds": 300,
+      "cpuPct": {
+        "main#14892": 0.42,
+        "gpu-process#10224": 0,
+        "utility:network.mojom.NetworkService#28408": 0.1,
+        "renderer#2760": 4.27,
+        "utility:node.mojom.NodeService#5304": 0.42,
+        "utility:audio.mojom.AudioService#1092": 0.42
+      },
+      "totalWsMB": 691.5,
+      "totalPrivateMB": 469.9,
+      "processes": [
+        {
+          "pid": 14892,
+          "type": "main",
+          "wsMB": 102.8,
+          "privateMB": 69.2
+        },
+        {
+          "pid": 10224,
+          "type": "gpu-process",
+          "wsMB": 133.8,
+          "privateMB": 143.3
+        },
+        {
+          "pid": 28408,
+          "type": "utility:network.mojom.NetworkService",
+          "wsMB": 49.1,
+          "privateMB": 13.1
+        },
+        {
+          "pid": 2760,
+          "type": "renderer",
+          "wsMB": 182.5,
+          "privateMB": 118.3
+        },
+        {
+          "pid": 5304,
+          "type": "utility:node.mojom.NodeService",
+          "wsMB": 124.1,
+          "privateMB": 115.6
+        },
+        {
+          "pid": 1092,
+          "type": "utility:audio.mojom.AudioService",
+          "wsMB": 99.2,
+          "privateMB": 10.4
+        }
+      ]
+    },
+    "secondInstance": {
+      "secondExited": true,
+      "exitCode": 0,
+      "visibleAgain": true,
+      "utilityProcesses": [
+        "utility:node.mojom.NodeService"
+      ]
+    },
+    "backendCrash": {
+      "killed": [
+        5304
+      ],
+      "recoveredMs": 1246,
+      "state": {
+        "status": "playing",
+        "position": 37.37166666666667,
+        "index": 2,
+        "queue": 4,
+        "duration": 105.195089,
+        "underruns": 0,
+        "transition": false,
+        "hidden": false
+      }
+    },
+    "offlineThenOnline": {
+      "offline": {
+        "status": "playing",
+        "position": 47.403666666666666,
+        "index": 2,
+        "queue": 4,
+        "duration": 105.195089,
+        "underruns": 0,
+        "transition": false,
+        "hidden": false
+      },
+      "bannerShownWhileOffline": false,
+      "bannerClearedAfter": true,
+      "after": {
+        "status": "playing",
+        "position": 50.393,
+        "index": 2,
+        "queue": 4,
+        "duration": 105.195089,
+        "underruns": 0,
+        "transition": false,
+        "hidden": false
+      }
+    },
+    "window-min-960x680": {
+      "w": 960,
+      "h": 680,
+      "dpr": 1,
+      "overflowX": false
+    },
+    "window-normal-1280x820": {
+      "w": 1264,
+      "h": 812,
+      "dpr": 1,
+      "overflowX": false
+    },
+    "window-maximized": {
+      "w": 2560,
+      "h": 1438,
+      "dpr": 1,
+      "overflowX": false
+    },
+    "quit": {
+      "exited": true,
+      "leftover": [],
+      "playingBeforeQuit": {
+        "status": "playing",
+        "position": 65.69433333333333,
+        "index": 2,
+        "queue": 4,
+        "duration": 105.195089,
+        "underruns": 0,
+        "transition": false,
+        "hidden": false
+      }
+    },
+    "warmStartAndRestore": {
+      "windowPageMs": 260,
+      "uiRenderedMs": 366,
+      "restored": {
+        "status": "idle",
+        "position": 61.083666666666666,
+        "index": 2,
+        "queue": 4,
+        "duration": 105.195089,
+        "underruns": 0,
+        "transition": false,
+        "hidden": false
+      },
+      "ok": true
+    },
+    "diskMB": {
+      "library": 0,
+      "remote": 0,
+      "covers": 0.2,
+      "cache/pcm": 329.4,
+      "cache/stems": 0,
+      "automix.sqlite": 0.9,
+      "electronProfile": 17.200000000000045
+    }
+  },
+  "finishedAt": "2026-10-20T20:50:41.682Z"
+}

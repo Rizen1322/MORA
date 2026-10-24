@@ -11,9 +11,10 @@ export function clockOnly(prev: PlayerSnapshot, next: PlayerSnapshot): boolean {
 
 /**
  * Passes player snapshots on, but clock-only ticks at most every `ms` (the latest one always
- * arrives, via a trailing call). Real changes go through at once.
+ * arrives, via a trailing call). Real changes go through at once. While `hidden()` (locked screen,
+ * app in the background) clock-only ticks are dropped: the caller pushes the latest state on return.
  */
-export function throttleClock(push: (s: PlayerSnapshot) => void, latest: () => PlayerSnapshot, ms: number) {
+export function throttleClock(push: (s: PlayerSnapshot) => void, latest: () => PlayerSnapshot, ms: number, hidden: () => boolean = () => false) {
   let prev: PlayerSnapshot | null = null, at = 0;
   let trailing: ReturnType<typeof setTimeout> | null = null;
   const send = (s: PlayerSnapshot) => {
@@ -22,6 +23,7 @@ export function throttleClock(push: (s: PlayerSnapshot) => void, latest: () => P
     push(s);
   };
   return (s: PlayerSnapshot) => {
+    if (prev && hidden() && clockOnly(prev, s)) return;
     if (!prev || performance.now() - at >= ms || !clockOnly(prev, s)) return send(s);
     trailing ??= setTimeout(() => send(latest()), ms - (performance.now() - at));
   };

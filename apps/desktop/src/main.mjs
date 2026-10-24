@@ -12,6 +12,7 @@ import { publishLibrary } from './publish.mjs';
 import { ResolverUpdater } from './resolver-update.mjs';
 import electronUpdater from 'electron-updater';
 import { AppUpdates } from './app-update.mjs';
+import { watchPower } from './idle-power.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const resources = app.isPackaged ? process.resourcesPath : path.join(here, '..', 'build');
@@ -34,6 +35,7 @@ let win = null;
 let tray = null;
 let quitting = false;
 let backend = null; // { proc, port, ready }
+let powerWatch = null;
 let origin = null;
 let crashTimes = [];
 let backendState = 'starting';
@@ -148,7 +150,7 @@ async function startBackend(port = 0) {
   b.ready = new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('backend start timeout')), 90_000);
     proc.on('message', (m) => {
-      if (m?.type === 'ready') { clearTimeout(timer); b.port = m.port; resolve(m.port); }
+      if (m?.type === 'ready') { clearTimeout(timer); b.port = m.port; resolve(m.port); powerWatch?.resend(); }
       else if (m?.type === 'error') { clearTimeout(timer); reject(new Error(m.message)); }
     });
     proc.once('exit', (code) => { clearTimeout(timer); reject(new Error(`backend exited with ${code}`)); });
@@ -527,6 +529,8 @@ async function main() {
   updateTray();
 
   createWindow();
+  // idle + mains power lets the backend analyze the whole library (setting analysis.onlyWhenIdle)
+  powerWatch = watchPower(powerMonitor, (s) => { try { backend?.proc.postMessage({ type: 'power', ...s }); } catch { /* backend restarting: resent when ready */ } });
   try {
     await openApp(await startBackend(0));
   } catch (e) {
@@ -545,6 +549,7 @@ async function main() {
     e.preventDefault();
     stopped = true;
     globalShortcut.unregisterAll();
+    powerWatch?.stop();
     tray?.destroy();
     void stopBackend().finally(() => app.quit());
   });

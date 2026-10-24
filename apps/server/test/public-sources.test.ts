@@ -227,4 +227,18 @@ describe('offline downloads', () => {
     expect(left).toContain(hashOf(pinnedId));
     expect(left).not.toContain(hashOf(plain));
   });
+
+  it('liking an online track downloads it only when the setting is on; unliking keeps the download', async () => {
+    const like = (id: string, value: number) => a.app.inject({ method: 'POST', url: `/api/tracks/${id}/reaction`, payload: { value } });
+    const off = a.services.lib.addRemote({ provider: 'youtube', externalId: 'eeeeeeeeeee', title: 'Off', artist: 'A', duration: 180, meta: {} });
+    await like(off.id, 1);
+    expect(a.services.downloads.list().some((j) => j.trackId === off.id)).toBe(false);
+    expect((await a.app.inject({ method: 'PUT', url: '/api/settings', payload: { downloads: { autoLiked: true } } })).json().downloads).toEqual({ autoLiked: true });
+    const on = a.services.lib.addRemote({ provider: 'youtube', externalId: 'fffffffffff', title: 'On', artist: 'A', duration: 180, meta: {} });
+    await like(on.id, 1);
+    const job = await waitJob(a.services.downloads.list().find((j) => j.trackId === on.id)!.id, ['done', 'failed']);
+    expect(job.state, job.error ?? '').toBe('done');
+    await like(on.id, 0);
+    expect(a.services.lib.get(on.id)!.pinned).toBe(1);
+  });
 });

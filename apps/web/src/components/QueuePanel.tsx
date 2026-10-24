@@ -1,15 +1,28 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { DotsSixVertical, X, Trash, Sparkle } from '@phosphor-icons/react';
+import { DotsSixVertical, X, Trash, Sparkle, Headphones, Stop, CircleNotch } from '@phosphor-icons/react';
 import { fmtTime, methodShort, tracksWord } from '../lib/format.ts';
 import { controller, trackOf, useApp } from '../store/app.ts';
 import { Cover, Equalizer } from './common.tsx';
+import { togglePreview, usePreview } from '../lib/transition-preview.ts';
+
+/** Plays the rendered blend from the current track into `to`; again stops it. */
+function PreviewButton({ from, to, title }: { from: string; to: string; title: string }) {
+  const preview = usePreview(), key = `${from}>${to}`;
+  const on = preview.playing === key, wait = preview.loading === key;
+  return (
+    <button className="icon-btn" aria-pressed={on} aria-label={on ? 'Остановить прослушивание перехода' : `Послушать переход в «${title}»`} title="Послушать переход" onClick={() => void togglePreview(from, to)}>
+      {wait ? <CircleNotch size={16} className="spin" /> : on ? <Stop size={16} weight="fill" /> : <Headphones size={16} />}
+    </button>
+  );
+}
 
 export function QueuePanel({ onClose, className = '' }: { onClose?: () => void; className?: string } = {}) {
   // Only what the panel shows: position ticks must not re-render the whole queue.
   const p = useApp(useShallow((s) => ({
     queue: s.player.queue, index: s.player.index, status: s.player.status, context: s.player.context,
     nextPlan: s.player.nextPlan, transitionActive: !!s.player.transition?.active, waveLoading: s.player.waveLoading,
+    continuation: s.player.continuation,
   })));
   const setOpen = useApp((s) => s.setQueueOpen);
   const [drag, setDrag] = useState<number | null>(null);
@@ -133,6 +146,7 @@ export function QueuePanel({ onClose, className = '' }: { onClose?: () => void; 
                 </div>
               </button>
               <span className="q-actions">
+                {curT && t.mixingAllowed !== false && curT.mixingAllowed !== false && <PreviewButton from={curT.id} to={t.id} title={t.title} />}
                 <button className="icon-btn" aria-label={`Убрать из очереди: ${t.title}`} onClick={() => controller.removeAt(i)}>
                   <X size={16} />
                 </button>
@@ -143,6 +157,7 @@ export function QueuePanel({ onClose, className = '' }: { onClose?: () => void; 
         <div style={{ height: Math.max(0, upcoming.length - b) * rowH }} />
         </div>
         {wave && p.waveLoading && <p className="caption dim" style={{ padding: 8 }}>Подбираю следующие треки…</p>}
+        {p.continuation && <><div className="queue-label">Далее · {p.continuation}</div><p className="caption dim" style={{ padding: 8 }}>Очередь заканчивается — подбираю похожую музыку, она начнётся без паузы.</p></>}
       </div>
     </aside>
   );
