@@ -62,7 +62,7 @@ final class NativeQueuePreparation: @unchecked Sendable {
              allocate: @escaping @Sendable () async -> Int?,
              accept: @escaping @Sendable (Int, [String: Any]) async -> Bool,
              event: @escaping @Sendable (String, String) -> Void) async {
-        defer { finished() }
+        defer { finished(); event("finished", "none") }
         guard let raw = manifest["items"] as? [[String: Any]], let from = manifest["from"] as? Int,
               let settings = manifest["settings"] as? [String: Any],
               let previous = manifest["previous"] as? [String: Any] else { return }

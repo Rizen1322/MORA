@@ -240,6 +240,7 @@ final class NativeMixHost {
                 configuration["from"] = from; configuration["items"] = future; configuration["previous"] = previous
                 if !self.done, let renderer = self.renderer, !(try renderer.update(from: from, tracks: [])) { throw Failure.invalid }
                 self.preparation?.cancel()
+                self.nextWhenPrepared = false // A replacement manifest owns new navigation intent.
                 let referenced = Set((items + (manifest["loopItems"] as? [[String: Any]] ?? [])).compactMap { item -> Int? in
                     guard let source = item["source"] as? [String: Any], source["kind"] as? String == "local" else { return nil }
                     return source["file"] as? Int
@@ -302,7 +303,13 @@ final class NativeMixHost {
                     }, event: { [weak self] kind, reason in
                         self?.work.async { [weak self] in
                             guard let self, self.preparation === job else { return }
-                            self.save(); MoraPlaybackJournal.record("native.preparation.\(kind)", ["reason": reason])
+                            if kind == "finished" && !job.hasRemaining {
+                                self.nextWhenPrepared = false
+                                if self.ended { self.continueWhenPrepared = false }
+                            }
+                            if ["ready", "failed", "finished"].contains(kind) { self.publish("preparation") }
+                            else { self.save() }
+                            MoraPlaybackJournal.record("native.preparation.\(kind)", ["reason": reason])
                         }
                     })
                 }
