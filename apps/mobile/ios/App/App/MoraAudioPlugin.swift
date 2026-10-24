@@ -47,6 +47,10 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "diagnosticsClear", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "diagnosticsShare", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "diagnosticsTest", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeProbeStart", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeProbeStop", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeProbeState", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeProbeCommand", returnType: CAPPluginReturnPromise),
     ]
 
     private var playing = false
@@ -56,6 +60,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private var navigationSignature = ""
     private var navigationRoute = "webkit"
     private var navigationEpoch = 0
+    private let nativeProbe = NativePlaybackProbe()
 
     override public func load() {
         MoraPlaybackJournal.record("native.load")
@@ -190,6 +195,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc private func interruption(_ n: Notification) {
+        if nativeProbe.active { nativeProbe.interruption(n); return }
         MoraPlaybackJournal.record("native.interruption", ["seq": n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ?? 0,
             "reason": String(n.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt ?? 0),
             "paused": n.userInfo?[AVAudioSessionInterruptionWasSuspendedKey] as? Bool ?? false])
@@ -218,6 +224,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc private func routeChange(_ n: Notification) {
+        if nativeProbe.active { nativeProbe.routeChange(n); return }
         MoraPlaybackJournal.record("native.routeChange", ["reason": String(n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0)])
         guard let raw = n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
               let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
@@ -226,6 +233,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc private func mediaReset(_ n: Notification) {
+        if nativeProbe.active { MoraPlaybackJournal.record("native.probe.mediaReset"); return }
         MoraPlaybackJournal.record("native.mediaReset")
         if playing {
             if !webAudioSession { MoraAudioSession.activate() }
@@ -238,20 +246,25 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         if n.name == UIApplication.didEnterBackgroundNotification { MoraPlaybackJournal.flush() }
     }
 
-    @objc func diagnosticsInfo(_ call: CAPPluginCall) { call.resolve(["enabled": MoraPlaybackJournal.enabled]) }
+    @objc func diagnosticsInfo(_ call: CAPPluginCall) { call.resolve(["enabled": MoraPlaybackJournal.enabled, "nativeProbe": true]) }
+    private func diagnosticReport() -> [String: Any] {
+        var report = MoraPlaybackJournal.report()
+        report["nativeProbe"] = nativeProbe.snapshot
+        return report
+    }
     @objc func diagnosticsRecord(_ call: CAPPluginCall) {
         MoraPlaybackJournal.record(call.getString("stage") ?? "invalid", call.getObject("fields") ?? [:])
         call.resolve()
     }
     @objc func diagnosticsClear(_ call: CAPPluginCall) { MoraPlaybackJournal.clear(); call.resolve() }
     @objc func diagnosticsReport(_ call: CAPPluginCall) {
-        DispatchQueue.main.async { call.resolve(MoraPlaybackJournal.report()) }
+        DispatchQueue.main.async { call.resolve(self.diagnosticReport()) }
     }
     @objc func diagnosticsShare(_ call: CAPPluginCall) {
         guard MoraPlaybackJournal.enabled else { call.reject("Diagnostics disabled"); return }
         DispatchQueue.main.async {
             do {
-                let data = try JSONSerialization.data(withJSONObject: MoraPlaybackJournal.report(), options: [.prettyPrinted, .sortedKeys])
+                let data = try JSONSerialization.data(withJSONObject: self.diagnosticReport(), options: [.prettyPrinted, .sortedKeys])
                 let url = FileManager.default.temporaryDirectory.appendingPathComponent("MORA-playback-diagnostics.json")
                 try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
                 guard let vc = self.bridge?.viewController, vc.presentedViewController == nil else { call.reject("Share unavailable"); return }
@@ -276,6 +289,37 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             call.resolve()
         }
     }
+
+    @objc func nativeProbeStart(_ call: CAPPluginCall) {
+        guard MoraPlaybackJournal.enabled else { call.reject("Diagnostics disabled"); return }
+        DispatchQueue.main.async {
+            self.nativeProbe.start { result in
+                switch result {
+                case .success(let snapshot): call.resolve(snapshot)
+                case .failure: MoraPlaybackJournal.record("native.probe.startFailed"); call.reject("Native audio start failed")
+                }
+            }
+        }
+    }
+    @objc func nativeProbeStop(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            self.nativeProbe.stop { ok in
+                if ok { call.resolve() } else { call.reject("Native session release failed") }
+            }
+        }
+    }
+    @objc func nativeProbeState(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { call.resolve(self.nativeProbe.snapshot) }
+    }
+    @objc func nativeProbeCommand(_ call: CAPPluginCall) {
+        guard MoraPlaybackJournal.enabled, let action = call.getString("action") else { call.reject("Diagnostics disabled"); return }
+        let time = call.getDouble("seekTime")
+        DispatchQueue.main.async {
+            self.nativeProbe.command(action, time: time, source: "test") { ok in
+                if ok { call.resolve(self.nativeProbe.snapshot) } else { call.reject("Native command failed") }
+            }
+        }
+    }
 }
 
 /// Private, bounded journal. It never reads the media library or any credentials.
@@ -293,7 +337,7 @@ enum MoraPlaybackJournal {
     }()
     private static var write: DispatchWorkItem?
     private static let numeric: Set<String> = ["seq", "position", "seekTime", "clock", "peak", "monotonicMs", "duration", "rate"]
-    private static let flags: Set<String> = ["paused", "starved", "hidden", "allowed", "playing", "intentPlaying", "webAudioSession", "seekable", "node"]
+    private static let flags: Set<String> = ["paused", "starved", "hidden", "allowed", "playing", "intentPlaying", "webAudioSession", "seekable", "node", "probeActive"]
     private static let codes: Set<String> = ["id", "action", "command", "status", "context", "source", "reason", "outcome", "route", "kind", "mediaState"]
 
     static func record(_ stage: String, _ fields: [String: Any] = [:]) {

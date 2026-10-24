@@ -1,10 +1,21 @@
 /** Enabled only by the diagnostic iOS shell. Shared through window across the two JS bundles. */
 export type TraceFields = Record<string, string | number | boolean | undefined>;
 export type NavigationRoute = 'webkit' | 'native';
+export interface NativeProbeState { active: boolean; playing: boolean; index: number; position: number; duration: number }
+export interface NativeProbe {
+  start(): Promise<NativeProbeState>;
+  stop(): Promise<void>;
+  state(): Promise<NativeProbeState>;
+  command(action: MediaSessionAction, seekTime?: number): Promise<NativeProbeState>;
+}
 export interface NativePlaybackControls {
+  ready?: Promise<void>;
   route: NavigationRoute;
   contextState?: string;
   snapshot?: () => TraceFields;
+  suspend?: () => Promise<void>;
+  probeActive?: boolean;
+  probe?: NativeProbe;
   setRoute(route: NavigationRoute): Promise<void>;
 }
 export interface PlaybackDiagnostics {
@@ -40,7 +51,7 @@ export function withPlaybackId<T>(id: string, fn: () => T): T {
 
 // No titles, URLs, provider IDs, tokens, arbitrary errors or device names enter the journal.
 const numbers = new Set(['seq', 'position', 'seekTime', 'clock', 'peak', 'monotonicMs', 'duration', 'rate']);
-const flags = new Set(['paused', 'starved', 'hidden', 'allowed', 'playing', 'intentPlaying', 'webAudioSession', 'seekable', 'node']);
+const flags = new Set(['paused', 'starved', 'hidden', 'allowed', 'playing', 'intentPlaying', 'webAudioSession', 'seekable', 'node', 'probeActive']);
 const codes = new Set(['id', 'action', 'command', 'status', 'context', 'source', 'reason', 'outcome', 'route', 'kind', 'mediaState']);
 export function safeTraceFields(fields: TraceFields): TraceFields {
   const result: TraceFields = {};

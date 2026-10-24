@@ -1,6 +1,7 @@
 import { Capacitor, CapacitorHttp, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import type { FetchArgs, FetchResult } from '../shared/protocol.ts';
 import { setupDiagnostics, type NativeDiagnostics } from './diagnostics.ts';
+import { createNativeProbe, type NativeProbePort } from './native-probe.ts';
 import { playbackDiagnostics, tracePlayback, withPlaybackId, type NativePlaybackControls, type NavigationRoute } from '../../../web/src/lib/playback-trace.ts';
 
 /**
@@ -10,7 +11,7 @@ import { playbackDiagnostics, tracePlayback, withPlaybackId, type NativePlayback
  * commands with the previous split navigation path; neither proves ownership.
  */
 
-interface MoraAudio extends NativeDiagnostics {
+interface MoraAudio extends NativeDiagnostics, NativeProbePort {
   setRemoteNavigation(o: { actions: MediaSessionAction[]; seekable: boolean; route: NavigationRoute; epoch?: number }): Promise<void>;
   setPlaybackState(o: { playing: boolean; intentPlaying: boolean; webAudioSession: boolean }): Promise<void>;
   addListener(ev: 'command', fn: (e: { action: MediaSessionAction; seekTime?: number; id?: string; source?: string; routeEpoch?: number }) => void): Promise<PluginListenerHandle>;
@@ -99,6 +100,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
   const handlers = new Map<MediaSessionAction, MediaSessionActionHandler | null>();
   const registerAction = ms.setActionHandler.bind(ms);
   const dispatch = (action: MediaSessionAction, details: MediaSessionActionDetails, source: string, nativeId?: string) => {
+    if (window.moraNativePlayback?.probeActive) { tracePlayback('js.command.probeBlocked', { action, source }); return; }
     const d = playbackDiagnostics(), handler = handlers.get(action);
     if (!d) { handler?.(details); return; }
     const id = nativeId ?? d.nextId();
@@ -127,7 +129,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
   let routeEpoch = 0;
   let routeQueue = MoraAudio.setRemoteNavigation({ actions: [], seekable: false, route: 'webkit', epoch: routeEpoch }).catch(() => {});
   const registerHandler = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
-    const blocked = (nativeNavigation || switching) && navigation.has(action);
+    const blocked = !!window.moraNativePlayback?.probeActive || ((nativeNavigation || switching) && navigation.has(action));
     let outcome = 'accepted';
     try { registerAction(action, blocked ? null : wrapped(action, handler)); } catch { outcome = 'rejected'; }
     tracePlayback('js.handler.register', { action, allowed: !!handler, source: blocked ? 'native' : 'webkit', outcome });
@@ -140,6 +142,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
     route: 'webkit',
     setRoute(route) {
       const change = routeQueue.then(async () => {
+        if (controls.probeActive) throw new Error('Stop native audio probe before changing routes');
         if (route !== 'webkit' && route !== 'native') throw new Error('Unknown navigation route');
         switching = true;
         routeEpoch++;
@@ -186,6 +189,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
   let intentPlaying = false, metadataSeq = 0, forceNextPosition = false;
   const origPos = ms.setPositionState?.bind(ms);
   const publishPosition = (reason = 'tick') => {
+    if (controls.probeActive) return;
     if (!(duration > 0) || !Number.isFinite(duration) || !Number.isFinite(position) || !Number.isFinite(rate) || rate === 0) return;
     const elapsed = playing ? (performance.now() - sentAt) / 1000 * rate : 0;
     const p = Math.max(0, Math.min(duration, position + elapsed));
@@ -206,6 +210,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
     get: () => current,
     set: (m: MediaMetadata | null) => {
       current = m;
+      if (controls.probeActive) return;
       if (!m) {
         nowKey = ''; duration = 0; seekable = false; metadata?.set?.call(ms, null); origPos?.(); syncNavigation();
         tracePlayback('js.media.publish', { kind: 'metadata', reason: 'clear', seq: metadataSeq, route: controls.route }); return;
@@ -230,6 +235,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
     },
   });
   ms.setPositionState = (s?: MediaPositionState) => {
+    if (controls.probeActive) return;
     if (!s) return;
     const d = s.duration ?? duration, p = s.position ?? position, r = s.playbackRate ?? rate;
     // The player reports ~20×/s; iOS advances Now Playing's clock by itself, so a seek or rate change
@@ -242,6 +248,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
   };
 
   const syncPlayback = (reason: string, currentPosition?: number) => {
+    if (controls.probeActive) return;
     const context = controls.contextState;
     const now = intentPlaying && (context === undefined || context === 'running');
     if (now === playing && reason !== 'context') return;
@@ -277,4 +284,42 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
     });
   };
   attach();
+
+  const audioSession = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+  let previousAudioType: string | undefined;
+  controls.probe = createNativeProbe(MoraAudio, {
+    async prepare() {
+      await controls.setRoute('webkit');
+      controls.probeActive = true;
+      await controls.suspend?.();
+      if (controls.contextState === 'running') throw new Error('Web audio is still running');
+      for (const [action] of handlers) registerHandler(action, null);
+      metadata?.set?.call(ms, null); origPos?.(); ms.playbackState = 'none';
+      previousAudioType = audioSession?.type;
+      if (audioSession) audioSession.type = 'auto';
+      tracePlayback('js.probe.prepared', { context: controls.contextState, probeActive: true });
+    },
+    restore() {
+      controls.probeActive = false;
+      if (audioSession && previousAudioType !== undefined) audioSession.type = previousAudioType;
+      previousAudioType = undefined;
+      for (const [action, handler] of handlers) registerHandler(action, handler);
+      intentPlaying = false;
+      syncPlayback('probe-stop');
+      const cached = current; nowKey = '';
+      ms.metadata = cached;
+      tracePlayback('js.probe.restored', { context: controls.contextState, probeActive: false });
+    },
+  });
+  // WebContent can reload independently while the native player continues.
+  // Recover the guard before allowing a new WebAudio session in that page.
+  controls.ready = Promise.resolve().then(() => MoraAudio.nativeProbeState()).then(async (state) => {
+    if (!state.active) return;
+    controls.probeActive = true;
+    await controls.suspend?.();
+    previousAudioType = audioSession?.type;
+    if (audioSession) audioSession.type = 'auto';
+    for (const [action] of handlers) registerHandler(action, null);
+    tracePlayback('js.probe.recovered', { context: controls.contextState, probeActive: true });
+  }).catch(() => {});
 }

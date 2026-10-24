@@ -269,6 +269,8 @@ export class PlayerController {
   async unlockAudio(): Promise<void> { await this.ensureEngine(); }
 
   private async ensureEngine(): Promise<void> {
+    await nativePlaybackControls()?.ready;
+    if (nativePlaybackControls()?.probeActive) throw new Error('Остановите нативный тест в диагностике перед запуском музыки');
     if (this.engineStarting) return this.engineStarting;
     this.engineStarting = this.createEngine().finally(() => { this.engineStarting = null; });
     return this.engineStarting;
@@ -303,13 +305,23 @@ export class PlayerController {
       controls.contextState = ctx.state;
       controls.snapshot = () => ({ context: ctx.state, status: this.state.status,
         position: this.state.position, duration: this.state.duration, paused: this.diagnosticMixerPaused });
+      controls.suspend = async () => {
+        this.pause();
+        if (ctx.state !== 'closed') {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try { await Promise.race([ctx.suspend(), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Audio suspension timeout')), 2000); })]); }
+          finally { clearTimeout(timer); }
+          if (!['suspended', 'closed'].includes(ctx.state)) throw new Error('Audio context is still active');
+        }
+        reportContext();
+      };
       window.dispatchEvent(new Event('mora-context-state'));
     };
     const keepRunning = (event: Event) => {
       reportContext();
       tracePlayback('context.event', { reason: event.type, context: ctx.state, status: this.state.status, hidden: document.hidden });
       if (ctx.state !== 'running' && ctx.state !== 'closed' && (this.state.status === 'playing' || this.state.status === 'buffering')) {
-        const allowed = playbackDiagnostics()?.allowAutoResume ?? !nativePlaybackControls();
+        const allowed = !nativePlaybackControls()?.probeActive && (playbackDiagnostics()?.allowAutoResume ?? !nativePlaybackControls());
         if (!allowed) { tracePlayback('context.autoResume.suppressed', { context: ctx.state }); return; }
         tracePlayback('context.autoResume.request', { context: ctx.state });
         void ctx.resume().then(() => tracePlayback('context.autoResume.resolved', { context: ctx.state }), () => tracePlayback('context.autoResume.rejected', { context: ctx.state }));

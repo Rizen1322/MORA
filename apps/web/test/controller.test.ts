@@ -70,6 +70,11 @@ beforeEach(() => {
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); vi.unstubAllGlobals(); });
 
 describe('playback preparation and queue changes', () => {
+  it('prevents normal WebAudio output from starting during an independent native probe', async () => {
+    const { controller } = setup();
+    vi.stubGlobal('window', { moraNativePlayback: { probeActive: true } });
+    await expect(controller.unlockAudio()).rejects.toThrow('Остановите нативный тест');
+  });
   it('reports native context suspension without undoing it or treating a later running state as user Play', async () => {
     const { controller, h } = setup();
     const resume = vi.fn(async () => {});

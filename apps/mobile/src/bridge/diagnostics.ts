@@ -17,7 +17,7 @@ export async function setupDiagnostics(native: NativeDiagnostics): Promise<void>
   const pending = new Set<Promise<void>>();
   const drain = async () => { await Promise.all([...pending]); };
   const snapshot = (): TraceFields => ({ ...nativePlaybackControls()?.snapshot?.(),
-    route: nativePlaybackControls()?.route, allowed: d.allowAutoResume,
+    route: nativePlaybackControls()?.route, probeActive: nativePlaybackControls()?.probeActive ?? false, allowed: d.allowAutoResume,
     hidden: document.hidden, mediaState: navigator.mediaSession?.playbackState });
   const d: PlaybackDiagnostics = {
     allowAutoResume: false,
@@ -34,7 +34,11 @@ export async function setupDiagnostics(native: NativeDiagnostics): Promise<void>
     async report() { d.record('js.snapshot', snapshot()); await drain(); return native.diagnosticsReport(); },
     async clear() { await drain(); await native.diagnosticsClear(); d.record('js.test.cleared', snapshot()); },
     async share() { d.record('js.export', snapshot()); await drain(); await native.diagnosticsShare(); },
-    test: (action, seekTime) => native.diagnosticsTest({ action, seekTime }),
+    async test(action, seekTime) {
+      const controls = nativePlaybackControls();
+      if (controls?.probeActive && controls.probe) { await controls.probe.command(action, seekTime); return; }
+      await native.diagnosticsTest({ action, seekTime });
+    },
     setAutoResume(enabled) { d.allowAutoResume = enabled; d.record('js.autoResume.option', { allowed: enabled }); },
   };
   window.moraDiagnostics = d;

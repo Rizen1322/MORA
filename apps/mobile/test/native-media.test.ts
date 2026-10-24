@@ -8,6 +8,10 @@ const native = vi.hoisted(() => ({
   addListener: vi.fn(async (_event: string, _fn: any) => ({ remove: async () => {} })),
   diagnosticsInfo: vi.fn(async () => ({ enabled: false })),
   diagnosticsRecord: vi.fn(async (_event: any) => {}),
+  nativeProbeStart: vi.fn(async () => ({ active: true, playing: true, index: 0, position: 0, duration: 90 })),
+  nativeProbeStop: vi.fn(async () => {}),
+  nativeProbeState: vi.fn(async () => ({ active: false, playing: false, index: 0, position: 0, duration: 0 })),
+  nativeProbeCommand: vi.fn(async (_o: any) => ({ active: true, playing: false, index: 0, position: 60, duration: 90 })),
 }));
 vi.mock('@capacitor/core', () => ({
   Capacitor: { isNativePlatform: () => true }, CapacitorHttp: {}, registerPlugin: () => native,
@@ -44,6 +48,35 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('iPhone Now Playing bridge', () => {
+  it('isolates native playback from WebKit metadata, commands and the normal controller', async () => {
+    const originalPosition = ms.setPositionState, originalActions = ms.setActionHandler;
+    setupNative(emptyFetch, () => {});
+    const controls = window.moraNativePlayback!;
+    controls.contextState = 'running';
+    controls.suspend = async () => { controls.contextState = 'suspended'; update({ status: 'paused', position: 12 }); };
+    const next = vi.fn(); ms.setActionHandler('nexttrack', next);
+    const oldNext = originalActions.mock.calls.at(-1)![1];
+    ms.metadata = new Metadata({ title: 'Before test' });
+    update({ status: 'playing', position: 12 });
+    ms.setPositionState({ duration: 180, position: 12 });
+    await controls.probe!.start();
+    expect(controls.probeActive).toBe(true);
+    expect(controls.contextState).toBe('suspended');
+    expect(ms.published).toBeNull();
+    originalPosition.mockClear();
+    ms.metadata = new Metadata({ title: 'Cached while native plays' });
+    ms.setPositionState({ duration: 180, position: 16 });
+    update({ status: 'playing', position: 16 });
+    oldNext({ action: 'nexttrack' });
+    expect(next).not.toHaveBeenCalled();
+    expect(originalPosition).not.toHaveBeenCalled();
+    expect(ms.published).toBeNull();
+    await expect(controls.setRoute('native')).rejects.toThrow('Stop native');
+    await controls.probe!.stop();
+    expect(controls.probeActive).toBe(false);
+    expect(ms.published?.title).toBe('Cached while native plays');
+    expect(ms.playbackState).toBe('paused');
+  });
   it('defaults to real WebKit navigation handlers and changes routes without duplicate delivery', async () => {
     const webkit = ms.setActionHandler;
     setupNative(emptyFetch, () => {});
