@@ -61,7 +61,7 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
                     guard !ticket.cancelled else { throw Failure.cancelled }
                     guard !FileManager.default.fileExists(atPath: destination.path) else { throw Failure.network }
                     let partial = destination.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).download")
-                    guard FileManager.default.createFile(atPath: partial.path, contents: nil) else { throw Failure.network }
+                    guard FileManager.default.createFile(atPath: partial.path, contents: nil, attributes: NativePreparationFiles.attributes) else { throw Failure.network }
                     let file = try FileHandle(forWritingTo: partial)
                     var request = URLRequest(url: url); request.cachePolicy = .reloadIgnoringLocalCacheData
                     request.allHTTPHeaderFields = headers

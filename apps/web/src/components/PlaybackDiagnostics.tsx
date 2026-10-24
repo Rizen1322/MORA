@@ -37,7 +37,7 @@ export function PlaybackDiagnostics() {
       } catch { /* Older shell has no native baseline. */ }
     };
     void update();
-    const timer = setInterval(() => { if (nativePlaybackControls()?.probeActive) void update(); }, 1000);
+    const timer = setInterval(() => { const c = nativePlaybackControls(); if (c?.probeActive || c?.mixActive) void update(); }, 1000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [diagnostics]);
   if (!diagnostics) return null;
@@ -52,14 +52,14 @@ export function PlaybackDiagnostics() {
   const probeActive = !!controls?.probeActive;
   return <section className="pref-card playback-diagnostics" aria-label="Диагностика управления iOS">
     <h2>Управление на экране блокировки · диагностическая сборка</h2>
-    <p>Версия 1.0.14: микшер AutoMix работает нативно на Swift, без JavaScriptCore. Журнал записывается постоянно,
+    <p>Версия 1.0.15: загрузка и подготовка следующих песен работают вне WebView; микшер AutoMix — на Swift. Журнал записывается постоянно,
       метка сохраняет предыдущие события.</p>
     <div className="pref-card" style={{ padding: 14 }}>
       <h3>Нативный плеер · ваша музыка</h3>
-      <p>Музыка, AutoMix-переходы и экран блокировки работают в нативном движке iPhone. Плеер заранее готовит
-        текущую и две следующие песни: на экране блокировки они переключаются и смешиваются без приложения.
-        Следующие песни готовятся, пока приложение может работать; если iOS его приостановила, очередь продолжится
-        после того, как вы снова откроете MORA.</p>
+      <p>Включите альбом или плейлист и дождитесь сообщения «Очередь передана iPhone для фоновой подготовки».
+        После этого загрузка, анализ и планирование следующих переходов продолжаются при заблокированном экране.
+        Одновременно плеер держит готовыми две следующие песни и пополняет этот запас сам.
+        Для «Волны» передаётся уже подобранная очередь; подбор новых рекомендаций пока требует открытого приложения.</p>
       <label className="pref-row">
         <input type="checkbox" checked={nativePlayback} onChange={e => {
           try { localStorage.setItem(NATIVE_PLAYBACK_KEY, e.target.checked ? 'on' : 'off'); } catch { /* private storage */ }
@@ -68,6 +68,7 @@ export function PlaybackDiagnostics() {
       </label>
       {controls?.mixActive && mixState && <>
         <p role="status">Песня {mixState.index + 1}/{mixState.count ?? '?'} · {mixState.failed ? 'ошибка — экспортируйте журнал' : mixState.playing ? 'играет' : mixState.ended ? 'очередь закончилась' : 'пауза'} · {mixState.position.toFixed(1)} / {mixState.duration.toFixed(1)} с · пропуски звука: {mixState.underruns ?? 0}</p>
+        {mixState.preparation && <p role="status">Фоновая подготовка: {({ idle: 'ожидание', waiting: 'запас готов', downloading: 'загрузка', decoding: 'декодирование', analyzing: 'анализ', planning: 'планирование', complete: 'очередь подготовлена', failed: 'ошибка — экспортируйте журнал', cancelled: 'отменена' } as Record<string, string>)[mixState.preparation.state] ?? mixState.preparation.state} · подготовлено после передачи: {mixState.preparation.ready} · ошибок: {mixState.preparation.failedCount ?? 0}</p>}
         <div className="playback-diagnostics-actions">
           <button className="btn" disabled={busy || mixState.transitionStart === undefined} onClick={() => void run(async () => {
             controller.seek(Math.max(0, (mixState.transitionStart ?? 0) - 8));

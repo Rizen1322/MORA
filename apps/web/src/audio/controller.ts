@@ -408,6 +408,7 @@ export class PlayerController {
           loop.map(e => ({ trackId: e.trackId, entryId: e.entryId })), this.nativeAbort.signal);
         if (revision !== this.nativeRevision) return;
         this.nativeManifestKey = key; this.set({ nextPending: [], error: null });
+        if (entries.length || loop.length) this.notify('Очередь передана iPhone для фоновой подготовки', 'info');
         tracePlayback('native.queue.handoff', { outcome: 'accepted' });
       } catch {
         if (revision !== this.nativeRevision || this.nativeAbort.signal.aborted) return;
@@ -2233,6 +2234,11 @@ export class PlayerController {
   }
 
   private focusAnalysis(): void {
+    if (this.native && this.nativeMix.prepareQueue) {
+      // The native producer owns MIR and downloading; do not duplicate that work in WebContent.
+      void api.focus({ current: null, next: [], candidates: [] }).catch(() => {});
+      return;
+    }
     const cur = this.currentEntry?.trackId ?? null;
     const n = this.nextIndex();
     const next = n !== null ? [this.state.queue[n]?.trackId].filter(Boolean) as string[] : [];

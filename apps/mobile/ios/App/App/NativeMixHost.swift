@@ -3,10 +3,8 @@ import Foundation
 import MediaPlayer
 import UIKit
 
-/// Native MORA playback of a queue of fully uploaded tracks. The page appends tracks
-/// while it runs; the queue keeps playing (with its DJ transitions) while the page is
-/// suspended. All mutable engine/JSC/file state is confined to work; the audio
-/// completion only dispatches a small notification.
+/// Native playback plus a cancellable preparation producer, independent of page timers.
+/// Engine/file ownership is confined to work; analysis and downloads run off that queue.
 final class NativeMixHost {
     private let work = DispatchQueue(label: "ru.mora.native-mix", qos: .userInitiated)
     private let lock = NSLock()
@@ -85,7 +83,7 @@ final class NativeMixHost {
                     .appendingPathComponent("MORA/native-mix", isDirectory: true)
                 self.id = UUID().uuidString
                 let folder = root.appendingPathComponent(self.id, isDirectory: true)
-                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: NativePreparationFiles.attributes)
                 self.folder = folder; self.bytes = [:]; self.sourceBytes = [:]; self.pendingUploads = []; self.preparedFileKey = 500000; self.sourceKey = 0
                 self.preparing = true; self.failed = false
                 self.ownershipRevision += 1
@@ -102,7 +100,7 @@ final class NativeMixHost {
                       data.count <= 32768 * 8, data.count % 8 == 0,
                       self.bytes.values.reduce(0, +) + data.count <= 768 * 1024 * 1024, let url = self.file(track) else { throw Failure.invalid }
                 if offset == 0 {
-                    guard FileManager.default.createFile(atPath: url.path, contents: nil) else { throw Failure.invalid }
+                    guard FileManager.default.createFile(atPath: url.path, contents: nil, attributes: NativePreparationFiles.attributes) else { throw Failure.invalid }
                     self.pendingUploads.insert(track)
                 }
                 let file = try FileHandle(forWritingTo: url)
@@ -195,7 +193,7 @@ final class NativeMixHost {
                       offset + data.count <= 128 * 1024 * 1024,
                       self.sourceBytes.values.reduce(0, +) + data.count <= 512 * 1024 * 1024 else { throw Failure.invalid }
                 let url = folder.appendingPathComponent("source-\(key).media")
-                if offset == 0 { guard FileManager.default.createFile(atPath: url.path, contents: nil) else { throw Failure.invalid } }
+                if offset == 0 { guard FileManager.default.createFile(atPath: url.path, contents: nil, attributes: NativePreparationFiles.attributes) else { throw Failure.invalid } }
                 let file = try FileHandle(forWritingTo: url); defer { try? file.close() }
                 try file.seekToEnd(); try file.write(contentsOf: data); self.sourceBytes[key, default: 0] += data.count
                 self.reply(completion, .success([:]))

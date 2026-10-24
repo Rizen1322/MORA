@@ -48,6 +48,7 @@ it('hands off the full album once and follows native progress beyond the third t
   expect(mix.prepareQueue).toHaveBeenCalledOnce();
   expect(mix.prepareQueue.mock.calls[0][1].map(e => e.trackId)).toEqual(ids.slice(1));
   expect(api.prepare).toHaveBeenCalledTimes(1);
+  expect(api.focus).toHaveBeenLastCalledWith({ current: null, next: [], candidates: [] });
   expect(mix.update).not.toHaveBeenCalled();
   const entries = controller.state.queue;
   h.onNativeState(state({ index: 4, position: 3, entryId: entries[4].entryId,

@@ -82,7 +82,7 @@ final class NativeMediaLoader {
         }
         guard text.contains("#EXT-X-ENDLIST"), !segments.isEmpty, segments.count <= 10000 else { throw Failure.playlist }
         let partial = destination.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).hls")
-        guard FileManager.default.createFile(atPath: partial.path, contents: nil) else { throw Failure.playlist }
+        guard FileManager.default.createFile(atPath: partial.path, contents: nil, attributes: NativePreparationFiles.attributes) else { throw Failure.playlist }
         defer { try? FileManager.default.removeItem(at: partial) }
         let file = try FileHandle(forWritingTo: partial); defer { try? file.close() }
         var total = 0, byteOffset = 0

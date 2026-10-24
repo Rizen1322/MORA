@@ -1,6 +1,17 @@
 import AVFoundation
 import Foundation
 
+/// Preparation continues after screen lock, after the device's first unlock.
+enum NativePreparationFiles {
+    static var attributes: [FileAttributeKey: Any] {
+        #if os(iOS)
+        return [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
+        #else
+        return [:]
+        #endif
+    }
+}
+
 /// File conversion on the preparation queue; never called by the audio renderer.
 enum NativePCMDecoder {
     enum Failure: Error { case invalid, cancelled, limit }
@@ -37,7 +48,7 @@ enum NativePCMDecoder {
               let converter = AVAudioConverter(from: source, to: format),
               let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8192) else { throw Failure.invalid }
         let partial = destination.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).partial")
-        guard FileManager.default.createFile(atPath: partial.path, contents: nil) else { throw Failure.invalid }
+        guard FileManager.default.createFile(atPath: partial.path, contents: nil, attributes: NativePreparationFiles.attributes) else { throw Failure.invalid }
         defer { try? FileManager.default.removeItem(at: partial) }
         let file = try FileHandle(forWritingTo: partial)
         defer { try? file.close() }

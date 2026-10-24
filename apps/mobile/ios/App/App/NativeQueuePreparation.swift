@@ -151,7 +151,7 @@ final class NativeQueuePreparation: @unchecked Sendable {
             if ticket.cancelled { state("cancelled", ready: produced, remaining: 0) }
             else if loop.isEmpty && cursor == batch.count { state("complete", ready: produced, remaining: 0) }
         } catch {
-            if !ticket.cancelled { state("failed", ready: produced, remaining: raw.count - produced, reason: "analysis"); event("failed", "analysis") }
+            if !ticket.cancelled { state("failed", ready: produced, remaining: max(0, raw.count - processed), reason: "analysis"); event("failed", "analysis") }
         }
     }
     private func analysis(_ core: NativePreparationCore, folder: URL, file: Int, frames: Int) throws -> [String: Any] {
