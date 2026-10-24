@@ -1,4 +1,6 @@
 import { TrackArtists } from './TrackArtists.tsx';
+import { Radio } from '@phosphor-icons/react';
+import { startSimilar } from '../lib/radio.ts';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   CaretDown,
@@ -331,7 +333,8 @@ export function PlayerBar() {
       </div>
       <div className="pb-right">
         <button className="pb-next-preview" onClick={() => setQueueOpen(!queueOpen)} aria-label={upcoming ? `Дальше: ${upcoming.title}. Открыть очередь` : 'Открыть очередь'}>
-          {upcoming ? <><Cover url={upcoming.coverUrl} seed={upcoming.album || upcoming.id} size={30} /><span><span>Дальше</span><strong>{upcoming.title}</strong></span><Queue size={16} /></> : <span>Ваша очередь <Queue size={16} /></span>}
+          {upcoming ? <><Cover url={upcoming.coverUrl} seed={upcoming.album || upcoming.id} size={30} /><span><span>Дальше</span><strong>{upcoming.title}</strong></span><Queue size={16} /></>
+            : p.continuation ? <><span><span>Дальше</span><strong>{p.continuation}</strong></span><Queue size={16} /></> : <span>Ваша очередь <Queue size={16} /></span>}
         </button>
         <div className="pb-tools">
         <button className="icon-btn" aria-label="Диагностика AutoMix" onClick={() => go('/diagnostics')}>
@@ -545,6 +548,7 @@ export function FullPlayer() {
               <button className="icon-btn" aria-pressed={t.reaction < 0} aria-label="Не нравится" onClick={() => void react(t, t.reaction < 0 ? 0 : -1)}>
                 <HeartBreak size={23} weight={t.reaction < 0 ? 'fill' : 'regular'} />
               </button>
+              <button className="icon-btn" aria-label="Похожее на этот трек" title="Дальше — похожее на этот трек" disabled={t.reaction < 0} onClick={() => void startSimilar(t)}><Radio size={23} /></button>
             </div>
             <Volume p={p} />
           </div>
@@ -554,6 +558,12 @@ export function FullPlayer() {
             <button className="fp-next-track" onClick={() => setShowQueue(true)} aria-label={`Открыть очередь. Далее: ${next.title}`}>
               <Swap k={next.id} className="fp-next-cover"><Cover url={next.coverUrl} seed={next.album || next.id} size={48} /></Swap>
               <span><span className="fp-next-label">{p.transition?.active ? 'Уже входит в микс' : 'Следом за этим треком'}</span><Swap k={next.id} className="fp-next-copy"><span><strong className="ellipsis">{next.title}</strong><span className="caption muted ellipsis">{next.artist}</span></span></Swap></span>
+              <CaretRight size={18} aria-hidden="true" />
+            </button>
+          </section>}
+          {!next && p.continuation && <section className="fp-up-next" aria-label="Следующий трек">
+            <button className="fp-next-track" onClick={() => setShowQueue(true)} aria-label={`Открыть очередь. Далее: ${p.continuation}`}>
+              <span><span className="fp-next-label">Следом за этим треком</span><Swap k="continuation" className="fp-next-copy"><span><strong className="ellipsis">{p.continuation}</strong><span className="caption muted ellipsis">Подбираю похожую музыку…</span></span></Swap></span>
               <CaretRight size={18} aria-hidden="true" />
             </button>
           </section>}

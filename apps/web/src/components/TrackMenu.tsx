@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowBendDownRight, Heart, HeartBreak, ListPlus, MusicNotesPlus, PencilSimple, Play, Trash, User, VinylRecord, ChartLine, ArrowSquareOut, Waveform, Swap, DownloadSimple, Radio } from '@phosphor-icons/react';
-import { startRadio } from '../lib/radio.ts';
+import { startArtistRadio, startSimilar } from '../lib/radio.ts';
 import { openVersionPanel } from './VersionPanel.tsx';
 import { api, type Track } from '../lib/api.ts';
 import { trackAlbumHref, trackArtistLinks, go } from '../lib/router.ts';
@@ -55,8 +55,11 @@ export function TrackMenu({ track, x, y, onClose, onPlay, extra }: { track: Trac
               <DownloadSimple size={18} /> {track.pinned ? 'Удалить загрузку' : 'Скачать'}
             </button>
           )}
-          <button role="menuitem" onClick={() => { onClose(); void startRadio({ title: track.title, artist: track.artist }); }}>
-            <Radio size={18} /> Радио по треку
+          <button role="menuitem" onClick={() => { onClose(); void startSimilar(track); }} disabled={track.reaction < 0}>
+            <Radio size={18} /> Похожее на этот трек
+          </button>
+          <button role="menuitem" onClick={() => { onClose(); void startArtistRadio(trackArtistLinks(track)[0]?.name ?? track.artist); }}>
+            <Radio size={18} /> Радио по исполнителю
           </button>
           <button role="menuitem" onClick={() => { onClose(); openVersionPanel({ trackId: track.id, title: track.title, artist: track.artist, duration: track.duration }); }}>
             <Swap size={18} /> Найти другую версию

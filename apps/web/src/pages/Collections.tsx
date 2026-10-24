@@ -8,6 +8,7 @@ import { ConfirmModal, Cover, PromptModal } from '../components/common.tsx';
 import { TrackList } from '../components/TrackList.tsx';
 import { CollectionHeader } from './Library.tsx';
 import { PlaylistMix } from '../components/PlaylistMix.tsx';
+import { LikeAllTracks } from '../components/LikeAll.tsx';
 
 export function PlaylistPage() {
   const { parts } = useRoute();
@@ -77,6 +78,7 @@ export function PlaylistPage() {
         <button className="btn btn-ghost btn-sm" aria-pressed={reorder} onClick={() => setReorder(!reorder)} disabled={tracks.length < 2}>
           {reorder ? <Check size={16} /> : <ListNumbers size={16} />} {reorder ? 'Готово' : 'Порядок'}
         </button>
+        {tracks.length > 0 && <LikeAllTracks tracks={tracks} />}
         <a className="btn btn-ghost btn-sm" href={`/api/backup/playlists?playlist=${encodeURIComponent(id)}`} download="MORA-playlist.json">Экспорт</a>
         <button className="btn btn-secondary btn-sm" disabled={tracks.length < 2} onClick={() => setMix(true)}>Собрать микс</button>
         <button className="btn btn-danger btn-sm" onClick={() => setModal('delete')}>

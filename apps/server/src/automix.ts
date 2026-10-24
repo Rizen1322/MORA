@@ -10,10 +10,13 @@ import {
   planSkip,
   planTransition,
   planRequestedTransition,
+  ratingFeatures,
+  ratingStats,
   stepAsync,
   type AutoMixSettings,
   type PcmSpan,
   type PlannerTrack,
+  type RatingStats,
   type TransitionPlan,
   type TransitionRating,
   type TransitionRatingReason,
@@ -25,10 +28,16 @@ import type { Library, TrackRow } from './library.ts';
 
 export interface AppSettings {
   automix: AutoMixSettings;
-  wave: { mood: 'calm' | 'normal' | 'energetic'; diversity: 'familiar' | 'balanced' | 'discover'; mode: 'normal' | 'mix'; yandexSeeds?: string[] };
+  /** continueRadio: a finished queue goes on as a station of similar music. */
+  wave: { mood: 'calm' | 'normal' | 'energetic'; diversity: 'familiar' | 'balanced' | 'discover'; mode: 'normal' | 'mix'; yandexSeeds?: string[]; continueRadio: boolean };
   ui: { showDiagnostics: boolean; motion?: 'system'|'full'|'reduced'; graphics?: 'auto'|'canvas' };
   sound: SoundSettings;
   yandex: YandexIntegrationSettings;
+  /** autoLiked: liking an online track also downloads it for offline listening. */
+  downloads: { autoLiked: boolean };
+  /** onlyWhenIdle (desktop, default on there): the whole library is analyzed only while the computer is idle
+   * and on mains power; the current and next tracks always are. */
+  analysis: { onlyWhenIdle: boolean };
 }
 
 /** What the connected Yandex Music account is used for. Every switch defaults to on. */
@@ -41,10 +50,12 @@ export interface YandexIntegrationSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   automix: DEFAULT_AUTOMIX_SETTINGS,
-  wave: { mood: 'normal', diversity: 'balanced', mode: 'normal' },
+  wave: { mood: 'normal', diversity: 'balanced', mode: 'normal', continueRadio: true },
   ui: { showDiagnostics: false },
   sound: sanitizeSound(undefined),
   yandex: { syncLikes: true, syncDislikes: true, importLikes: true, waveFeedback: true },
+  downloads: { autoLiked: false },
+  analysis: { onlyWhenIdle: false },
 };
 
 const vocalKeys = new WeakMap<object, string>();
@@ -72,6 +83,9 @@ export function getSettings(db: Db): AppSettings {
     sound: sanitizeSound(s.sound),
     // Older settings predate the integration switches: everything stays enabled.
     yandex: { ...DEFAULT_SETTINGS.yandex, ...(s.yandex ?? {}) },
+    downloads: { ...DEFAULT_SETTINGS.downloads, ...(s.downloads ?? {}) },
+    // only the desktop app reports idle and mains power
+    analysis: { ...DEFAULT_SETTINGS.analysis, onlyWhenIdle: process.env.AUTOMIX_DESKTOP === '1', ...(s.analysis ?? {}) },
   };
 }
 
@@ -99,7 +113,7 @@ export class AutoMixService {
   plan(fromId: string, toId: string): { plan: TransitionPlan; cached: boolean; pending: string[] } {
     const r = this.prepare(fromId, toId);
     if ('plan' in r) return r;
-    const plan = planTransition(r.pa, r.pb, r.settings);
+    const plan = planTransition(r.pa, r.pb, r.settings, undefined, r.feedback);
     if (!r.pending.length) this.store(r.key, plan, r.a.content_hash, r.b.content_hash);
     return { plan, cached: false, pending: r.pending };
   }
@@ -114,7 +128,7 @@ export class AutoMixService {
     const r = unchecked ? this.prepare(fromId, toId, true) : cached;
     if ('plan' in r) return r;
     // stepped: the iPhone app's in-process server keeps answering PCM reads while this plans
-    const finalists = r.pending.length ? [planTransition(r.pa, r.pb, r.settings)] : await stepAsync(planFinalistsSteps(r.pa, r.pb, r.settings));
+    const finalists = r.pending.length ? [planTransition(r.pa, r.pb, r.settings, undefined, r.feedback)] : await stepAsync(planFinalistsSteps(r.pa, r.pb, r.settings, r.feedback));
     if (finalists.length < 2) {
       if (!r.pending.length) this.store(r.key, finalists[0], r.a.content_hash, r.b.content_hash);
       return { plan: finalists[0], cached: false, pending: r.pending };
@@ -136,7 +150,7 @@ export class AutoMixService {
   }
 
   private prepare(fromId: string, toId: string, ignoreCache = false): { plan: TransitionPlan; cached: true; pending: string[] }
-    | { a: TrackRow; b: TrackRow; pa: PlannerTrack; pb: PlannerTrack; settings: AutoMixSettings; key: string; pending: string[] } {
+    | { a: TrackRow; b: TrackRow; pa: PlannerTrack; pb: PlannerTrack; settings: AutoMixSettings; feedback: RatingStats | null; key: string; pending: string[] } {
     const a = this.lib.get(fromId);
     const b = this.lib.get(toId);
     if (!a || !b) throw new Error('трек не найден');
@@ -147,17 +161,47 @@ export class AutoMixService {
     if (!pa.analysis && pa.mixingAllowed) pending.push(a.id);
     if (!pb.analysis && pb.mixingAllowed) pending.push(b.id);
     if (pending.length) this.analysis.prioritize(pending, PRIORITY.next);
+    const feedback = this.ratingStats();
     const key = fnv1a(
       [a.id, b.id, a.content_hash, b.content_hash, ANALYZER_VERSION, PLANNER_VERSION, JSON.stringify(settings), pa.mixingAllowed, pb.mixingAllowed,
         a.album, b.album, pa.albumArtist, pb.albumArtist, a.track_no, b.track_no, a.disc_no, b.disc_no, !!pa.analysis, !!pb.analysis,
-        vocalKey(pa.analysis?.vocalActivity),vocalKey(pb.analysis?.vocalActivity)].join('|'),
+        // new ratings make new plans; without any the key stays as before
+        vocalKey(pa.analysis?.vocalActivity),vocalKey(pb.analysis?.vocalActivity), ...(feedback ? [feedback.version] : [])].join('|'),
     );
     const row = q(this.db, 'SELECT plan FROM transition_cache WHERE key = ?').get(key) as { plan: string } | undefined;
     if (row && !ignoreCache) {
       q(this.db, 'UPDATE transition_cache SET used_at = ? WHERE key = ?').run(Date.now(), key);
       return { plan: JSON.parse(row.plan) as TransitionPlan, cached: true, pending };
     }
-    return { a, b, pa, pb, settings, key, pending };
+    return { a, b, pa, pb, settings, feedback, key, pending };
+  }
+
+  private feedback: { sig: string; stats: RatingStats | null } | null = null;
+
+  /** Smoothed listener-rating statistics of executed transitions, recomputed only when a rating changes. */
+  ratingStats(): RatingStats | null {
+    const s = q(this.db, 'SELECT COUNT(*) AS n, COALESCE(MAX(rated_at), 0) AS t, COALESCE(SUM(id), 0) AS ids FROM transition_log WHERE rating IS NOT NULL').get() as { n: number; t: number; ids: number };
+    const sig = `${s.n}|${s.t}|${s.ids}`;
+    if (this.feedback?.sig === sig) return this.feedback.stats;
+    const rows = q(this.db, 'SELECT from_track, to_track, plan, rating FROM transition_log WHERE rating IS NOT NULL ORDER BY id').all() as
+      { from_track: string | null; to_track: string | null; plan: string; rating: TransitionRating }[];
+    // the tempo of an unlocked pair comes from the small analysis summary, not the whole analysis
+    const tempoOf = (id: string | null) => {
+      const t = id ? this.lib.get(id) : undefined;
+      const row = t && q(this.db, "SELECT summary FROM analysis WHERE content_hash = ? AND status = 'done' AND summary IS NOT NULL ORDER BY version = ? DESC, updated_at DESC LIMIT 1")
+        .get(t.content_hash, ANALYZER_VERSION) as { summary: string } | undefined;
+      const bpm = row ? (JSON.parse(row.summary) as { bpm?: number | null }).bpm : null;
+      return { beat: typeof bpm === 'number' ? { bpm } : null };
+    };
+    const rated = rows.flatMap((r) => {
+      let plan: TransitionPlan;
+      try { plan = JSON.parse(r.plan) as TransitionPlan; } catch { return []; }
+      if (!plan?.method) return [];
+      return [{ rating: r.rating, features: ratingFeatures(plan, plan.beatAlign ? null : tempoOf(r.from_track), plan.beatAlign ? null : tempoOf(r.to_track)) }];
+    });
+    const stats = ratingStats(rated);
+    this.feedback = { sig, stats };
+    return stats;
   }
 
   /** Only plans built on finished analysis are worth caching. */

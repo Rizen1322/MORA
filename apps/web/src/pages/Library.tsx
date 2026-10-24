@@ -1,6 +1,8 @@
 import { hasTrackArtist, trackArtists } from '../lib/artists.ts';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { MagnifyingGlass, Play, Shuffle, Plus, ArrowUpRight, Stack } from '@phosphor-icons/react';
+import { MagnifyingGlass, Play, Shuffle, Plus, ArrowUpRight, Stack, Radio } from '@phosphor-icons/react';
+import { LikeAllTracks } from '../components/LikeAll.tsx';
+import { startArtistRadio } from '../lib/radio.ts';
 import { api, type Track } from '../lib/api.ts';
 import { fmtTotal, tracksWord } from '../lib/format.ts';
 import { albumHref, artistHref, searchHref, useRoute } from '../lib/router.ts';
@@ -307,7 +309,7 @@ export function AlbumPage() {
   const t = list.find((x) => x.coverUrl) ?? list[0];
   return (
     <div className="main-inner">
-      <CollectionHeader kind="Альбом" title={album} sub={`${artist} · ${t.year ?? ''} ${tracksWord(list.length)}, ${fmtTotal(list.reduce((a, x) => a + x.duration, 0))}`} cover={t.coverUrl} seed={album} onPlay={() => play(0)} onShuffle={() => play(Math.floor(Math.random() * list.length), true)} />
+      <CollectionHeader kind="Альбом" title={album} sub={`${artist} · ${t.year ?? ''} ${tracksWord(list.length)}, ${fmtTotal(list.reduce((a, x) => a + x.duration, 0))}`} cover={t.coverUrl} seed={album} onPlay={() => play(0)} onShuffle={() => play(Math.floor(Math.random() * list.length), true)}><LikeAllTracks tracks={list} /></CollectionHeader>
       <TrackList tracks={list} showAlbum={false} onPlay={(i) => play(i)} />
     </div>
   );
@@ -327,7 +329,11 @@ export function ArtistPage() {
   const t = list.find((x) => x.coverUrl) ?? list[0];
   return (
     <div className="main-inner">
-      <CollectionHeader kind="Исполнитель" title={artist} sub={tracksWord(list.length)} cover={t.coverUrl} seed={artist} round onPlay={() => play(0)} onShuffle={() => play(Math.floor(Math.random() * list.length), true)}><a className="btn btn-ghost" href={searchHref(artist, 'artist')}>Найти в каталоге Яндекса</a></CollectionHeader>
+      <CollectionHeader kind="Исполнитель" title={artist} sub={tracksWord(list.length)} cover={t.coverUrl} seed={artist} round onPlay={() => play(0)} onShuffle={() => play(Math.floor(Math.random() * list.length), true)}>
+        <button className="btn btn-ghost" onClick={() => void startArtistRadio(artist)}><Radio size={18} /> Радио по исполнителю</button>
+        <LikeAllTracks tracks={list} />
+        <a className="btn btn-ghost" href={searchHref(artist, 'artist')}>Найти в каталоге Яндекса</a>
+      </CollectionHeader>
       <TrackList tracks={list} onPlay={(i) => play(i)} />
     </div>
   );

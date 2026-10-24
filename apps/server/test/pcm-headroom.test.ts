@@ -77,6 +77,39 @@ describe('playback decoder headroom', () => {
     } finally { reopened.shutdown(); }
   });
 
+  it('16-bit store (phone) halves the file, keeps overs up to +6 dB and still reads float', async () => {
+    const cfg = loadConfig({ dataDir: path.join(dir, 's16-store'), stemsPython: null, pcmCacheFormat: 's16le' });
+    const ff = new FfmpegTools(cfg.ffmpeg, cfg.ffprobe);
+    const folder = path.join(cfg.dataDir, 'cache', 'pcm');
+    fs.mkdirSync(folder, { recursive: true });
+    // a float file from the desktop format is never read as 16-bit
+    fs.writeFileSync(path.join(folder, 'hot16_44100.f32'), Buffer.alloc(400));
+    const cache = new PcmCache(cfg, ff);
+    const reference = execFileSync('ffmpeg', ['-v', 'error', '-i', source, '-ac', '2', '-ar', '44100', '-f', 'f32le', 'pipe:1'], { windowsHide: true });
+    try {
+      const e = cache.open('hot16', 44100, async () => source, 1);
+      const r = await cache.read(e, 1000, 4096);
+      expect(r.totalFrames).toBe(44100);
+      expect(r.data.length).toBe(4096 * 8);
+      let peak = 0, err = 0;
+      for (let i = 0; i < r.data.length; i += 4) {
+        const v = r.data.readFloatLE(i);
+        peak = Math.max(peak, Math.abs(v));
+        err = Math.max(err, Math.abs(v - reference.readFloatLE(1000 * 8 + i)));
+      }
+      expect(peak).toBeGreaterThan(1.24);
+      expect(err).toBeLessThanOrEqual(2 / 32768);
+      expect((await cache.read(e, 0, 44101)).complete).toBe(true);
+      expect(fs.statSync(path.join(folder, 'hot16_44100.s16h')).size).toBe(44100 * 4);
+    } finally { cache.shutdown(); }
+    const reopened = new PcmCache(cfg, ff);
+    try {
+      const e = reopened.open('hot16', 44100, async () => { throw new Error('must reuse the 16-bit store'); }, 99);
+      expect(e.estimatedFrames).toBe(44100);
+      expect((await reopened.read(e, 44000, 1000)).data.length).toBe(100 * 8);
+    } finally { reopened.shutdown(); }
+  });
+
   it('joins concurrent requests before the source resolves instead of decoding twice', async () => {
     const cfg = loadConfig({ dataDir: path.join(dir, 'single-flight'), stemsPython: null });
     const ff = new FfmpegTools(cfg.ffmpeg, cfg.ffprobe), decode = vi.spyOn(ff, 'decode');

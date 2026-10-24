@@ -55,6 +55,28 @@ describe('progressive audio through the single PCM engine', () => {
     expect(tail.rawPayload.length).toBeGreaterThan(0);
   });
 
+  it('keeps reading after the finished download is moved out of staging (ADTS .aac streams too)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mora-moved-stream-'));
+    cleanup.push(async () => { fs.rmSync(dir, { recursive: true, force: true }); });
+    const staging = path.join(dir, 'staging'), staged = path.join(staging, 'track.aac'), published = path.join(dir, 'published.aac');
+    await fsp.mkdir(staging);
+    const bytes = Buffer.from(Array.from({ length: 600_000 }, (_, i) => i % 251));
+    await fsp.writeFile(staged, bytes.subarray(0, 300_000));
+    const finish = deferred();
+    const state = { staging, done: false, error: null as Error | null, result: finish.promise.then(() => published) };
+    const input = await growingAudioInput(state);
+    if (typeof input === 'string') throw new Error('expected stream');
+    const got: Buffer[] = [];
+    const reading = (async () => { for await (const c of input) got.push(c as Buffer); })();
+    await vi.waitFor(() => expect(got.reduce((n, c) => n + c.length, 0)).toBe(300_000));
+    // the writer completes, publishes (moves) the file, then reports done
+    await fsp.appendFile(staged, bytes.subarray(300_000));
+    await fsp.rename(staged, published);
+    state.done = true; finish.resolve();
+    await reading;
+    expect(Buffer.concat(got).equals(bytes)).toBe(true);
+  });
+
   it('does not treat a broken transfer as a completed stream', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mora-broken-stream-'));
     cleanup.push(async () => { fs.rmSync(dir, { recursive: true, force: true }); });

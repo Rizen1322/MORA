@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({ intent: 1, owner: null as number | null, left: 15, items: [] as any[], tracks: new Map<string, any>(), callbacks: [] as (()=>void)[], play: vi.fn(), extend: vi.fn(), search: vi.fn(), related: vi.fn(), toast: vi.fn() }));
-vi.mock('../src/store/app.ts',()=>({controller:{unlockAudio:async()=>{},get intentVersion(){return h.intent},subscribe:(fn:()=>void)=>h.callbacks.push(fn)},useApp:{getState:()=>({tracks:h.tracks,settings:{wave:{mood:'normal',diversity:'balanced',mode:'mix'}},toast:h.toast})}}));
+vi.mock('../src/store/app.ts',()=>({controller:{state:{queue:[],index:-1},unlockAudio:async()=>{},get intentVersion(){return h.intent},subscribe:(fn:()=>void)=>h.callbacks.push(fn)},useApp:{subscribe:()=>()=>{},getState:()=>({tracks:h.tracks,settings:{wave:{mood:'normal',diversity:'balanced',mode:'mix'}},toast:h.toast})}}));
 vi.mock('../src/store/catalog.ts',()=>({publicPlayer:{get sessionVersion(){return h.owner},get remaining(){return h.left},get sessionItems(){return h.items},play:(...args:any[])=>h.play(...args),extend:(...args:any[])=>h.extend(...args)}}));
 vi.mock('../src/pages/Search.tsx',()=>({asCatalog:(t:any)=>t}));
 vi.mock('../src/lib/api.ts',()=>({api:{publicSearch:(...args:any[])=>h.search(...args),publicRadio:(...args:any[])=>h.related(...args)}}));

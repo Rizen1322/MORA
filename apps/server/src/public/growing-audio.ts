@@ -9,7 +9,8 @@ export interface GrowingAudio {
   result: Promise<string>;
 }
 const wait = () => new Promise<void>((resolve) => setTimeout(resolve, 40));
-const STREAMABLE = /\.(webm|mp3|opus|ogg|flac|wav)$/i;
+// ADTS .aac (HLS packed audio) is a plain frame stream like MP3.
+const STREAMABLE = /\.(webm|mp3|opus|ogg|flac|wav|aac)$/i;
 
 /** Reads the writer's existing bytes once, waits for new bytes and ends only after verification. */
 export async function growingAudioInput(state: GrowingAudio, signal?: AbortSignal): Promise<string | Readable> {
@@ -18,26 +19,32 @@ export async function growingAudioInput(state: GrowingAudio, signal?: AbortSigna
     const files = await fs.readdir(state.staging).catch(() => []);
     for (const name of files) {
       if (!STREAMABLE.test(name)) continue; // MP4/M4A may need a moov atom at the end: use the complete file.
-      const file = path.join(state.staging, name);
-      const stat = await fs.stat(file).catch(() => null);
+      const staged = path.join(state.staging, name);
+      const stat = await fs.stat(staged).catch(() => null);
       if (!stat || stat.size < 16384 || !stat.isFile()) continue;
-      const handle = await fs.open(file, 'r').catch(() => null);
-      if (!handle) continue;
       let stream!: Readable;
       stream = Readable.from((async function* () {
-        let position = 0;
-        try {
-          while (!stream.destroyed) {
-            if (state.error) throw state.error;
-            const buffer = Buffer.allocUnsafe(64 * 1024);
-            const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
-            if (bytesRead) { position += bytesRead; yield buffer.subarray(0, bytesRead); continue; }
-            if (state.done) { await state.result; break; }
-            await wait();
+        // The file is opened per read, never held: the finished download is moved into the cache
+        // (the iPhone's file layer waits for open handles before a move). Once moved, the rest comes
+        // from the published file at the same position.
+        let position = 0, file = staged;
+        while (!stream.destroyed) {
+          if (state.error) throw state.error;
+          const handle = await fs.open(file, 'r').catch((e: NodeJS.ErrnoException) => { if (e.code === 'ENOENT') return null; throw e; });
+          if (!handle) {
+            if (file !== staged) throw new Error('файл записи пропал');
+            while (!state.done) { if (state.error) throw state.error; await wait(); }
+            file = await state.result;
+            continue;
           }
-        } finally { await handle.close().catch(() => {}); }
+          let bytesRead = 0;
+          const buffer = Buffer.allocUnsafe(256 * 1024);
+          try { ({ bytesRead } = await handle.read(buffer, 0, buffer.length, position)); } finally { await handle.close().catch(() => {}); }
+          if (bytesRead) { position += bytesRead; yield buffer.subarray(0, bytesRead); continue; }
+          if (state.done) { await state.result; break; }
+          await wait();
+        }
       })());
-      stream.once('close', () => { void handle.close().catch(() => {}); });
       return stream;
     }
     await wait();

@@ -5,6 +5,7 @@ import { useRoute } from '../lib/router.ts';
 import { publicPlayer, usePublicPlayback } from '../store/catalog.ts';
 import { Cover } from '../components/common.tsx';
 import { PublicRow, asCatalog } from './Search.tsx';
+import { PublicLikeAll } from './PublicCatalog.tsx';
 import '../styles/catalog.css';
 import '../styles/public-catalog.css';
 
@@ -30,7 +31,7 @@ export function SoundCloudArtistPage() {
             <Cover url={page.coverUrl} seed={page.id} round />
             <div className="catalog-hero-content"><p className="catalog-eyebrow">Исполнитель · SoundCloud</p><h1>{page.title}</h1>
               {page.description && <p className="public-catalog-description">{page.description}</p>}
-              <div className="catalog-hero-actions"><button className="btn btn-primary" disabled={!page.tracks.length} onClick={() => play()}><Play size={20} weight="fill" />Слушать</button><a className="btn btn-ghost" href={`https://soundcloud.com/${encodeURIComponent(page.permalink)}`} target="_blank" rel="noreferrer noopener"><ArrowSquareOut size={17} />SoundCloud</a></div>
+              <div className="catalog-hero-actions"><button className="btn btn-primary" disabled={!page.tracks.length} onClick={() => play()}><Play size={20} weight="fill" />Слушать</button>{page.tracks.length > 0 && <PublicLikeAll tracks={page.tracks} />}<a className="btn btn-ghost" href={`https://soundcloud.com/${encodeURIComponent(page.permalink)}`} target="_blank" rel="noreferrer noopener"><ArrowSquareOut size={17} />SoundCloud</a></div>
             </div>
           </header>
           {(prep.phase !== 'idle' || prep.error) && <div className="catalog-playback-notice" role={prep.error ? 'alert' : 'status'}><span>{prep.error ?? `Готовим: ${prep.title}`}</span><button className="icon-btn" aria-label="Закрыть" onClick={() => prep.error ? publicPlayer.dismissError() : publicPlayer.cancel()}><X size={18} /></button></div>}

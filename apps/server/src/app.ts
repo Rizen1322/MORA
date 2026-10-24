@@ -3,7 +3,7 @@ import path from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { AnalysisService } from './analysis.ts';
-import { AutoMixService } from './automix.ts';
+import { AutoMixService, getSettings } from './automix.ts';
 import { ensureDirs, loadConfig, type AppConfig } from './config.ts';
 import { openDb, type Db } from './db.ts';
 import { EventHub } from './events.ts';
@@ -13,6 +13,7 @@ import { PcmCache } from './pcmCache.ts';
 import { ProviderRegistry } from './providers/index.ts';
 import { registerLibraryRoutes } from './routes/library.ts';
 import { registerPlaybackRoutes } from './routes/playback.ts';
+import { registerPreviewRoutes } from './routes/preview.ts';
 import { registerMiscRoutes } from './routes/misc.ts';
 import { registerCatalogRoutes } from './routes/catalog.ts';
 import { registerPublicCatalogRoutes } from './routes/public-catalog.ts';
@@ -84,6 +85,7 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
   lib.reactionSyncFor = (trackId) => yandexReactions.status(trackId);
   lib.displayReactionFor = (trackId, local) => yandexReactions.displayReaction(trackId, local);
   analysis.vocalActivityFor=(hash)=>stems.activity(hash);
+  analysis.setPower({ onlyWhenIdle: getSettings(db).analysis.onlyWhenIdle });
   lib.onTrackAdded = (t) => {analysis.ensure(t, 5);yandexReactions.attachTrack(t.id);};
   const automix = new AutoMixService(db, lib, analysis);
   const wave = new WaveService(db, lib, analysis);
@@ -140,6 +142,7 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
 
   registerLibraryRoutes(app, services);
   registerPlaybackRoutes(app, services);
+  registerPreviewRoutes(app, services);
   registerMiscRoutes(app, services);
   registerCatalogRoutes(app, services);
   registerPublicCatalogRoutes(app, services);

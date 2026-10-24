@@ -35,6 +35,7 @@ export type EngineCommand =
   | { cmd: 'arm'; transition: ArmedTransition }
   | { cmd: 'disarm' }
   | { cmd: 'finish'; fade: number }
+  | { cmd: 'tickRate'; seconds: number }
   | { cmd: 'stop' };
 
 class AutoMixProcessor extends AudioWorkletProcessor {
@@ -110,6 +111,9 @@ class AutoMixProcessor extends AudioWorkletProcessor {
         break;
       case 'stop':
         c.stopAll();
+        break;
+      case 'tickRate':
+        c.setTickSeconds(m.seconds);
         break;
     }
   }

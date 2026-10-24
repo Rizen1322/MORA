@@ -131,11 +131,12 @@ export function TitleBar() {
 export function TabBar() {
   const { path } = useRoute();
   const items = [
-    { href: '#/', label: 'Главная', Icon: House, on: path === '/' },
-    { href: '#/wave', label: 'Волна', Icon: Waveform, on: path === '/wave' },
+    // The wave starts from the large card on Home, so its page belongs to that tab.
+    { href: '#/', label: 'Главная', Icon: House, on: path === '/' || path === '/wave' },
+    { href: '#/liked', label: 'Любимое', Icon: Heart, on: path === '/liked' },
     { href: '#/library', label: 'Медиатека', Icon: Books, on: (path.startsWith('/library') && path !== '/library/search') || path.startsWith('/playlist') || path.startsWith('/album') || path.startsWith('/artist') },
     { href: '#/search', label: 'Поиск', Icon: MagnifyingGlass, on: path === '/library/search' || path === '/search' || path.startsWith('/catalog') },
-    { href: '#/more', label: 'Ещё', Icon: DotsThreeCircle, on: ['/more', '/settings', '/sources', '/history', '/liked', '/diagnostics'].includes(path) },
+    { href: '#/more', label: 'Ещё', Icon: DotsThreeCircle, on: ['/more', '/settings', '/sources', '/history', '/diagnostics'].includes(path) },
   ];
   return (
     <nav className="tabbar" aria-label="Разделы">

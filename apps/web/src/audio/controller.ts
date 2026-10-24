@@ -56,6 +56,8 @@ export interface PlayerSnapshot {
   lastTransition: { plan: TransitionPlan; outcome: Record<string, unknown>; at: number; logId?: number; rating?: TransitionRating | null; ratingReason?: TransitionRatingReason | null } | null;
   waveLoading: boolean;
   waveRefillError?: string | null;
+  /** The finite queue ends: label of the station being chosen to continue it. */
+  continuation?: string | null;
   engineReady: boolean;
   sampleRate: number;
   audioHealth?: { maxRenderMs: number; slowBlocks: number; pcmUnderruns: number; latencyMs: number };
@@ -121,6 +123,12 @@ let seq = 0;
 /** iPhone app (mora-mobile, set by its bridge before this module runs): the phone's buttons set the
  * volume, so the app has no volume control and plays at full level. */
 export const systemVolume = typeof document !== 'undefined' && document.documentElement.classList.contains('mora-mobile');
+/** Each save rewrites the whole library database image on the iPhone: store the position there less often. */
+const POSITION_SAVE_MS = systemVolume ? 30_000 : 5000;
+/** Paused or stopped this long: the AudioContext is suspended until the next Play. */
+const IDLE_SUSPEND_MS = 3 * 60_000;
+/** Next tracks that fail to load in a row before preparation stops instead of eating the queue. */
+const MAX_SKIPS = 3;
 
 const uid = () => `${Date.now().toString(36)}-${(++seq).toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -149,6 +157,7 @@ export class PlayerController {
   private next: NextPrep | null = null;
   private preparing: Promise<void> | null = null;
   private preparationRevision = 0;
+  private skipStreak = 0;
   private analysisRevision = 0;
   private resourceRevisions = new Map<string, number>();
   private vocalRevisions = new Map<string, string>();
@@ -176,6 +185,7 @@ export class PlayerController {
   private waveRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private radioPlay: { entryId: string; trackId: string; sessionId: string; batchId: string | null; seconds: number; tick: number } | null = null;
   private waveExhausted = false;
+  private heardEntries = new Set<string>();
   private loudnessTarget: number | null = -16;
   private restoredPosition = 0;
   private deckTelemetry = new Map<string, DeckTelemetry>();
@@ -251,6 +261,8 @@ export class PlayerController {
   /** Changes only when a new listening queue is selected, not on edits/seek/pause. */
   private queueRevision = 0;
   get queueVersion(): number { return this.queueRevision; }
+  /** Recent queue entries that played to their end or into a transition (not skipped). */
+  get heard(): ReadonlySet<string> { return this.heardEntries; }
 
   /** Unlock in the originating user gesture before a remote track is prepared. */
   async unlockAudio(): Promise<void> { await this.ensureEngine(); }
@@ -287,6 +299,22 @@ export class PlayerController {
     this.ctx = ctx;
     this.node = node;
     this.analyser = analyser;
+    // Locked screen / background: 4 clock ticks a second instead of 20 (fewer main-thread wake-ups),
+    // and the position is stored on the way out since the periodic save is sparse on the phone.
+    const onVisibility = () => {
+      this.post({ cmd: 'tickRate', seconds: document.hidden ? 0.25 : 0.05 });
+      if (document.hidden && this.current) this.scheduleSave(true);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    onVisibility();
+    // A paused context still renders silence and keeps the audio hardware (and on iOS the whole
+    // backgrounded app) awake. After a long pause it sleeps; Play resumes it (ensureEngine).
+    let idle: ReturnType<typeof setTimeout> | null = null;
+    const quiet = () => this.state.status === 'paused' || this.state.status === 'idle';
+    this.subscribe(() => {
+      if (!quiet()) { if (idle) { clearTimeout(idle); idle = null; } return; }
+      idle ??= setTimeout(() => { idle = null; if (quiet() && ctx.state === 'running') void ctx.suspend().catch(() => {}); }, IDLE_SUSPEND_MS);
+    });
     this.postVolume();
     if (this.tone) this.setTone(this.tone);
     this.setPlayback(this.playback);
@@ -564,7 +592,7 @@ export class PlayerController {
       this.post({ cmd: 'disarm' });
       this.releaseSlot(slot);
       this.removeIndexSilently(idx);
-      void this.prepareNext();
+      if (this.keepPreparing(msg)) void this.prepareNext();
     } else if (this.current === slot) {
       this.notify(`Не удалось воспроизвести «${t?.title ?? 'трек'}»: ${msg}`, 'error');
       const generation = this.generation;
@@ -631,7 +659,7 @@ export class PlayerController {
     const queue: QueueEntry[] = [fromId, toId].map((trackId) => ({ entryId: uid(), trackId, origin: 'user' }));
     this.originalOrder = null;
     this.queueRevision++;
-    this.set({ queue, index: 0, context: { type: 'queue', label: 'Прослушивание перехода' }, shuffle: false, repeat: 'off', waveLoading: false, error: null });
+    this.set({ queue, index: 0, context: { type: 'queue', id: 'preview', label: 'Прослушивание перехода' }, shuffle: false, repeat: 'off', waveLoading: false, error: null });
     await this.startAt(0, seconds);
   }
 
@@ -728,6 +756,7 @@ export class PlayerController {
     this.post({ cmd: 'start', deck: slot.deck, token: slot.token, frame: Math.round(seconds * this.sr) });
     if (paused) this.post({ cmd: 'pause', paused: true });
     this.current = slot;
+    this.skipStreak = 0;
     if (prev && prev !== slot) this.retireSlot(prev, 120);
     this.maxPos = seconds;
     this.set({ status: paused ? 'paused' : 'playing' });
@@ -865,6 +894,7 @@ export class PlayerController {
     const request = { current: cur, generation: this.generation, revision: this.preparationRevision,
       quick: this.instantNext || reason === 'dislike' || this.next?.plan.debug.requested === true || this.next?.plan.method === 'skip_fade' };
     this.nextRequest = request;
+    this.skipStreak = 0;
     const isRelevant = () => this.nextRequest === request && this.current === cur && request.generation === this.generation &&
       request.revision === this.preparationRevision && !this.state.transition?.active;
     try {
@@ -1034,7 +1064,32 @@ export class PlayerController {
     this.yandexSessionReset = false;
     if (this.waveRetryTimer) clearTimeout(this.waveRetryTimer);
     this.waveRetryTimer = null;
-    this.set({ waveLoading: false, waveRefillError: null });
+    this.set({ waveLoading: false, waveRefillError: null, continuation: null });
+  }
+
+  /** A station is being chosen for the queue end (label), or none will come (null): the last song's end
+   * then waits for it instead of stopping, or stops for real. */
+  holdQueueEnd(label: string | null): void {
+    this.set({ continuation: label });
+    if (label || this.current || !this.waveExhausted || this.state.status !== 'buffering' || this.isWave() || this.state.context?.type === 'online-radio') return;
+    this.waveExhausted = false;
+    this.set({ status: 'idle', position: 0 });
+  }
+
+  /** The queue goes on as a station: the playing song is not cut, the next ones mix in as usual.
+   * replaceUpcoming: the station takes over from the next song (another station, "similar to this"). */
+  continueAs(context: PlayContext, trackIds: string[] = [], origin: Origin = 'context', replaceUpcoming = false): void {
+    const exhausted = this.waveExhausted;
+    this.resetWaveBuffer();
+    this.waveExhausted = exhausted;
+    const entries = trackIds.map((id) => ({ entryId: uid(), trackId: id, origin }));
+    const kept = replaceUpcoming ? this.state.queue.slice(0, this.state.index + 1) : this.state.queue;
+    this.set({ context, queue: [...kept, ...entries] });
+    this.onQueueChanged();
+    if (!this.current && this.waveExhausted && this.state.status === 'buffering') {
+      const next = this.nextIndex();
+      if (next !== null) { this.waveExhausted = false; void this.startAt(next, 0, 'finished'); }
+    }
   }
 
   /** Apply saved provider settings to future recommendations without cutting audio. */
@@ -1306,8 +1361,23 @@ export class PlayerController {
     setTimeout(() => { if (isRelevant() && !this.next) void this.prepareNext(manual); }, 3000);
   }
 
+  /** Drops a next track that failed to load: the first skip is announced, a streak stops preparation with one error. */
+  private skipNext(index: number, msg: string): void {
+    this.removeIndexSilently(index);
+    if (!this.keepPreparing(msg)) return;
+    if (this.skipStreak === 1) this.notify(`Пропущен следующий трек: ${msg}`, 'error');
+    this.preparationRevision++;
+  }
+
+  /** Counts a skipped next track; false once too many failed in a row (until a track starts or the listener presses Next). */
+  private keepPreparing(msg: string): boolean {
+    if (++this.skipStreak < MAX_SKIPS) return true;
+    if (this.skipStreak === MAX_SKIPS) this.notify(`Подряд не загрузились ${MAX_SKIPS} следующих трека, подготовка остановлена: ${msg}`, 'error');
+    return false;
+  }
+
   private async doPrepare(manual = false): Promise<void> {
-    if (!this.current || this.next || this.startingGeneration === this.generation) return;
+    if (!this.current || this.next || this.startingGeneration === this.generation || this.skipStreak >= MAX_SKIPS) return;
     const cur = this.current;
     const gen = this.generation;
     const revision = this.preparationRevision;
@@ -1339,10 +1409,7 @@ export class PlayerController {
     } catch (e) {
       if (!isRelevant()) return;
       if (unreachable(e)) return this.retryPrepare(manual, isRelevant);
-      this.notify(`Пропущен следующий трек: ${(e as Error).message}`, 'error');
-      this.removeIndexSilently(n);
-      this.preparationRevision++;
-      return;
+      return this.skipNext(n, (e as Error).message);
     }
     if (!isRelevant()) {
       this.releaseSlot(slot);
@@ -1360,10 +1427,7 @@ export class PlayerController {
       if (!isRelevant()) return;
       this.releaseSlot(slot);
       if (unreachable(e)) return this.retryPrepare(manual, isRelevant);
-      this.notify(`Пропущен следующий трек: ${(e as Error).message}`, 'error');
-      this.removeIndexSilently(n);
-      this.preparationRevision++;
-      return;
+      return this.skipNext(n, (e as Error).message);
     }
     if (!isRelevant() || slot.abort.signal.aborted) {
       this.releaseSlot(slot);
@@ -1371,9 +1435,7 @@ export class PlayerController {
     }
     if (slot.failed) {
       this.releaseSlot(slot);
-      this.removeIndexSilently(n);
-      this.preparationRevision++;
-      return;
+      return this.skipNext(n, slot.failed);
     }
     plan = this.fitPlan(vocals.plan);
     this.next = { entry, index: n, slot, plan, pending };
@@ -1537,6 +1599,7 @@ export class PlayerController {
     this.pendingEndReason = 'transition';
     this.prevSlot = this.current;
     this.current = nx.slot;
+    this.skipStreak = 0;
     this.maxPos = position;
     const end = nx.plan.tempoB[nx.plan.tempoB.length - 1]?.[0] ?? 0;
     this.recovering = end > nx.plan.duration && nx.plan.tempoB.some(([, rate]) => Math.abs(rate - 1) > 0.001)
@@ -1662,7 +1725,7 @@ export class PlayerController {
           else {
             this.releaseSlot(this.current);
             this.current = null;
-            this.waveExhausted = this.isWave() || this.state.context?.type === 'online-radio';
+            this.waveExhausted = this.isWave() || this.state.context?.type === 'online-radio' || !!this.state.continuation;
             this.set({ status: this.waveExhausted ? 'buffering' : 'idle', position: 0 });
             if (this.isWave()) void this.topUpWave();
           }
@@ -1718,7 +1781,7 @@ export class PlayerController {
     if (e.paused && status === 'playing') status = 'paused';
     this.set({ position: pos, ratio: d.ratio, limiterDb: e.limiterDb, transition, status });
     if (status === 'playing') void this.topUpWave();
-    if (performance.now() - this.lastSaved > 5000 && status === 'playing') this.scheduleSave(true);
+    if (performance.now() - this.lastSaved > POSITION_SAVE_MS && status === 'playing') this.scheduleSave(true);
     if ('mediaSession' in navigator && this.state.duration > 0) {
       try {
           navigator.mediaSession.setPositionState({ duration: this.state.duration, position: Math.min(pos, this.state.duration), playbackRate: this.playback.speed });
@@ -1761,6 +1824,11 @@ export class PlayerController {
 
   private finishPlay(reason: string, transitionId?: string): void {
     this.playRevision++;
+    const entry = this.currentEntry;
+    if (entry && (reason === 'finished' || reason === 'transition')) {
+      this.heardEntries.add(entry.entryId);
+      if (this.heardEntries.size > 200) this.heardEntries.delete(this.heardEntries.values().next().value!);
+    }
     if (this.playId !== null) {
       const ms = Math.round(Math.max(0, this.maxPos - this.playStartPos) * 1000);
       void api.endPlay(this.playId, ms, reason, transitionId).catch(() => {});

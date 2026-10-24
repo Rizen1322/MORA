@@ -115,12 +115,17 @@ export function evalPoints(points: [number, number][], t: number): number {
   return t1 === t0 ? v1 : v0 + ((v1 - v0) * (t - t0)) / (t1 - t0);
 }
 
+function silent(L: Float32Array, R: Float32Array, n: number): boolean {
+  for (let i = 0; i < n; i++) if (L[i] !== 0 || R[i] !== 0) return false;
+  return true;
+}
+
 /**
  * Tempo-synced feedback echo for DJ-style "echo out": the outgoing track's
  * last beats repeat and decay over the incoming one. The feedback path is
  * band-limited (no bass build-up, softened highs).
  */
-class Echo {
+export class Echo {
   private readonly L: Float32Array;
   private readonly R: Float32Array;
   private pos = 0;
@@ -134,11 +139,14 @@ class Echo {
   private lpR = 0;
   private readonly hpA: number;
   private readonly lpA: number;
+  /** Consecutive ring writes that were exact zeros on both channels; at the ring length it is empty. */
+  private zeros: number;
 
   constructor(sampleRate: number) {
     const n = Math.ceil(sampleRate * 2.5);
     this.L = new Float32Array(n);
     this.R = new Float32Array(n);
+    this.zeros = n;
     this.hpA = Math.exp((-2 * Math.PI * 250) / sampleRate);
     this.lpA = 1 - Math.exp((-2 * Math.PI * 6000) / sampleRate);
   }
@@ -171,6 +179,12 @@ class Echo {
     // Keep advancing through silent input/output blocks: a delayed attack can
     // still be waiting in the ring even when this entire block is silent.
     const N = this.L.length;
+    if (this.zeros >= N && this.outStep === 0 && silent(inL, inR, n)) {
+      // Every ring sample is an exact zero: the echo adds nothing and stays empty. Only the
+      // filters' sub-float32 remainders (they never reach the ring) are dropped.
+      this.hpL = this.hpR = this.hpXL = this.hpXR = this.lpL = this.lpR = 0;
+      return;
+    }
     for (let i = 0; i < n; i++) {
       const tailGain = this.deadline === null ? 1 : Math.max(0, Math.min(1, (this.deadline-clock-i)/this.deadlineFadeFrames));
       // Keep the deadline closed until configure/reset; a surviving send can
@@ -199,6 +213,7 @@ class Echo {
       this.lpR += this.lpA * (hR - this.lpR);
       this.L[this.pos] = inL[i] + this.lpL * this.feedback;
       this.R[this.pos] = inR[i] + this.lpR * this.feedback;
+      this.zeros = this.L[this.pos] === 0 && this.R[this.pos] === 0 ? this.zeros + 1 : 0;
       this.pos = this.pos + 1 === N ? 0 : this.pos + 1;
     }
   }
@@ -206,6 +221,7 @@ class Echo {
   reset(): void {
     this.L.fill(0);
     this.R.fill(0);
+    this.zeros = this.L.length;
     this.pos = 0;
     this.hpL = this.hpR = this.hpXL = this.hpXR = this.lpL = this.lpR = 0;
     this.out = 1;
@@ -360,7 +376,7 @@ export class MixerCore {
   private peak = 0;
   private sinceTick = 0;
   private sinceNeed = 0;
-  readonly tickFrames: number;
+  tickFrames: number;
   /** Seconds of audio requested ahead of the playhead. */
   aheadSeconds = 24;
 
@@ -615,6 +631,11 @@ export class MixerCore {
   }
 
   setPlayback(settings: PlaybackSettings): void { this.playback.set(settings); }
+
+  /** Telemetry interval only: a hidden page needs fewer wake-ups. Audio timing stays per sample. */
+  setTickSeconds(seconds: number): void {
+    this.tickFrames = Math.max(1, Math.round(this.sampleRate * Math.min(1, Math.max(0.01, seconds))));
+  }
 
   seek(token: string, frame: number): void {
     const di = this.decks.findIndex((d) => d.token === token);
@@ -960,6 +981,9 @@ export class MixerCore {
       d.fadeStep = 1 / Math.round(this.sampleRate * 0.008);
     }
     if (produced) { d.lastRawL = bl[produced - 1]; d.lastRawR = br[produced - 1]; }
+    // An armed plan may move this deck's bands: keep the three-band chain current from then on.
+    const armed = this.armed;
+    d.iso.idle = !d.laneTarget && !(armed && (armed.fromToken === d.token || armed.toToken === d.token));
     d.iso.processBlock(bl, br, 0, len, [from[1], from[2], from[3]], [to[1], to[2], to[3]]);
     d.filter.processBlock(bl, br, len, from[6], to[6]);
     const n0 = d.normGain;

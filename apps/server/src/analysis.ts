@@ -159,6 +159,20 @@ export class AnalysisService {
     r.worker.w.postMessage({ type: 'cancel', jobId: r.jobId });
   }
 
+  /** Desktop: the listener's "only when idle on mains power" switch and Electron's power signal.
+   * Paused library-wide work (background/imported) stays queued; a job already running finishes.
+   * Until the first signal the computer counts as in use. */
+  private power = { onlyWhenIdle: false, idle: false, onBattery: false };
+
+  setPower(p: Partial<{ onlyWhenIdle: boolean; idle: boolean; onBattery: boolean }>): void {
+    this.power = { ...this.power, ...p };
+    this.pump();
+  }
+
+  backgroundAllowed(): boolean {
+    return !this.power.onlyWhenIdle || (this.power.idle && !this.power.onBattery);
+  }
+
   /** Demotes queued work that is no longer relevant (queue changed). Running jobs finish. */
   demote(keepTrackIds: Set<string>): void {
     for (const item of this.queue.values()) {
@@ -172,7 +186,8 @@ export class AnalysisService {
       if (pw.busy) continue;
       // two long recordings at once would hold two full mono PCMs: they wait for each other
       const longRunning = [...this.running.values()].some((r) => this.isLong(r.item.trackId));
-      const next = [...this.queue.values()].filter((q) => !longRunning || !this.isLong(q.trackId))
+      const background = this.backgroundAllowed();
+      const next = [...this.queue.values()].filter((q) => (!longRunning || !this.isLong(q.trackId)) && (background || q.priority >= PRIORITY.wave))
         .sort((a, b) => b.priority - a.priority || a.seq - b.seq)[0];
       if (!next) return;
       this.queue.delete(next.hash);

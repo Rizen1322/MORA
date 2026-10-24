@@ -104,6 +104,24 @@ describe('playback preparation and queue changes', () => {
     expect(postMessage).toHaveBeenCalledWith({cmd:'gain',deck:0,gainDb:-7.1}, []);
     expect(api.plan).not.toHaveBeenCalled();
   });
+  it('stops preparing after three next tracks fail in a row and reports it once', async () => {
+    const { controller, h } = setup();
+    const notify = (controller as unknown as { notify: ReturnType<typeof vi.fn> }).notify;
+    const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
+    controller.state = { ...controller.state, queue: ids.map((id) => ({ entryId: `${id}-entry`, trackId: id, origin: 'user' })) };
+    const load = vi.spyOn(h as typeof h & { loadSlot(): Promise<never> }, 'loadSlot').mockRejectedValue(new Error('bie.Readable.from is not a function'));
+    await h.prepareNext();
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(3));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(load).toHaveBeenCalledTimes(3);
+    expect(controller.state.queue.map((e) => e.trackId)).toEqual(['a', 'e', 'f']);
+    expect(notify.mock.calls.map(([msg]) => msg)).toEqual([
+      'Пропущен следующий трек: bie.Readable.from is not a function',
+      'Подряд не загрузились 3 следующих трека, подготовка остановлена: bie.Readable.from is not a function',
+    ]);
+    await h.prepareNext();
+    expect(load).toHaveBeenCalledTimes(3);
+  });
   it('does not let background preparation replace the deck of an unfinished manual load', async () => {
     const { controller, h, slot } = setup();
     const transport = h as typeof h & { loadSlot(): Promise<typeof h.current>; waitFed(): Promise<void> };
@@ -1363,5 +1381,67 @@ describe('continuous wave reservoir', () => {
     await previous;
     expect(controller.state.queue.map(e => e.trackId)).not.toContain('d');
     expect(controller.state.queue.some(e => e.yandexBatchId === 'stale')).toBe(false);
+  });
+});
+
+describe('queue-end continuation', () => {
+  it('waits for the chosen station instead of stopping and starts it as the last song ends', () => {
+    const { controller, h, slot } = setup();
+    controller.state = { ...controller.state, context: { type: 'playlist', label: 'Летний' }, queue: controller.state.queue.slice(0, 1) };
+    const start = vi.spyOn(controller, 'startAt').mockResolvedValue(undefined);
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    controller.holdQueueEnd('Радио по мотивам «Летний»');
+    h.onEngine({ type: 'ended', deck: 0, token: slot.token });
+    expect(controller.state.status).toBe('buffering');
+    controller.continueAs({ type: 'online-radio', label: 'Радио по мотивам «Летний»' });
+    expect(controller.state).toMatchObject({ status: 'buffering', continuation: null, context: { type: 'online-radio' } });
+    controller.addToQueue(['b']);
+    expect(start).toHaveBeenCalledWith(1, 0, 'finished');
+  });
+  it('appends a local wave without cutting the playing song and prepares the usual transition', async () => {
+    const { controller, h } = setup();
+    controller.state = { ...controller.state, context: { type: 'album', label: 'Альбом' }, queue: controller.state.queue.slice(0, 1) };
+    vi.mocked(api.waveNext).mockResolvedValue({ picks: [] });
+    const start = vi.spyOn(controller, 'startAt');
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    controller.continueAs({ type: 'wave', label: 'Моя волна' }, ['b', 'c'], 'wave');
+    expect(controller.state.queue.map((e) => [e.trackId, e.origin])).toEqual([['a', 'user'], ['b', 'wave'], ['c', 'wave']]);
+    expect(controller.state.index).toBe(0);
+    expect(start).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(api.plan).toHaveBeenCalledWith('a', 'b'));
+  });
+  it('stops for real when no continuation was found', () => {
+    const { controller, h, slot } = setup();
+    controller.state = { ...controller.state, context: { type: 'playlist', label: 'Летний' }, queue: controller.state.queue.slice(0, 1) };
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    controller.holdQueueEnd('Радио');
+    h.onEngine({ type: 'ended', deck: 0, token: slot.token });
+    controller.holdQueueEnd(null);
+    expect(controller.state.status).toBe('idle');
+    // without a pending station the end of a finite queue stops as before
+    const fresh = setup();
+    fresh.controller.state = { ...fresh.controller.state, context: { type: 'playlist', label: 'Летний' }, queue: fresh.controller.state.queue.slice(0, 1) };
+    cleanups.push(() => { if (fresh.h.saveTimer) clearTimeout(fresh.h.saveTimer); });
+    fresh.h.onEngine({ type: 'ended', deck: 0, token: fresh.slot.token });
+    expect(fresh.controller.state.status).toBe('idle');
+  });
+  it('lets another station take over from the next song without cutting the playing one', () => {
+    const { controller, h } = setup();
+    controller.state = { ...controller.state, context: { type: 'wave', label: 'Моя волна' } };
+    const start = vi.spyOn(controller, 'startAt');
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    controller.continueAs({ type: 'online-radio', label: 'Радио' }, ['c'], 'context', true);
+    expect(controller.state.queue.map((e) => e.trackId)).toEqual(['a', 'c']);
+    expect(controller.state).toMatchObject({ index: 0, context: { type: 'online-radio' } });
+    expect(h.current.trackId).toBe('a');
+    expect(start).not.toHaveBeenCalled();
+  });
+  it('remembers songs that played through, not skipped ones', () => {
+    const { controller } = setup();
+    const play = controller as unknown as { finishPlay(reason: string): void };
+    play.finishPlay('skip');
+    expect(controller.heard.has('a-entry')).toBe(false);
+    play.finishPlay('transition');
+    expect(controller.heard.has('a-entry')).toBe(true);
   });
 });

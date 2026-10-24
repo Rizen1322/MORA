@@ -127,6 +127,13 @@ export class CatalogPlayer {
       if (request === this.request && !this.session) this.set({ phase: 'idle', externalId: null });
     }
   }
+  /** Continues the listening queue with these items (queue-end radio): nothing queued is replaced. */
+  follow(items: CatalogTrack[]): number {
+    const request = ++this.request, transport = this.deps.transport;
+    this.session = { request, items: [...items], next: 0, queued: transport.state.queue.map((e) => e.trackId), version: transport.intentVersion, queueVersion: transport.queueVersion };
+    void this.pump();
+    return request;
+  }
   /** Items of the running session not queued yet (radio refills before this runs dry). */
   get remaining(): number { return this.session && this.matches(this.session) ? this.session.items.length - this.session.next : -1; }
   get sessionItems(): CatalogTrack[] { return this.session?.items ?? []; }

@@ -18,6 +18,9 @@ class ChannelSplitter {
   private hp2a: Biquad;
   private hp2b: Biquad;
   private ap2: Biquad;
+  /** Unity-gain equivalent: LR4 low + high sums to a 2nd order allpass, so all bands at 1 = AP2(AP1(x)). */
+  private uni1: Biquad;
+  private uni2: Biquad;
 
   constructor(fs: number, f1: number, f2: number) {
     const q = BUTTERWORTH_Q;
@@ -30,6 +33,8 @@ class ChannelSplitter {
     this.hp2a = new Biquad(highpass(fs, f2, q));
     this.hp2b = new Biquad(highpass(fs, f2, q));
     this.ap2 = new Biquad(allpass(fs, f2, q));
+    this.uni1 = new Biquad(allpass(fs, f1, q));
+    this.uni2 = new Biquad(allpass(fs, f2, q));
   }
 
   process(x: number, gl: number, gm: number, gh: number): number {
@@ -40,17 +45,38 @@ class ChannelSplitter {
     return gl * low + gm * mid + gh * high;
   }
 
+  processUnity(x: number): number {
+    return this.uni2.process(this.uni1.process(x));
+  }
+
   reset(): void {
-    for (const b of [this.lp1a, this.lp1b, this.hp1a, this.hp1b, this.lp2a, this.lp2b, this.hp2a, this.hp2b, this.ap2]) b.reset();
+    for (const b of [this.lp1a, this.lp1b, this.hp1a, this.hp1b, this.lp2a, this.lp2b, this.hp2a, this.hp2b, this.ap2, this.uni1, this.uni2]) b.reset();
   }
 }
+
+/**
+ * Samples a chain must run on the same input before its output may replace the other one: its
+ * slowest pole (180 Hz, Q 0.707) forgets a stale state by e^-40 (-350 dB) in 50 ms.
+ */
+const WARM_SECONDS = 0.05;
 
 export class StereoIsolator {
   private l: ChannelSplitter;
   private r: ChannelSplitter;
+  /**
+   * Set by the owner while no band move is expected (no transition armed for this deck). Then
+   * unity blocks run only the 2-section allpass equivalent (2 instead of 9 biquads per channel).
+   * Without it the three-band chain stays current, warming up behind the allpass output first.
+   */
+  idle = false;
+  private readonly warmFrames: number;
+  /** Samples each chain has run on the actual input since it was last skipped (reset: exact). */
+  private fullWarm = Infinity;
+  private uniWarm = Infinity;
   constructor(fs: number, f1 = LOW_MID_HZ, f2 = MID_HIGH_HZ) {
     this.l = new ChannelSplitter(fs, f1, f2);
     this.r = new ChannelSplitter(fs, f1, f2);
+    this.warmFrames = Math.round(fs * WARM_SECONDS);
   }
 
   /**
@@ -67,6 +93,32 @@ export class StereoIsolator {
   ): void {
     const n = end - start;
     if (n <= 0) return;
+    const unity = from[0] === 1 && from[1] === 1 && from[2] === 1 && to[0] === 1 && to[1] === 1 && to[2] === 1;
+    const fullReady = this.fullWarm >= this.warmFrames, uniReady = this.uniWarm >= this.warmFrames;
+    const useUni = unity && uniReady && (this.idle || !fullReady);
+    const runFull = !useUni || (!this.idle && !fullReady);
+    const runUni = useUni || (unity && this.idle && !uniReady);
+    this.fullWarm = runFull ? this.fullWarm + n : 0;
+    this.uniWarm = runUni ? this.uniWarm + n : 0;
+    const l = this.l, r = this.r;
+    if (!runFull) {
+      for (let i = start; i < end; i++) {
+        L[i] = l.processUnity(L[i]);
+        R[i] = r.processUnity(R[i]);
+      }
+      return;
+    }
+    if (runUni) {
+      // one chain warms up on the same input while the other one is heard
+      for (let i = start; i < end; i++) {
+        const xl = L[i], xr = R[i];
+        const ul = l.processUnity(xl), ur = r.processUnity(xr);
+        const fl = l.process(xl, 1, 1, 1), fr = r.process(xr, 1, 1, 1);
+        L[i] = useUni ? ul : fl;
+        R[i] = useUni ? ur : fr;
+      }
+      return;
+    }
     const dl = (to[0] - from[0]) / n;
     const dm = (to[1] - from[1]) / n;
     const dh = (to[2] - from[2]) / n;
@@ -85,5 +137,6 @@ export class StereoIsolator {
   reset(): void {
     this.l.reset();
     this.r.reset();
+    this.fullWarm = this.uniWarm = Infinity;
   }
 }

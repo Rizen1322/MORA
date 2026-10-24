@@ -12,11 +12,16 @@ const wanted = Number(process.env.AUTOMIX_PORT || 0);
 
 let close: (() => Promise<void>) | null = null;
 let closing: Promise<void> | null = null;
+let analysis: { setPower(p: { idle: boolean; onBattery: boolean }): void } | null = null;
 const shutdown = (code = 0) => {
   closing ??= (close ? close() : Promise.resolve()).catch((e) => console.error('shutdown', e)).finally(() => process.exit(code));
   return closing;
 };
-parent.on('message', (e) => { if (e.data?.type === 'shutdown') void shutdown(); });
+parent.on('message', (e) => {
+  if (e.data?.type === 'shutdown') void shutdown();
+  // idle-power.mjs: whether library-wide analysis may run now
+  else if (e.data?.type === 'power') analysis?.setPower({ idle: e.data.idle === true, onBattery: e.data.onBattery === true });
+});
 
 try {
   if (token.length < 32) throw new Error('launch token missing');
@@ -24,6 +29,7 @@ try {
   setSoundCloudTransport((input, init) => net.fetch(input instanceof URL ? input.href : input, init));
   const created = await createApp({ host: '127.0.0.1', port: wanted, accessToken: token });
   close = created.close;
+  analysis = created.services.analysis;
   try {
     await created.app.listen({ host: '127.0.0.1', port: wanted });
   } catch (e) {

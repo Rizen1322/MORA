@@ -8,6 +8,7 @@ import { Cover } from '../components/common.tsx';
 import { ImportActions } from '../components/ImportActions.tsx';
 import { YandexLikesImport } from '../components/YandexLikesImport.tsx';
 import { YandexIntegrationSettings } from '../components/YandexIntegrationSettings.tsx';
+import '../styles/prefs.css';
 
 const STATUS: Record<ProviderInfo['status'], { label: string; cls: string }> = {
   connected: { label: 'Подключено', cls: 'ok' },
@@ -36,13 +37,13 @@ export function SourcesPage() {
   useEffect(() => {
     void load();
   }, [load]);
+  const connected = providers.filter((p) => p.status === 'connected').length;
   return (
-    <div className="main-inner">
+    <div className="main-inner prefs-page">
       <h1 className="page-title">Источники</h1>
-      <p className="muted" style={{ maxWidth: '70ch' }}>
-        Подключите свою медиатеку или музыкальный сервис. Доступные треки подготавливаются заранее, чтобы AutoMix мог выбрать музыкальный вход и свести следующую песню.
-      </p>
-      <div className="toolbar">
+      <p className="page-intro">Откуда MORA берёт музыку. Треки из подключённых источников заранее готовятся к сведению.</p>
+      <div className="src-toolbar">
+        <span className="small muted tnum" role="status">{providers.length ? `Подключено ${connected} из ${providers.length}` : 'Проверяем источники…'}</span>
         <button
           className="btn btn-ghost btn-sm"
           disabled={busy}
@@ -52,10 +53,10 @@ export function SourcesPage() {
             setBusy(false);
           }}
         >
-          <ArrowClockwise size={16} /> {busy ? 'Проверяю…' : 'Проверить подключения'}
+          <ArrowClockwise size={16} aria-hidden="true" /> {busy ? 'Проверяю…' : 'Проверить подключения'}
         </button>
       </div>
-      <div className="source-grid" style={{ marginTop: 8 }}>
+      <div className="src-grid">
         {providers.map((p) => (
           <SourceCard key={p.id} p={p} />
         ))}
@@ -70,6 +71,7 @@ function SourceCard({ p }: { p: ProviderInfo }) {
   const importLikes = useApp((s) => s.settings?.yandex.importLikes !== false);
   const [form, setForm] = useState<Record<string, string>>(() => ({ ...p.config }));
   const [open, setOpen] = useState(false);
+  const [browse, setBrowse] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const st = STATUS[p.status];
@@ -95,67 +97,31 @@ function SourceCard({ p }: { p: ProviderInfo }) {
     }
   };
 
+  const isConnected = p.status === 'connected';
+  const searchable = isConnected && p.capabilities.search && p.id !== 'local';
   return (
-    <article className="source-card" aria-label={p.name}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
-        <div>
-          <h3>{p.name}</h3>
-          <div className="caption dim" style={{ marginTop: 2 }}>
-            {p.official ? 'официальный API' : 'неофициальный API'}
-            {p.account ? ` · ${p.account}` : ''}
+    <article className="src-card" aria-labelledby={`src-${p.id}`}>
+      <header className="src-head">
+        <div className="src-title">
+          <h2 id={`src-${p.id}`}>{p.name}</h2>
+          <div className="src-meta">
+            {p.account ?? (p.id === 'local' ? 'На этом устройстве' : p.official ? 'Официальный API' : 'Неофициальный API')}
           </div>
         </div>
-        <span className={`tag ${st.cls}`}>{st.label}</span>
-      </div>
-      <div className="small">{p.statusText}</div>
-      <div className="caps" aria-label="Возможности">
-        {CAP_LABEL.map(([k, l]) => (
-          <span key={k} className={`cap ${p.capabilities[k] ? 'yes' : ''}`} title={p.capabilities[k] ? 'есть' : 'нет'}>
-            {p.capabilities[k] ? '✓ ' : '× '}
-            {l}
-          </span>
-        ))}
-        <span className="cap yes">кэш: {p.capabilities.caching === 'persistent' ? 'постоянный' : p.capabilities.caching === 'session' ? 'до перезапуска' : 'нет'}</span>
-      </div>
-      <ul className="notes">
-        {p.notes.map((n, i) => (
-          <li key={i}>{n}</li>
-        ))}
-      </ul>
-      {p.docs.length > 0 && (
-        <div className="caption" style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-          {p.docs.map((d) => (
-            <a key={d} href={d} target="_blank" rel="noreferrer noopener" className="muted" style={{ textDecoration: 'underline' }}>
-              {new URL(d).host}
-              <ArrowSquareOut size={11} style={{ marginLeft: 2, verticalAlign: '-1px' }} />
-            </a>
-          ))}
-        </div>
-      )}
-      {p.id === 'local' && <ImportActions compact />}
-      {connectable && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {p.status === 'connected' ? (
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={async () => {
-                await api.disconnectProvider(p.id);
-                await load(true);
-                toast(`${p.name}: отключено`);
-              }}
-            >
-              Отключить
-            </button>
-          ) : (
-            <button className="btn btn-secondary btn-sm" onClick={() => setOpen(!open)} aria-expanded={open}>
-              {open ? 'Скрыть' : 'Подключить'}
-            </button>
-          )}
-        </div>
-      )}
-      {open && p.status !== 'connected' && (
+        <span className={`src-status ${st.cls}`}><i aria-hidden="true" />{st.label}</span>
+      </header>
+      {p.statusText && <p className="src-text">{p.statusText}</p>}
+
+      {/* One main action per source; everything else lives under «Подробнее». */}
+      {p.id === 'local' ? <ImportActions compact />
+        : connectable && !isConnected ? <div className="src-actions"><button className="btn btn-primary" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? 'Скрыть' : 'Подключить'}</button></div>
+        : p.id === 'yandex' && isConnected ? <div className="src-actions"><a className="btn btn-primary" href="#/yandex">Открыть каталог Яндекса</a></div>
+        : searchable ? <div className="src-actions"><button className="btn btn-secondary" onClick={() => setBrowse(!browse)} aria-expanded={browse}><MagnifyingGlass size={17} aria-hidden="true" /> {browse ? 'Скрыть поиск' : 'Найти треки'}</button></div>
+        : null}
+
+      {open && !isConnected && (
         <form
-          style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
+          className="src-form"
           onSubmit={(e) => {
             e.preventDefault();
             void connect();
@@ -177,22 +143,60 @@ function SourceCard({ p }: { p: ProviderInfo }) {
               {f.help && <span className="caption dim">{f.help}</span>}
             </div>
           ))}
-          {err && <div className="small" style={{ color: 'var(--danger)' }}>{err}</div>}
+          {err && <div className="small error-text" role="alert">{err}</div>}
           <div>
-            <button className="btn btn-primary btn-sm" disabled={busy}>
+            <button className="btn btn-primary" disabled={busy}>
               {busy ? 'Проверяю…' : 'Проверить и сохранить'}
             </button>
           </div>
         </form>
       )}
-      {p.status === 'connected' && p.id === 'yandex' && <a className="btn btn-primary" href="#/yandex">Открыть каталог Яндекса</a>}
-      {p.status === 'connected' && p.id === 'yandex' && <YandexIntegrationSettings />}
-      {p.status === 'connected' && p.id === 'yandex' && importLikes && <YandexLikesImport />}
-      {p.status === 'connected' && p.capabilities.search && p.id !== 'local' && <ProviderBrowser p={p} />}
+      {isConnected && p.id === 'yandex' && <YandexIntegrationSettings />}
+      {isConnected && p.id === 'yandex' && importLikes && <YandexLikesImport />}
+      {searchable && (p.id === 'yandex' || browse) && <ProviderBrowser p={p} />}
+
+      <details className="src-more">
+        <summary>Подробнее</summary>
+        <div className="caps" aria-label="Возможности">
+          {CAP_LABEL.map(([k, l]) => (
+            <span key={k} className={`cap ${p.capabilities[k] ? 'yes' : ''}`}>
+              {p.capabilities[k] ? '✓ ' : '× '}
+              {l}
+            </span>
+          ))}
+          <span className="cap yes">кэш: {p.capabilities.caching === 'persistent' ? 'постоянный' : p.capabilities.caching === 'session' ? 'до перезапуска' : 'нет'}</span>
+        </div>
+        {p.notes.length > 0 && <ul className="notes">
+          {p.notes.map((n, i) => (
+            <li key={i}>{n}</li>
+          ))}
+        </ul>}
+        {p.docs.length > 0 && (
+          <div className="src-docs">
+            {p.docs.map((d) => (
+              <a key={d} href={d} target="_blank" rel="noreferrer noopener">
+                {new URL(d).host}
+                <ArrowSquareOut size={12} aria-hidden="true" />
+              </a>
+            ))}
+          </div>
+        )}
+        {connectable && isConnected && (
+          <button
+            className="btn btn-ghost btn-sm src-disconnect"
+            onClick={async () => {
+              await api.disconnectProvider(p.id);
+              await load(true);
+              toast(`${p.name}: отключено`);
+            }}
+          >
+            Отключить
+          </button>
+        )}
+      </details>
     </article>
   );
 }
-
 function ProviderBrowser({ p }: { p: ProviderInfo }) {
   const searchRevision = useRef(0);
   const [q, setQ] = useState('');
