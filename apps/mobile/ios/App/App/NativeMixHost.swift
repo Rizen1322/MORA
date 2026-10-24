@@ -21,6 +21,7 @@ final class NativeMixHost {
     private var player: AVAudioPlayerNode?
     private var format: AVAudioFormat?
     private var epoch = 0
+    private var ownershipRevision = 0
     private var pending = 0
     private var rendered: Int64 = 0
     private var queued: Int64 = 0
@@ -53,7 +54,7 @@ final class NativeMixHost {
         let state: [String: Any] = ["active": folder != nil, "playing": wantsPlaying && !failed,
             "preparing": preparing, "index": index, "position": position, "duration": duration,
             "renderedFrames": rendered, "queuedFrames": queued, "presentedFrames": presented,
-            "epoch": epoch, "underruns": underruns, "maxRenderMs": maxRenderMs, "failed": failed]
+            "epoch": epoch, "ownership": ownershipRevision, "underruns": underruns, "maxRenderMs": maxRenderMs, "failed": failed]
         var result = state
         if let plan = config["transition"] as? [String: Any], let start = plan["triggerFrame"] as? Double { result["transitionStart"] = start / sr }
         lock.lock(); cached = result; lock.unlock()
@@ -68,6 +69,7 @@ final class NativeMixHost {
                 let folder = root.appendingPathComponent(self.id, isDirectory: true)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 self.folder = folder; self.bytes = [0, 0]; self.preparing = true; self.failed = false
+                self.ownershipRevision += 1
                 self.epoch += 1; self.save()
                 self.reply(completion, .success(["id": self.id]))
             } catch { self.reply(completion, .failure(error)) }
@@ -133,7 +135,7 @@ final class NativeMixHost {
     private func fill() throws {
         guard let renderer, let format, let player else { throw Failure.playback }
         let generation = epoch
-        while pending < 3 && !done {
+        while pending < 8 && !done {
             let began = ProcessInfo.processInfo.systemUptime
             let block = try autoreleasepool { try renderer.render() }
             maxRenderMs = max(maxRenderMs, (ProcessInfo.processInfo.systemUptime - began) * 1000)
@@ -219,12 +221,14 @@ final class NativeMixHost {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         }
     }
-    func command(_ action: String, time: Double? = nil, source: String, completion: @escaping Reply) {
+    func command(_ action: String, time: Double? = nil, source: String, id commandId: String? = nil,
+                 owner: Int? = nil, completion: @escaping Reply) {
         work.async {
-            let id = UUID().uuidString
+            let id = commandId ?? UUID().uuidString
             MoraPlaybackJournal.record("native.mix.command", ["id": id, "action": action, "source": source])
             do {
                 guard self.folder != nil, !self.preparing, !self.failed else { throw Failure.invalid }
+                if let owner, owner != self.ownershipRevision { throw Failure.invalid }
                 self.updatePosition()
                 if source != "interruption" { self.resumeAfterInterruption = false }
                 switch action {
@@ -261,6 +265,7 @@ final class NativeMixHost {
     }
     private func installTargets() {
         let generation = epoch
+        let owner = ownershipRevision
         DispatchQueue.main.async { [weak self] in
             guard let self, self.active, self.snapshot["epoch"] as? Int == generation else { return }
             let c = MPRemoteCommandCenter.shared()
@@ -271,10 +276,11 @@ final class NativeMixHost {
             for (command, action) in bindings {
                 command.isEnabled = true
                 let target = command.addTarget { [weak self] event in
-                    guard let self, self.active else { return .commandFailed }
+                    guard let self, self.active, self.snapshot["ownership"] as? Int == owner else { return .commandFailed }
                     let time = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime
-                    MoraPlaybackJournal.record("native.mix.callback", ["action": action, "seekTime": time ?? -1])
-                    self.command(action, time: time, source: "remote") { _ in }
+                    let id = UUID().uuidString
+                    MoraPlaybackJournal.record("native.mix.callback", ["id": id, "action": action, "seekTime": time ?? -1])
+                    self.command(action, time: time, source: "remote", id: id, owner: owner) { _ in }
                     return .success
                 }
                 self.targets.append((command, target))
@@ -283,6 +289,7 @@ final class NativeMixHost {
     }
     func stop(_ completion: @escaping Reply) {
         work.async {
+            guard self.folder != nil || self.ownsSession else { self.reply(completion, .success(self.snapshot)); return }
             self.epoch += 1; self.wantsPlaying = false; self.resumeAfterInterruption = false
             self.player?.stop(); self.engine?.stop(); self.renderer = nil
             do {

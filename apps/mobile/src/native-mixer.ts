@@ -3,16 +3,20 @@ import { MixerCore, type MixerEvent } from '../../../packages/core/src/engine/mi
 import type { NativeMixConfig } from '../../web/src/lib/native-mix.ts';
 
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const base64Values = new Uint8Array(128);
+for (let i = 0; i < alphabet.length; i++) base64Values[alphabet.charCodeAt(i)] = i;
 function decode(s: string): Float32Array {
   if (!s || s.length % 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(s)) throw new Error('Missing PCM');
   const size = s.length / 4 * 3 - (s.endsWith('==') ? 2 : s.endsWith('=') ? 1 : 0);
   if (size % 8) throw new Error('Unaligned PCM');
   const out = new Uint8Array(size);
-  let value = 0, bits = 0, at = 0;
-  for (const c of s) {
-    if (c === '=') break;
-    value = (value << 6) | alphabet.indexOf(c); bits += 6;
-    if (bits >= 8) { bits -= 8; out[at++] = (value >>> bits) & 255; }
+  let at = 0;
+  for (let i = 0; i < s.length; i += 4) {
+    const value = (base64Values[s.charCodeAt(i)] << 18) | (base64Values[s.charCodeAt(i + 1)] << 12)
+      | (base64Values[s.charCodeAt(i + 2)] << 6) | base64Values[s.charCodeAt(i + 3)];
+    out[at++] = value >>> 16;
+    if (at < size) out[at++] = value >>> 8;
+    if (at < size) out[at++] = value;
   }
   return new Float32Array(out.buffer);
 }
@@ -79,6 +83,9 @@ export class NativeMixerRuntime {
       if (this.advance) { this.advance = false; this.core.start(1, 'B', 0); }
       this.supply(); mark(length);
       this.core.process(left.subarray(length, length + 128), right.subarray(length, length + 128), 128);
+      for (let i = length; i < length + 128; i++) {
+        if (!Number.isFinite(left[i]) || !Number.isFinite(right[i])) throw new Error('Nonfinite native output');
+      }
       length += 128;
       if (this.tail > 0) { this.tail -= 128; if (this.tail <= 0) this.done = true; }
     }
