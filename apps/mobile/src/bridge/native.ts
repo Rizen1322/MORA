@@ -300,6 +300,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
       tracePlayback('js.probe.prepared', { context: controls.contextState, probeActive: true });
     },
     restore() {
+      if (!controls.probeActive) return;
       controls.probeActive = false;
       if (audioSession && previousAudioType !== undefined) audioSession.type = previousAudioType;
       previousAudioType = undefined;

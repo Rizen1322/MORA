@@ -162,6 +162,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func setPlaybackState(_ call: CAPPluginCall) {
+        if !Thread.isMainThread { DispatchQueue.main.async { self.setPlaybackState(call) }; return }
         let wasPlaying = playing
         let effectivePlaying = call.getBool("playing") ?? playing
         // Preserve intent across context suspension so an interruption ending
@@ -195,6 +196,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc private func interruption(_ n: Notification) {
+        if !Thread.isMainThread { DispatchQueue.main.async { self.interruption(n) }; return }
         if nativeProbe.active { nativeProbe.interruption(n); return }
         MoraPlaybackJournal.record("native.interruption", ["seq": n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ?? 0,
             "reason": String(n.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt ?? 0),
@@ -224,6 +226,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc private func routeChange(_ n: Notification) {
+        if !Thread.isMainThread { DispatchQueue.main.async { self.routeChange(n) }; return }
         if nativeProbe.active { nativeProbe.routeChange(n); return }
         MoraPlaybackJournal.record("native.routeChange", ["reason": String(n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0)])
         guard let raw = n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
@@ -233,6 +236,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc private func mediaReset(_ n: Notification) {
+        if !Thread.isMainThread { DispatchQueue.main.async { self.mediaReset(n) }; return }
         if nativeProbe.active { MoraPlaybackJournal.record("native.probe.mediaReset"); return }
         MoraPlaybackJournal.record("native.mediaReset")
         if playing {

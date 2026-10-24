@@ -34,7 +34,7 @@ If the card never changes to the test title, say so. A disabled slider, wrong me
 
 ## Journal
 
-`native.probe.command` records a received native action and source. `native.probe.applied` records handling acceptance/rejection; it is not a hardware audibility acknowledgement. `native.probe.state` records native position/duration/playing and melody index (`seq=0/1`) on actions and every 5 seconds while playing. There is no polling timer while paused. An MP callback's immediate success only means queued for main-thread handling.
+`native.probe.callback` records an actual MP callback; its ID is carried into `native.probe.command` and `native.probe.applied`. Test commands use source=test without a fabricated MP callback. Applied records handling acceptance/rejection, not hardware audibility. `native.probe.state` records position/duration/playing and melody index (`seq=0/1`) on actions and every 5 seconds while playing. There is no polling timer while paused. An MP callback's immediate success only means queued for main-thread handling.
 
 The JSON report includes `nativeProbe: {active, playing, index, position, duration}`. Existing WebAudio snapshots remain separately visible with `probeActive=true`; those paused controller fields must not be mistaken for the native player's state. No user track titles, URLs, tokens or raw errors enter the journal.
 

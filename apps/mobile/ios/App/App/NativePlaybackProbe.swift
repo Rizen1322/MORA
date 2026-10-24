@@ -15,6 +15,7 @@ final class NativePlaybackProbe: NSObject, AVAudioPlayerDelegate {
     private var timer: Timer?
     private var targets: [(MPRemoteCommand, Any)] = []
     private let work = DispatchQueue(label: "ru.mora.native-probe")
+    private var ownsSession = false // Access only on work, including release retries.
     private enum Failure: Error { case cancelled, playback }
 
     var snapshot: [String: Any] {
@@ -42,6 +43,7 @@ final class NativePlaybackProbe: NSObject, AVAudioPlayerDelegate {
                 }
                 try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, policy: .default, options: [])
                 try AVAudioSession.sharedInstance().setActive(true)
+                self.ownsSession = true
                 let prepared = urls
                 DispatchQueue.main.async {
                     guard self.revision == intent else { completion(.failure(Failure.cancelled)); return }
@@ -66,8 +68,10 @@ final class NativePlaybackProbe: NSObject, AVAudioPlayerDelegate {
         active = false
         MoraPlaybackJournal.record("native.probe.stop")
         work.async {
+            guard self.ownsSession else { DispatchQueue.main.async { completion(true) }; return }
             do {
                 try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                self.ownsSession = false
                 DispatchQueue.main.async { completion(true) }
             } catch {
                 MoraPlaybackJournal.record("native.probe.sessionFailed")
@@ -112,11 +116,11 @@ final class NativePlaybackProbe: NSObject, AVAudioPlayerDelegate {
             "position": player.currentTime, "duration": player.duration, "playing": player.isPlaying])
     }
 
-    func command(_ action: String, time: Double? = nil, source: String, completion: @escaping (Bool) -> Void) {
+    func command(_ action: String, time: Double? = nil, source: String, id commandId: String? = nil, completion: @escaping (Bool) -> Void) {
         guard active, let audio = player else { completion(false); return }
         revision += 1
         let intent = revision
-        let id = UUID().uuidString
+        let id = commandId ?? UUID().uuidString
         MoraPlaybackJournal.record("native.probe.command", ["id": id, "action": action, "source": source, "seekTime": time ?? -1])
         if action == "play" || (action == "toggle" && !audio.isPlaying) {
             wantsPlaying = true
@@ -173,8 +177,10 @@ final class NativePlaybackProbe: NSObject, AVAudioPlayerDelegate {
                 let time = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime
                 if action == "seekto", time == nil || time?.isFinite != true { return .commandFailed }
                 guard let self else { return .commandFailed }
+                let id = UUID().uuidString
+                MoraPlaybackJournal.record("native.probe.callback", ["id": id, "action": action])
                 // .success means queued. native.probe.applied records actual transport handling.
-                DispatchQueue.main.async { self.command(action, time: time, source: "remote") { _ in } }
+                DispatchQueue.main.async { self.command(action, time: time, source: "remote", id: id) { _ in } }
                 return .success
             }
             targets.append((command, target))
