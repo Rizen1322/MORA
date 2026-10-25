@@ -12,6 +12,11 @@ actor PreparedQueueCheck {
     }
     func result() -> [String] { entries }
 }
+actor ArtworkCheck {
+    private var files: Set<Int> = []
+    func accept(_ file: Int) { files.insert(file) }
+    func result() -> Set<Int> { files }
+}
 
 let base = URL(string: CommandLine.arguments[1])!
 let root = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
@@ -103,6 +108,36 @@ Task.detached {
         let fallbackEntries = await fallbackSink.result()
         precondition(fallbackEntries == ["B", "C", "D", "E", "F", "G", "H"])
         precondition(fallback.snapshot["running"] as? Bool == false)
+        let coverFolder = root.appendingPathComponent("cover")
+        try FileManager.default.createDirectory(at: coverFolder, withIntermediateDirectories: true)
+        try firstPCM.write(to: coverFolder.appendingPathComponent("0.f32le"))
+        let coverJob = NativeQueuePreparation(index: 0), coverSink = PreparedQueueCheck()
+        var covered = item("B"); covered["coverUrl"] = base.appendingPathComponent("slow-cover").absoluteString
+        await coverJob.run(folder: coverFolder, manifest: ["from": 1, "items": [covered], "settings": ["enabled": false],
+            "previous": ["trackId": "A", "duration": 0.5, "mixingAllowed": false]],
+            seed: ["file": 0, "totalFrames": 24000], script: script,
+            allocate: { await coverSink.allocate() }, accept: { index, track in
+                let accepted = await coverSink.accept(index, track)
+                let acknowledgement = try! await client.data(base.appendingPathComponent("cover-accepted"), ticket: NativePreparationTicket())
+                precondition(String(data: acknowledgement, encoding: .utf8) == "before-cover", "Optional cover blocked ready PCM")
+                return accepted
+            }, event: { _, _ in })
+        coverJob.cancel()
+        let images = NativeQueueArtwork(), imageSink = ArtworkCheck()
+        for file in 1...5 {
+            images.load(base.appendingPathComponent("cover-window"), hosts: [base.host!], index: file, file: file) { _, file, data in
+                precondition(String(data: data, encoding: .utf8) == "cover")
+                Task { await imageSink.accept(file) }
+            }
+        }
+        for _ in 0..<100 {
+            if await imageSink.result().count == 5 { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let imageFiles = await imageSink.result()
+        precondition(imageFiles == Set(1...5), "Deferred current/future covers were dropped")
+        images.cancel()
+        print("Native preparation: delayed optional artwork does not hold ready PCM")
         print("Native queue: failed MIR/planner preserve seven playable future songs")
         print("Native queue: eight preparations, repeat cycles and playback permits passed without WebContent")
         print("Native HTTP: file bytes, HTTP status, transfer limit, cancelled job and cross-host auth stripping passed")

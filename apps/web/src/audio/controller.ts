@@ -2274,8 +2274,9 @@ export class PlayerController {
   }
 
   async restore(): Promise<void> {
+    const intent = this.previewRevision, revision = this.nativeRevision, queueRevision = this.queueRevision;
     try {
-      const q = (await api.queue()) as {
+      const q = (await api.queue().catch(() => null)) as {
         items: QueueEntry[];
         index: number;
         position: number;
@@ -2285,26 +2286,47 @@ export class PlayerController {
         volume?: number;
         originalOrder?: QueueEntry[] | null;
       } | null;
-      if (!q || !Array.isArray(q.items)) return;
+      const controls = nativePlaybackControls();
+      await controls?.ready;
+      const native = controls?.mix ? await controls.mix.state().catch(() => null) : null;
       // Initial provider/library loading can outlive the listener's first
       // Play/queue command. Restoration must never replace that newer intent.
-      if (this.current || this.state.queue.length || this.state.waveLoading || this.state.status === 'loading') return;
-      const items = q.items.filter((e) => this.track(e.trackId));
-      const curId = q.items[q.index]?.entryId;
+      if (intent !== this.previewRevision || revision !== this.nativeRevision || queueRevision !== this.queueRevision
+        || this.current || this.state.queue.length || this.state.waveLoading || this.state.status === 'loading') return;
+      const saved = q && Array.isArray(q.items) ? q : null;
+      const items = saved?.items.filter((e) => this.track(e.trackId)) ?? [];
+      const active = native?.active && !native.failed && !native.preparing ? native : null;
+      // A native queue can outlive WebContent and its last persisted position.
+      // Include audible/upcoming entries even if persistence preceded their arrival.
+      for (const raw of active ? [active.currentTrack, active.nextTrack] : []) {
+        if (raw?.entryId && raw.trackId && this.track(raw.trackId) && !items.some(e => e.entryId === raw.entryId)) {
+          items.push({ trackId: raw.trackId, entryId: raw.entryId, origin: 'user' });
+        }
+      }
+      const curId = active?.entryId || (saved && saved.items[saved.index]?.entryId);
       const index = Math.max(0, items.findIndex((e) => e.entryId === curId));
-      this.originalOrder = q.originalOrder ?? null;
-      this.restoredPosition = q.position ?? 0;
+      this.originalOrder = saved?.originalOrder ?? null;
+      this.restoredPosition = saved?.position ?? 0;
       this.set({
         queue: items,
         index: items.length ? index : -1,
-        context: q.context,
-        shuffle: !!q.shuffle,
-        repeat: q.repeat ?? 'off',
-        volume: systemVolume ? 1 : q.volume ?? 0.9,
+        context: saved?.context ?? null,
+        shuffle: !!saved?.shuffle,
+        repeat: saved?.repeat ?? 'off',
+        volume: systemVolume ? 1 : saved?.volume ?? 0.9,
         position: this.restoredPosition,
         duration: items[index] ? this.track(items[index].trackId)?.duration ?? 0 : 0,
         status: 'idle',
       });
+      if (active && items.some(e => e.entryId === active.entryId)) {
+        this.nativeAt = active.index;
+        this.restoredPosition = active.position;
+        this.maxPos = active.position;
+        // Adoption must not replace a running native manifest or upload PCM.
+        this.nativeManifestKey = JSON.stringify([this.queueRevision, items.map(e => e.entryId), this.state.repeat, this.state.shuffle, this.loudnessTarget]);
+        this.onNativeState(active);
+        this.nativePoll();
+      }
     } catch {
       /* first run */
     }

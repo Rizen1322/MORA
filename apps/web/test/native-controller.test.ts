@@ -8,7 +8,7 @@ import type { NativeMix, NativeMixState } from '../src/lib/native-mix.ts';
 vi.mock('../src/audio/engine.worklet.ts?worker&url', () => ({ default: '/engine.js' }));
 vi.mock('../src/lib/api.ts', async (original) => {
   const actual = await original<typeof import('../src/lib/api.ts')>();
-  return { ...actual, api: { plan: vi.fn(), prepare: vi.fn(), focus: vi.fn(), saveQueue: vi.fn(), startPlay: vi.fn(), endPlay: vi.fn(), waveNext: vi.fn(), yandexFeedback: vi.fn() } };
+  return { ...actual, api: { queue: vi.fn(), plan: vi.fn(), prepare: vi.fn(), focus: vi.fn(), saveQueue: vi.fn(), startPlay: vi.fn(), endPlay: vi.fn(), waveNext: vi.fn(), yandexFeedback: vi.fn() } };
 });
 
 const seconds = 20, frames = seconds * 48000;
@@ -35,6 +35,55 @@ beforeEach(() => {
   vi.stubGlobal('navigator', {});
 });
 afterEach(() => { timer?.(); vi.unstubAllGlobals(); });
+it('hydrates a reloaded page from the audible native track and controls it without restarting audio', async () => {
+  const entries = ['a', 'b', 'c', 'd', 'e', 'f'].map(trackId => ({ trackId, entryId: `entry-${trackId}`, origin: 'user' as const }));
+  vi.mocked(api.queue).mockResolvedValue({ items: entries, index: 1, position: 4, context: null, repeat: 'off', shuffle: false });
+  const currentTrack = { title: 'e', artist: '', trackId: 'e', entryId: 'entry-e', file: 500004, totalFrames: 48000 * 120, gainDb: 0 };
+  const mix = { upload: vi.fn(), start: vi.fn(), update: vi.fn(), prepareQueue: vi.fn(), settings: vi.fn(), stop: vi.fn(),
+    state: vi.fn(async () => state({ index: 4, position: 37, duration: 120, entryId: 'entry-e', currentTrack, blend: null })), command: vi.fn(async () => state()) };
+  let ready!: () => void;
+  vi.stubGlobal('window', { moraNativePlayback: { route: 'webkit', mixActive: true, mix, ready: new Promise<void>(resolve => { ready = resolve; }) } });
+  const tracks = new Map(entries.map(e => [e.trackId, { id: e.trackId, title: e.trackId, duration: 120, status: 'ok' } as Track]));
+  const controller = new PlayerController(id => tracks.get(id), vi.fn());
+  const h = controller as unknown as { nativeTimer: ReturnType<typeof setInterval>; saveTimer: ReturnType<typeof setTimeout> | null };
+  timer = () => { clearInterval(h.nativeTimer); if (h.saveTimer) clearTimeout(h.saveTimer); };
+  const restoring = controller.restore();
+  await Promise.resolve();
+  expect(mix.state).not.toHaveBeenCalled();
+  ready(); await restoring;
+  expect(controller.state).toMatchObject({ index: 4, position: 37, duration: 120, status: 'playing' });
+  expect(h.nativeTimer).toBeTruthy();
+  controller.pause(); await controller.resume();
+  expect(mix.command.mock.calls.map(c => c[0])).toEqual(['pause', 'play']);
+  expect(mix.upload).not.toHaveBeenCalled(); expect(mix.start).not.toHaveBeenCalled(); expect(mix.prepareQueue).not.toHaveBeenCalled();
+});
+it('does not apply an old native restore after a newer playback intent', async () => {
+  const entry = { trackId: 'old', entryId: 'entry-old', origin: 'user' as const };
+  vi.mocked(api.queue).mockResolvedValue({ items: [entry], index: 0, position: 4, context: null, repeat: 'off', shuffle: false });
+  let resolve!: (value: NativeMixState) => void;
+  const mix = { state: vi.fn(() => new Promise<NativeMixState>(r => { resolve = r; })) };
+  vi.stubGlobal('window', { moraNativePlayback: { route: 'webkit', mix, ready: Promise.resolve() } });
+  const controller = new PlayerController(id => ({ id, duration: 120 } as Track), vi.fn());
+  const h = controller as unknown as { nativeTimer: ReturnType<typeof setInterval>; saveTimer: ReturnType<typeof setTimeout> | null };
+  timer = () => { clearInterval(h.nativeTimer); if (h.saveTimer) clearTimeout(h.saveTimer); };
+  const restoring = controller.restore();
+  await vi.waitFor(() => expect(mix.state).toHaveBeenCalledOnce());
+  controller.pause();
+  resolve(state({ entryId: entry.entryId })); await restoring;
+  expect(controller.state.status).toBe('paused'); expect(controller.state.queue).toEqual([]);
+});
+it('adopts native playback even before the first queue snapshot was persisted', async () => {
+  vi.mocked(api.queue).mockResolvedValue(null);
+  const currentTrack = { title: 'e', artist: '', trackId: 'e', entryId: 'entry-e', file: 500004, totalFrames: 48000 * 120, gainDb: 0 };
+  const mix = { state: vi.fn(async () => state({ index: 4, position: 37, duration: 120, entryId: 'entry-e', currentTrack })) };
+  vi.stubGlobal('window', { moraNativePlayback: { route: 'webkit', mix, ready: Promise.resolve() } });
+  const controller = new PlayerController(id => ({ id, duration: 120 } as Track), vi.fn());
+  const h = controller as unknown as { nativeTimer: ReturnType<typeof setInterval>; saveTimer: ReturnType<typeof setTimeout> | null };
+  timer = () => { clearInterval(h.nativeTimer); if (h.saveTimer) clearTimeout(h.saveTimer); };
+  await controller.restore();
+  expect(controller.state).toMatchObject({ index: 0, position: 37, duration: 120, status: 'playing' });
+  expect(controller.state.queue[0].entryId).toBe('entry-e');
+});
 it('hands off the full album once and follows native progress beyond the third track without page PCM preparation', async () => {
   const mix = { upload: vi.fn(async () => {}), start: vi.fn(async () => state()), update: vi.fn(async () => state()),
     prepareQueue: vi.fn(async () => state()), settings: vi.fn(async () => {}), stop: vi.fn(), state: vi.fn(async () => state()), command: vi.fn(async () => state()) } satisfies NativeMix;

@@ -21,6 +21,11 @@ final class NativeMixHost {
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
     private var format: AVAudioFormat?
+    private let makeEngine: () -> AVAudioEngine
+    private var engineObserver: NSObjectProtocol?
+    private var sessionObservers: [NSObjectProtocol] = []
+    private var interrupted = false
+    private var mediaResetPending = false
     private var epoch = 0
     private var ownershipRevision = 0
     private var pending = 0
@@ -45,6 +50,7 @@ final class NativeMixHost {
     private var prunedIndex = -1
     private var newestKey = -1
     private var preparation: NativeQueuePreparation?
+    private var artworkLoader = NativeQueueArtwork()
     private var sourceBytes: [Int: Int] = [:]
     private var pendingUploads: Set<Int> = []
     private var preparedFileKey = 500000
@@ -56,9 +62,33 @@ final class NativeMixHost {
     private enum Failure: Error { case invalid, playback }
     typealias Reply = (Result<[String: Any], Error>) -> Void
 
+    init(makeEngine: @escaping () -> AVAudioEngine = { AVAudioEngine() }) {
+        self.makeEngine = makeEngine
+        // Observe directly, without a main-queue hop: engine reconfiguration,
+        // interruption and unplug intent must be serialized together on work.
+        let nc = NotificationCenter.default, session = AVAudioSession.sharedInstance()
+        sessionObservers = [
+            nc.addObserver(forName: AVAudioSession.interruptionNotification, object: session, queue: nil) { [weak self] in self?.interruption($0) },
+            nc.addObserver(forName: AVAudioSession.routeChangeNotification, object: session, queue: nil) { [weak self] in self?.routeChange($0) },
+            nc.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: session, queue: nil) { [weak self] _ in self?.mediaReset() }
+        ]
+    }
+    deinit {
+        for observer in sessionObservers { NotificationCenter.default.removeObserver(observer) }
+        if let engineObserver { NotificationCenter.default.removeObserver(engineObserver) }
+        preparation?.cancel(); artworkLoader.cancel()
+    }
+
     private var sr: Double { config["sampleRate"] as? Double ?? 48000 }
     private func file(_ key: Int) -> URL? { folder?.appendingPathComponent("\(key).f32le") }
     private static func key(_ track: [String: Any], _ i: Int) -> Int { track["file"] as? Int ?? i }
+    private func available(_ index: Int) -> Bool {
+        guard tracks.indices.contains(index), let url = file(Self.key(tracks[index], index)),
+              let count = tracks[index]["totalFrames"] as? Int else { return false }
+        return bytes[Self.key(tracks[index], index)] == count * 8 && FileManager.default.fileExists(atPath: url.path)
+    }
+    private var canGoBack: Bool { position > 3 ? available(index) : available(index - 1) }
+    private var playbackRate: Double { wantsPlaying && !failed ? PlaybackSettings(config["playback"] as? [String: Any]).speed : 0 }
     private func reply(_ completion: @escaping Reply, _ result: Result<[String: Any], Error>) {
         DispatchQueue.main.async { completion(result) }
     }
@@ -121,7 +151,8 @@ final class NativeMixHost {
             guard let count = track["totalFrames"] as? Int, count > 0, count * 8 == bytes[Self.key(track, from + offset)],
                   let gain = track["gainDb"] as? Double, gain.isFinite, abs(gain) <= 36 else { throw Failure.invalid }
             // Keep encoded images/URLs out of the DSP context, including on seek/skip.
-            var copy = track; copy.removeValue(forKey: "artwork"); copy.removeValue(forKey: "coverUrl"); return copy
+            var copy = track; copy.removeValue(forKey: "artwork"); copy.removeValue(forKey: "coverUrl")
+            copy.removeValue(forKey: "artworkHTTPHost"); return copy
         }
     }
     private func artwork(_ track: [String: Any]) -> MPMediaItemArtwork? {
@@ -134,6 +165,19 @@ final class NativeMixHost {
             let format = UIGraphicsImageRendererFormat(); format.scale = 1
             return UIGraphicsImageRenderer(size: size, format: format).image { _ in
                 thumbnail.draw(in: CGRect(origin: .zero, size: size))
+            }
+        }
+    }
+    private func requestArtwork(_ track: [String: Any], at: Int) {
+        guard track["artwork"] == nil, let text = track["coverUrl"] as? String, let url = URL(string: text) else { return }
+        let loader = artworkLoader, file = Self.key(track, at), entry = track["entryId"] as? String
+        let hosts = Set([track["artworkHTTPHost"] as? String].compactMap { $0 })
+        loader.load(url, hosts: hosts, index: at, file: file) { [weak self] at, file, data in
+            self?.work.async { [weak self] in
+                guard let self, self.artworkLoader === loader, self.tracks.indices.contains(at),
+                      Self.key(self.tracks[at], at) == file, self.tracks[at]["entryId"] as? String == entry else { return }
+                self.artworks[at] = self.artwork(["artwork": ["base64": data.base64EncodedString()]])
+                if at == self.index { self.publish("artwork") }
             }
         }
     }
@@ -159,6 +203,7 @@ final class NativeMixHost {
                 guard raw.indices.contains(start), self.engine == nil || sr == self.sr else { throw Failure.invalid }
                 let metadata = try self.validated(raw, from: 0)
                 self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false
+                self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
                 if let folder = self.folder {
                     for key in self.sourceBytes.keys { try? FileManager.default.removeItem(at: folder.appendingPathComponent("source-\(key).media")) }
                     self.sourceBytes.removeAll()
@@ -166,16 +211,8 @@ final class NativeMixHost {
                 self.artworks = raw.map { self.artwork($0) }
                 self.config = config; self.config["tracks"] = metadata; self.tracks = metadata
                 for (i, track) in metadata.enumerated() { self.pendingUploads.remove(Self.key(track, i)) }
-                if self.engine == nil {
-                    let session = AVAudioSession.sharedInstance()
-                    try session.setCategory(.playback, mode: .default, options: [])
-                    try session.setActive(true); self.ownsSession = true
-                    self.format = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 2)
-                    let engine = AVAudioEngine(), player = AVAudioPlayerNode()
-                    self.engine = engine; self.player = player
-                    engine.attach(player); engine.connect(player, to: engine.mainMixerNode, format: self.format)
-                    self.underruns = 0; self.maxRenderMs = 0
-                }
+                self.mediaResetPending = false
+                if self.engine == nil { try self.buildGraph(); self.underruns = 0; self.maxRenderMs = 0 }
                 self.preparing = false; self.failed = false
                 try self.select(index: start, position: position, playing: config["paused"] as? Bool != true)
                 self.prune()
@@ -215,7 +252,7 @@ final class NativeMixHost {
     func prepareQueue(id: String, manifest: [String: Any], completion: @escaping Reply) {
         work.async {
             do {
-                guard id == self.id, let folder = self.folder, self.engine != nil, !self.failed,
+                guard id == self.id, let folder = self.folder, !self.tracks.isEmpty, !self.preparing, !self.failed,
                       let requestedFrom = manifest["from"] as? Int, requestedFrom > 0,
                       let items = manifest["items"] as? [[String: Any]], items.count <= 1000,
                       manifest["previous"] is [String: Any], manifest["settings"] is [String: Any],
@@ -283,6 +320,7 @@ final class NativeMixHost {
                                     let added = try self.validated([track], from: at)
                                     if !self.done, let renderer = self.renderer, !(try renderer.update(from: at, tracks: added)) { throw Failure.invalid }
                                     self.tracks += added; self.config["tracks"] = self.tracks; self.artworks.append(self.artwork(track))
+                                    self.requestArtwork(track, at: at)
                                     appended = true
                                     if self.nextWhenPrepared || (self.done && self.ended && self.continueWhenPrepared) {
                                         try self.select(index: at, position: 0, playing: self.wantsPlaying || self.continueWhenPrepared)
@@ -356,10 +394,14 @@ final class NativeMixHost {
         work.async {
             for key in ["tone", "preDb", "playback", "volume"] { if let value = values[key] { self.config[key] = value } }
             self.renderer?.apply(values)
+            self.publish("settings")
             self.reply(completion, .success(self.snapshot))
         }
     }
     private func select(index: Int, position: Double, playing: Bool) throws {
+        // Reject unavailable navigation before stopping the audible graph.
+        guard available(index) else { throw Failure.invalid }
+        if engine == nil && playing && !interrupted && !mediaResetPending { try buildGraph() }
         epoch += 1; wantsPlaying = false
         player?.stop(); engine?.pause()
         pending = 0; rendered = 0; queued = 0; completed = 0; presented = 0; marks.removeAll(); done = false; ended = false
@@ -369,7 +411,7 @@ final class NativeMixHost {
         guard let folder else { throw Failure.invalid }
         renderer = try NativeQueueRenderer(folder: folder, config: next)
         wantsPlaying = playing
-        try fill()
+        if engine != nil { try fill() }
         if playing { try engine?.start(); player?.play() }
         publish("select")
     }
@@ -402,6 +444,10 @@ final class NativeMixHost {
     }
     private func played(generation: Int, end: Int64) {
         guard generation == epoch, folder != nil, !failed else { return }
+        // A configuration change can flush scheduled buffers. Those callbacks
+        // are not evidence of audible progress; the observer restores from the
+        // last heard position and invalidates this epoch.
+        if engine?.isRunning != true { return }
         pending = max(0, pending - 1); completed = max(completed, end)
         updatePosition()
         if wantsPlaying {
@@ -449,16 +495,18 @@ final class NativeMixHost {
         let artist = tracks.indices.contains(index) ? tracks[index]["artist"] as? String ?? "" : ""
         var info: [String: Any] = [MPMediaItemPropertyTitle: title, MPMediaItemPropertyArtist: artist,
             MPMediaItemPropertyPersistentID: NSNumber(value: index + 1), MPMediaItemPropertyPlaybackDuration: state["duration"] ?? 0,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: position, MPNowPlayingInfoPropertyPlaybackRate: wantsPlaying ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: position, MPNowPlayingInfoPropertyPlaybackRate: playbackRate,
             MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0, MPNowPlayingInfoPropertyIsLiveStream: false,
             MPNowPlayingInfoPropertyPlaybackQueueIndex: index, MPNowPlayingInfoPropertyPlaybackQueueCount: tracks.count]
         if artworks.indices.contains(index), let artwork = artworks[index] { info[MPMediaItemPropertyArtwork] = artwork }
         let publishedInfo = info
         let canAdvance = tracks.indices.contains(index + 1) || preparation?.hasRemaining == true
+        let canReverse = canGoBack
         DispatchQueue.main.async { [weak self] in
             guard let self, self.active, self.snapshot["epoch"] as? Int == generation else { return }
             MPNowPlayingInfoCenter.default().nowPlayingInfo = publishedInfo
             MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = canAdvance
+            MPRemoteCommandCenter.shared().previousTrackCommand.isEnabled = canReverse
         }
         let prep = state["preparation"] as? [String: Any] ?? [:]
         MoraPlaybackJournal.record("native.mix.state", ["reason": reason, "seq": index, "position": position, "duration": state["duration"] ?? 0,
@@ -488,6 +536,7 @@ final class NativeMixHost {
             MoraPlaybackJournal.record("native.mix.command", ["id": id, "action": action, "source": source])
             do {
                 guard self.folder != nil, !self.preparing, !self.failed else { throw Failure.invalid }
+                if source == "interruption" && self.mediaResetPending { throw Failure.invalid }
                 if let owner, owner != self.ownershipRevision { throw Failure.invalid }
                 self.updatePosition()
                 if source != "interruption" { self.resumeAfterInterruption = false }
@@ -498,13 +547,22 @@ final class NativeMixHost {
                         self.continueWhenPrepared = false
                         self.wantsPlaying = false; self.player?.pause(); self.engine?.pause()
                     } else {
+                        let wasPlaying = self.wantsPlaying
                         try AVAudioSession.sharedInstance().setActive(true)
+                        self.mediaResetPending = false
+                        if self.engine == nil {
+                            try self.buildGraph()
+                            let at = self.ended && self.tracks.indices.contains(self.index + 1) ? self.index + 1 : self.index
+                            try self.select(index: at, position: self.ended ? 0 : self.position, playing: true)
+                            break
+                        }
                         if self.done && self.pending == 0 {
                             if self.tracks.indices.contains(self.index + 1) { try self.select(index: self.index + 1, position: 0, playing: true) }
                             else if self.preparation?.hasRemaining == true {
                                 self.continueWhenPrepared = true; self.wantsPlaying = false
                             } else { try self.select(index: self.index, position: 0, playing: true) }
                         }
+                        else if !wasPlaying { try self.select(index: self.index, position: self.position, playing: true) }
                         else { self.wantsPlaying = true; try self.fill(); try self.engine?.start(); self.player?.play() }
                     }
                 case "nexttrack":
@@ -517,7 +575,9 @@ final class NativeMixHost {
                         self.preparation?.gate.advance(self.index + 1)
                     } else { throw Failure.invalid }
                 case "previoustrack":
-                    try self.select(index: self.position > 3 ? self.index : max(0, self.index - 1), position: 0, playing: self.wantsPlaying)
+                    let previous = self.position > 3 ? self.index : self.index - 1
+                    guard self.available(previous) else { throw Failure.invalid }
+                    try self.select(index: previous, position: 0, playing: self.wantsPlaying)
                 case "seekto":
                     guard let time, time.isFinite else { throw Failure.invalid }
                     let duration = NativeMixTimeline.duration(self.tracks[self.index], sampleRate: self.sr)
@@ -546,7 +606,7 @@ final class NativeMixHost {
             let bindings: [(MPRemoteCommand, String)] = [(c.playCommand, "play"), (c.pauseCommand, "pause"), (c.togglePlayPauseCommand, "toggle"),
                 (c.nextTrackCommand, "nexttrack"), (c.previousTrackCommand, "previoustrack"), (c.changePlaybackPositionCommand, "seekto")]
             for (command, action) in bindings {
-                command.isEnabled = true
+                if action != "nexttrack" && action != "previoustrack" { command.isEnabled = true }
                 let target = command.addTarget { [weak self] event in
                     guard let self, self.active, self.snapshot["ownership"] as? Int == owner else { return .commandFailed }
                     let time = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime
@@ -562,9 +622,10 @@ final class NativeMixHost {
     func stop(_ completion: @escaping Reply) {
         work.async {
             self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false; self.nextWhenPrepared = false
+            self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
             guard self.folder != nil || self.ownsSession else { self.reply(completion, .success(self.snapshot)); return }
             self.epoch += 1; self.wantsPlaying = false; self.resumeAfterInterruption = false
-            self.player?.stop(); self.engine?.stop(); self.renderer = nil
+            self.discardGraph(); self.interrupted = false; self.mediaResetPending = false
             do {
                 if self.ownsSession { try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation); self.ownsSession = false }
                 // folder is created only under our private cache with a native-generated UUID.
@@ -583,11 +644,14 @@ final class NativeMixHost {
         let type = (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue
         let options = (notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? NSNumber)?.uintValue ?? 0
         work.async {
+            guard self.folder != nil, !self.tracks.isEmpty else { return }
             if type == AVAudioSession.InterruptionType.began.rawValue {
+                self.interrupted = true
                 self.resumeAfterInterruption = self.wantsPlaying || self.continueWhenPrepared; self.wantsPlaying = false; self.continueWhenPrepared = false
                 self.player?.pause(); self.engine?.pause(); self.publish("interruption")
             } else if type == AVAudioSession.InterruptionType.ended.rawValue {
-                let resume = self.resumeAfterInterruption && AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume)
+                self.interrupted = false
+                let resume = !self.mediaResetPending && self.resumeAfterInterruption && AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume)
                 self.resumeAfterInterruption = false
                 if resume { self.command("play", source: "interruption") { _ in } }
             }
@@ -595,7 +659,55 @@ final class NativeMixHost {
     }
     func routeChange(_ notification: Notification) {
         let reason = (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue
-        if reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { command("pause", source: "route") { _ in } }
+        if active && reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { command("pause", source: "route") { _ in } }
     }
-    func mediaReset() { work.async { if self.folder != nil { self.fail() } } }
+    func mediaReset() {
+        work.async {
+            guard self.folder != nil, !self.tracks.isEmpty else { return }
+            self.wantsPlaying = false; self.resumeAfterInterruption = false; self.interrupted = false
+            self.continueWhenPrepared = false; self.nextWhenPrepared = false; self.mediaResetPending = true
+            self.discardGraph(); self.ownsSession = false
+            self.publish("mediaReset") // Preserve the queue; only a subsequent user Play activates audio.
+        }
+    }
+    private func buildGraph() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .default, options: [])
+        try session.setActive(true); ownsSession = true
+        format = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 2)
+        let engine = makeEngine(), player = AVAudioPlayerNode()
+        self.engine = engine; self.player = player
+        engine.attach(player); engine.connect(player, to: engine.mainMixerNode, format: format)
+        engineObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self, weak engine] _ in
+            guard let engine else { return }; self?.configurationChanged(engine)
+        }
+    }
+    private func discardGraph() {
+        epoch += 1
+        if let engineObserver { NotificationCenter.default.removeObserver(engineObserver); self.engineObserver = nil }
+        player?.stop(); engine?.stop(); renderer = nil; player = nil; engine = nil; format = nil
+        pending = 0; rendered = 0; queued = 0; completed = 0; presented = 0; marks.removeAll(); blend = nil
+        // Completion belongs to the queue, not the discarded graph. Preserve it
+        // while an ended track waits for the producer to deliver its successor.
+        lastLogFrame = -1
+    }
+    private func configurationChanged(_ changed: AVAudioEngine) {
+        work.async {
+            guard self.folder != nil, self.engine === changed, !changed.isRunning else { return }
+            self.discardGraph()
+            self.publish("configuration")
+            let generation = self.epoch
+            // Coalesce related route/interruption notifications before deciding
+            // whether playback is still wanted. Unplug/Pause always wins.
+            self.work.asyncAfter(deadline: .now() + 0.05) {
+                guard self.epoch == generation, self.wantsPlaying, !self.interrupted, !self.mediaResetPending else { return }
+                do {
+                    let pendingNext = self.nextWhenPrepared
+                    try self.select(index: self.index, position: self.position, playing: true)
+                    self.nextWhenPrepared = pendingNext; self.publish("configurationRecovered")
+                }
+                catch { self.fail() }
+            }
+        }
+    }
 }

@@ -35,15 +35,16 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
     }()
     private let allowLoopback: Bool
     private let allowedHTTPHosts: Set<String>
+    private let timeout: TimeInterval
     private var transfers: [Int: Transfer] = [:] // delegateQueue only
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 180
+        config.timeoutIntervalForRequest = min(30, timeout); config.timeoutIntervalForResource = timeout
         config.httpCookieStorage = nil; config.urlCache = nil; config.httpMaximumConnectionsPerHost = 3
         return URLSession(configuration: config, delegate: self, delegateQueue: delegateQueue)
     }()
-    init(allowLoopback: Bool = false, allowedHTTPHosts: Set<String> = []) {
-        self.allowLoopback = allowLoopback; self.allowedHTTPHosts = allowedHTTPHosts; super.init()
+    init(allowLoopback: Bool = false, allowedHTTPHosts: Set<String> = [], timeout: TimeInterval = 180) {
+        self.allowLoopback = allowLoopback; self.allowedHTTPHosts = allowedHTTPHosts; self.timeout = timeout; super.init()
     }
     func invalidate() { delegateQueue.addOperation { self.session.invalidateAndCancel() } }
     private func valid(_ url: URL) -> Bool {

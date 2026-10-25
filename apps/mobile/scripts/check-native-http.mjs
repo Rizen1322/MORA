@@ -16,6 +16,8 @@ wave.write('RIFF', 0); wave.writeUInt32LE(wave.length - 8, 4); wave.write('WAVEf
 wave.writeUInt16LE(1, 20); wave.writeUInt16LE(1, 22); wave.writeUInt32LE(22050, 24); wave.writeUInt32LE(44100, 28);
 wave.writeUInt16LE(2, 32); wave.writeUInt16LE(16, 34); wave.write('data', 36); wave.writeUInt32LE(22050, 40);
 for (let i = 0; i < 11025; i++) wave.writeInt16LE(Math.round(Math.sin(i * .05) * 4000), 44 + i * 2);
+let coverAccepted = false, coverReleased = false;
+let imagesInFlight = 0;
 const server = createServer((req, res) => {
   if (req.url === '/redirect') {
     assert.equal(req.headers.authorization, 'Bearer fixture');
@@ -25,6 +27,15 @@ const server = createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': payload.length }); res.end(payload);
   } else if (req.url === '/list.m3u8') { assert.equal(req.headers['x-mora-test'], 'required'); res.end('#EXTM3U\n#EXTINF:1,\nfirst.aac\n#EXTINF:1,\nsecond.aac\n#EXT-X-ENDLIST\n'); }
   else if (req.url === '/wave') { res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': wave.length }); res.end(wave); }
+  else if (req.url === '/slow-cover') {
+    // Old code waits for this optional resource before accepting ready PCM.
+    setTimeout(() => { coverReleased = true; res.end('optional-cover'); }, 2000);
+  }
+  else if (req.url === '/cover-accepted') { coverAccepted = true; res.end(coverReleased ? 'late' : 'before-cover'); }
+  else if (req.url === '/cover-window') {
+    assert.ok(++imagesInFlight <= 2, 'Optional artwork concurrency must be bounded');
+    setTimeout(() => { imagesInFlight--; res.end('cover'); }, 150);
+  }
   else if (req.url === '/first.aac') { res.end(Buffer.from([1, 2, 3])); }
   else if (req.url === '/second.aac') { res.end(Buffer.from([4, 5, 6])); }
   else if (req.url === '/chunked') { res.writeHead(200); res.write(payload.subarray(0, 20)); res.end(payload.subarray(20)); }
@@ -64,6 +75,7 @@ try {
     child.on('error', reject); child.on('close', resolve);
   });
   assert.equal(code, 0);
+  assert.equal(coverAccepted, true, 'The artwork regression must accept its audio fixture');
   const actual = JSON.parse(await readFile(join(folder, 'analysis-actual.json'), 'utf8'));
   function compare(a, b, path = 'analysis') {
     if (typeof a === 'number') assert.ok(Number.isFinite(b) && Math.abs(a - b) <= 2e-5 * Math.max(1, Math.abs(a)), `${path}: ${a} != ${b}`);

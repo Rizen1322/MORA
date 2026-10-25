@@ -153,9 +153,8 @@ final class NativeQueuePreparation: @unchecked Sendable {
                     }
                     if let artwork = item["artwork"] { track["artwork"] = artwork }
                     else if let text = item["coverUrl"] as? String, let url = URL(string: text) {
-                        if let data = try? await http.data(url, limit: 2 * 1024 * 1024, ticket: ticket) {
-                            track["artwork"] = ["base64": data.base64EncodedString()]
-                        }
+                        track["coverUrl"] = text
+                        if let host = url.host, hosts.contains(host) { track["artworkHTTPHost"] = host }
                     }
                     guard !ticket.cancelled else { throw NativeMediaHTTP.Failure.cancelled }
                     committed = await accept(at, track)
@@ -199,5 +198,54 @@ final class NativeQueuePreparation: @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: temporary) }
         let length = try NativePCMDecoder.resample(source, from: 48000, to: temporary, sampleRate: 44100, cancelled: { self.ticket.cancelled })
         return try core.analyze(temporary, frames: length, ticket: ticket)
+    }
+}
+
+/// Session-owned: replacing a preparation manifest keeps artwork requests for
+/// retained PCM alive. The host checks the entry/file identity before applying it.
+final class NativeQueueArtwork: @unchecked Sendable {
+    private let ticket = NativePreparationTicket()
+    private let lock = NSLock()
+    private var pendingArtwork = 0
+    private struct ArtworkRequest: Sendable {
+        let url: URL, hosts: Set<String>, index: Int, file: Int
+        let accept: @Sendable (Int, Int, Data) -> Void
+    }
+    private var deferredArtwork: [ArtworkRequest] = []
+    func cancel() {
+        ticket.cancel()
+        lock.lock(); deferredArtwork.removeAll(); lock.unlock()
+    }
+    /// Optional images never block the sequential audio producer. Bound both the
+    /// number of in-flight images and their lifetime, including very fast skips.
+    func load(_ url: URL, hosts: Set<String>, index: Int, file: Int,
+                             accept: @escaping @Sendable (Int, Int, Data) -> Void) {
+        lock.lock()
+        guard !ticket.cancelled else { lock.unlock(); return }
+        let request = ArtworkRequest(url: url, hosts: hosts, index: index, file: file, accept: accept)
+        if pendingArtwork >= 2 {
+            // The gate permits current + two upcoming songs. Keep that latest
+            // window rather than accumulating the covers of rapidly skipped songs.
+            deferredArtwork.append(request)
+            if deferredArtwork.count > 3 { deferredArtwork.removeFirst() }
+            lock.unlock(); return
+        }
+        pendingArtwork += 1; lock.unlock()
+        startArtwork(request)
+    }
+    private func startArtwork(_ request: ArtworkRequest) {
+        Task.detached(priority: .utility) {
+            let http = NativeMediaHTTP(allowedHTTPHosts: request.hosts, timeout: 8)
+            defer { http.invalidate(); self.artworkFinished() }
+            if let data = try? await http.data(request.url, limit: 2 * 1024 * 1024, ticket: self.ticket), !self.ticket.cancelled {
+                request.accept(request.index, request.file, data)
+            }
+        }
+    }
+    private func artworkFinished() {
+        lock.lock(); pendingArtwork -= 1
+        let next = !ticket.cancelled && !deferredArtwork.isEmpty ? deferredArtwork.removeFirst() : nil
+        if next != nil { pendingArtwork += 1 }; lock.unlock()
+        if let next { startArtwork(next) }
     }
 }

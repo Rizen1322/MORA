@@ -209,7 +209,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc private func interruption(_ n: Notification) {
         if !Thread.isMainThread { DispatchQueue.main.async { self.interruption(n) }; return }
-        if nativeMix.active { nativeMix.interruption(n); return }
+        if nativeMix.active { return } // NativeMixHost observes session events on its control queue.
         if nativeProbe.active { nativeProbe.interruption(n); return }
         MoraPlaybackJournal.record("native.interruption", ["seq": n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ?? 0,
             "reason": String(n.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt ?? 0),
@@ -240,7 +240,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc private func routeChange(_ n: Notification) {
         if !Thread.isMainThread { DispatchQueue.main.async { self.routeChange(n) }; return }
-        if nativeMix.active { nativeMix.routeChange(n); return }
+        if nativeMix.active { return }
         if nativeProbe.active { nativeProbe.routeChange(n); return }
         MoraPlaybackJournal.record("native.routeChange", ["reason": String(n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0)])
         guard let raw = n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
@@ -251,7 +251,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc private func mediaReset(_ n: Notification) {
         if !Thread.isMainThread { DispatchQueue.main.async { self.mediaReset(n) }; return }
-        if nativeMix.active { nativeMix.mediaReset(); return }
+        if nativeMix.active { return }
         if nativeProbe.active { MoraPlaybackJournal.record("native.probe.mediaReset"); return }
         MoraPlaybackJournal.record("native.mediaReset")
         if playing {
