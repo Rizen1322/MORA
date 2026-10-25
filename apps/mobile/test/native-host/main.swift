@@ -102,19 +102,29 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
     private func waitingConfigurationRegression(id: String, seed: [String: Any]) async throws {
         let argument = CommandLine.arguments.firstIndex(of: "--fixture-base")!
         let base = URL(string: CommandLine.arguments[argument + 1])!
-        _ = try await call { host.start(id: id, config: ["sampleRate": 48000.0, "position": 5.7, "tracks": [seed]], completion: $0) }
+        _ = try await call { host.start(id: id, config: ["sampleRate": 48000.0, "position": 0.0, "tracks": [seed]], completion: $0) }
         let item: [String: Any] = ["file": 99, "entryId": "held-audio", "trackId": "held-audio", "title": "Held audio", "duration": 1.0,
             "mixingAllowed": false, "source": ["kind": "direct", "url": base.appendingPathComponent("audio-wait").absoluteString, "allowHTTP": true]]
         _ = try await call { host.prepareQueue(id: id, manifest: ["from": 1, "items": [item], "settings": ["enabled": false],
             "previous": ["trackId": "long", "duration": 6.0, "mixingAllowed": false]], completion: $0) }
+        // Synchronize the fixture before ending the audible song: Core startup
+        // and the first HTTP request need not finish within its final 300ms.
+        var held = false
+        let downloadDeadline = ProcessInfo.processInfo.systemUptime + 10
+        while ProcessInfo.processInfo.systemUptime < downloadDeadline {
+            let (pending, _) = try await URLSession.shared.data(from: base.appendingPathComponent("audio-pending"))
+            held = String(data: pending, encoding: .utf8) == "1"
+            if held { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        try require(held, "Fixture did not hold next audio")
+        _ = try await call { host.command("seekto", time: 5.7, source: "fixture", completion: $0) }
         for _ in 0..<100 {
             last = try await call { host.state($0) }
             if last["ended"] as? Bool == true { break }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
         try require(last["ended"] as? Bool == true, "Fixture did not end while awaiting audio")
-        let (pending, _) = try await URLSession.shared.data(from: base.appendingPathComponent("audio-pending"))
-        try require(String(data: pending, encoding: .utf8) == "1", "Fixture did not hold next audio")
         let stopped = engines.latest!
         stopped.stop()
         NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: stopped)
