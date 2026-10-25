@@ -35,18 +35,17 @@ try {
     ...files, resolve(root, 'apps/mobile/test/native-host/main.swift'), '-o', join(app, 'HostCheck')]);
   run('codesign', ['--force', '--sign', '-', app]);
   run('xcrun', ['simctl', 'install', device.udid, app]);
+  const container = run('xcrun', ['simctl', 'get_app_container', device.udid, bundle, 'data']);
   for (const mode of ['natural', 'skip']) {
     run('xcrun', ['simctl', 'launch', '--terminate-running-process', device.udid, bundle, ...(mode === 'skip' ? ['--skip'] : [])]);
-    const container = run('xcrun', ['simctl', 'get_app_container', device.udid, bundle, 'data']);
-    let report, backgrounded = false;
+    let report;
     for (let i = 0; i < 60; i++) {
       await sleep(1000);
       try { report = JSON.parse(await readFile(join(container, 'Documents', `${mode}.json`), 'utf8')); } catch { continue; }
       if (report.status === 'failed' || report.status === 'passed') break;
-      if (!backgrounded) { run('xcrun', ['simctl', 'launch', device.udid, 'com.apple.Preferences']); backgrounded = true; }
     }
     assert.equal(report?.status, 'passed', JSON.stringify({ mode, report }));
-    assert.ok(backgrounded, 'The test must leave the foreground before completing');
+    assert.equal(report.backgrounded, true, 'The iOS app must observe its own background state');
     console.log(`Native iOS host ${mode}: reached track 8 without WebView; duration, seek and background refill passed`);
   }
 } finally {

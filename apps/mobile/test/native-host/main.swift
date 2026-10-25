@@ -18,6 +18,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
     private let host = NativeMixHost()
     private var skip = false
+    private var backgrounded = false
     private var seen: Set<Int> = []
     private var last: [String: Any] = [:]
     private var reportURL: URL {
@@ -35,7 +36,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         try await withCheckedThrowingContinuation { continuation in operation { continuation.resume(with: $0) } }
     }
     private func write(_ status: String, reason: String = "none") {
-        let data: [String: Any] = ["status": status, "reason": reason, "indexes": seen.sorted(),
+        let data: [String: Any] = ["status": status, "reason": reason, "indexes": seen.sorted(), "backgrounded": backgrounded,
             "state": last, "events": MoraPlaybackJournal.snapshot]
         if let bytes = try? JSONSerialization.data(withJSONObject: data) { try? bytes.write(to: reportURL, options: .atomic) }
     }
@@ -65,12 +66,16 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         }
         _ = try await call { host.prepareQueue(id: id, manifest: ["from": 1, "items": items, "settings": ["enabled": false],
             "previous": ["trackId": "T0", "duration": 3.0, "mixingAllowed": false]], completion: $0) }
-        write("ready") // Runner moves this app to the background now.
-        for _ in 0..<200 {
+        write("ready")
+        // Public UIKit app switch; simctl launch of an already-running Settings
+        // process doesn't reliably activate it. No page exists in this app.
+        UIApplication.shared.open(URL(string: "https://example.invalid/mora-native-host-check")!)
+        for _ in 0..<600 {
             if UIApplication.shared.applicationState == .background { break }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         try require(UIApplication.shared.applicationState == .background, "Fixture never entered the background")
+        backgrounded = true
         for _ in 0..<500 {
             last = try await call { host.state($0) }
             let index = last["index"] as? Int ?? -1, count = last["count"] as? Int ?? 0
