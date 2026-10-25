@@ -69,7 +69,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         write("ready")
         // Public UIKit app switch; simctl launch of an already-running Settings
         // process doesn't reliably activate it. No page exists in this app.
-        UIApplication.shared.open(URL(string: "https://example.invalid/mora-native-host-check")!)
+        UIApplication.shared.open(URL(string: "https://example.invalid/mora-native-host-check")!, options: [:], completionHandler: nil)
         for _ in 0..<600 {
             if UIApplication.shared.applicationState == .background { break }
             try await Task.sleep(nanoseconds: 50_000_000)
