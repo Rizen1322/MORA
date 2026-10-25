@@ -21,7 +21,7 @@ wave.write('RIFF'); wave.writeUInt32LE(wave.length - 8, 4); wave.write('WAVEfmt 
 wave.writeUInt32LE(16, 16); wave.writeUInt16LE(1, 20); wave.writeUInt16LE(2, 22);
 wave.writeUInt32LE(48000, 24); wave.writeUInt32LE(192000, 28); wave.writeUInt16LE(4, 32);
 wave.writeUInt16LE(16, 34); wave.write('data', 36); wave.writeUInt32LE(wave.length - 44, 40);
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64');
 const server = createServer((req, res) => {
   if (req.url === '/cover') { covers.add(res); res.on('close', () => covers.delete(res)); }
   else if (req.url === '/audio-wait') { audio.add(res); res.on('close', () => audio.delete(res)); }
