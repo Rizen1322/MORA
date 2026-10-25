@@ -162,7 +162,12 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         }
         try require(UIApplication.shared.applicationState == .background, "Fixture never entered the background")
         backgrounded = true
-        for _ in 0..<500 {
+        // Eight 3s tracks need 21s just to reach the last song. Cold JavaScriptCore
+        // initialization can outlive the first song on a busy Simulator runner;
+        // bound the whole check by wall time without confusing that startup
+        // delay with a stopped native queue.
+        let playbackDeadline = ProcessInfo.processInfo.systemUptime + 60
+        while ProcessInfo.processInfo.systemUptime < playbackDeadline {
             last = try await call { host.state($0) }
             let index = last["index"] as? Int ?? -1, count = last["count"] as? Int ?? 0
             try require(last["failed"] as? Bool != true, "Native host failed")
