@@ -22,6 +22,7 @@ final class NativeMixHost {
     private var player: AVAudioPlayerNode?
     private var format: AVAudioFormat?
     private let makeEngine: () -> AVAudioEngine
+    private let preparationScript: String?
     private var engineObserver: NSObjectProtocol?
     private var sessionObservers: [NSObjectProtocol] = []
     private var interrupted = false
@@ -62,8 +63,9 @@ final class NativeMixHost {
     private enum Failure: Error { case invalid, playback }
     typealias Reply = (Result<[String: Any], Error>) -> Void
 
-    init(makeEngine: @escaping () -> AVAudioEngine = { AVAudioEngine() }) {
+    init(makeEngine: @escaping () -> AVAudioEngine = { AVAudioEngine() }, preparationScript: String? = nil) {
         self.makeEngine = makeEngine
+        self.preparationScript = preparationScript
         // Observe directly, without a main-queue hop: engine reconfiguration,
         // interruption and unplug intent must be serialized together on work.
         let nc = NotificationCenter.default, session = AVAudioSession.sharedInstance()
@@ -257,7 +259,7 @@ final class NativeMixHost {
                       let items = manifest["items"] as? [[String: Any]], items.count <= 1000,
                       manifest["previous"] is [String: Any], manifest["settings"] is [String: Any],
                       let scriptURL = Bundle.main.url(forResource: "native-preparation", withExtension: "js", subdirectory: "public") else { throw Failure.invalid }
-                let script = try String(contentsOf: scriptURL, encoding: .utf8)
+                let script = try self.preparationScript ?? String(contentsOf: scriptURL, encoding: .utf8)
                 for item in items {
                     guard let key = item["file"] as? Int, (0..<1_000_000).contains(key), item["source"] is [String: Any] else { throw Failure.invalid }
                 }

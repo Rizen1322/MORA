@@ -55,9 +55,9 @@ try {
   run('xcrun', ['simctl', 'install', device.udid, app]);
   const container = run('xcrun', ['simctl', 'get_app_container', device.udid, bundle, 'data']);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  for (const mode of ['natural', 'skip']) {
+  for (const mode of ['natural', 'skip', 'slow-analysis']) {
     run('xcrun', ['simctl', 'launch', '--terminate-running-process', device.udid, bundle,
-      '--fixture-base', `http://127.0.0.1:${server.address().port}`, ...(mode === 'skip' ? ['--skip'] : [])]);
+      '--fixture-base', `http://127.0.0.1:${server.address().port}`, ...(mode === 'skip' ? ['--skip'] : mode === 'slow-analysis' ? ['--slow-analysis'] : [])]);
     let report;
     for (let i = 0; i < 90; i++) {
       await sleep(1000);

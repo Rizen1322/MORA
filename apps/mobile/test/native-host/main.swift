@@ -25,17 +25,24 @@ final class EngineCapture: @unchecked Sendable {
 final class HostCheck: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
     private let engines = EngineCapture()
-    private lazy var host = NativeMixHost(makeEngine: { [engines] in engines.create() })
+    private let slowAnalysis = CommandLine.arguments.contains("--slow-analysis")
+    private lazy var host = NativeMixHost(makeEngine: { [engines] in engines.create() }, preparationScript: slowAnalysis ? """
+        var MoraPreparation = { analyzerVersion: 'slow-fixture', analyzeJSON: function() {
+            var end = Date.now() + 20000;
+            while (Date.now() < end) { if (moraPreparationCancelled()) throw Error('cancelled'); }
+            return '{}';
+        }, planJSON: function() { return '{}'; } };
+        """ : nil)
     private var skip = false
     private var backgrounded = false
     private var seen: Set<Int> = []
     private var last: [String: Any] = [:]
     private var reportURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(skip ? "skip.json" : "natural.json")
+            .appendingPathComponent(slowAnalysis ? "slow-analysis.json" : skip ? "skip.json" : "natural.json")
     }
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        skip = CommandLine.arguments.contains("--skip")
+        skip = slowAnalysis || CommandLine.arguments.contains("--skip")
         let window = UIWindow(frame: UIScreen.main.bounds); window.rootViewController = UIViewController()
         window.makeKeyAndVisible(); self.window = window
         Task { do { try await run() } catch { write("failed", reason: String(describing: error)) } }
@@ -158,10 +165,10 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         for (i, key) in keys.enumerated() {
             _ = try await call { host.sourceAppend(id: id, key: key, offset: 0, base64: wav.base64EncodedString(), completion: $0) }
             items.append(["file": key, "entryId": "E\(i + 1)", "trackId": "T\(i + 1)", "title": "Track \(i + 1)",
-                "artist": "Fixture", "duration": 3.0, "mixingAllowed": false, "source": ["kind": "local", "file": key]])
+                "artist": "Fixture", "duration": 3.0, "mixingAllowed": slowAnalysis, "source": ["kind": "local", "file": key]])
         }
-        _ = try await call { host.prepareQueue(id: id, manifest: ["from": 1, "items": items, "settings": ["enabled": false],
-            "previous": ["trackId": "T0", "duration": 3.0, "mixingAllowed": false]], completion: $0) }
+        _ = try await call { host.prepareQueue(id: id, manifest: ["from": 1, "items": items, "settings": ["enabled": slowAnalysis],
+            "previous": ["trackId": "T0", "duration": 3.0, "mixingAllowed": slowAnalysis]], completion: $0) }
         write("ready")
         // Public UIKit app switch; simctl launch of an already-running Settings
         // process doesn't reliably activate it. No page exists in this app.
@@ -176,7 +183,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         // initialization can outlive the first song on a busy Simulator runner;
         // bound the whole check by wall time without confusing that startup
         // delay with a stopped native queue.
-        let playbackDeadline = ProcessInfo.processInfo.systemUptime + 60
+        let playbackDeadline = ProcessInfo.processInfo.systemUptime + (slowAnalysis ? 10 : 60)
         while ProcessInfo.processInfo.systemUptime < playbackDeadline {
             last = try await call { host.state($0) }
             let index = last["index"] as? Int ?? -1, count = last["count"] as? Int ?? 0
@@ -191,6 +198,11 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         try require(seen.contains(7), "Native refill stopped after index \(seen.max() ?? -1)")
+        if slowAnalysis {
+            write("passed")
+            _ = try await call { host.stop($0) }
+            return
+        }
         _ = try await call { host.command("pause", source: "fixture", completion: $0) }
         last = try await call { host.command("seekto", time: 0.35, source: "fixture", completion: $0) }
         try require(abs((last["position"] as? Double ?? 0) - 0.35) < 0.02, "Native seek lost its position")
