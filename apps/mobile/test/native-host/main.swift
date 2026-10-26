@@ -35,7 +35,11 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
             var end = Date.now() + 1000;
             while (Date.now() < end) { if (moraPreparationCancelled()) throw Error('cancelled'); }
             return '{"version":"retained-fixture"}';
-        }, planJSON: function(input) { var r = JSON.parse(input); return JSON.stringify({gainDb:r.settings.loudnessTarget === -16 ? -3 : -6}); } };
+        }, planJSON: function(input) {
+            var r = JSON.parse(input);
+            if (r.settings.loudnessTarget === -22) { var end = Date.now() + 1000; while (Date.now() < end) {} }
+            return JSON.stringify({gainDb:!r.a.mixingAllowed || !r.b.mixingAllowed ? 0 : r.settings.loudnessTarget === -16 ? -3 : r.settings.loudnessTarget === -22 ? -9 : -6});
+        } };
         """ : slowAnalysis ? """
         var MoraPreparation = { analyzerVersion: 'slow-fixture', analyzeJSON: function() {
             var end = Date.now() + 20000;
@@ -84,8 +88,9 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         }
         let item: [String: Any] = ["file": key, "trackId": "retained-next", "entryId": "retained-next", "mixingAllowed": true,
             "source": ["kind": "local", "file": key]]
-        func manifest(_ target: Double) -> [String: Any] {
-            ["from": 1, "items": [item], "settings": ["enabled": true, "loudnessTarget": target],
+        func manifest(_ target: Double, allowed: Bool = true) -> [String: Any] {
+            var candidate = item; candidate["mixingAllowed"] = allowed
+            return ["from": 1, "items": [candidate], "settings": ["enabled": true, "loudnessTarget": target],
              "previous": ["trackId": "retained-seed", "duration": 6.0, "mixingAllowed": true]]
         }
         _ = try await call { host.prepareQueue(id: id, manifest: manifest(-16), completion: $0) }
@@ -113,6 +118,27 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
             try require((next?["gainDb"] as? NSNumber)?.doubleValue == expected && last["count"] as? Int == 2,
                 "Manifest replacement lost retained analysis or new settings; expected gain \(expected)")
         }
+        _ = try await call { host.prepareQueue(id: id, manifest: manifest(-22), completion: $0) }
+        var planning = false
+        let planningDeadline = ProcessInfo.processInfo.systemUptime + 10
+        while ProcessInfo.processInfo.systemUptime < planningDeadline {
+            last = try await call { host.state($0) }
+            planning = (last["analysis"] as? [String: Any])?["state"] as? String == "planning"
+            if planning { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        try require(planning, "Policy fixture did not enter its delayed planner")
+        _ = try await call { host.prepareQueue(id: id, manifest: manifest(-22, allowed: false), completion: $0) }
+        let policyDeadline = ProcessInfo.processInfo.systemUptime + 10
+        var gain: Double?
+        while ProcessInfo.processInfo.systemUptime < policyDeadline {
+            last = try await call { host.state($0) }
+            gain = ((last["nextTrack"] as? [String: Any])?["gainDb"] as? NSNumber)?.doubleValue
+            try require(gain != -9, "A stale plan survived a processing-policy change")
+            if gain == 0 { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        try require(gain == 0, "Updated processing policy was not applied to retained PCM")
         write("passed"); _ = try await call { host.stop($0) }
     }
     private func artworkRegressions(id: String, seed: [String: Any]) async throws {

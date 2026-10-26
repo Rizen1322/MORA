@@ -195,7 +195,7 @@ final class NativeMixAnalysis: @unchecked Sendable {
             guard let file = pcm["file"] as? Int, let frames = pcm["totalFrames"] as? Int else { throw NativePreparationCore.Failure.analysis }
             self.frames = frames
             // Never retain source URLs or credentials in the analysis queue/cache.
-            self.value = ["id": value["trackId"] ?? "", "duration": Double(frames) / 48000,
+            self.value = ["id": value["trackId"] ?? "", "entryId": pcm["entryId"] ?? "", "duration": Double(frames) / 48000,
                           "mixingAllowed": value["mixingAllowed"] ?? false, "analysis": value["analysis"] ?? NSNull()]
             url = folder.appendingPathComponent("\(UUID().uuidString).mir-pcm")
             // A private hard link pins the PCM independently of playback pruning.
@@ -279,6 +279,9 @@ final class NativeMixAnalysis: @unchecked Sendable {
                 let result = try core.plan(a: a, b: b, settings: request.settings, sampleRate: 48000)
                 if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
                 var track = request.pcm; track["gainDb"] = result["gainDb"] ?? 0.0
+                var policies: [String: Bool] = [:]
+                for source in [request.a, request.b] { policies[source.value["entryId"] as? String ?? ""] = source.value["mixingAllowed"] as? Bool == true }
+                track["_analysisPolicy"] = policies
                 if let tr = result["transition"] as? [String: Any], let trigger = tr["triggerFrame"] as? Int,
                    let entry = tr["entryFrame"] as? Int, trigger < request.a.frames, entry < request.b.frames {
                     track["transition"] = tr; track["plan"] = result["plan"]

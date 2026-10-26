@@ -53,6 +53,7 @@ final class NativeMixHost {
     private var preparation: NativeQueuePreparation?
     private var analysisWorker = NativeMixAnalysis()
     private var analysisSettings: [String: Any] = [:]
+    private var analysisPolicies: [String: Bool] = [:]
     private var artworkLoader = NativeQueueArtwork()
     private var sourceBytes: [Int: Int] = [:]
     private var pendingUploads: Set<Int> = []
@@ -160,7 +161,7 @@ final class NativeMixHost {
                   let gain = track["gainDb"] as? Double, gain.isFinite, abs(gain) <= 36 else { throw Failure.invalid }
             // Keep encoded images/URLs out of the DSP context, including on seek/skip.
             var copy = track; copy.removeValue(forKey: "artwork"); copy.removeValue(forKey: "coverUrl")
-            copy.removeValue(forKey: "artworkHTTPHost"); return copy
+            copy.removeValue(forKey: "artworkHTTPHost"); copy.removeValue(forKey: "_analysisPolicy"); return copy
         }
     }
     private func artwork(_ track: [String: Any]) -> MPMediaItemArtwork? {
@@ -211,7 +212,7 @@ final class NativeMixHost {
                 guard raw.indices.contains(start), self.engine == nil || sr == self.sr else { throw Failure.invalid }
                 let metadata = try self.validated(raw, from: 0)
                 self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false
-                self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis(); self.analysisSettings = [:]
+                self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis(); self.analysisSettings = [:]; self.analysisPolicies = [:]
                 self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
                 if let folder = self.folder {
                     for key in self.sourceBytes.keys { try? FileManager.default.removeItem(at: folder.appendingPathComponent("source-\(key).media")) }
@@ -288,7 +289,16 @@ final class NativeMixHost {
                 self.preparation?.cancel(keepAnalysis: true)
                 let settings = configuration["settings"] as! [String: Any]
                 let settingsChanged = !NSDictionary(dictionary: self.analysisSettings).isEqual(to: settings)
-                if settingsChanged {
+                var policies: [String: Bool] = [:]
+                for item in items + (manifest["loopItems"] as? [[String: Any]] ?? []) {
+                    if let entry = item["entryId"] as? String { policies[entry] = item["mixingAllowed"] as? Bool == true }
+                }
+                let initial = manifest["previous"] as! [String: Any]
+                if initial["trackId"] as? String == self.tracks[self.index]["trackId"] as? String,
+                   let entry = self.tracks[self.index]["entryId"] as? String { policies[entry] = initial["mixingAllowed"] as? Bool == true }
+                let policyChanged = policies.contains { self.analysisPolicies[$0.key] != nil && self.analysisPolicies[$0.key] != $0.value }
+                self.analysisPolicies.merge(policies) { _, new in new }
+                if settingsChanged || policyChanged {
                     self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis(); self.analysisSettings = settings
                 }
                 let analysis = self.analysisWorker
@@ -305,18 +315,16 @@ final class NativeMixHost {
                 self.tracks = Array(self.tracks.prefix(from)); self.artworks = Array(self.artworks.prefix(from)); self.config["tracks"] = self.tracks
                 analysis.retain(Dictionary(uniqueKeysWithValues: self.tracks.enumerated().map { ($0.offset, Self.key($0.element, $0.offset)) }))
                 analysis.advance(self.index)
-                if settingsChanged {
+                if settingsChanged || policyChanged {
                     // Retained PCM may need a new plan after changing loudness or
                     // AutoMix settings. Reuse the content cache; do not download again.
                     var a = items.first(where: { $0["entryId"] as? String == self.tracks[self.index]["entryId"] as? String }) ?? (manifest["previous"] as! [String: Any])
                     for at in (self.index + 1)..<from {
                         guard let b = items.first(where: { $0["entryId"] as? String == self.tracks[at]["entryId"] as? String }) else { break }
-                        if a["mixingAllowed"] as? Bool == true || b["mixingAllowed"] as? Bool == true {
-                            analysis.enqueue(folder: folder, before: a, previousPCM: self.tracks[at - 1], next: b, pcm: self.tracks[at],
+                        analysis.enqueue(folder: folder, before: a, previousPCM: self.tracks[at - 1], next: b, pcm: self.tracks[at],
                                 index: at, script: script, settings: settings,
                                 upgrade: { [weak self] at, track in self?.applyAnalysis(analysis, at: at, track: track) },
                                 event: { [weak self] _, reason in self?.recordAnalysis(analysis, reason: reason) })
-                        }
                         a = b
                     }
                 }
@@ -405,6 +413,8 @@ final class NativeMixHost {
             guard let self, self.analysisWorker === worker, at > self.index, self.tracks.indices.contains(at),
                   track["entryId"] as? String == self.tracks[at]["entryId"] as? String,
                   Self.key(track, at) == Self.key(self.tracks[at], at), self.available(at) else { return }
+            if let policies = track["_analysisPolicy"] as? [String: Bool],
+               policies.contains(where: { self.analysisPolicies[$0.key] != $0.value }) { return }
             do {
                 let checked = try self.validated([track], from: at)[0]
                 if let renderer = self.renderer {

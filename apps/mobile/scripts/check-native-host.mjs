@@ -66,7 +66,10 @@ try {
     }
     assert.equal(report?.status, 'passed', JSON.stringify({ mode, report }));
     if (mode !== 'retained-analysis') assert.equal(report.backgrounded, true, 'The iOS app must observe its own background state');
-    console.log(`Native iOS host ${mode}: eight tracks, artwork leases, Previous boundary, speed, reset and configuration recovery passed`);
+    const detail = mode === 'retained-analysis' ? 'retained MIR, cache reuse, settings and processing-policy changes'
+      : mode.startsWith('slow-analysis') ? 'eight tracks with blocked MIR, PCM readiness and fresh paused diagnostics'
+      : 'eight tracks, artwork leases, Previous boundary, speed, reset and configuration recovery';
+    console.log(`Native iOS host ${mode}: ${detail} passed`);
   }
 } finally {
   server.closeAllConnections();
