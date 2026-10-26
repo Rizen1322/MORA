@@ -55,7 +55,7 @@ try {
   run('xcrun', ['simctl', 'install', device.udid, app]);
   const container = run('xcrun', ['simctl', 'get_app_container', device.udid, bundle, 'data']);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  for (const mode of ['natural', 'skip', 'slow-analysis', 'slow-analysis-eof']) {
+  for (const mode of ['natural', 'skip', 'slow-analysis', 'slow-analysis-eof', 'retained-analysis']) {
     run('xcrun', ['simctl', 'launch', '--terminate-running-process', device.udid, bundle,
       '--fixture-base', `http://127.0.0.1:${server.address().port}`, ...(mode === 'natural' ? [] : [`--${mode}`])]);
     let report;
@@ -65,7 +65,7 @@ try {
       if (report.status === 'failed' || report.status === 'passed') break;
     }
     assert.equal(report?.status, 'passed', JSON.stringify({ mode, report }));
-    assert.equal(report.backgrounded, true, 'The iOS app must observe its own background state');
+    if (mode !== 'retained-analysis') assert.equal(report.backgrounded, true, 'The iOS app must observe its own background state');
     console.log(`Native iOS host ${mode}: eight tracks, artwork leases, Previous boundary, speed, reset and configuration recovery passed`);
   }
 } finally {

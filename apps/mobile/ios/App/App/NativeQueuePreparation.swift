@@ -37,7 +37,7 @@ final class NativePreparationGate: @unchecked Sendable {
 final class NativeQueuePreparation: @unchecked Sendable {
     let ticket = NativePreparationTicket()
     let gate: NativePreparationGate
-    let analysis = NativeMixAnalysis()
+    let analysis: NativeMixAnalysis
     private let jobId = UUID().uuidString
     private let lock = NSLock()
     private var cached: [String: Any] = ["state": "idle", "ready": 0, "remaining": 0]
@@ -53,11 +53,12 @@ final class NativeQueuePreparation: @unchecked Sendable {
         for (key, value) in gate.snapshot { result[key] = value }; return result
     }
     var hasRemaining: Bool { !ticket.cancelled && snapshot["hasMore"] as? Bool == true }
-    init(index: Int, remaining: Int = 0, loopCount: Int = 0) {
+    init(index: Int, remaining: Int = 0, loopCount: Int = 0, analysis: NativeMixAnalysis = NativeMixAnalysis()) {
+        self.analysis = analysis
         gate = NativePreparationGate(index: index); repeats = loopCount > 0
         cached = ["state": "starting", "ready": 0, "remaining": max(remaining, loopCount)]
     }
-    func cancel() { ticket.cancel(); gate.cancel(); analysis.cancel() }
+    func cancel(keepAnalysis: Bool = false) { ticket.cancel(); gate.cancel(); if !keepAnalysis { analysis.cancel() } }
     private func state(_ code: String, ready: Int, remaining: Int, reason: String = "none") {
         lock.lock(); updated = ProcessInfo.processInfo.systemUptime; if code == "failed" { failureCount += 1 }
         cached = ["state": code, "ready": ready, "remaining": remaining, "reason": reason, "failedCount": failureCount]; lock.unlock()
@@ -127,7 +128,7 @@ final class NativeQueuePreparation: @unchecked Sendable {
                     }
                     // PCM readiness never waits for seed/candidate MIR or planning.
                     // Analysis has its own bounded serial executor and pinned file leases.
-                    if before["mixingAllowed"] as? Bool == true || next["mixingAllowed"] as? Bool == true {
+                    if !ticket.cancelled && (before["mixingAllowed"] as? Bool == true || next["mixingAllowed"] as? Bool == true) {
                         analysis.enqueue(folder: folder, before: before, previousPCM: previousPCM,
                                          next: next, pcm: track, index: at, script: script, settings: settings,
                                          upgrade: upgrade, event: event)
@@ -179,6 +180,7 @@ final class NativeMixAnalysis: @unchecked Sendable {
     private var active: Request?
     private var stopped = false
     private var audible = -1
+    private var allowedFiles: [Int: Int]?
     private var cached: [String: Any] = ["state": "idle"]
     private var updated = ProcessInfo.processInfo.systemUptime
     var snapshot: [String: Any] {
@@ -220,6 +222,12 @@ final class NativeMixAnalysis: @unchecked Sendable {
         if let active, active.index <= audible { active.ticket.cancel() }
         pending.removeAll { $0.index <= audible }; lock.unlock()
     }
+    func retain(_ files: [Int: Int]) {
+        lock.lock(); allowedFiles = files
+        if let active, files[active.index] != active.pcm["file"] as? Int { active.ticket.cancel() }
+        pending.removeAll { files[$0.index] != $0.pcm["file"] as? Int }
+        lock.unlock()
+    }
     func enqueue(folder: URL, before: [String: Any], previousPCM: [String: Any], next: [String: Any], pcm: [String: Any],
                  index: Int, script: String, settings: [String: Any],
                  upgrade: @escaping @Sendable (Int, [String: Any]) -> Void, event: @escaping @Sendable (String, String) -> Void) {
@@ -228,7 +236,9 @@ final class NativeMixAnalysis: @unchecked Sendable {
                 b: Source(folder: folder, value: next, pcm: pcm), index: index, script: script, settings: settings,
                 pcm: pcm, upgrade: upgrade, event: event)
             lock.lock()
-            guard !stopped, index > audible else { lock.unlock(); return }
+            guard !stopped, index > audible, allowedFiles == nil || allowedFiles?[index] == pcm["file"] as? Int else { lock.unlock(); return }
+            guard !(active?.index == index && active?.pcm["file"] as? Int == pcm["file"] as? Int),
+                  !pending.contains(where: { $0.index == index && $0.pcm["file"] as? Int == pcm["file"] as? Int }) else { lock.unlock(); return }
             // At most one active and two pending pairs. Newer playback windows
             // evict obsolete queued work rather than accumulating PCM leases.
             pending.append(request)

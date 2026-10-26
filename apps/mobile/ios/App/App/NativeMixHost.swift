@@ -51,6 +51,8 @@ final class NativeMixHost {
     private var prunedIndex = -1
     private var newestKey = -1
     private var preparation: NativeQueuePreparation?
+    private var analysisWorker = NativeMixAnalysis()
+    private var analysisSettings: [String: Any] = [:]
     private var artworkLoader = NativeQueueArtwork()
     private var sourceBytes: [Int: Int] = [:]
     private var pendingUploads: Set<Int> = []
@@ -80,7 +82,7 @@ final class NativeMixHost {
     deinit {
         for observer in sessionObservers { NotificationCenter.default.removeObserver(observer) }
         if let engineObserver { NotificationCenter.default.removeObserver(engineObserver) }
-        preparation?.cancel(); artworkLoader.cancel()
+        preparation?.cancel(); analysisWorker.cancel(); artworkLoader.cancel()
     }
 
     private var sr: Double { config["sampleRate"] as? Double ?? 48000 }
@@ -209,6 +211,7 @@ final class NativeMixHost {
                 guard raw.indices.contains(start), self.engine == nil || sr == self.sr else { throw Failure.invalid }
                 let metadata = try self.validated(raw, from: 0)
                 self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false
+                self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis(); self.analysisSettings = [:]
                 self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
                 if let folder = self.folder {
                     for key in self.sourceBytes.keys { try? FileManager.default.removeItem(at: folder.appendingPathComponent("source-\(key).media")) }
@@ -282,7 +285,13 @@ final class NativeMixHost {
                 }
                 configuration["from"] = from; configuration["items"] = future; configuration["previous"] = previous
                 if !self.done, let renderer = self.renderer, !(try renderer.update(from: from, tracks: [])) { throw Failure.invalid }
-                self.preparation?.cancel()
+                self.preparation?.cancel(keepAnalysis: true)
+                let settings = configuration["settings"] as! [String: Any]
+                let settingsChanged = !NSDictionary(dictionary: self.analysisSettings).isEqual(to: settings)
+                if settingsChanged {
+                    self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis(); self.analysisSettings = settings
+                }
+                let analysis = self.analysisWorker
                 self.nextWhenPrepared = false // A replacement manifest owns new navigation intent.
                 let referenced = Set((items + (manifest["loopItems"] as? [[String: Any]] ?? [])).compactMap { item -> Int? in
                     guard let source = item["source"] as? [String: Any], source["kind"] as? String == "local" else { return nil }
@@ -294,11 +303,28 @@ final class NativeMixHost {
                     try? FileManager.default.removeItem(at: folder.appendingPathComponent("source-\(key).media")); self.sourceBytes.removeValue(forKey: key)
                 }
                 self.tracks = Array(self.tracks.prefix(from)); self.artworks = Array(self.artworks.prefix(from)); self.config["tracks"] = self.tracks
+                analysis.retain(Dictionary(uniqueKeysWithValues: self.tracks.enumerated().map { ($0.offset, Self.key($0.element, $0.offset)) }))
+                analysis.advance(self.index)
+                if settingsChanged {
+                    // Retained PCM may need a new plan after changing loudness or
+                    // AutoMix settings. Reuse the content cache; do not download again.
+                    var a = items.first(where: { $0["entryId"] as? String == self.tracks[self.index]["entryId"] as? String }) ?? (manifest["previous"] as! [String: Any])
+                    for at in (self.index + 1)..<from {
+                        guard let b = items.first(where: { $0["entryId"] as? String == self.tracks[at]["entryId"] as? String }) else { break }
+                        if a["mixingAllowed"] as? Bool == true || b["mixingAllowed"] as? Bool == true {
+                            analysis.enqueue(folder: folder, before: a, previousPCM: self.tracks[at - 1], next: b, pcm: self.tracks[at],
+                                index: at, script: script, settings: settings,
+                                upgrade: { [weak self] at, track in self?.applyAnalysis(analysis, at: at, track: track) },
+                                event: { [weak self] _, reason in self?.recordAnalysis(analysis, reason: reason) })
+                        }
+                        a = b
+                    }
+                }
                 if future.isEmpty && (manifest["loopItems"] as? [[String: Any]] ?? []).isEmpty {
                     self.preparation = nil; self.continueWhenPrepared = false; self.nextWhenPrepared = false; self.prune(); self.publish("handoff"); self.reply(completion, .success(self.viewState())); return
                 }
                 let job = NativeQueuePreparation(index: self.index, remaining: future.count,
-                    loopCount: (manifest["loopItems"] as? [[String: Any]] ?? []).count); self.preparation = job
+                    loopCount: (manifest["loopItems"] as? [[String: Any]] ?? []).count, analysis: self.analysisWorker); self.preparation = job
                 let seed = self.tracks[from - 1]
                 self.prune(); self.publish("handoff")
                 MoraPlaybackJournal.record("native.preparation.handoff", ["from": from, "count": items.count])
@@ -345,26 +371,9 @@ final class NativeMixHost {
                             }
                         }
                     }, upgrade: { [weak self] at, track in
-                        self?.work.async { [weak self] in
-                            guard let self, self.preparation === job, !job.ticket.cancelled,
-                                  at > self.index, self.tracks.indices.contains(at),
-                                  track["entryId"] as? String == self.tracks[at]["entryId"] as? String,
-                                  Self.key(track, at) == Self.key(self.tracks[at], at), self.available(at) else { return }
-                            do {
-                                if let renderer = self.renderer {
-                                    guard try renderer.upgrade(index: at, track: track) else {
-                                        MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "pastHorizon"]); return
-                                    }
-                                } else if at == self.index + 1,
-                                          let tr = track["transition"] as? [String: Any], let trigger = tr["triggerFrame"] as? NSNumber,
-                                          trigger.doubleValue <= (self.position + 0.35) * self.sr { return }
-                                self.tracks[at] = try self.validated([track], from: at)[0]
-                                self.config["tracks"] = self.tracks
-                                self.publish("planReady")
-                                MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "applied"])
-                            } catch { MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "rejected"]) }
-                        }
+                        self?.applyAnalysis(analysis, at: at, track: track)
                     }, event: { [weak self] kind, reason in
+                        if kind == "analysis" { self?.recordAnalysis(analysis, reason: reason); return }
                         self?.work.async { [weak self] in
                             guard let self, self.preparation === job else { return }
                             if kind == "finished" && !job.hasRemaining {
@@ -384,8 +393,36 @@ final class NativeMixHost {
             } catch { self.reply(completion, .failure(error)) }
         }
     }
+    private func recordAnalysis(_ worker: NativeMixAnalysis, reason: String) {
+        work.async { [weak self] in
+            guard let self, self.analysisWorker === worker else { return }
+            self.save()
+            MoraPlaybackJournal.record("native.preparation.analysis", ["reason": reason, "analysis": worker.snapshot])
+        }
+    }
+    private func applyAnalysis(_ worker: NativeMixAnalysis, at: Int, track: [String: Any]) {
+        work.async { [weak self] in
+            guard let self, self.analysisWorker === worker, at > self.index, self.tracks.indices.contains(at),
+                  track["entryId"] as? String == self.tracks[at]["entryId"] as? String,
+                  Self.key(track, at) == Self.key(self.tracks[at], at), self.available(at) else { return }
+            do {
+                let checked = try self.validated([track], from: at)[0]
+                if let renderer = self.renderer {
+                    guard try renderer.upgrade(index: at, track: checked) else {
+                        MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "pastHorizon"]); return
+                    }
+                } else if at == self.index + 1,
+                          let tr = checked["transition"] as? [String: Any], let trigger = tr["triggerFrame"] as? NSNumber,
+                          trigger.doubleValue <= (self.position + 0.35) * self.sr { return }
+                self.tracks[at] = checked; self.config["tracks"] = self.tracks
+                self.publish("planReady")
+                MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "applied"])
+            } catch { MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "rejected"]) }
+        }
+    }
     private func viewState() -> [String: Any] {
         var result = snapshot
+        result["analysis"] = analysisWorker.snapshot
         if let preparation { result["preparation"] = preparation.snapshot }
         if tracks.indices.contains(index) { result["currentTrack"] = tracks[index] }
         if tracks.indices.contains(index + 1) { result["nextTrack"] = tracks[index + 1] }
@@ -526,7 +563,9 @@ final class NativeMixHost {
         position = max(0, min(position, NativeMixTimeline.duration(tracks[index], sampleRate: sr)))
     }
     private func publish(_ reason: String) {
-        updatePosition(); preparation?.analysis.advance(index); save()
+        updatePosition()
+        analysisWorker.retain(Dictionary(uniqueKeysWithValues: tracks.enumerated().map { ($0.offset, Self.key($0.element, $0.offset)) }))
+        analysisWorker.advance(index); save()
         preparation?.gate.advance(index)
         if index != prunedIndex { prune() }
         let state = snapshot, generation = epoch
@@ -662,6 +701,7 @@ final class NativeMixHost {
     func stop(_ completion: @escaping Reply) {
         work.async {
             self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false; self.nextWhenPrepared = false
+            self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis()
             self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
             DispatchQueue.main.async { [weak self] in self?.refillLease(waiting: false) }
             guard self.folder != nil || self.ownsSession else { self.reply(completion, .success(self.snapshot)); return }

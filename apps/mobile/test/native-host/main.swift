@@ -27,7 +27,16 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
     private let engines = EngineCapture()
     private let slowAnalysis = CommandLine.arguments.contains("--slow-analysis") || CommandLine.arguments.contains("--slow-analysis-eof")
     private let slowAnalysisEOF = CommandLine.arguments.contains("--slow-analysis-eof")
-    private lazy var host = NativeMixHost(makeEngine: { [engines] in engines.create() }, preparationScript: slowAnalysis ? """
+    private let retainedAnalysis = CommandLine.arguments.contains("--retained-analysis")
+    private lazy var host = NativeMixHost(makeEngine: { [engines] in engines.create() }, preparationScript: retainedAnalysis ? """
+        var retainedCalls = 0;
+        var MoraPreparation = { analyzerVersion: 'retained-fixture', analyzeJSON: function() {
+            if (++retainedCalls > 2) throw Error('analysis cache was lost');
+            var end = Date.now() + 1000;
+            while (Date.now() < end) { if (moraPreparationCancelled()) throw Error('cancelled'); }
+            return '{"version":"retained-fixture"}';
+        }, planJSON: function(input) { var r = JSON.parse(input); return JSON.stringify({gainDb:r.settings.loudnessTarget === -16 ? -3 : -6}); } };
+        """ : slowAnalysis ? """
         var MoraPreparation = { analyzerVersion: 'slow-fixture', analyzeJSON: function() {
             var end = Date.now() + 20000;
             while (Date.now() < end) { if (moraPreparationCancelled()) throw Error('cancelled'); }
@@ -40,7 +49,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
     private var last: [String: Any] = [:]
     private var reportURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(slowAnalysisEOF ? "slow-analysis-eof.json" : slowAnalysis ? "slow-analysis.json" : skip ? "skip.json" : "natural.json")
+            .appendingPathComponent(retainedAnalysis ? "retained-analysis.json" : slowAnalysisEOF ? "slow-analysis-eof.json" : slowAnalysis ? "slow-analysis.json" : skip ? "skip.json" : "natural.json")
     }
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         skip = (slowAnalysis && !slowAnalysisEOF) || CommandLine.arguments.contains("--skip")
@@ -59,6 +68,53 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
     }
     enum Failure: Error { case check(String) }
     private func require(_ value: Bool, _ message: String) throws { if !value { throw Failure.check(message) } }
+    private func retainedAnalysisRegression(id: String) async throws {
+        let pcm = [Float](repeating: 0.1, count: 48000 * 6 * 2).withUnsafeBytes { Data($0) }
+        for offset in stride(from: 0, to: pcm.count, by: 262144) {
+            let block = pcm.subdata(in: offset..<min(pcm.count, offset + 262144))
+            _ = try await call { host.append(id: id, track: 0, offset: offset, base64: block.base64EncodedString(), completion: $0) }
+        }
+        let seed: [String: Any] = ["file": 0, "totalFrames": 48000 * 6, "gainDb": 0.0, "entryId": "retained-seed", "trackId": "retained-seed"]
+        _ = try await call { host.start(id: id, config: ["sampleRate": 48000.0, "position": 0.0, "paused": true, "tracks": [seed]], completion: $0) }
+        let reserved = try await call { host.reserveSources(id: id, count: 1, completion: $0) }
+        let key = (reserved["keys"] as! [Int])[0], wave = NativeProbeWave.make(track: 1, seconds: 3)
+        for offset in stride(from: 0, to: wave.count, by: 262144) {
+            let block = wave.subdata(in: offset..<min(wave.count, offset + 262144))
+            _ = try await call { host.sourceAppend(id: id, key: key, offset: offset, base64: block.base64EncodedString(), completion: $0) }
+        }
+        let item: [String: Any] = ["file": key, "trackId": "retained-next", "entryId": "retained-next", "mixingAllowed": true,
+            "source": ["kind": "local", "file": key]]
+        func manifest(_ target: Double) -> [String: Any] {
+            ["from": 1, "items": [item], "settings": ["enabled": true, "loudnessTarget": target],
+             "previous": ["trackId": "retained-seed", "duration": 6.0, "mixingAllowed": true]]
+        }
+        _ = try await call { host.prepareQueue(id: id, manifest: manifest(-16), completion: $0) }
+        var entered = false
+        let deadline = ProcessInfo.processInfo.systemUptime + 10
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            last = try await call { host.state($0) }
+            let analysis = last["analysis"] as? [String: Any]
+            entered = analysis?["state"] as? String == "analyzing"
+            if entered { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        try require(entered && last["count"] as? Int == 2, "Retained MIR fixture did not start after PCM readiness")
+        _ = try await call { host.prepareQueue(id: id, manifest: manifest(-16), completion: $0) }
+        for expected in [-3.0, -6.0] {
+            if expected == -6 { _ = try await call { host.prepareQueue(id: id, manifest: manifest(-18), completion: $0) } }
+            let deadline = ProcessInfo.processInfo.systemUptime + 10
+            while ProcessInfo.processInfo.systemUptime < deadline {
+                last = try await call { host.state($0) }
+                let next = last["nextTrack"] as? [String: Any]
+                if (next?["gainDb"] as? NSNumber)?.doubleValue == expected { break }
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            let next = last["nextTrack"] as? [String: Any]
+            try require((next?["gainDb"] as? NSNumber)?.doubleValue == expected && last["count"] as? Int == 2,
+                "Manifest replacement lost retained analysis or new settings; expected gain \(expected)")
+        }
+        write("passed"); _ = try await call { host.stop($0) }
+    }
     private func artworkRegressions(id: String, seed: [String: Any]) async throws {
         guard let argument = CommandLine.arguments.firstIndex(of: "--fixture-base") else { throw Failure.check("Missing cover fixture server") }
         let base = URL(string: CommandLine.arguments[argument + 1])!
@@ -148,6 +204,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
     }
     private func run() async throws {
         let begin = try await call { host.begin($0) }, id = begin["id"] as! String
+        if retainedAnalysis { try await retainedAnalysisRegression(id: id); return }
         let frames = 3 * 48000
         let pcm = (0..<frames).flatMap { i -> [Float] in
             let value = Float(sin(Double(i) * 2 * .pi * 220 / 48000) * 0.1); return [value, value]
