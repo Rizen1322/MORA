@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import CryptoKit
 
 /// One sleeping producer, released by native audible-track changes, not by page timers.
 final class NativePreparationGate: @unchecked Sendable {
@@ -36,6 +37,8 @@ final class NativePreparationGate: @unchecked Sendable {
 final class NativeQueuePreparation: @unchecked Sendable {
     let ticket = NativePreparationTicket()
     let gate: NativePreparationGate
+    let analysis = NativeMixAnalysis()
+    private let jobId = UUID().uuidString
     private let lock = NSLock()
     private var cached: [String: Any] = ["state": "idle", "ready": 0, "remaining": 0]
     private var failureCount = 0
@@ -46,6 +49,7 @@ final class NativeQueuePreparation: @unchecked Sendable {
         lock.lock(); var result = cached; result["running"] = running
         result["hasMore"] = running && ((cached["remaining"] as? Int ?? 0) > 0 || repeats)
         result["stageSeconds"] = max(0, ProcessInfo.processInfo.systemUptime - updated); lock.unlock()
+        result["jobId"] = jobId; result["analysis"] = analysis.snapshot
         for (key, value) in gate.snapshot { result[key] = value }; return result
     }
     var hasRemaining: Bool { !ticket.cancelled && snapshot["hasMore"] as? Bool == true }
@@ -53,7 +57,7 @@ final class NativeQueuePreparation: @unchecked Sendable {
         gate = NativePreparationGate(index: index); repeats = loopCount > 0
         cached = ["state": "starting", "ready": 0, "remaining": max(remaining, loopCount)]
     }
-    func cancel() { ticket.cancel(); gate.cancel() }
+    func cancel() { ticket.cancel(); gate.cancel(); analysis.cancel() }
     private func state(_ code: String, ready: Int, remaining: Int, reason: String = "none") {
         lock.lock(); updated = ProcessInfo.processInfo.systemUptime; if code == "failed" { failureCount += 1 }
         cached = ["state": code, "ready": ready, "remaining": remaining, "reason": reason, "failedCount": failureCount]; lock.unlock()
@@ -61,6 +65,7 @@ final class NativeQueuePreparation: @unchecked Sendable {
     func run(folder: URL, manifest: [String: Any], seed: [String: Any], script: String,
              allocate: @escaping @Sendable () async -> Int?,
              accept: @escaping @Sendable (Int, [String: Any]) async -> Bool,
+             upgrade: @escaping @Sendable (Int, [String: Any]) -> Void = { _, _ in },
              event: @escaping @Sendable (String, String) -> Void) async {
         defer { finished(); event("finished", "none") }
         guard let raw = manifest["items"] as? [[String: Any]], let from = manifest["from"] as? Int,
@@ -76,21 +81,9 @@ final class NativeQueuePreparation: @unchecked Sendable {
         var batch = raw, cursor = 0
         let loop = manifest["loopItems"] as? [[String: Any]] ?? []
         configure(remaining: raw.count, loopCount: loop.count)
-        var analyses: [String: [String: Any]] = [:]
         var before = previous, previousPCM = seed
         if let frames = seed["totalFrames"] as? Int { before["duration"] = Double(frames) / 48000 }
         do {
-            let core = try NativePreparationCore(script: script)
-            if before["mixingAllowed"] as? Bool == true && (before["analysis"] == nil || before["analysis"] is NSNull) {
-                if let file = seed["file"] as? Int, let frames = seed["totalFrames"] as? Int {
-                    state("analyzing", ready: produced, remaining: raw.count)
-                    do { before["analysis"] = try analysis(core, folder: folder, file: file, frames: frames) }
-                    catch {
-                        if ticket.cancelled { throw error }
-                        before["analysis"] = NSNull(); event("fallback", "analysis")
-                    }
-                }
-            }
             while !ticket.cancelled {
                 if cursor >= batch.count {
                     if loop.isEmpty { break }
@@ -118,39 +111,9 @@ final class NativeQueuePreparation: @unchecked Sendable {
                     guard !ticket.cancelled else { throw NativeMediaHTTP.Failure.cancelled }
                     var next = item
                     next["id"] = item["trackId"]; next["duration"] = Double(frames) / 48000
-                    let trackId = item["trackId"] as? String ?? ""
-                    if let analysis = analyses[trackId] { next["analysis"] = analysis }
-                    if next["analysis"] == nil || next["analysis"] is NSNull {
-                        if item["mixingAllowed"] as? Bool == true {
-                            state("analyzing", ready: produced, remaining: max(0, batch.count - cursor + 1)); event("stage", "analyzing")
-                            do { next["analysis"] = try analysis(core, folder: folder, file: fileKey, frames: frames) }
-                            catch {
-                                if ticket.cancelled { throw error }
-                                next["analysis"] = NSNull(); event("fallback", "analysis")
-                            }
-                        } else { next["analysis"] = NSNull() }
-                    }
-                    if let analysis = next["analysis"] as? [String: Any] {
-                        analyses[trackId] = analysis
-                        if analyses.count > 64, let oldest = analyses.keys.first(where: { $0 != trackId }) { analyses.removeValue(forKey: oldest) }
-                    }
-                    before["id"] = before["trackId"]
-                    before["analysis"] = before["analysis"] ?? NSNull()
-                    state("planning", ready: produced, remaining: max(0, batch.count - cursor + 1))
-                    let result: [String: Any]
-                    do { result = try core.plan(a: before, b: next, settings: settings, sampleRate: 48000) }
-                    catch {
-                        if ticket.cancelled { throw error }
-                        result = [:]; event("fallback", "planner")
-                    }
                     var track: [String: Any] = ["file": fileKey, "totalFrames": frames,
                         "title": item["title"] ?? "", "artist": item["artist"] ?? "", "entryId": item["entryId"] ?? "",
-                        "trackId": item["trackId"] ?? "", "gainDb": result["gainDb"] ?? 0.0]
-                    if let transition = result["transition"] as? [String: Any],
-                       let trigger = transition["triggerFrame"] as? Int, let entry = transition["entryFrame"] as? Int,
-                       trigger < (previousPCM["totalFrames"] as? Int ?? 0), entry < frames {
-                        track["transition"] = transition; track["plan"] = result["plan"]
-                    }
+                        "trackId": item["trackId"] ?? "", "gainDb": 0.0]
                     if let artwork = item["artwork"] { track["artwork"] = artwork }
                     else if let text = item["coverUrl"] as? String, let url = URL(string: text) {
                         track["coverUrl"] = text
@@ -161,6 +124,13 @@ final class NativeQueuePreparation: @unchecked Sendable {
                     guard committed else {
                         if !ticket.cancelled { state("failed", ready: produced, remaining: batch.count - cursor, reason: "commit"); event("failed", "commit") }
                         break
+                    }
+                    // PCM readiness never waits for seed/candidate MIR or planning.
+                    // Analysis has its own bounded serial executor and pinned file leases.
+                    if before["mixingAllowed"] as? Bool == true || next["mixingAllowed"] as? Bool == true {
+                        analysis.enqueue(folder: folder, before: before, previousPCM: previousPCM,
+                                         next: next, pcm: track, index: at, script: script, settings: settings,
+                                         upgrade: upgrade, event: event)
                     }
                     before = next; previousPCM = track; at += 1; produced += 1; consecutiveFailures = 0
                     state("ready", ready: produced, remaining: batch.count - cursor); event("ready", "none")
@@ -192,12 +162,147 @@ final class NativeQueuePreparation: @unchecked Sendable {
     private func configure(remaining: Int, loopCount: Int) {
         lock.lock(); repeats = loopCount > 0; cached["remaining"] = max(remaining, loopCount); lock.unlock()
     }
-    private func analysis(_ core: NativePreparationCore, folder: URL, file: Int, frames: Int) throws -> [String: Any] {
-        let source = folder.appendingPathComponent("\(file).f32le")
-        let temporary = folder.appendingPathComponent("\(UUID().uuidString).analysis")
+
+}
+
+/// MIR has no dependency edge back into the PCM producer. One executor also
+/// prevents cancelled, synchronous JS calls from running concurrently on new VMs.
+final class NativeMixAnalysis: @unchecked Sendable {
+    private static let executor = DispatchQueue(label: "ru.mora.mir", qos: .utility)
+    // Accessed only on executor. Script identity versions the content-addressed cache.
+    private static var core: NativePreparationCore?
+    private static var scriptKey = ""
+    private static var cache: [String: [String: Any]] = [:]
+    private static var cacheOrder: [String] = []
+    private let lock = NSLock()
+    private var pending: [Request] = []
+    private var active: Request?
+    private var stopped = false
+    private var audible = -1
+    private var cached: [String: Any] = ["state": "idle"]
+    private var updated = ProcessInfo.processInfo.systemUptime
+    var snapshot: [String: Any] {
+        lock.lock(); defer { lock.unlock() }
+        var result = cached; result["queued"] = pending.count
+        result["stageSeconds"] = max(0, ProcessInfo.processInfo.systemUptime - updated)
+        return result
+    }
+    private final class Source {
+        let value: [String: Any], url: URL, frames: Int
+        init(folder: URL, value: [String: Any], pcm: [String: Any]) throws {
+            guard let file = pcm["file"] as? Int, let frames = pcm["totalFrames"] as? Int else { throw NativePreparationCore.Failure.analysis }
+            self.frames = frames
+            // Never retain source URLs or credentials in the analysis queue/cache.
+            self.value = ["id": value["trackId"] ?? "", "duration": Double(frames) / 48000,
+                          "mixingAllowed": value["mixingAllowed"] ?? false, "analysis": value["analysis"] ?? NSNull()]
+            url = folder.appendingPathComponent("\(UUID().uuidString).mir-pcm")
+            // A private hard link pins the PCM independently of playback pruning.
+            try FileManager.default.linkItem(at: folder.appendingPathComponent("\(file).f32le"), to: url)
+        }
+        deinit { try? FileManager.default.removeItem(at: url) }
+    }
+    private final class Request: @unchecked Sendable {
+        let id = UUID().uuidString, ticket = NativePreparationTicket()
+        let a: Source, b: Source, index: Int, script: String, settings: [String: Any], pcm: [String: Any]
+        let upgrade: @Sendable (Int, [String: Any]) -> Void
+        let event: @Sendable (String, String) -> Void
+        init(a: Source, b: Source, index: Int, script: String, settings: [String: Any], pcm: [String: Any],
+             upgrade: @escaping @Sendable (Int, [String: Any]) -> Void, event: @escaping @Sendable (String, String) -> Void) {
+            self.a = a; self.b = b; self.index = index; self.script = script; self.settings = settings
+            self.pcm = pcm; self.upgrade = upgrade; self.event = event
+        }
+    }
+    func cancel() {
+        lock.lock(); stopped = true; active?.ticket.cancel(); pending.removeAll(); lock.unlock()
+    }
+    func advance(_ index: Int) {
+        lock.lock(); audible = max(audible, index)
+        if let active, active.index <= audible { active.ticket.cancel() }
+        pending.removeAll { $0.index <= audible }; lock.unlock()
+    }
+    func enqueue(folder: URL, before: [String: Any], previousPCM: [String: Any], next: [String: Any], pcm: [String: Any],
+                 index: Int, script: String, settings: [String: Any],
+                 upgrade: @escaping @Sendable (Int, [String: Any]) -> Void, event: @escaping @Sendable (String, String) -> Void) {
+        do {
+            let request = try Request(a: Source(folder: folder, value: before, pcm: previousPCM),
+                b: Source(folder: folder, value: next, pcm: pcm), index: index, script: script, settings: settings,
+                pcm: pcm, upgrade: upgrade, event: event)
+            lock.lock()
+            guard !stopped, index > audible else { lock.unlock(); return }
+            // At most one active and two pending pairs. Newer playback windows
+            // evict obsolete queued work rather than accumulating PCM leases.
+            pending.append(request)
+            if pending.count > 2 { pending.removeFirst() }
+            let begin = active == nil
+            if begin { active = pending.removeFirst() }
+            let first = active; lock.unlock()
+            if begin, let first { schedule(first) }
+        } catch { event("fallback", "analysisLease") }
+    }
+    private func stage(_ name: String, _ request: Request, role: String = "pair") {
+        lock.lock(); updated = ProcessInfo.processInfo.systemUptime
+        cached = ["state": name, "jobId": request.id, "toIndex": request.index, "role": role]
+        lock.unlock(); request.event("analysis", name)
+    }
+    private func schedule(_ request: Request) {
+        stage("queued", request)
+        Self.executor.async { [self] in
+            defer {
+                lock.lock(); active = nil
+                let next = !stopped && !pending.isEmpty ? pending.removeFirst() : nil
+                active = next; lock.unlock()
+                if let next { schedule(next) }
+            }
+            do {
+                if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
+                stage("initializing", request)
+                let scriptKey = SHA256.hash(data: Data(request.script.utf8)).map { String(format: "%02x", $0) }.joined()
+                if Self.core == nil || Self.scriptKey != scriptKey {
+                    Self.core = try NativePreparationCore(script: request.script); Self.scriptKey = scriptKey
+                }
+                guard let core = Self.core else { throw NativePreparationCore.Failure.script }
+                var a = request.a.value, b = request.b.value
+                a["analysis"] = try analyze(request.a, core: core, scriptKey: scriptKey, request: request, role: "seed")
+                b["analysis"] = try analyze(request.b, core: core, scriptKey: scriptKey, request: request, role: "candidate")
+                if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
+                stage("planning", request)
+                let result = try core.plan(a: a, b: b, settings: request.settings, sampleRate: 48000)
+                if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
+                var track = request.pcm; track["gainDb"] = result["gainDb"] ?? 0.0
+                if let tr = result["transition"] as? [String: Any], let trigger = tr["triggerFrame"] as? Int,
+                   let entry = tr["entryFrame"] as? Int, trigger < request.a.frames, entry < request.b.frames {
+                    track["transition"] = tr; track["plan"] = result["plan"]
+                }
+                request.upgrade(request.index, track)
+                stage("complete", request)
+            } catch {
+                stage(request.ticket.cancelled ? "cancelled" : "fallback", request)
+            }
+        }
+    }
+    private func analyze(_ source: Source, core: NativePreparationCore, scriptKey: String, request: Request, role: String) throws -> Any {
+        guard source.value["mixingAllowed"] as? Bool == true else { return NSNull() }
+        if let ready = source.value["analysis"] as? [String: Any], ready["version"] as? String == core.analyzerVersion { return ready }
+        stage("fingerprint", request, role: role)
+        let file = try FileHandle(forReadingFrom: source.url)
+        defer { try? file.close() }
+        var digest = SHA256()
+        while let data = try file.read(upToCount: 1024 * 1024), !data.isEmpty {
+            if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
+            digest.update(data: data)
+        }
+        let key = scriptKey + digest.finalize().map { String(format: "%02x", $0) }.joined()
+        if let ready = Self.cache[key] { stage("cacheHit", request, role: role); return ready }
+        stage("resampling", request, role: role)
+        let temporary = source.url.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).mir-44100")
         defer { try? FileManager.default.removeItem(at: temporary) }
-        let length = try NativePCMDecoder.resample(source, from: 48000, to: temporary, sampleRate: 44100, cancelled: { self.ticket.cancelled })
-        return try core.analyze(temporary, frames: length, ticket: ticket)
+        let frames = try NativePCMDecoder.resample(source.url, from: 48000, to: temporary, sampleRate: 44100, cancelled: { request.ticket.cancelled })
+        stage("analyzing", request, role: role)
+        let result = try core.analyze(temporary, frames: frames, ticket: request.ticket) { [self] name in stage(name, request, role: role) }
+        if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
+        Self.cache[key] = result; Self.cacheOrder.append(key)
+        if Self.cacheOrder.count > 32 { Self.cache.removeValue(forKey: Self.cacheOrder.removeFirst()) }
+        return result
     }
 }
 

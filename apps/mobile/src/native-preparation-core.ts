@@ -8,6 +8,7 @@ import { ANALYZER_VERSION, DEFAULT_AUTOMIX_SETTINGS, type AutoMixSettings, type 
 // WebContent and never in the Swift audio producer. DSP playback remains Swift.
 declare const moraPreparationRead: (offset: number, frames: number) => string;
 declare const moraPreparationCancelled: () => boolean;
+declare const moraPreparationProgress: (stage: string) => void;
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const values = new Uint8Array(128);
 for (let i = 0; i < alphabet.length; i++) values[alphabet.charCodeAt(i)] = i;
@@ -32,6 +33,7 @@ export function analyzeJSON(input: string): string {
   const acc = new AnalysisAccumulator(frames / 44100 + 5);
   const left = new Float32Array(32768), right = new Float32Array(32768);
   const checkCancel = () => { if (moraPreparationCancelled()) throw Error('cancelled'); };
+  moraPreparationProgress('feedingPcm');
   for (let at = 0; at < frames; at += 32768) {
     checkCancel();
     const length = Math.min(32768, frames - at), input = pcm(moraPreparationRead(at, length));
@@ -39,7 +41,7 @@ export function analyzeJSON(input: string): string {
     for (let i = 0; i < length; i++) { left[i] = input[i * 2]; right[i] = input[i * 2 + 1]; }
     acc.push(left.subarray(0, length), right.subarray(0, length), length);
   }
-  return JSON.stringify(acc.finish({ checkCancel }));
+  return JSON.stringify(acc.finish({ checkCancel, onProgress: (_, stage) => moraPreparationProgress(stage) }));
 }
 export function planJSON(input: string): string {
   const request = JSON.parse(input) as { a: PlannerTrack; b: PlannerTrack; settings?: AutoMixSettings; sampleRate: number };

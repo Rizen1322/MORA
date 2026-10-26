@@ -25,7 +25,8 @@ final class EngineCapture: @unchecked Sendable {
 final class HostCheck: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
     private let engines = EngineCapture()
-    private let slowAnalysis = CommandLine.arguments.contains("--slow-analysis")
+    private let slowAnalysis = CommandLine.arguments.contains("--slow-analysis") || CommandLine.arguments.contains("--slow-analysis-eof")
+    private let slowAnalysisEOF = CommandLine.arguments.contains("--slow-analysis-eof")
     private lazy var host = NativeMixHost(makeEngine: { [engines] in engines.create() }, preparationScript: slowAnalysis ? """
         var MoraPreparation = { analyzerVersion: 'slow-fixture', analyzeJSON: function() {
             var end = Date.now() + 20000;
@@ -39,10 +40,10 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
     private var last: [String: Any] = [:]
     private var reportURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(slowAnalysis ? "slow-analysis.json" : skip ? "skip.json" : "natural.json")
+            .appendingPathComponent(slowAnalysisEOF ? "slow-analysis-eof.json" : slowAnalysis ? "slow-analysis.json" : skip ? "skip.json" : "natural.json")
     }
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        skip = slowAnalysis || CommandLine.arguments.contains("--skip")
+        skip = (slowAnalysis && !slowAnalysisEOF) || CommandLine.arguments.contains("--skip")
         let window = UIWindow(frame: UIScreen.main.bounds); window.rootViewController = UIViewController()
         window.makeKeyAndVisible(); self.window = window
         Task { do { try await run() } catch { write("failed", reason: String(describing: error)) } }
@@ -169,6 +170,19 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         }
         _ = try await call { host.prepareQueue(id: id, manifest: ["from": 1, "items": items, "settings": ["enabled": slowAnalysis],
             "previous": ["trackId": "T0", "duration": 3.0, "mixingAllowed": slowAnalysis]], completion: $0) }
+        if slowAnalysis {
+            var analyzing = false
+            let deadline = ProcessInfo.processInfo.systemUptime + 10
+            while ProcessInfo.processInfo.systemUptime < deadline {
+                last = try await call { host.state($0) }
+                let preparation = last["preparation"] as? [String: Any]
+                let analysis = preparation?["analysis"] as? [String: Any]
+                analyzing = analysis?["state"] as? String == "analyzing"
+                if analyzing { break }
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            try require(analyzing, "Slow MIR fixture never entered its blocked analyzer")
+        }
         write("ready")
         // Public UIKit app switch; simctl launch of an already-running Settings
         // process doesn't reliably activate it. No page exists in this app.
@@ -183,7 +197,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         // initialization can outlive the first song on a busy Simulator runner;
         // bound the whole check by wall time without confusing that startup
         // delay with a stopped native queue.
-        let playbackDeadline = ProcessInfo.processInfo.systemUptime + (slowAnalysis ? 10 : 60)
+        let playbackDeadline = ProcessInfo.processInfo.systemUptime + (slowAnalysis && !slowAnalysisEOF ? 10 : 60)
         while ProcessInfo.processInfo.systemUptime < playbackDeadline {
             last = try await call { host.state($0) }
             let index = last["index"] as? Int ?? -1, count = last["count"] as? Int ?? 0
@@ -199,6 +213,12 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         }
         try require(seen.contains(7), "Native refill stopped after index \(seen.max() ?? -1)")
         if slowAnalysis {
+            _ = try await call { host.command("pause", source: "fixture", completion: $0) }
+            let previousSnapshot = try await call { host.state($0) }
+            try await Task.sleep(nanoseconds: 150_000_000)
+            let live = try await call { host.diagnosticState($0) }
+            try require((live["snapshotCapturedAt"] as? Double ?? 0) > (previousSnapshot["stateSavedAt"] as? Double ?? .infinity),
+                "Diagnostic export did not capture a new state while audio was paused")
             write("passed")
             _ = try await call { host.stop($0) }
             return

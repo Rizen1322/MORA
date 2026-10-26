@@ -1775,6 +1775,23 @@ final class NativeQueueRenderer {
         }
         return true
     }
+    /// Changes one future track without replacing or truncating the queue tail.
+    /// The deck position is the source horizon already rendered (not the audible
+    /// position or output clock, which diverge under speed/tempo stretching).
+    func upgrade(index: Int, track raw: [String: Any]) throws -> Bool {
+        guard !done, index > current, tracks.indices.contains(index) else { return false }
+        let next = try Self.track(raw, index), old = tracks[index]
+        guard old.file == next.file, old.totalFrames == next.totalFrames else { return false }
+        if index == current + 1 {
+            guard !core.isTransitionActive, !promote, !advance, !endedLast, core.main == current % 2 else { return false }
+            if let plan = next.transition,
+               plan.triggerFrame <= core.decks[current % 2].position() + sampleRate * 0.35 { return false }
+        }
+        tracks[index] = next
+        do { if index == current + 1 { try loadNext() } }
+        catch { tracks[index] = old; try? loadNext(); throw error }
+        return true
+    }
     func render() throws -> NativeMixBlock {
         var marks: [NativeMixMark] = []
         func mark(_ offset: Int) {

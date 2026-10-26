@@ -266,11 +266,27 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func diagnosticsInfo(_ call: CAPPluginCall) { call.resolve(["enabled": MoraPlaybackJournal.enabled, "nativeProbe": true]) }
-    private func diagnosticReport() -> [String: Any] {
-        var report = MoraPlaybackJournal.report()
-        report["nativeProbe"] = nativeProbe.snapshot
-        report["nativeMix"] = nativeMix.snapshot
-        return report
+    private func diagnosticReport(_ completion: @escaping ([String: Any]) -> Void) {
+        // Both paths finish on main. A blocked control queue must not prevent an
+        // export altogether: the timeout is explicitly marked as cached/stale.
+        var finished = false
+        let finish: ([String: Any], Bool) -> Void = { state, stale in
+            guard !finished else { return }; finished = true
+            var report = MoraPlaybackJournal.report()
+            report["schema"] = 3
+            report["snapshotCapturedAt"] = Date().timeIntervalSince1970
+            report["isSnapshotStale"] = stale
+            report["nativeProbe"] = self.nativeProbe.snapshot
+            report["nativeMix"] = state
+            completion(report)
+        }
+        nativeMix.diagnosticState { result in
+            switch result {
+            case .success(let state): finish(state, false)
+            case .failure: finish(self.nativeMix.snapshot, true)
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { finish(self.nativeMix.snapshot, true) }
     }
     @objc func diagnosticsRecord(_ call: CAPPluginCall) {
         MoraPlaybackJournal.record(call.getString("stage") ?? "invalid", call.getObject("fields") ?? [:])
@@ -278,13 +294,13 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
     @objc func diagnosticsClear(_ call: CAPPluginCall) { MoraPlaybackJournal.clear(); call.resolve() }
     @objc func diagnosticsReport(_ call: CAPPluginCall) {
-        DispatchQueue.main.async { call.resolve(self.diagnosticReport()) }
+        diagnosticReport { call.resolve($0) }
     }
     @objc func diagnosticsShare(_ call: CAPPluginCall) {
         guard MoraPlaybackJournal.enabled else { call.reject("Diagnostics disabled"); return }
-        DispatchQueue.main.async {
+        diagnosticReport { report in
             do {
-                let data = try JSONSerialization.data(withJSONObject: self.diagnosticReport(), options: [.prettyPrinted, .sortedKeys])
+                let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 let url = FileManager.default.temporaryDirectory.appendingPathComponent("MORA-playback-diagnostics.json")
                 try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
                 guard let vc = self.bridge?.viewController, vc.presentedViewController == nil else { call.reject("Share unavailable"); return }

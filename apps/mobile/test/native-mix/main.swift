@@ -24,3 +24,23 @@ for config in configs {
 try output.write(to: directory.appendingPathComponent("actual.f32le"))
 try JSONSerialization.data(withJSONObject: all).write(to: directory.appendingPathComponent("actual.json"))
 print("Native PCM files -> Swift mixer queue passed; max producer block \(maxMs) ms (macOS only)")
+// A plan upgrade must preserve all later PCM tracks and reject a trigger that
+// is already behind the source position rendered into the output queue.
+let upgraded = try NativeQueueRenderer(folder: directory, config: configs[0])
+let rawTracks = configs[0]["tracks"] as! [[String: Any]]
+_ = try upgraded.render()
+let acceptedUpgrade = try upgraded.upgrade(index: 1, track: rawTracks[1])
+precondition(acceptedUpgrade)
+precondition(upgraded.trackCount == 3)
+var late = rawTracks[1], latePlan = late["transition"] as! [String: Any]
+latePlan["triggerFrame"] = 0.0; late["transition"] = latePlan
+let acceptedLateUpgrade = try upgraded.upgrade(index: 1, track: late)
+precondition(!acceptedLateUpgrade)
+var upgradedIndexes = Set<Int>()
+for _ in 0..<240 {
+    let block = try upgraded.render()
+    upgradedIndexes.formUnion(block.marks.map { $0.index })
+    if block.done { break }
+}
+precondition(upgradedIndexes.contains(2) && upgraded.trackCount == 3)
+print("Native future plan upgrade: render horizon and three-track tail preserved")

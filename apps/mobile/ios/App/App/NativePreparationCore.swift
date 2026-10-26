@@ -8,6 +8,8 @@ final class NativePreparationCore {
     private var file: FileHandle?
     private var ticket: NativePreparationTicket?
     private var exception: String?
+    private var progress: ((String) -> Void)?
+    var analyzerVersion: String { api.forProperty("analyzerVersion")?.toString() ?? "" }
     enum Failure: Error { case script, analysis }
     init(script: String) throws {
         guard let vm = JSVirtualMachine(), let context = JSContext(virtualMachine: vm) else { throw Failure.script }
@@ -23,13 +25,16 @@ final class NativePreparationCore {
         let cancelled: @convention(block) () -> Bool = { [weak self] in self?.ticket?.cancelled ?? true }
         context.setObject(read, forKeyedSubscript: "moraPreparationRead" as NSString)
         context.setObject(cancelled, forKeyedSubscript: "moraPreparationCancelled" as NSString)
+        let report: @convention(block) (String) -> Void = { [weak self] stage in self?.progress?(stage) }
+        context.setObject(report, forKeyedSubscript: "moraPreparationProgress" as NSString)
         context.evaluateScript(script)
         guard exception == nil else { throw Failure.script }
         api = context.objectForKeyedSubscript("MoraPreparation")
     }
-    func analyze(_ source: URL, frames: Int, ticket: NativePreparationTicket) throws -> [String: Any] {
+    func analyze(_ source: URL, frames: Int, ticket: NativePreparationTicket, progress: ((String) -> Void)? = nil) throws -> [String: Any] {
         self.ticket = ticket; self.file = try FileHandle(forReadingFrom: source)
-        defer { try? file?.close(); file = nil; self.ticket = nil }
+        self.progress = progress
+        defer { try? file?.close(); file = nil; self.ticket = nil; self.progress = nil }
         return try call("analyzeJSON", ["frames": frames])
     }
     func plan(a: [String: Any], b: [String: Any], settings: [String: Any], sampleRate: Double) throws -> [String: Any] {

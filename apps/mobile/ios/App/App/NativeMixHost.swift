@@ -60,6 +60,8 @@ final class NativeMixHost {
     private var nextWhenPrepared = false
     // Main queue only. Do not remove WebKit's or the baseline probe's targets.
     private var targets: [(MPRemoteCommand, Any)] = []
+    private var refillTask: UIBackgroundTaskIdentifier = .invalid // main queue only
+    private var refillWaiting = false // one finite assertion per waiting interval
     private enum Failure: Error { case invalid, playback }
     typealias Reply = (Result<[String: Any], Error>) -> Void
 
@@ -104,6 +106,8 @@ final class NativeMixHost {
             "waitingForPreparation": continueWhenPrepared && ended, "pendingNext": nextWhenPrepared,
             "entryId": tracks.indices.contains(index) ? tracks[index]["entryId"] as? String ?? "" : ""]
         var result = state
+        result["stateSavedAt"] = Date().timeIntervalSince1970
+        result["stateSavedUptime"] = ProcessInfo.processInfo.systemUptime
         if let blend { result["blend"] = ["index": blend.index, "progress": blend.progress] }
         else { result["blend"] = NSNull() }
         if let preparation { result["preparation"] = preparation.snapshot }
@@ -340,6 +344,26 @@ final class NativeMixHost {
                                 }
                             }
                         }
+                    }, upgrade: { [weak self] at, track in
+                        self?.work.async { [weak self] in
+                            guard let self, self.preparation === job, !job.ticket.cancelled,
+                                  at > self.index, self.tracks.indices.contains(at),
+                                  track["entryId"] as? String == self.tracks[at]["entryId"] as? String,
+                                  Self.key(track, at) == Self.key(self.tracks[at], at), self.available(at) else { return }
+                            do {
+                                if let renderer = self.renderer {
+                                    guard try renderer.upgrade(index: at, track: track) else {
+                                        MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "pastHorizon"]); return
+                                    }
+                                } else if at == self.index + 1,
+                                          let tr = track["transition"] as? [String: Any], let trigger = tr["triggerFrame"] as? NSNumber,
+                                          trigger.doubleValue <= (self.position + 0.35) * self.sr { return }
+                                self.tracks[at] = try self.validated([track], from: at)[0]
+                                self.config["tracks"] = self.tracks
+                                self.publish("planReady")
+                                MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "applied"])
+                            } catch { MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "rejected"]) }
+                        }
                     }, event: { [weak self] kind, reason in
                         self?.work.async { [weak self] in
                             guard let self, self.preparation === job else { return }
@@ -349,7 +373,10 @@ final class NativeMixHost {
                             }
                             if ["ready", "failed", "finished"].contains(kind) { self.publish("preparation") }
                             else { self.save() }
-                            MoraPlaybackJournal.record("native.preparation.\(kind)", ["reason": reason])
+                            var fields: [String: Any] = ["reason": reason]
+                            if kind == "analysis" { fields["analysis"] = job.analysis.snapshot }
+                            fields["jobId"] = job.snapshot["jobId"]
+                            MoraPlaybackJournal.record("native.preparation.\(kind)", fields)
                         }
                     })
                 }
@@ -365,6 +392,16 @@ final class NativeMixHost {
         return result
     }
     func state(_ completion: @escaping Reply) { work.async { self.reply(completion, .success(self.viewState())) } }
+    func diagnosticState(_ completion: @escaping Reply) {
+        work.async {
+            let previous = self.snapshot["stateSavedAt"]
+            self.updatePosition(); self.save()
+            var value = self.viewState()
+            value["lastStateSavedAt"] = previous
+            value["snapshotCapturedAt"] = Date().timeIntervalSince1970
+            self.reply(completion, .success(value))
+        }
+    }
     func update(id: String, from: Int, tracks raw: [[String: Any]], completion: @escaping Reply) {
         work.async {
             do {
@@ -489,7 +526,7 @@ final class NativeMixHost {
         position = max(0, min(position, NativeMixTimeline.duration(tracks[index], sampleRate: sr)))
     }
     private func publish(_ reason: String) {
-        updatePosition(); save()
+        updatePosition(); preparation?.analysis.advance(index); save()
         preparation?.gate.advance(index)
         if index != prunedIndex { prune() }
         let state = snapshot, generation = epoch
@@ -506,6 +543,7 @@ final class NativeMixHost {
         let canReverse = canGoBack
         DispatchQueue.main.async { [weak self] in
             guard let self, self.active, self.snapshot["epoch"] as? Int == generation else { return }
+            self.refillLease(waiting: state["waitingForPreparation"] as? Bool == true)
             MPNowPlayingInfoCenter.default().nowPlayingInfo = publishedInfo
             MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = canAdvance
             MPRemoteCommandCenter.shared().previousTrackCommand.isEnabled = canReverse
@@ -625,6 +663,7 @@ final class NativeMixHost {
         work.async {
             self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false; self.nextWhenPrepared = false
             self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
+            DispatchQueue.main.async { [weak self] in self?.refillLease(waiting: false) }
             guard self.folder != nil || self.ownsSession else { self.reply(completion, .success(self.snapshot)); return }
             self.epoch += 1; self.wantsPlaying = false; self.resumeAfterInterruption = false
             self.discardGraph(); self.interrupted = false; self.mediaResetPending = false
@@ -671,6 +710,21 @@ final class NativeMixHost {
             self.discardGraph(); self.ownsSession = false
             self.publish("mediaReset") // Preserve the queue; only a subsequent user Play activates audio.
         }
+    }
+    /// A short, best-effort window for a download already in progress at EOF.
+    /// It does not keep silent audio running or promise an iOS execution quota.
+    private func refillLease(waiting: Bool) {
+        if !waiting { refillWaiting = false; endRefillLease(); return }
+        guard !refillWaiting else { return }; refillWaiting = true
+        refillTask = UIApplication.shared.beginBackgroundTask(withName: "MORA finish next audio") { [weak self] in self?.endRefillLease() }
+        let task = refillTask
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+            guard let self, self.refillTask == task else { return }; self.endRefillLease()
+        }
+    }
+    private func endRefillLease() {
+        guard refillTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(refillTask); refillTask = .invalid
     }
     private func buildGraph() throws {
         let session = AVAudioSession.sharedInstance()

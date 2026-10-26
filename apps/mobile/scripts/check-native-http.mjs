@@ -58,6 +58,7 @@ try {
   const expected = JSON.parse(runInNewContext(`${source}\nMoraPreparation.analyzeJSON(JSON.stringify({ frames: ${frames} }))`, {
     moraPreparationRead: (offset, frames) => inputBytes.subarray(offset * 8, (offset + frames) * 8).toString('base64'),
     moraPreparationCancelled: () => false,
+    moraPreparationProgress: () => {},
   }, { timeout: 120000 }));
   const build = spawnSync('swiftc', [resolve(root, 'apps/mobile/ios/App/App/NativeMediaHTTP.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativeMediaLoader.swift'),

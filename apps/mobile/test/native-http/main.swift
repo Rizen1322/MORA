@@ -17,6 +17,11 @@ actor ArtworkCheck {
     func accept(_ file: Int) { files.insert(file) }
     func result() -> Set<Int> { files }
 }
+actor UpgradeCheck {
+    private var gain: Double?
+    func accept(_ track: [String: Any]) { gain = (track["gainDb"] as? NSNumber)?.doubleValue }
+    func result() -> Double? { gain }
+}
 
 let base = URL(string: CommandLine.arguments[1])!
 let root = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
@@ -108,6 +113,28 @@ Task.detached {
         let fallbackEntries = await fallbackSink.result()
         precondition(fallbackEntries == ["B", "C", "D", "E", "F", "G", "H"])
         precondition(fallback.snapshot["running"] as? Bool == false)
+        // Turning off overlap must retain loudness normalization. Supplied full
+        // analysis avoids conflating this check with the speed of the analyzer.
+        let gainFolder = root.appendingPathComponent("gain")
+        try FileManager.default.createDirectory(at: gainFolder, withIntermediateDirectories: true)
+        try firstPCM.write(to: gainFolder.appendingPathComponent("0.f32le"))
+        var known = profile
+        known["loudness"] = ["integratedLufs": -24.0, "truePeakDb": -8.0]
+        var gainItem = item("B"); gainItem["mixingAllowed"] = true; gainItem["analysis"] = known
+        let gainJob = NativeQueuePreparation(index: 0), gainSink = PreparedQueueCheck(), upgradedGain = UpgradeCheck()
+        await gainJob.run(folder: gainFolder, manifest: ["from": 1, "items": [gainItem],
+            "settings": ["enabled": false, "loudnessTarget": -16.0],
+            "previous": ["trackId": "A", "mixingAllowed": true, "analysis": known]],
+            seed: ["file": 0, "totalFrames": 24000], script: script,
+            allocate: { await gainSink.allocate() }, accept: { index, track in await gainSink.accept(index, track) },
+            upgrade: { _, track in Task { await upgradedGain.accept(track) } }, event: { _, _ in })
+        for _ in 0..<200 {
+            if await upgradedGain.result() != nil { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let normalization = await upgradedGain.result()
+        precondition(normalization == 8.0, "Disabling AutoMix removed loudness normalization")
+        gainJob.cancel()
         let coverFolder = root.appendingPathComponent("cover")
         try FileManager.default.createDirectory(at: coverFolder, withIntermediateDirectories: true)
         try firstPCM.write(to: coverFolder.appendingPathComponent("0.f32le"))
