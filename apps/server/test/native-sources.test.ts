@@ -50,3 +50,12 @@ it('resolves at most four entries at once, in queue order', async () => {
   expect(peak).toBe(4);
   expect(started.slice(0, 4)).toEqual(['t0', 't1', 't2', 't3']);
 });
+
+it('reuses resolved remote sources across growing handoffs', async () => {
+  const resolve = vi.fn(async (source: { external_id: string }) => ({ kind: 'direct', url: `https://audio.test/${source.external_id}.mp3` }));
+  const services = svc(resolve);
+  const list = (n: number) => Array.from({ length: n }, (_, i) => ({ trackId: `t${i}`, entryId: `e${i}`, file: i }));
+  await nativeSources(services, list(4), 'previous');
+  await nativeSources(services, list(8), 'previous');
+  expect(resolve).toHaveBeenCalledTimes(8);
+});
