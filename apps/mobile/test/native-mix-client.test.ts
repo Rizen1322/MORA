@@ -181,3 +181,27 @@ it('keeps the playing queue when a replacement start fails', async () => {
   await expect(mix.start({ sampleRate: 48000, position: 0, tracks: [track(1)] })).rejects.toThrow('invalid');
   expect(stop).not.toHaveBeenCalled();
 });
+
+it('hands over only the entries the server kept and reports the dropped ones', async () => {
+  const handoff = vi.fn(async () => state);
+  const mix = createNativeMix({ ...port(), nativeSourceReserve: reserve, nativeSourceAppend: vi.fn(), nativePrepareQueue: handoff }, {
+    prepare: async () => {}, restore: () => {}, sources: async entries => ({
+      items: entries.filter(e => e.entryId !== 'entry1').map(e => ({ ...e, title: e.trackId, artist: '', duration: 180, mixingAllowed: true,
+        source: { kind: 'direct' as const, url: 'https://audio.test/song.mp3' } })),
+      previous: { trackId: 'seed', duration: 180, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS }),
+  });
+  await mix.start({ sampleRate: 48000, position: 0, tracks: [track(0)] });
+  const entries = Array.from({ length: 3 }, (_, i) => ({ trackId: `track${i}`, entryId: `entry${i}` }));
+  const result = await mix.prepareQueue!(1, entries, 'seed');
+  expect(handoff.mock.calls[0][0].manifest.items.map(t => t.entryId)).toEqual(['entry0', 'entry2']);
+  expect(result.dropped).toEqual(['entry1']);
+});
+it('rejects a manifest with reordered or foreign items', async () => {
+  const hooks = sourceHooks();
+  hooks.sources.mockImplementation(async entries => ({ items: entries.slice().reverse().map(e => ({ ...e, title: '', artist: '', duration: 3, mixingAllowed: true,
+    source: { kind: 'direct' as const, url: 'https://audio.test/song.mp3' } })), previous: { trackId: 'a', duration: 3, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS }));
+  const mix = createNativeMix({ ...port(), nativeSourceReserve: reserve, nativeSourceAppend: vi.fn(), nativePrepareQueue: vi.fn(async () => state) }, hooks);
+  await mix.start({ sampleRate: 48000, position: 0, tracks: [track(0)] });
+  const entries = [0, 1].map(i => ({ trackId: `track${i}`, entryId: `entry${i}` }));
+  await expect(mix.prepareQueue!(1, entries, 'seed')).rejects.toThrow('Изменилась запись');
+});

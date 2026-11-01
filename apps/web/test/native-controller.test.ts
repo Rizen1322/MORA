@@ -186,7 +186,18 @@ it('plays the queue natively: uploads tracks with their blends ahead and follows
   expect(controller.state.status).toBe('paused');
 });
 
-it('hands twelve future radio entries to native before relying on page polling', async () => {
+it('drops entries native could not receive from the page queue', async () => {
+  const mix = { prepareQueue: vi.fn(async () => state({ dropped: ['entry-c'] } as any)), upload: vi.fn(), start: vi.fn(), update: vi.fn(),
+    settings: vi.fn(), stop: vi.fn(), state: vi.fn(async () => state()), command: vi.fn(async () => state()) };
+  vi.stubGlobal('window', { moraNativePlayback: { route: 'webkit', mix, mixActive: true } });
+  const controller = new PlayerController(id => ({ id, title: id, duration: 180, status: 'ok', analysis: {} } as Track), vi.fn());
+  const h = controller as unknown as { nativeTimer: ReturnType<typeof setInterval>; saveTimer: ReturnType<typeof setTimeout> | null; nativeSyncing: Promise<void> | null; nativeAt: number };
+  timer = () => { clearInterval(h.nativeTimer); if (h.saveTimer) clearTimeout(h.saveTimer); };
+  controller.state = { ...controller.state, queue: ['a', 'b', 'c', 'd'].map(t => ({ entryId: 'entry-' + t, trackId: t, origin: 'wave' as const })), index: 0 };
+  h.nativeAt = 0; void (controller as any).nativeSync(); await h.nativeSyncing;
+  expect(controller.state.queue.map(e => e.trackId)).toEqual(['a', 'b', 'd']);
+});
+it('hands thirty future radio entries to native in growing handoffs before relying on page polling', async () => {
   let next = 0;
   vi.mocked(api.waveNext).mockImplementation(async () => ({ picks: Array.from({ length: 4 }, () => ({ id: 'wave-' + ++next, reasons: [] })) } as any));
   const mix = { startSource: vi.fn(async (entry: any) => state({ currentTrack: { ...entry, title: entry.trackId, artist: '', totalFrames: frames, gainDb: 0 } })), prepareQueue: vi.fn(async () => state()), upload: vi.fn(), start: vi.fn(), update: vi.fn(),
@@ -198,8 +209,11 @@ it('hands twelve future radio entries to native before relying on page polling',
   await controller.playTracks(['first'], 0, { type: 'wave' });
   await h.nativeSyncing;
   expect(mix.prepareQueue).toHaveBeenCalled();
-  expect(mix.prepareQueue.mock.calls[0][1]).toHaveLength(12);
-  expect(api.waveNext).toHaveBeenCalledTimes(3);
+  await vi.waitFor(() => expect(mix.prepareQueue.mock.calls.at(-1)![1]).toHaveLength(30));
+  expect(mix.prepareQueue.mock.calls[0][1].length).toBeLessThan(30);
+  expect(mix.prepareQueue.mock.calls.every(c => c[5] === false)).toBe(true); // Top-ups are unflagged refreshes.
+  expect(api.waveNext).toHaveBeenCalledTimes(8);
+  expect(Math.max(...vi.mocked(api.waveNext).mock.calls.map(c => c[0].count!))).toBe(4);
 });
 
 it('distinguishes native refreshes from explicit edits, including an edit during handoff', async () => {
