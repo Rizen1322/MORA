@@ -61,6 +61,8 @@ final class NativeMixHost {
     private var sourceKey = 0
     private var continueWhenPrepared = false
     private var nextWhenPrepared = false
+    private var initialTicket: NativePreparationTicket?
+    private var initialConfig: [String: Any] = [:]
     // Main queue only. Do not remove WebKit's or the baseline probe's targets.
     private var targets: [(MPRemoteCommand, Any)] = []
     private var refillTask: UIBackgroundTaskIdentifier = .invalid // main queue only
@@ -83,7 +85,7 @@ final class NativeMixHost {
     deinit {
         for observer in sessionObservers { NotificationCenter.default.removeObserver(observer) }
         if let engineObserver { NotificationCenter.default.removeObserver(engineObserver) }
-        preparation?.cancel(); analysisWorker.cancel(); artworkLoader.cancel()
+        initialTicket?.cancel(); preparation?.cancel(); analysisWorker.cancel(); artworkLoader.cancel()
     }
 
     private var sr: Double { config["sampleRate"] as? Double ?? 48000 }
@@ -121,7 +123,7 @@ final class NativeMixHost {
     func begin(_ completion: @escaping Reply) {
         work.async {
             do {
-                if self.folder != nil { self.reply(completion, .success(["id": self.id])); return }
+                if self.folder != nil { self.reply(completion, .success(["id": self.id, "hasQueue": !self.tracks.isEmpty])); return }
                 let root = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                     .appendingPathComponent("MORA/native-mix", isDirectory: true)
                 self.id = UUID().uuidString
@@ -203,7 +205,9 @@ final class NativeMixHost {
         }
     }
     func start(id: String, config: [String: Any], completion: @escaping Reply) {
-        work.async {
+        work.async { self.startOnQueue(id: id, config: config, completion: completion) }
+    }
+    private func startOnQueue(id: String, config: [String: Any], completion: @escaping Reply) {
             do {
                 guard self.folder != nil, id == self.id, let sr = config["sampleRate"] as? Double,
                       [44100.0, 48000.0].contains(sr), let raw = config["tracks"] as? [[String: Any]], !raw.isEmpty,
@@ -211,6 +215,7 @@ final class NativeMixHost {
                 let start = config["index"] as? Int ?? 0
                 guard raw.indices.contains(start), self.engine == nil || sr == self.sr else { throw Failure.invalid }
                 let metadata = try self.validated(raw, from: 0)
+                self.initialTicket?.cancel(); self.initialTicket = nil; self.initialConfig = [:]
                 self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false
                 self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis(); self.analysisSettings = [:]; self.analysisPolicies = [:]
                 self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
@@ -227,11 +232,81 @@ final class NativeMixHost {
                 try self.select(index: start, position: position, playing: config["paused"] as? Bool != true)
                 self.prune()
                 if self.targets.isEmpty { self.installTargets() }
-                self.reply(completion, .success(self.snapshot))
+                self.reply(completion, .success(self.viewState()))
             } catch {
                 // Invalid replacement data keeps the queue that is already playing.
                 if case Failure.invalid = error, self.engine != nil {} else { self.fail() }
                 self.reply(completion, .failure(error))
+            }
+    }
+    /// The first song follows the same native loader/decoder as the future queue.
+    /// No page callback is needed between download completion and audio start.
+    func prepareStart(id: String, item: [String: Any], config: [String: Any], completion: @escaping Reply) {
+        work.async {
+            let gain = config["gainDb"] as? Double ?? 0
+            guard id == self.id, let folder = self.folder,
+                  config["sampleRate"] as? Double == 48000,
+                  let position = config["position"] as? Double, position.isFinite, position >= 0,
+                  let trackId = item["trackId"] as? String, !trackId.isEmpty,
+                  let entryId = item["entryId"] as? String, !entryId.isEmpty,
+                  let allowed = item["mixingAllowed"] as? Bool,
+                  let source = item["source"] as? [String: Any], gain.isFinite, abs(gain) <= 36,
+                  config["gainDb"] == nil || config["gainDb"] is Double, self.preparedFileKey < 999999 else {
+                self.reply(completion, .failure(Failure.invalid)); return
+            }
+            self.initialTicket?.cancel()
+            let ticket = NativePreparationTicket(); self.initialTicket = ticket; self.initialConfig = config
+            self.preparedFileKey += 1; let key = self.preparedFileKey
+            let downloaded = folder.appendingPathComponent("\(UUID().uuidString).media")
+            let pcm = folder.appendingPathComponent("\(key).f32le")
+            let allowedHost = source["allowHTTP"] as? Bool == true ? (source["url"] as? String).flatMap { URL(string: $0)?.host } : nil
+            let hosts = Set([allowedHost].compactMap { $0 })
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let http = NativeMediaHTTP(allowedHTTPHosts: hosts)
+                defer { http.invalidate(); try? FileManager.default.removeItem(at: downloaded) }
+                do {
+                    let media = try await NativeMediaLoader(http: http).load(source, to: downloaded, folder: folder, ticket: ticket)
+                    let frames = try NativePCMDecoder.decode(media, to: pcm, sampleRate: 48000, cancelled: { ticket.cancelled })
+                    guard let self else { try? FileManager.default.removeItem(at: pcm); return }
+                    self.work.async {
+                        guard self.initialTicket === ticket, !ticket.cancelled, self.id == id, self.folder == folder,
+                              frames > 0, frames <= Int.max / 8,
+                              self.bytes.values.reduce(0, +) + frames * 8 <= 768 * 1024 * 1024 else {
+                            try? FileManager.default.removeItem(at: pcm)
+                            if self.initialTicket === ticket { self.initialTicket = nil; self.initialConfig = [:] }
+                            self.reply(completion, .failure(Failure.invalid)); return
+                        }
+                        var next = self.initialConfig
+                        next["paused"] = next["paused"] as? Bool == true || self.interrupted || self.mediaResetPending
+                        var track: [String: Any] = ["file": key, "totalFrames": frames, "gainDb": allowed ? next["gainDb"] as? Double ?? 0 : 0,
+                            "trackId": trackId, "entryId": entryId, "title": item["title"] ?? "", "artist": item["artist"] ?? ""]
+                        if let artwork = item["artwork"] { track["artwork"] = artwork }
+                        let previous = self.tracks.indices.contains(self.index) && self.available(self.index)
+                            && self.tracks[self.index]["entryId"] as? String != entryId ? self.tracks[self.index] : nil
+                        let oldArtwork = self.artworks.indices.contains(self.index) ? self.artworks[self.index] : nil
+                        self.bytes[key] = frames * 8; self.pendingUploads.insert(key)
+                        next["tracks"] = (previous.map { [$0] } ?? []) + [track]; next["index"] = previous == nil ? 0 : 1
+                        self.initialTicket = nil; self.initialConfig = [:]
+                        self.startOnQueue(id: id, config: next, completion: completion)
+                        if !self.failed, self.tracks.indices.contains(self.index), Self.key(self.tracks[self.index], self.index) == key {
+                            if previous != nil { self.artworks[0] = oldArtwork }
+                            var artworkTrack = track
+                            if let cover = item["coverUrl"] { artworkTrack["coverUrl"] = cover }
+                            if let host = URL(string: item["coverUrl"] as? String ?? "")?.host, hosts.contains(host) { artworkTrack["artworkHTTPHost"] = host }
+                            self.requestArtwork(artworkTrack, at: self.index)
+                        } else if !self.tracks.enumerated().contains(where: { Self.key($0.element, $0.offset) == key }) {
+                            self.bytes.removeValue(forKey: key); self.pendingUploads.remove(key)
+                            try? FileManager.default.removeItem(at: pcm)
+                        }
+                    }
+                } catch {
+                    try? FileManager.default.removeItem(at: pcm)
+                    self?.work.async { [weak self] in
+                        guard let self else { return }
+                        if self.initialTicket === ticket { self.initialTicket = nil; self.initialConfig = [:] }
+                        self.reply(completion, .failure(error))
+                    }
+                }
             }
         }
     }
@@ -479,6 +554,10 @@ final class NativeMixHost {
     func settings(_ values: [String: Any], completion: @escaping Reply) {
         work.async {
             for key in ["tone", "preDb", "playback", "volume"] { if let value = values[key] { self.config[key] = value } }
+            if self.initialTicket != nil {
+                for key in ["tone", "preDb", "playback", "volume"] { if let value = values[key] { self.initialConfig[key] = value } }
+                if let gain = values["gainDb"] as? Double, gain.isFinite, abs(gain) <= 36 { self.initialConfig["gainDb"] = gain }
+            }
             self.renderer?.apply(values)
             self.publish("settings")
             self.reply(completion, .success(self.snapshot))
@@ -606,6 +685,7 @@ final class NativeMixHost {
             "gateUpper": prep["gateUpper"] ?? -1, "gateWaiting": prep["gateWaiting"] ?? -1, "stageSeconds": prep["stageSeconds"] ?? 0])
     }
     private func fail() {
+        initialTicket?.cancel(); initialTicket = nil; initialConfig = [:]
         preparation?.cancel(); preparation = nil; continueWhenPrepared = false; nextWhenPrepared = false
         wantsPlaying = false; failed = true; epoch += 1
         player?.stop(); engine?.pause(); renderer = nil
@@ -624,9 +704,14 @@ final class NativeMixHost {
             let id = commandId ?? UUID().uuidString
             MoraPlaybackJournal.record("native.mix.command", ["id": id, "action": action, "source": source])
             do {
-                guard self.folder != nil, !self.preparing, !self.failed else { throw Failure.invalid }
-                if source == "interruption" && self.mediaResetPending { throw Failure.invalid }
+                guard self.folder != nil, !self.failed else { throw Failure.invalid }
                 if let owner, owner != self.ownershipRevision { throw Failure.invalid }
+                if self.initialTicket != nil, action == "pause" || action == "play" {
+                    self.initialConfig["paused"] = action == "pause"
+                    if self.preparing { self.save(); self.reply(completion, .success(self.snapshot)); return }
+                }
+                guard !self.preparing else { throw Failure.invalid }
+                if source == "interruption" && self.mediaResetPending { throw Failure.invalid }
                 self.updatePosition()
                 if source != "interruption" { self.resumeAfterInterruption = false }
                 switch action {
@@ -710,6 +795,7 @@ final class NativeMixHost {
     }
     func stop(_ completion: @escaping Reply) {
         work.async {
+            self.initialTicket?.cancel(); self.initialTicket = nil; self.initialConfig = [:]
             self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false; self.nextWhenPrepared = false
             self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis()
             self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
@@ -735,8 +821,9 @@ final class NativeMixHost {
         let type = (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue
         let options = (notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? NSNumber)?.uintValue ?? 0
         work.async {
-            guard self.folder != nil, !self.tracks.isEmpty else { return }
+            guard self.folder != nil, !self.tracks.isEmpty || self.initialTicket != nil else { return }
             if type == AVAudioSession.InterruptionType.began.rawValue {
+                if self.initialTicket != nil { self.initialConfig["paused"] = true }
                 self.interrupted = true
                 self.resumeAfterInterruption = self.wantsPlaying || self.continueWhenPrepared; self.wantsPlaying = false; self.continueWhenPrepared = false
                 self.player?.pause(); self.engine?.pause(); self.publish("interruption")
@@ -754,7 +841,8 @@ final class NativeMixHost {
     }
     func mediaReset() {
         work.async {
-            guard self.folder != nil, !self.tracks.isEmpty else { return }
+            guard self.folder != nil, !self.tracks.isEmpty || self.initialTicket != nil else { return }
+            if self.initialTicket != nil { self.initialConfig["paused"] = true }
             self.wantsPlaying = false; self.resumeAfterInterruption = false; self.interrupted = false
             self.continueWhenPrepared = false; self.nextWhenPrepared = false; self.mediaResetPending = true
             self.discardGraph(); self.ownsSession = false

@@ -342,6 +342,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
   // The A/B probe and native playback exclude each other; native playback reuses its own session.
   const owned = <T>(work: () => Promise<T>) => controls.mixActive ? work() : claim(work);
   controls.mix = { ...mix,
+    ...(mix.startSource ? { startSource: (entry, config, signal) => owned(() => mix.startSource!(entry, config, signal)) } : {}),
     upload: (file, offset, bytes, signal) => owned(() => mix.upload(file, offset, bytes, signal)),
     start: (config, signal) => owned(() => mix.start(config, signal)),
     async stop() { if (controls.probeActive && !controls.mixActive) throw new Error('Остановите тест A/B'); await mix.stop(); } };

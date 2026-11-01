@@ -253,6 +253,11 @@ export class PlayerController {
     this.previewRevision++;
     this.loudnessTarget = target;
     if (this.native && this.nativeAt >= 0) { this.nativeManifestKey = ''; void this.nativeSync(); return; }
+    if (this.native && this.nativeMix.startSource) {
+      const track = this.track(this.state.queue[this.state.index]?.trackId);
+      void this.nativeMix.settings({ gainDb: track?.mixingAllowed === false ? 0 : gainFromSummary(track?.analysis, target) }).catch(() => {});
+      return;
+    }
     if (this.state.transition?.active) {
       this.deferredLoudnessChange = true;
       return;
@@ -343,6 +348,24 @@ export class PlayerController {
       transition: null, nextPlan: null, nextPending: [], error: null });
     this.focusAnalysis();
     try {
+      if (this.nativeMix.startSource) {
+        const track = this.track(entry.trackId);
+        if (!track) throw Error('трек не найден в медиатеке');
+        if (track.status === 'missing') throw new ApiError(track.error ?? 'файл не найден', 410);
+        const s = await this.nativeMix.startSource({ trackId: entry.trackId, entryId: entry.entryId },
+          { sampleRate: NATIVE_SR, position: seconds, paused: startPaused || this.state.status === 'paused',
+            gainDb: track.mixingAllowed === false ? 0 : gainFromSummary(track.analysis, this.loudnessTarget),
+            ...this.nativeSettings() }, abort.signal);
+        if (revision !== this.nativeRevision) return;
+        if (!s.active || s.failed || !s.currentTrack || s.currentTrack.entryId !== entry.entryId) throw Error('Нативный трек не подготовлен');
+        this.nativeTracks = [];
+        this.nativeTracks[s.index] = { ...s.currentTrack, file: s.currentTrack.file ?? 0, entryId: entry.entryId, trackId: entry.trackId };
+        this.nativeAt = s.index; this.nativeManifestKey = ''; this.nativeFiles.clear();
+        this.skipStreak = 0; this.maxPos = s.position;
+        this.set({ status: s.playing ? 'playing' : 'paused', position: s.position, duration: s.duration || this.state.duration });
+        this.beginPlay(entry); this.nativePoll(); void this.nativeSync(); this.scheduleSave();
+        return;
+      }
       const f = await this.nativeFile(entry.trackId, abort.signal, 'current');
       if (revision !== this.nativeRevision) return;
       // Previous stays available to the lock screen when its file is still uploaded.
@@ -544,7 +567,7 @@ export class PlayerController {
   }
 
   private nativeCommand(action: MediaSessionAction, seekTime?: number): void {
-    if (this.nativeAt >= 0) void this.nativeMix.command(action, seekTime).catch(() => {});
+    if (this.nativeAt >= 0 || this.nativeMix.startSource) void this.nativeMix.command(action, seekTime).catch(() => {});
   }
 
   // ------------------------------------------------------------------ engine

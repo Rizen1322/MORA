@@ -28,6 +28,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
     private let slowAnalysis = CommandLine.arguments.contains("--slow-analysis") || CommandLine.arguments.contains("--slow-analysis-eof")
     private let slowAnalysisEOF = CommandLine.arguments.contains("--slow-analysis-eof")
     private let retainedAnalysis = CommandLine.arguments.contains("--retained-analysis")
+    private let sourceStart = CommandLine.arguments.contains("--source-start")
     private lazy var host = NativeMixHost(makeEngine: { [engines] in engines.create() }, preparationScript: retainedAnalysis ? """
         var retainedCalls = 0;
         var MoraPreparation = { analyzerVersion: 'retained-fixture', analyzeJSON: function() {
@@ -53,7 +54,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
     private var last: [String: Any] = [:]
     private var reportURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(retainedAnalysis ? "retained-analysis.json" : slowAnalysisEOF ? "slow-analysis-eof.json" : slowAnalysis ? "slow-analysis.json" : skip ? "skip.json" : "natural.json")
+            .appendingPathComponent(sourceStart ? "source-start.json" : retainedAnalysis ? "retained-analysis.json" : slowAnalysisEOF ? "slow-analysis-eof.json" : slowAnalysis ? "slow-analysis.json" : skip ? "skip.json" : "natural.json")
     }
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         skip = (slowAnalysis && !slowAnalysisEOF) || CommandLine.arguments.contains("--skip")
@@ -72,6 +73,62 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
     }
     enum Failure: Error { case check(String) }
     private func require(_ value: Bool, _ message: String) throws { if !value { throw Failure.check(message) } }
+    private func sourceStartRegression(id: String) async throws {
+        let arguments = CommandLine.arguments
+        guard let flag = arguments.firstIndex(of: "--fixture-base"), arguments.indices.contains(flag + 1),
+              let base = URL(string: arguments[flag + 1]) else { throw Failure.check("Missing fixture address") }
+        func item(_ entry: String, allowed: Bool = true) -> [String: Any] {
+            ["trackId": entry, "entryId": entry, "title": entry, "mixingAllowed": allowed,
+             "source": ["kind": "direct", "url": base.appendingPathComponent("audio-wait").absoluteString, "allowHTTP": true]]
+        }
+        func pending() async throws {
+            for _ in 0..<100 {
+                let (data, _) = try await URLSession.shared.data(from: base.appendingPathComponent("audio-pending"))
+                if String(data: data, encoding: .utf8) == "1" { return }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            throw Failure.check("Native first-source request never started")
+        }
+        let loading = Task { try await call { host.prepareStart(id: id, item: item("first"),
+            config: ["sampleRate": 48000.0, "position": 0.25, "gainDb": -3.0], completion: $0) } }
+        try await pending()
+        _ = try await call { host.command("pause", source: "fixture", completion: $0) }
+        _ = try await URLSession.shared.data(from: base.appendingPathComponent("audio-release"))
+        last = try await loading.value
+        let first = last["currentTrack"] as? [String: Any]
+        try require(first?["entryId"] as? String == "first" && first?["gainDb"] as? Double == -3,
+                    "Native source start lost metadata or normalization")
+        try require(last["playing"] as? Bool == false && abs((last["position"] as? Double ?? -1) - 0.25) < 0.02,
+                    "Pause during initial download was ignored")
+        _ = try await call { host.command("play", source: "fixture", completion: $0) }
+        var advanced = false
+        for _ in 0..<100 {
+            last = try await call { host.state($0) }
+            if (last["position"] as? Double ?? 0) > 0.26 { advanced = true; break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        try require(advanced, "Native first source did not advance after Play")
+        let replacement = Task { try await call { host.prepareStart(id: id, item: item("second", allowed: false),
+            config: ["sampleRate": 48000.0, "position": 0.0, "paused": true, "gainDb": 6.0], completion: $0) } }
+        try await pending()
+        _ = try await URLSession.shared.data(from: base.appendingPathComponent("audio-release"))
+        last = try await replacement.value
+        try require(last["index"] as? Int == 1, "Source replacement discarded the available predecessor")
+        try require((last["currentTrack"] as? [String: Any])?["gainDb"] as? Double == 0, "Restricted source received normalization")
+        _ = try await call { host.command("previoustrack", source: "fixture", completion: $0) }
+        last = try await call { host.state($0) }
+        try require((last["currentTrack"] as? [String: Any])?["entryId"] as? String == "first", "Previous lost native PCM")
+        let cancelled = Task { try await call { host.prepareStart(id: id, item: item("obsolete"),
+            config: ["sampleRate": 48000.0, "position": 0.0], completion: $0) } }
+        try await pending()
+        _ = try await call { host.stop($0) }
+        var rejected = false
+        do { _ = try await cancelled.value } catch { rejected = true }
+        try require(rejected, "Stopped source preparation still succeeded")
+        last = try await call { host.state($0) }
+        try require(last["active"] as? Bool == false, "Cancelled native first start kept its owner")
+        write("passed")
+    }
     private func retainedAnalysisRegression(id: String) async throws {
         let pcm = [Float](repeating: 0.1, count: 48000 * 6 * 2).withUnsafeBytes { Data($0) }
         for offset in stride(from: 0, to: pcm.count, by: 262144) {
@@ -230,6 +287,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
     }
     private func run() async throws {
         let begin = try await call { host.begin($0) }, id = begin["id"] as! String
+        if sourceStart { try await sourceStartRegression(id: id); return }
         if retainedAnalysis { try await retainedAnalysisRegression(id: id); return }
         let frames = 3 * 48000
         let pcm = (0..<frames).flatMap { i -> [Float] in

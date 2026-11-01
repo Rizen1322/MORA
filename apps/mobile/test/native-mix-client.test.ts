@@ -11,6 +11,78 @@ const port = (order: string[] = []) => ({
   nativeMixStop: async () => { order.push('stop'); },
   nativeMixState: async () => state, nativeMixCommand: async () => state,
 });
+const sourceHooks = () => ({ prepare: vi.fn(async () => {}), restore: vi.fn(), sources: vi.fn(async entries => ({
+  items: entries.map(e => ({ ...e, title: e.trackId, artist: '', duration: 180, mixingAllowed: true,
+    source: { kind: 'direct' as const, url: 'https://audio.test/song.mp3' } })),
+  previous: { trackId: 'a', duration: 180, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS,
+})) });
+const reserve = async ({ count }: { count: number }) => ({ keys: Array.from({ length: count }, (_, i) => i) });
+it('hands the first source to Swift without asking the page for decoded PCM', async () => {
+  const prepare = vi.fn(async () => state), append = vi.fn(), start = vi.fn(), hooks = sourceHooks();
+  const mix = createNativeMix({ ...port(), nativeMixStart: start, nativeMixAppend: append,
+    nativePrepareStart: prepare, nativeSourceReserve: reserve, nativeSourceAppend: vi.fn() }, hooks);
+  expect(await mix.startSource!({ trackId: 'a', entryId: 'e' }, { sampleRate: 48000, position: 7, gainDb: -3 })).toBe(state);
+  expect(prepare).toHaveBeenCalledWith({ id: 'test', item: expect.objectContaining({ trackId: 'a', entryId: 'e', source: { kind: 'direct', url: 'https://audio.test/song.mp3' } }),
+    config: { sampleRate: 48000, position: 7, gainDb: -3 } });
+  expect(append).not.toHaveBeenCalled();expect(start).not.toHaveBeenCalled();
+});
+it('preserves Pause and settings changes while the first source is being resolved', async () => {
+  const hooks = sourceHooks(), prepare = vi.fn(async () => state);
+  let resolved!: (manifest: Awaited<ReturnType<typeof hooks.sources>>) => void;
+  const original = hooks.sources;
+  hooks.sources = vi.fn(() => new Promise(resolve => { resolved = resolve; }));
+  const mix = createNativeMix({ ...port(), nativeMixSettings: vi.fn(), nativePrepareStart: prepare, nativeSourceReserve: reserve, nativeSourceAppend: vi.fn() }, hooks);
+  const starting = mix.startSource!({ trackId: 'a', entryId: 'e' }, { sampleRate: 48000, position: 0 });
+  await vi.waitFor(() => expect(resolved).toBeDefined());
+  await mix.command('pause');await mix.settings({ volume: .2, gainDb: -6 });
+  resolved(await original([{ trackId: 'a', entryId: 'e', file: 0 }]));
+  await starting;
+  expect(prepare.mock.calls[0][0].config).toMatchObject({ paused: true, volume: .2, gainDb: -6 });
+});
+it('interrupts native source preparation on abort without waiting behind its start promise', async () => {
+  let reject!: (error: Error) => void;
+  const stop = vi.fn(async () => { reject?.(new Error('cancelled')); });
+  const prepare = vi.fn(() => new Promise<typeof state>((_resolve, no) => { reject = no; }));
+  const hooks = sourceHooks(), abort = new AbortController();
+  const mix = createNativeMix({ ...port(), nativeMixStop: stop, nativePrepareStart: prepare, nativeSourceReserve: reserve, nativeSourceAppend: vi.fn() }, hooks);
+  const starting = mix.startSource!({ trackId: 'a', entryId: 'e' }, { sampleRate: 48000, position: 0 }, abort.signal);
+  const rejected = expect(starting).rejects.toThrow('cancelled');
+  await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());abort.abort();await rejected;
+  expect(stop).toHaveBeenCalled();expect(hooks.restore).toHaveBeenCalledOnce();
+});
+it('uploads the compressed local source once for a native first start', async () => {
+  const hooks = sourceHooks(), append = vi.fn(), pcm = vi.fn(), prepare = vi.fn(async () => state);
+  hooks.sources.mockImplementation(async entries => ({ items: entries.map(e => ({ ...e, title: '', artist: '', duration: 3, mixingAllowed: true,
+    source: { kind: 'upload', trackId: e.trackId } })), previous: { trackId: 'a', duration: 3, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS } as any));
+  const mix = createNativeMix({ ...port(), nativeMixAppend: pcm, nativePrepareStart: prepare, nativeSourceReserve: reserve, nativeSourceAppend: append }, {
+    ...hooks, sourceFile: async () => new Response(Uint8Array.of(1, 2, 3), { headers: { 'X-Native-Length': '3' } }),
+  });
+  await mix.startSource!({ trackId: 'a', entryId: 'e' }, { sampleRate: 48000, position: 0 });
+  expect(append).toHaveBeenCalledWith({ id: 'test', key: 0, offset: 0, base64: 'AQID' });
+  expect(prepare.mock.calls[0][0].item.source).toEqual({ kind: 'local', file: 0 });expect(pcm).not.toHaveBeenCalled();
+});
+it('keeps a recovered native queue if replacement source preparation fails', async () => {
+  const stop = vi.fn(), hooks = sourceHooks();
+  const mix = createNativeMix({ ...port(), nativeMixBegin: async () => ({ id: 'recovered', hasQueue: true }), nativeMixStop: stop,
+    nativePrepareStart: async () => { throw Error('download failed'); }, nativeSourceReserve: reserve, nativeSourceAppend: vi.fn() }, hooks);
+  await expect(mix.startSource!({ trackId: 'a', entryId: 'e' }, { sampleRate: 48000, position: 0 })).rejects.toThrow('download failed');
+  expect(stop).not.toHaveBeenCalled();expect(hooks.restore).not.toHaveBeenCalled();
+});
+it('does not stop an existing owner for a source request cancelled before acquiring a session', async () => {
+  const stop = vi.fn(), hooks = sourceHooks(), begin = vi.fn();
+  const mix = createNativeMix({ ...port(), nativeMixBegin: begin, nativeMixStop: stop,
+    nativePrepareStart: vi.fn(), nativeSourceReserve: reserve, nativeSourceAppend: vi.fn() }, hooks);
+  await expect(mix.startSource!({ trackId: 'a', entryId: 'e' }, { sampleRate: 48000, position: 0 }, AbortSignal.abort())).rejects.toThrow();
+  expect(begin).not.toHaveBeenCalled();expect(stop).not.toHaveBeenCalled();expect(hooks.restore).not.toHaveBeenCalled();
+});
+it('rejects a mismatched first recording before native playback', async () => {
+  const hooks = sourceHooks(), prepare = vi.fn();
+  hooks.sources.mockImplementation(async entries => ({ items: entries.map(e => ({ ...e, entryId: 'changed', title: '', artist: '', duration: 3, mixingAllowed: true,
+    source: { kind: 'direct' as const, url: 'https://audio.test/song.mp3' } })), previous: { trackId: 'a', duration: 3, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS }));
+  const mix = createNativeMix({ ...port(), nativePrepareStart: prepare, nativeSourceReserve: reserve, nativeSourceAppend: vi.fn() }, hooks);
+  await expect(mix.startSource!({ trackId: 'a', entryId: 'e' }, { sampleRate: 48000, position: 0 })).rejects.toThrow('Изменилась запись');
+  expect(prepare).not.toHaveBeenCalled();
+});
 it('hands off more than two upcoming sources and preserves repeat order', async () => {
   const handoff = vi.fn(async () => state);
   const mix = createNativeMix({ ...port(), nativeSourceReserve: async ({ count }) => ({ keys: Array.from({ length: count }, (_, i) => i) }),

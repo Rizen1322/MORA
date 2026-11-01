@@ -54,6 +54,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativeMixBegin", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixAppend", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixStart", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativePrepareStart", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixUpdate", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeMixStop", returnType: CAPPluginReturnPromise),
@@ -379,6 +380,11 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func nativeMixStart(_ call: CAPPluginCall) {
         guard let id = call.getString("id"), let config = call.getObject("config") else { call.reject("Invalid native mix"); return }
         nativeMix.start(id: id, config: config, completion: mixReply(call))
+    }
+    @objc func nativePrepareStart(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), let item = call.getObject("item"),
+              let config = call.getObject("config") else { call.reject("Invalid native source"); return }
+        nativeMix.prepareStart(id: id, item: item, config: config, completion: mixReply(call))
     }
     @objc func nativeMixUpdate(_ call: CAPPluginCall) {
         guard let id = call.getString("id"), let from = call.getInt("from"),

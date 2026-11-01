@@ -29,6 +29,8 @@ export interface NativeMixConfig {
   index?: number;
   paused?: boolean;
 }
+export type NativeSourceConfig = Omit<NativeMixConfig, 'tracks' | 'index'> & { gainDb?: number };
+export type NativeMixSettings = Pick<NativeMixConfig, 'tone' | 'preDb' | 'playback' | 'volume'> & { gainDb?: number };
 export interface NativeMixState extends NativeProbeState {
   /** Audible native overlap; null explicitly means that no transition is playing. */
   blend?: { index: number; progress: number } | null;
@@ -52,8 +54,10 @@ export interface NativeMixState extends NativeProbeState {
   ended?: boolean;
 }
 export interface NativeMix {
-  prepareQueue?(from: number, entries: { trackId: string; entryId: string }[], previousId: string,
-    loopEntries?: { trackId: string; entryId: string }[], signal?: AbortSignal): Promise<NativeMixState>;
+  /** Native download/decode and playback of the first recording, without page-side PCM. */
+  startSource?(entry: NativeQueueEntry, config: NativeSourceConfig, signal?: AbortSignal): Promise<NativeMixState>;
+  prepareQueue?(from: number, entries: NativeQueueEntry[], previousId: string,
+    loopEntries?: NativeQueueEntry[], signal?: AbortSignal): Promise<NativeMixState>;
   /** Isolates WebKit audio on first use, then appends PCM to a native file. */
   upload(file: number, offset: number, bytes: ArrayBuffer, signal?: AbortSignal): Promise<void>;
   /** (Re)starts native playback of uploaded files. */
@@ -61,8 +65,13 @@ export interface NativeMix {
   /** Replaces the tracks from `from` onwards without interrupting the audible one. */
   update(from: number, tracks: NativeMixTrack[]): Promise<NativeMixState>;
   /** Live speed/pitch, tone and volume; later tracks keep them. */
-  settings(values: Pick<NativeMixConfig, 'tone' | 'preDb' | 'playback' | 'volume'>): Promise<void>;
+  settings(values: NativeMixSettings): Promise<void>;
   stop(): Promise<void>;
   state(): Promise<NativeMixState>;
   command(action: MediaSessionAction, seekTime?: number): Promise<NativeMixState>;
+}
+
+export interface NativeQueueEntry {
+  trackId: string;
+  entryId: string;
 }

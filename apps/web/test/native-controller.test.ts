@@ -35,6 +35,26 @@ beforeEach(() => {
   vi.stubGlobal('navigator', {});
 });
 afterEach(() => { timer?.(); vi.unstubAllGlobals(); });
+it('starts through native source preparation and sends Pause while it is downloading', async () => {
+  let finish!: (s: NativeMixState) => void;
+  const startSource = vi.fn(() => new Promise<NativeMixState>(resolve => { finish = resolve; }));
+  const mix = { upload: vi.fn(), start: vi.fn(), startSource, update: vi.fn(), prepareQueue: vi.fn(), settings: vi.fn(), stop: vi.fn(),
+    state: vi.fn(async () => state()), command: vi.fn(async () => state()) };
+  vi.stubGlobal('window', { moraNativePlayback: { route: 'webkit', mix, mixActive: true } });
+  const controller = new PlayerController(id => ({ id, title: id, duration: seconds, status: 'ok', analysis: {} } as Track), vi.fn());
+  const h = controller as unknown as { nativeTimer: ReturnType<typeof setInterval>; saveTimer: ReturnType<typeof setTimeout> | null; nativeSyncing: Promise<void> | null };
+  timer = () => { clearInterval(h.nativeTimer);if (h.saveTimer) clearTimeout(h.saveTimer); };
+  controller.state = { ...controller.state, queue: [{ trackId: 'a', entryId: 'entry-a', origin: 'user' }] };
+  const starting = controller.startAt(0, 4);
+  await vi.waitFor(() => expect(startSource).toHaveBeenCalledOnce());
+  controller.pause();expect(mix.command).toHaveBeenCalledWith('pause', undefined);
+  finish(state({ playing: false, position: 4, currentTrack: { trackId: 'a', entryId: 'entry-a', title: 'a', artist: '', totalFrames: frames, gainDb: 0 } }));
+  await starting;await h.nativeSyncing;
+  expect(controller.state.status).toBe('paused');
+  expect(startSource.mock.calls[0][0]).toMatchObject({ trackId: 'a', entryId: 'entry-a' });
+  expect(api.prepare).not.toHaveBeenCalled();expect(mix.upload).not.toHaveBeenCalled();expect(mix.start).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
+});
 it('hydrates a reloaded page from the audible native track and controls it without restarting audio', async () => {
   const entries = ['a', 'b', 'c', 'd', 'e', 'f'].map(trackId => ({ trackId, entryId: `entry-${trackId}`, origin: 'user' as const }));
   vi.mocked(api.queue).mockResolvedValue({ items: entries, index: 1, position: 4, context: null, repeat: 'off', shuffle: false });

@@ -55,7 +55,7 @@ try {
   run('xcrun', ['simctl', 'install', device.udid, app]);
   const container = run('xcrun', ['simctl', 'get_app_container', device.udid, bundle, 'data']);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  for (const mode of ['natural', 'skip', 'slow-analysis', 'slow-analysis-eof', 'retained-analysis']) {
+  for (const mode of ['natural', 'skip', 'slow-analysis', 'slow-analysis-eof', 'retained-analysis', 'source-start']) {
     run('xcrun', ['simctl', 'launch', '--terminate-running-process', device.udid, bundle,
       '--fixture-base', `http://127.0.0.1:${server.address().port}`, ...(mode === 'natural' ? [] : [`--${mode}`])]);
     let report;
@@ -65,8 +65,9 @@ try {
       if (report.status === 'failed' || report.status === 'passed') break;
     }
     assert.equal(report?.status, 'passed', JSON.stringify({ mode, report }));
-    if (mode !== 'retained-analysis') assert.equal(report.backgrounded, true, 'The iOS app must observe its own background state');
-    const detail = mode === 'retained-analysis' ? 'retained MIR, cache reuse, settings and processing-policy changes'
+    if (!['retained-analysis', 'source-start'].includes(mode)) assert.equal(report.backgrounded, true, 'The iOS app must observe its own background state');
+    const detail = mode === 'source-start' ? 'native first-source download/decode, Pause, Previous and cancellation'
+      : mode === 'retained-analysis' ? 'retained MIR, cache reuse, settings and processing-policy changes'
       : mode.startsWith('slow-analysis') ? 'eight tracks with blocked MIR, PCM readiness and fresh paused diagnostics'
       : 'eight tracks, artwork leases, Previous boundary, speed, reset and configuration recovery';
     console.log(`Native iOS host ${mode}: ${detail} passed`);
