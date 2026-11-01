@@ -65,6 +65,12 @@ enum NativeMixTimeline {
         return ["plan": plan, "transition": transition]
     }
 
+    /// iOS advances Now Playing elapsed time by the published rate; true while that
+    /// extrapolation is still within 0.5 s of the audible position.
+    static func nowPlayingCurrent(sentPosition: Double, sentAt: Double, rate: Double, position: Double, now: Double) -> Bool {
+        abs(sentPosition + (now - sentAt) * rate - position) < 0.5
+    }
+
     static func duration(_ track: [String: Any], sampleRate: Double) -> Double {
         guard let frames = (track["totalFrames"] as? NSNumber)?.doubleValue,
               frames.isFinite, frames > 0, sampleRate.isFinite, sampleRate > 0 else { return 0 }

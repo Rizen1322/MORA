@@ -13,6 +13,8 @@ CGImageDestinationAddImage(destination, image, nil)
 precondition(CGImageDestinationFinalize(destination))
 guard let decoded = NativeArtworkImage.decode((data as Data).base64EncodedString()) else { fatalError("Decode") }
 precondition(decoded.width == 512 && decoded.height == 256)
+precondition(NativeArtworkImage.decode(data as Data)?.width == 512)
 precondition(NativeArtworkImage.decode("invalid") == nil)
+precondition(NativeArtworkImage.decode(Data(repeating: 0, count: 3 * 1024 * 1024)) == nil)
 precondition(NativeArtworkImage.decode(Data(repeating: 0, count: 3 * 1024 * 1024).base64EncodedString()) == nil)
 print("Native artwork: PNG decode, aspect ratio, 512px bound, invalid/oversized rejection passed")

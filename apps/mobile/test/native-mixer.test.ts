@@ -85,8 +85,8 @@ describe('native prepared-pair mixer', () => {
     expect(types.filter(x => x === 'transitionEnd')).toHaveLength(2);
     const single = new NativeMixerRuntime({ ...config(1), position: 2.9 }, reader);
     let marks: number[] = [];
-    // 0.1 s of music plus the 0.1 s end tail: two blocks reach the end but are not done yet.
-    for (let i = 0; i < 2; i++) marks.push(...single.render().marks.map(m => m.index));
+    // 0.1 s of music plus the 0.1 s end tail: one 8192-frame block reaches the end but is not done yet.
+    for (let i = 0; i < 1; i++) marks.push(...single.render().marks.map(m => m.index));
     expect(single.update(1, [{ title: 'next', artist: '', totalFrames: sr * 3, gainDb: 0 }])).toBe(true);
     marks = [];
     for (let i = 0; i < 8; i++) marks.push(...single.render().marks.map(m => m.index));

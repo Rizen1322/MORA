@@ -63,3 +63,22 @@ precondition(NativeMixTimeline.consumedPrefix([["entryId": "new"]], currentEntry
 precondition(NativeMixTimeline.consumedPrefix([], currentEntryId: "D", requestedFrom: 4, currentIndex: 3) == 0) // Repeat-one lives in loopItems.
 precondition(NativeMixTimeline.consumedPrefix([["entryId": "new"]], currentEntryId: "D", requestedFrom: 2, currentIndex: 3) == nil)
 print("Native manifest: audible identity rebases stale page entries even with a fresh native index")
+
+func nowPlayingPublishes(rate: Double, sourceRate: Double, seekAt: Double? = nil) -> Int {
+    var sent = (position: 0.0, at: 0.0), count = 1, position = 0.0
+    for tick in 1...120 {
+        let now = Double(tick) * 0.5
+        position += 0.5 * sourceRate
+        if let seekAt, now == seekAt { position = 100 }
+        if !NativeMixTimeline.nowPlayingCurrent(sentPosition: sent.position, sentAt: sent.at, rate: rate, position: position, now: now) {
+            sent = (position, now); count += 1
+        }
+    }
+    return count
+}
+precondition(nowPlayingPublishes(rate: 1, sourceRate: 1) == 1, "Steady playback republished Now Playing")
+precondition(nowPlayingPublishes(rate: 1.25, sourceRate: 1.25) == 1, "DSP speed is not extrapolated")
+precondition((2...6).contains(nowPlayingPublishes(rate: 1, sourceRate: 1.03)), "Tempo stretch drift is not corrected")
+precondition(nowPlayingPublishes(rate: 1, sourceRate: 1, seekAt: 20) == 2, "A jump was not republished")
+precondition(nowPlayingPublishes(rate: 1, sourceRate: 0) == 121, "A stalled clock was not corrected")
+print("Native Now Playing: one publish for a steady minute, bounded drift corrections, jumps and stalls republished")
