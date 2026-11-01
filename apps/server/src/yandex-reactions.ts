@@ -182,7 +182,8 @@ export class YandexReactionSync {
   }
 
   private async drain(force: boolean): Promise<void> {
-    const yandex = getSettings(this.db).yandex;
+    // Read lazily: the 1 s tick on an empty outbox stays a single query.
+    let yandex: ReturnType<typeof getSettings>['yandex'] | undefined;
     const seen = new Set<string>();
     for (let turn = 0; turn < 32 && !this.stopped; turn++) {
       const rows = q(this.db, `SELECT * FROM yandex_reaction_sync WHERE status!='synced' AND attempts<? AND (? OR next_attempt_at<=?) ORDER BY updated_at LIMIT 64`)
@@ -191,6 +192,7 @@ export class YandexReactionSync {
       if (!row) return;
       seen.add(`${row.external_id}:${row.revision}`);
       if (!isYandexTrackId(row.external_id) || (row.track_id && this.externalId(row.track_id) !== row.external_id)) { this.update(row, 'error', this.maxAttempts, 0, 'Оценка сохранена здесь. Источник трека не подтверждён'); continue; }
+      yandex ??= getSettings(this.db).yandex;
       // Queued before the switch was turned off: wait for it instead of sending.
       const off = row.value === 1 ? !yandex.syncLikes : row.value === -1 ? !yandex.syncDislikes : !yandex.syncLikes && !yandex.syncDislikes;
       if (off) { this.update(row, 'pending', row.attempts, Date.now() + 60000, row.value === 1 ? LIKES_OFF : row.value === -1 ? DISLIKES_OFF : SYNC_OFF); continue; }
