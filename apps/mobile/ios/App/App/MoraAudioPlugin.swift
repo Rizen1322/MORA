@@ -63,6 +63,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativeSourceReserve", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeSourceAppend", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativePrepareQueue", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativePlayerPresent", returnType: CAPPluginReturnPromise),
     ]
 
     private var playing = false
@@ -409,6 +410,15 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func nativeMixCommand(_ call: CAPPluginCall) {
         guard let action = call.getString("action") else { call.reject("Invalid command"); return }
         nativeMix.command(action, time: call.getDouble("seekTime"), source: "page", completion: mixReply(call))
+    }
+    /// iPhone full player: resolves with the way the sheet closed; a rejection keeps the web player.
+    @objc func nativePlayerPresent(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard self.nativeMix.active, let vc = self.bridge?.viewController, vc.presentedViewController == nil else {
+                call.reject("Native player unavailable"); return
+            }
+            NativePlayerSheet.present(host: self.nativeMix, from: vc) { call.resolve(["action": $0]) }
+        }
     }
 }
 

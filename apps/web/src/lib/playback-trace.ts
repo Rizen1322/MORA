@@ -19,6 +19,8 @@ export interface NativePlaybackControls {
   probeActive?: boolean;
   probe?: NativeProbe;
   setRoute(route: NavigationRoute): Promise<void>;
+  /** iPhone: SwiftUI full player; resolves when it closes. */
+  presentPlayer?: () => Promise<{ action: 'close' | 'more' }>;
 }
 export interface PlaybackDiagnostics {
   currentId?: string;

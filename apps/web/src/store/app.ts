@@ -4,6 +4,8 @@ import { api, type AppSettings, type PlaylistSummary, type ProviderInfo, type Tr
 import { sanitizePlayback, type PlaybackSettings, type ToneSettings } from '@automix/core';
 import { useDownloads } from './downloads.ts';
 import { throttleClock } from '../lib/clockThrottle.ts';
+import { nativePlaybackControls } from '../lib/playback-trace.ts';
+import { presentNativePlayer } from '../lib/native-player.ts';
 
 export interface Toast {
   id: number;
@@ -184,7 +186,10 @@ export const useApp = create<AppState>((set, get) => ({
   setUpload: (u) => set({ upload: u }),
   setQueueOpen: (v) => set(v ? { queueOpen: true, panel: null } : { queueOpen: false }),
   setPanel: (p) => set(p ? { panel: p, queueOpen: false } : { panel: null }),
-  setFullPlayer: (v) => set({ fullPlayer: v }),
+  setFullPlayer: (v) => {
+    if (v && phone && presentNativePlayer(nativePlaybackControls(), () => set({ fullPlayer: true }))) return;
+    set({ fullPlayer: v });
+  },
 }));
 
 export const controller = new PlayerController(
