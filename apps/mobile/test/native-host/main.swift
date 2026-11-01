@@ -43,7 +43,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         } };
         """ : slowAnalysis ? """
         var MoraPreparation = { analyzerVersion: 'slow-fixture', analyzeJSON: function() {
-            var end = Date.now() + 20000;
+            var end = Date.now() + 120000;
             while (Date.now() < end) { if (moraPreparationCancelled()) throw Error('cancelled'); }
             return '{}';
         }, planJSON: function() { return '{}'; } };
@@ -337,8 +337,9 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         // Eight 3s tracks need 21s just to reach the last song. Cold JavaScriptCore
         // initialization can outlive the first song on a busy Simulator runner;
         // bound the whole check by wall time without confusing that startup
-        // delay with a stopped native queue.
-        let playbackDeadline = ProcessInfo.processInfo.systemUptime + (slowAnalysis && !slowAnalysisEOF ? 10 : 60)
+        // delay with a stopped native queue. MIR stays blocked longer than this
+        // entire deadline so progress cannot depend on its completion.
+        let playbackDeadline = ProcessInfo.processInfo.systemUptime + 60
         while ProcessInfo.processInfo.systemUptime < playbackDeadline {
             last = try await call { host.state($0) }
             let index = last["index"] as? Int ?? -1, count = last["count"] as? Int ?? 0
