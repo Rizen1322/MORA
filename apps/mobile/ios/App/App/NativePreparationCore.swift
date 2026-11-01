@@ -15,11 +15,19 @@ final class NativePreparationCore {
         guard let vm = JSVirtualMachine(), let context = JSContext(virtualMachine: vm) else { throw Failure.script }
         self.context = context
         context.exceptionHandler = { [weak self] _, value in self?.exception = value?.toString() ?? "script" }
-        let read: @convention(block) (Int32, Int32) -> String = { [weak self] offset, frames in
-            guard let self, let file = self.file, self.ticket?.cancelled == false, offset >= 0, frames > 0, frames <= 32768 else { return "" }
+        let read: @convention(block) (Int32, Int32) -> JSValue? = { [weak self] offset, frames in
+            guard let self, let file = self.file, self.ticket?.cancelled == false, offset >= 0, frames > 0, frames <= 32768 else { return nil }
             return autoreleasepool {
-                do { try file.seek(toOffset: UInt64(offset) * 8); return try file.read(upToCount: Int(frames) * 8)?.base64EncodedString() ?? "" }
-                catch { return "" }
+                do {
+                    try file.seek(toOffset: UInt64(offset) * 8)
+                    guard let data = try file.read(upToCount: Int(frames) * 8), data.count == Int(frames) * 8,
+                          let array = JSObjectMakeTypedArray(self.context.jsGlobalContextRef, kJSTypedArrayTypeFloat32Array, Int(frames) * 2, nil),
+                          let value = JSValue(jsValueRef: array, in: self.context),
+                          let target = JSObjectGetTypedArrayBytesPtr(self.context.jsGlobalContextRef, array, nil) else { return nil }
+                    // No JSC calls while the temporary backing-store pointer is in use.
+                    data.withUnsafeBytes { bytes in if let source = bytes.baseAddress { memcpy(target, source, data.count) } }
+                    return value
+                } catch { return nil }
             }
         }
         let cancelled: @convention(block) () -> Bool = { [weak self] in self?.ticket?.cancelled ?? true }

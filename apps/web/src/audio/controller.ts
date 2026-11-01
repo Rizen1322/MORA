@@ -1507,7 +1507,11 @@ export class PlayerController {
     await this.topUpWave();
   }
 
+  private waveReserve(): number { return this.native && this.nativeMix.prepareQueue ? 12 : 6; }
+
   private waveNeedsMore(): boolean {
+    // shortcut: radio selection still needs WebContent; hand off a longer known reserve until native radio selection exists.
+    if (this.native && this.nativeMix.prepareQueue) return this.state.queue.length - this.state.index - 1 < this.waveReserve();
     const upcoming = this.state.queue.slice(this.state.index + 1);
     const seconds = upcoming.reduce((sum, entry) => sum + (this.track(entry.trackId)?.duration ?? 180), 0);
     return upcoming.length < 4 || (upcoming.length < 6 && seconds < 480);
@@ -1547,7 +1551,7 @@ export class PlayerController {
       // Bounded requests/downloads: a reserve, not an offline copy of the catalog.
       for (let attempt = 0; attempt < 3 && relevant() && this.waveNeedsMore(); attempt++) {
         const ahead = this.state.queue.length - this.state.index - 1;
-        const count = Math.max(1, Math.min(4, 6 - ahead));
+        const count = Math.max(1, Math.min(4, this.waveReserve() - ahead));
         let added: QueueEntry[];
         if (this.state.context?.type === 'yandex-wave') {
           const attribution = this.yandexSession ?? this.state.queue.slice().reverse().find((e) => e.yandexSessionId);
@@ -1576,7 +1580,7 @@ export class PlayerController {
           if (known.has(entry.trackId) || (remote && remoteKnown.has(remote)) || this.track(entry.trackId)?.reaction === -1) return false;
           known.add(entry.trackId); if (remote) remoteKnown.add(remote);
           return true;
-        }).slice(0, Math.max(0, 8 - (this.state.queue.length - this.state.index - 1)));
+        }).slice(0, Math.max(0, Math.max(8, this.waveReserve()) - (this.state.queue.length - this.state.index - 1)));
         if (!added.length) break;
         addedAny = true;
         const trim = !this.state.transition?.active ? Math.max(0, this.state.index - 120) : 0;

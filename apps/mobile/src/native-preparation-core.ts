@@ -6,7 +6,7 @@ import { ANALYZER_VERSION, DEFAULT_AUTOMIX_SETTINGS, type AutoMixSettings, type 
 
 // Runs on the native preparation queue in app-process JavaScriptCore, never in
 // WebContent and never in the Swift audio producer. DSP playback remains Swift.
-declare const moraPreparationRead: (offset: number, frames: number) => string;
+declare const moraPreparationRead: (offset: number, frames: number) => Float32Array | string | undefined;
 declare const moraPreparationCancelled: () => boolean;
 declare const moraPreparationProgress: (stage: string) => void;
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -36,8 +36,9 @@ export function analyzeJSON(input: string): string {
   moraPreparationProgress('feedingPcm');
   for (let at = 0; at < frames; at += 32768) {
     checkCancel();
-    const length = Math.min(32768, frames - at), input = pcm(moraPreparationRead(at, length));
-    if (input.length !== length * 2) throw Error('short_pcm');
+    const length = Math.min(32768, frames - at), raw = moraPreparationRead(at, length);
+    const input = typeof raw === 'string' ? pcm(raw) : raw;
+    if (!input || input.length !== length * 2) throw Error('short_pcm');
     for (let i = 0; i < length; i++) { left[i] = input[i * 2]; right[i] = input[i * 2 + 1]; }
     acc.push(left.subarray(0, length), right.subarray(0, length), length);
   }
