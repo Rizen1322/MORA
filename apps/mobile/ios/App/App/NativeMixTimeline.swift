@@ -88,8 +88,9 @@ enum NativeMixTimeline {
     /// errors are retried three times (2, 5, 15 s); unavailable sources, HTTP 4xx and decode errors are skipped.
     static func retryDelay(_ reason: String, attempt: Int) -> Double? {
         let delays: [Double] = [2, 5, 15]
+        // Offline, every song would fail alike: wait on the same song instead of skipping through the queue.
+        if reason.hasPrefix("network_") { return delays.indices.contains(attempt) ? delays[attempt] : 30 }
         guard delays.indices.contains(attempt) else { return nil }
-        if reason.hasPrefix("network_") { return delays[attempt] }
         if reason.hasPrefix("http_"), let status = Int(reason.dropFirst(5)), status >= 500 { return delays[attempt] }
         return nil
     }
