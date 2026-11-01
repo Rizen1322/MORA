@@ -351,12 +351,10 @@ final class NativeMixHost {
                 }
                 var configuration = manifest, future = items
                 var previous = manifest["previous"] as! [String: Any]
-                // Address resolution can outlive a blend. Rebase on the track actually heard now.
-                if requestedFrom <= self.index {
-                    let current = self.tracks[self.index]["entryId"] as? String
-                    guard let consumed = future.firstIndex(where: { ($0["entryId"] as? String) == current }) else { throw Failure.invalid }
-                    previous = future[consumed]; future.removeFirst(consumed + 1)
-                }
+                // A suspended page can send stale entries with a fresh native index.
+                guard let consumed = NativeMixTimeline.consumedPrefix(future, currentEntryId: self.tracks[self.index]["entryId"] as? String,
+                    requestedFrom: requestedFrom, currentIndex: self.index) else { throw Failure.invalid }
+                if consumed > 0 { previous = future[consumed - 1]; future.removeFirst(consumed) }
                 var from = self.index + 1
                 while !future.isEmpty, self.tracks.indices.contains(from),
                       future[0]["entryId"] as? String == self.tracks[from]["entryId"] as? String {

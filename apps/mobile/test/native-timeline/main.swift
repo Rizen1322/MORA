@@ -50,3 +50,13 @@ let beforeFirst: [String: Any] = ["from": 1, "items": [[String: Any]]()]
 precondition((NativeMixTimeline.preservingTail(beforeFirst, after: skippedOriginal, currentEntryId: "A")["items"] as! [[String: Any]]).count == 5)
 precondition((NativeMixTimeline.preservingTail(emptyRefresh, after: skippedOriginal, currentEntryId: "unknown")["items"] as! [[String: Any]]).isEmpty)
 print("Native manifest: failed sources preserve identity-aligned tails without replaying the audible entry")
+
+let stalePage: [String: Any] = ["from": 4, "items": Array(skippedItems.prefix(1))]
+let staleMerged = NativeMixTimeline.preservingTail(stalePage, after: skippedOriginal, currentEntryId: "D")["items"] as! [[String: Any]]
+let consumed = NativeMixTimeline.consumedPrefix(staleMerged, currentEntryId: "D", requestedFrom: 4, currentIndex: 3)!
+precondition(staleMerged[consumed - 1]["entryId"] as? String == "D")
+precondition(staleMerged.dropFirst(consumed).map { $0["entryId"] as! String } == ["E", "F"], "Fresh native index replayed stale page entries")
+precondition(NativeMixTimeline.consumedPrefix([["entryId": "new"]], currentEntryId: "D", requestedFrom: 4, currentIndex: 3) == 0)
+precondition(NativeMixTimeline.consumedPrefix([], currentEntryId: "D", requestedFrom: 4, currentIndex: 3) == 0) // Repeat-one lives in loopItems.
+precondition(NativeMixTimeline.consumedPrefix([["entryId": "new"]], currentEntryId: "D", requestedFrom: 2, currentIndex: 3) == nil)
+print("Native manifest: audible identity rebases stale page entries even with a fresh native index")

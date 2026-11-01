@@ -235,3 +235,30 @@ it('distinguishes native refreshes from explicit edits, including an edit during
   expect(prepareQueue.mock.calls.at(-1)?.[1]).toEqual([]);
   expect(prepareQueue.mock.calls.at(-1)?.[5]).toBe(true);
 });
+
+it('adopts native progress beyond a restored partial queue before refreshing its future', async () => {
+  const entries = ['a', 'b'].map(trackId => ({ trackId, entryId: 'entry-' + trackId, origin: 'user' as const }));
+  vi.mocked(api.queue).mockResolvedValue({ items: entries, index: 0, position: 0, context: null, repeat: 'off', shuffle: false });
+  const track = (id: string) => ({ title: id, artist: '', trackId: id, entryId: 'entry-' + id, file: 500000, totalFrames: frames, gainDb: 0 });
+  const prepareQueue = vi.fn<NonNullable<NativeMix['prepareQueue']>>(async () => state());
+  const mix = { prepareQueue, state: vi.fn(async () => state({ entryId: 'entry-a', currentTrack: track('a'), nextTrack: track('b') })) };
+  vi.stubGlobal('window', { moraNativePlayback: { route: 'webkit', mixActive: true, mix, ready: Promise.resolve() } });
+  const controller = new PlayerController(id => ({ id, title: id, duration: seconds, status: 'ok' } as Track), vi.fn());
+  const h = controller as unknown as { nativeTimer: ReturnType<typeof setInterval>; saveTimer: ReturnType<typeof setTimeout> | null;
+    nativeSyncing: Promise<void> | null; onNativeState(s: NativeMixState): void };
+  timer = () => { clearInterval(h.nativeTimer); if (h.saveTimer) clearTimeout(h.saveTimer); };
+  await controller.restore();
+  expect(prepareQueue).not.toHaveBeenCalled();
+  h.onNativeState(state({ index: 3, entryId: 'entry-d', currentTrack: track('d'), nextTrack: track('e') }));
+  await h.nativeSyncing;
+  expect(controller.state.queue[controller.state.index].trackId).toBe('d');
+  expect(controller.state.queue.map(e => e.trackId)).toEqual(['a', 'b', 'd', 'e']);
+  controller.onSettingsChanged(-14); await h.nativeSyncing;
+  for (const call of prepareQueue.mock.calls) {
+    expect(call[0]).toBe(4);
+    expect(call[1].map(e => e.trackId)).toEqual(['e']);
+    expect(call[2]).toBe('d');
+    expect(call[5]).toBe(false);
+  }
+  expect(prepareQueue).toHaveBeenCalledTimes(2);
+});

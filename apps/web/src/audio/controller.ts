@@ -513,17 +513,23 @@ export class PlayerController {
       if (s.failed) this.notify('Нативное воспроизведение остановилось с ошибкой. Нажмите Play, чтобы продолжить.', 'error');
       return;
     }
+    let queue = this.state.queue;
     for (const [i, raw] of [[s.index, s.currentTrack], [s.index + 1, s.nextTrack]] as const) {
       if (raw?.entryId) {
-        const entry = this.state.queue.find(e => e.entryId === raw.entryId);
+        let entry = queue.find(e => e.entryId === raw.entryId);
+        if (!entry && raw.trackId && this.track(raw.trackId)) {
+          entry = { entryId: raw.entryId, trackId: raw.trackId, origin: 'user' };
+          queue = [...queue, entry];
+        }
         if (entry) this.nativeTracks[i] = { ...raw, file: raw.file ?? 0, entryId: entry.entryId, trackId: entry.trackId };
       }
     }
-    if (s.index !== this.nativeAt && (s.entryId || this.nativeTracks[s.index])) {
+    if (queue !== this.state.queue) this.set({ queue });
+    const entryId = s.entryId || this.nativeTracks[s.index]?.entryId, index = queue.findIndex(e => e.entryId === entryId);
+    if (entryId && (s.index !== this.nativeAt || (index >= 0 && index !== this.state.index))) {
       this.finishPlay(!this.nativeSkip && s.index === this.nativeAt + 1 ? 'transition' : 'skip');
       this.nativeSkip = false;
       this.nativeAt = s.index;
-      const entryId = s.entryId ?? this.nativeTracks[s.index]?.entryId, index = this.state.queue.findIndex(e => e.entryId === entryId);
       if (index >= 0) this.set({ index });
       this.maxPos = 0;
       if (index >= 0) this.beginPlay(this.state.queue[index]);

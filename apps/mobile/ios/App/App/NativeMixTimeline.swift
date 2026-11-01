@@ -25,6 +25,11 @@ enum NativeMixTimeline {
         var result = incoming; result["items"] = items + remaining.dropFirst(items.count); return result
     }
 
+    static func consumedPrefix(_ items: [[String: Any]], currentEntryId: String?, requestedFrom: Int, currentIndex: Int) -> Int? {
+        if let currentEntryId, let consumed = items.firstIndex(where: { $0["entryId"] as? String == currentEntryId }) { return consumed + 1 }
+        return requestedFrom <= currentIndex ? nil : 0
+    }
+
     /// Duration-only equal-power reserve; never waits for JavaScriptCore/MIR.
     static func reserve(before: [String: Any], next: [String: Any], frames: Int, settings: [String: Any]) -> [String: Any]? {
         guard settings["enabled"] as? Bool != false, before["mixingAllowed"] as? Bool == true,
