@@ -115,6 +115,9 @@ final class NativeQueuePreparation: @unchecked Sendable {
                     var track: [String: Any] = ["file": fileKey, "totalFrames": frames,
                         "title": item["title"] ?? "", "artist": item["artist"] ?? "", "entryId": item["entryId"] ?? "",
                         "trackId": item["trackId"] ?? "", "gainDb": 0.0]
+                    if let reserve = NativeMixTimeline.reserve(before: before, next: next, frames: frames, settings: settings) {
+                        track.merge(reserve) { _, new in new }
+                    }
                     if let artwork = item["artwork"] { track["artwork"] = artwork }
                     else if let text = item["coverUrl"] as? String, let url = URL(string: text) {
                         track["coverUrl"] = text
@@ -180,12 +183,13 @@ final class NativeMixAnalysis: @unchecked Sendable {
     private var active: Request?
     private var stopped = false
     private var audible = -1
+    private var failures = 0
     private var allowedFiles: [Int: Int]?
     private var cached: [String: Any] = ["state": "idle"]
     private var updated = ProcessInfo.processInfo.systemUptime
     var snapshot: [String: Any] {
         lock.lock(); defer { lock.unlock() }
-        var result = cached; result["queued"] = pending.count
+        var result = cached; result["queued"] = pending.count; result["failedCount"] = failures
         result["stageSeconds"] = max(0, ProcessInfo.processInfo.systemUptime - updated)
         return result
     }
@@ -279,6 +283,8 @@ final class NativeMixAnalysis: @unchecked Sendable {
                 let result = try core.plan(a: a, b: b, settings: request.settings, sampleRate: 48000)
                 if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
                 var track = request.pcm; track["gainDb"] = result["gainDb"] ?? 0.0
+                track.removeValue(forKey: "transition"); track.removeValue(forKey: "plan")
+                track["plan"] = result["plan"]
                 var policies: [String: Bool] = [:]
                 for source in [request.a, request.b] { policies[source.value["entryId"] as? String ?? ""] = source.value["mixingAllowed"] as? Bool == true }
                 track["_analysisPolicy"] = policies
@@ -289,6 +295,7 @@ final class NativeMixAnalysis: @unchecked Sendable {
                 request.upgrade(request.index, track)
                 stage("complete", request)
             } catch {
+                if !request.ticket.cancelled { lock.lock(); failures += 1; lock.unlock() }
                 stage(request.ticket.cancelled ? "cancelled" : "fallback", request)
             }
         }

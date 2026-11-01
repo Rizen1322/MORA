@@ -65,6 +65,7 @@ try {
     resolve(root, 'apps/mobile/ios/App/App/NativePCMDecoder.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativePreparationCore.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativeQueuePreparation.swift'),
+    resolve(root, 'apps/mobile/ios/App/App/NativeMixTimeline.swift'),
     resolve(root, 'apps/mobile/test/native-http/main.swift'), '-o', binary], { stdio: 'inherit' });
   assert.equal(build.status, 0);
   await new Promise(resolve => server.listen(0, '::', resolve));

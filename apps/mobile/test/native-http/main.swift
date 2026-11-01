@@ -107,7 +107,7 @@ Task.detached {
             seed: ["file": 0, "totalFrames": 24000], script: badScript,
             allocate: { await fallbackSink.allocate() }, accept: { index, track in
                 let accepted = await fallbackSink.accept(index, track)
-                precondition(track["transition"] == nil)
+                precondition((track["transition"] as? [String: Any])?["method"] as? String == "fallback_crossfade", "MIR failure removed the ready reserve")
                 fallback.gate.advance(index); return accepted
             }, event: { _, _ in })
         let fallbackEntries = await fallbackSink.result()

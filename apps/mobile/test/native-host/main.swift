@@ -7,8 +7,12 @@ import MediaPlayer
 enum MoraPlaybackJournal {
     private static let lock = NSLock()
     private static var events: [[String: Any]] = []
+    private static var transitionEnds = 0
+    static var completedTransitions: Int { lock.lock(); defer { lock.unlock() }; return transitionEnds }
     static func record(_ stage: String, _ fields: [String: Any] = [:]) {
-        lock.lock(); events.append(["stage": stage, "fields": fields])
+        lock.lock()
+        if stage == "native.mix.renderEvent", fields["kind"] as? String == "transitionEnd" { transitionEnds += 1 }
+        events.append(["stage": stage, "fields": fields])
         if events.count > 100 { events.removeFirst() }; lock.unlock()
     }
     static var snapshot: [[String: Any]] { lock.lock(); defer { lock.unlock() }; return events }
@@ -297,7 +301,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
             let data = pcm.subdata(in: offset..<min(pcm.count, offset + 262144))
             _ = try await call { host.append(id: id, track: 0, offset: offset, base64: data.base64EncodedString(), completion: $0) }
         }
-        _ = try await call { host.start(id: id, config: ["sampleRate": 48000.0, "position": 0.0, "index": 0,
+        _ = try await call { host.start(id: id, config: ["sampleRate": 48000.0, "position": 0.0, "index": 0, "paused": slowAnalysisEOF,
             "tracks": [["file": 0, "totalFrames": frames, "gainDb": 0.0, "entryId": "E0", "trackId": "T0", "title": "Track 0"]]], completion: $0) }
         // Production mirrors source leases after start(), which deliberately clears old leases.
         let reserved = try await call { host.reserveSources(id: id, count: 7, completion: $0) }
@@ -324,6 +328,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
             }
             try require(analyzing, "Slow MIR fixture never entered its blocked analyzer")
         }
+        if slowAnalysisEOF { _ = try await call { host.command("play", source: "fixture", completion: $0) } }
         write("ready")
         // Public UIKit app switch; simctl launch of an already-running Settings
         // process doesn't reliably activate it. No page exists in this app.
@@ -354,6 +359,9 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         try require(seen.contains(7), "Native refill stopped after index \(seen.max() ?? -1)")
+        if slowAnalysisEOF {
+            try require(MoraPlaybackJournal.completedTransitions == 7, "Blocked MIR lost reserve crossfades: \(MoraPlaybackJournal.completedTransitions)/7")
+        }
         if slowAnalysis {
             _ = try await call { host.command("pause", source: "fixture", completion: $0) }
             let previousSnapshot = try await call { host.state($0) }

@@ -1,6 +1,40 @@
 import Foundation
 
 enum NativeMixTimeline {
+    /// Duration-only equal-power reserve; never waits for JavaScriptCore/MIR.
+    static func reserve(before: [String: Any], next: [String: Any], frames: Int, settings: [String: Any]) -> [String: Any]? {
+        guard settings["enabled"] as? Bool != false, before["mixingAllowed"] as? Bool == true,
+              next["mixingAllowed"] as? Bool == true, let a = before["duration"] as? Double, a.isFinite, a > 0, frames > 0 else { return nil }
+        func limit(_ name: String, _ fallback: Double, _ maximum: Double) -> Double {
+            guard let v = (settings[name] as? NSNumber)?.doubleValue, v.isFinite else { return fallback }
+            return max(0, min(maximum, v))
+        }
+        let b = Double(frames) / 48000
+        let length = min(limit("fallbackSeconds", 6, 20), limit("maxBlendSeconds", 32, 60), a * 0.15, b * 0.35)
+        guard length >= 0.03 else { return nil }
+        func rounded(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
+        let start = rounded(max(0, a - length)), duration = rounded(length), swap = rounded(length / 2)
+        let id = "native-reserve-\(UUID().uuidString)"
+        let lanes: [[String: Any]] = ["A", "B"].map { deck in
+            ["deck": deck, "lane": "gain", "points": (0...8).map { i -> [Double] in
+                let t = Double(i) / 8
+                return [length * t, deck == "A" ? cos(t * .pi / 2) : sin(t * .pi / 2)]
+            }]
+        }
+        let plan: [String: Any] = ["id": id, "version": "native-reserve-1", "fromTrackId": before["trackId"] ?? "",
+            "toTrackId": next["trackId"] ?? "", "method": "fallback_crossfade", "confidence": 0.3,
+            "reasons": ["Резервный кроссфейд: полный анализ ещё не готов"], "fallbackReason": "analysis_pending",
+            "aExit": start, "bEntry": 0.0, "duration": duration, "gap": 0.0, "swapAt": swap,
+            "tempoB": [[0.0, 1.0]], "automation": lanes, "gainA": 0.0, "gainB": 0.0, "debug": ["processingAllowed": true]]
+        let transition: [String: Any] = ["planId": id, "method": "fallback_crossfade", "fromToken": "A", "toToken": "B",
+            "triggerFrame": (start * 48000).rounded(), "entryFrame": 0.0, "durationFrames": (duration * 48000).rounded(),
+            "swapFrame": (swap * 48000).rounded(), "gapFrames": 0.0, "tempoB": [[0.0, 1.0]],
+            "lanes": lanes.map { lane -> [String: Any] in
+                ["deck": lane["deck"]!, "lane": 0, "points": (lane["points"] as! [[Double]]).map { [($0[0] * 48000).rounded(), $0[1]] }]
+            }]
+        return ["plan": plan, "transition": transition]
+    }
+
     static func duration(_ track: [String: Any], sampleRate: Double) -> Double {
         guard let frames = (track["totalFrames"] as? NSNumber)?.doubleValue,
               frames.isFinite, frames > 0, sampleRate.isFinite, sampleRate > 0 else { return 0 }

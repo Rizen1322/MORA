@@ -32,6 +32,7 @@ export interface NativeMixConfig {
 export type NativeSourceConfig = Omit<NativeMixConfig, 'tracks' | 'index'> & { gainDb?: number };
 export type NativeMixSettings = Pick<NativeMixConfig, 'tone' | 'preDb' | 'playback' | 'volume'> & { gainDb?: number };
 export interface NativeMixState extends NativeProbeState {
+  analysis?: { state: string; role?: string; toIndex?: number; stageSeconds?: number; queued?: number; failedCount?: number };
   /** Audible native overlap; null explicitly means that no transition is playing. */
   blend?: { index: number; progress: number } | null;
   preparation?: { state: string; ready: number; remaining: number; reason?: string; failedCount?: number;
