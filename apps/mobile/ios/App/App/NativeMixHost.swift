@@ -523,6 +523,17 @@ final class NativeMixHost {
         return result
     }
     func state(_ completion: @escaping Reply) { work.async { self.updatePosition(); self.save(); self.reply(completion, .success(self.viewState())) } }
+    /// Native player sheet (Swift only): the view state with the queue and the current artwork.
+    func playerState(_ completion: @escaping Reply) {
+        work.async {
+            self.updatePosition(); self.save()
+            var value = self.viewState()
+            value["upcoming"] = Array(self.tracks.dropFirst(self.index + 1))
+            value["manifestItems"] = self.knownManifest?["items"] as? [[String: Any]] ?? []
+            if self.artworks.indices.contains(self.index), let artwork = self.artworks[self.index] { value["artwork"] = artwork }
+            self.reply(completion, .success(value))
+        }
+    }
     func diagnosticState(_ completion: @escaping Reply) {
         work.async {
             let previous = self.snapshot["stateSavedAt"]

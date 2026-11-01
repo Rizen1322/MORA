@@ -1,0 +1,304 @@
+import AVKit
+import MediaPlayer
+import SwiftUI
+import UIKit
+
+/// iPhone full player over the WebView while NativeMixHost plays. It reads native state only,
+/// so it keeps working while WebContent is suspended or reloading.
+enum NativePlayerSheet {
+    /// `finished` receives "close" or "more" («Ещё»: the page opens its own full player).
+    static func present(host: NativeMixHost, from parent: UIViewController, finished: @escaping (String) -> Void) {
+        let model = NativePlayerModel(host: host)
+        let controller = UIHostingController(rootView: NativePlayerView(model: model))
+        model.controller = controller
+        model.onFinish = finished
+        controller.modalPresentationStyle = .pageSheet
+        controller.sheetPresentationController?.prefersGrabberVisible = true
+        controller.overrideUserInterfaceStyle = .dark
+        controller.view.backgroundColor = UIColor(red: 5 / 255, green: 13 / 255, blue: 10 / 255, alpha: 1)
+        parent.present(controller, animated: true)
+    }
+}
+
+final class NativePlayerModel: ObservableObject {
+    @Published var state = NativePlayerState()
+    @Published private(set) var artwork: UIImage?
+    @Published var scrub: Double?
+    var editing = false
+    weak var controller: UIViewController?
+    var onFinish: ((String) -> Void)?
+    private var action = "close"
+    private let host: NativeMixHost
+    private var timer: Timer?
+    private var artworkKey = ""
+
+    init(host: NativeMixHost) { self.host = host }
+
+    /// Polls only while the sheet is on screen and the app is in the foreground.
+    func start() {
+        guard timer == nil else { return }
+        refresh()
+        let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in self?.refresh() }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+    func stop() { timer?.invalidate(); timer = nil }
+
+    func refresh() {
+        host.playerState { [weak self] result in
+            guard let self, case .success(let value) = result else { return }
+            let next = NativePlayerState(value)
+            if !next.active { self.close("close"); return }
+            if next != self.state { self.state = next }
+            let key = "\(next.entryId)|\(next.artworkReady)"
+            if key != self.artworkKey {
+                self.artworkKey = key
+                self.artwork = (value["artwork"] as? MPMediaItemArtwork)?.image(at: CGSize(width: 600, height: 600))
+            }
+        }
+    }
+
+    /// The same command path as the lock screen.
+    private func send(_ action: String, time: Double? = nil, then: (() -> Void)? = nil) {
+        host.command(action, time: time, source: "player") { [weak self] _ in then?(); self?.refresh() }
+    }
+    func transport(_ action: String) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        if action == "toggle" { state.playing.toggle() }
+        send(action)
+    }
+    func scrubbed(to time: Double) {
+        scrub = time
+        if !editing { seek() } // VoiceOver adjusts without an editing phase.
+    }
+    func seek() {
+        guard let time = scrub else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        send("seekto", time: time) { [weak self] in self?.scrub = nil }
+    }
+
+    func close(_ action: String) {
+        self.action = action
+        // From the presenter: dismissing this controller would only close the queue sheet above it.
+        controller?.presentingViewController?.dismiss(animated: true)
+    }
+    /// Also reached by swipe-down, which dismisses without close().
+    func finish() {
+        stop()
+        onFinish?(action); onFinish = nil
+    }
+}
+
+private extension Color {
+    static let moraBackground = Color(red: 5 / 255, green: 13 / 255, blue: 10 / 255)
+    static let moraMint = Color(red: 74 / 255, green: 222 / 255, blue: 154 / 255)
+    static let moraGold = Color(red: 245 / 255, green: 200 / 255, blue: 110 / 255)
+}
+
+private struct IconButton: View {
+    let symbol: String
+    let label: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.title3.weight(.semibold))
+                .frame(width: 44, height: 44).contentShape(Rectangle())
+        }
+        .accessibilityLabel(label)
+    }
+}
+
+private struct RoutePicker: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let view = AVRoutePickerView()
+        view.tintColor = UIColor.white.withAlphaComponent(0.7)
+        view.activeTintColor = UIColor(red: 74 / 255, green: 222 / 255, blue: 154 / 255, alpha: 1)
+        view.prioritizesVideoDevices = false
+        view.accessibilityLabel = "Устройство вывода"
+        return view
+    }
+    func updateUIView(_ view: AVRoutePickerView, context: Context) {}
+}
+
+struct NativePlayerView: View {
+    @ObservedObject var model: NativePlayerModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var queueOpen = false
+
+    var body: some View {
+        let s = model.state
+        VStack(spacing: 0) {
+            HStack {
+                IconButton(symbol: "chevron.down", label: "Свернуть плеер") { model.close("close") }
+                Spacer()
+                Text("Сейчас играет").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
+                    .accessibilityHidden(true)
+                Spacer()
+                IconButton(symbol: "ellipsis", label: "Ещё: нравится, текст песни") { model.close("more") }
+            }
+            .padding(.horizontal, -10)
+            Spacer(minLength: 12)
+            cover(playing: s.playing)
+            Spacer(minLength: 12)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(s.title.isEmpty ? "MORA" : s.title).font(.title2.bold()).lineLimit(2)
+                Text(s.artist).font(.title3).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            scrubber(s).padding(.top, 18)
+            transport(playing: s.playing).padding(.vertical, 6)
+            if let label = s.nextLabel {
+                Button { queueOpen = true } label: {
+                    Label(label, systemImage: s.automix ? "sparkles" : "music.note.list")
+                        .font(.footnote.weight(.medium)).lineLimit(1)
+                        .padding(.horizontal, 14).frame(minHeight: 44)
+                        .foregroundStyle(s.automix ? Color.moraGold : Color.white.opacity(0.8))
+                        .background(s.automix ? Color.moraGold.opacity(0.14) : Color.white.opacity(0.08), in: Capsule())
+                }
+                .accessibilityHint("Открыть очередь")
+            }
+            HStack {
+                RoutePicker().frame(width: 44, height: 44)
+                Spacer()
+                IconButton(symbol: "list.bullet", label: "Очередь") { queueOpen = true }
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+            .padding(.top, 10)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 16)
+        .padding(.bottom, 8)
+        .foregroundStyle(.white)
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+        .background { background.ignoresSafeArea() }
+        .onAppear { model.start() }
+        .onDisappear { model.finish() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in model.stop() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in model.start() }
+        .sheet(isPresented: $queueOpen) { NativeQueueView(model: model) }
+    }
+
+    private var background: some View {
+        ZStack {
+            LinearGradient(colors: [Color(red: 0.10, green: 0.24, blue: 0.17), .moraBackground], startPoint: .top, endPoint: .bottom)
+            if let image = model.artwork {
+                Image(uiImage: image).resizable().scaledToFill().blur(radius: 60).opacity(0.35)
+            }
+        }
+    }
+
+    private func cover(playing: Bool) -> some View {
+        Color.clear
+            .aspectRatio(1, contentMode: .fit)
+            .frame(maxWidth: 360)
+            .overlay {
+                if let image = model.artwork {
+                    Image(uiImage: image).resizable().scaledToFill()
+                } else {
+                    ZStack {
+                        Color.moraMint.opacity(0.12)
+                        Image(systemName: "music.note").font(.system(size: 64)).foregroundStyle(.white.opacity(0.4))
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .shadow(color: .black.opacity(0.6), radius: playing ? 30 : 14, y: playing ? 20 : 10)
+            .scaleEffect(playing || reduceMotion ? 1 : 0.84)
+            .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.75), value: playing)
+            .layoutPriority(-1)
+            .accessibilityHidden(true)
+    }
+
+    private func scrubber(_ s: NativePlayerState) -> some View {
+        let shown = model.scrub ?? s.position
+        return VStack(spacing: 6) {
+            Slider(value: Binding(get: { shown }, set: { model.scrubbed(to: $0) }), in: 0...max(s.duration, 1), onEditingChanged: { editing in
+                model.editing = editing
+                if !editing { model.seek() }
+            })
+            .tint(.white)
+            .disabled(s.duration <= 0)
+            .accessibilityLabel("Позиция")
+            .accessibilityValue("\(NativePlayerTime.text(shown)) из \(NativePlayerTime.text(s.duration))")
+            HStack {
+                Text(NativePlayerTime.text(shown))
+                Spacer()
+                Text(NativePlayerTime.text(s.duration))
+            }
+            .font(.caption.monospacedDigit().weight(.medium))
+            .foregroundStyle(.white.opacity(0.55))
+            .accessibilityHidden(true)
+        }
+    }
+
+    private func transport(playing: Bool) -> some View {
+        HStack {
+            Spacer()
+            Button { model.transport("previoustrack") } label: {
+                Image(systemName: "backward.fill").font(.system(size: 34)).frame(width: 64, height: 64)
+            }
+            .accessibilityLabel("Предыдущий")
+            Spacer()
+            Button { model.transport("toggle") } label: {
+                Image(systemName: playing ? "pause.fill" : "play.fill").font(.system(size: 34))
+                    .foregroundStyle(Color.moraBackground)
+                    .frame(width: 80, height: 80)
+                    .background(Color.moraMint, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .shadow(color: Color.moraMint.opacity(0.5), radius: 18, y: 10)
+            }
+            .accessibilityLabel(playing ? "Пауза" : "Играть")
+            Spacer()
+            Button { model.transport("nexttrack") } label: {
+                Image(systemName: "forward.fill").font(.system(size: 34)).frame(width: 64, height: 64)
+            }
+            .accessibilityLabel("Следующий")
+            Spacer()
+        }
+    }
+}
+
+private struct NativeQueueView: View {
+    @ObservedObject var model: NativePlayerModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if model.state.upcoming.isEmpty {
+                    Text("Очередь пуста").foregroundStyle(.secondary).listRowBackground(Color.clear)
+                }
+                ForEach(model.state.upcoming) { row in
+                    HStack(spacing: 12) {
+                        AsyncImage(url: row.cover) { image in
+                            image.resizable().scaledToFill()
+                        } placeholder: {
+                            ZStack { Color.white.opacity(0.08); Image(systemName: "music.note").foregroundStyle(.secondary) }
+                        }
+                        .frame(width: 42, height: 42)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.title).font(.body.weight(.medium)).lineLimit(1)
+                            Text(row.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                            if row.automix {
+                                Label("AutoMix", systemImage: "sparkles").font(.caption).foregroundStyle(Color.moraGold)
+                            }
+                        }
+                    }
+                    .frame(minHeight: 56)
+                    .accessibilityElement(children: .combine)
+                    .listRowBackground(Color.clear)
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .navigationTitle("Далее")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } } }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(.ultraThinMaterial)
+    }
+}
