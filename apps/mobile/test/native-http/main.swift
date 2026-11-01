@@ -80,10 +80,12 @@ Task.detached {
         let fftCore = try NativePreparationCore(script: """
         var MoraPreparation = {analyzeJSON: function() {
             for (var n of [2, 8, 2048, 4096]) {
-                var re = new Float64Array(n), im = new Float64Array(n);
+                var storage = new Float64Array(n + 2); storage[0] = 123; storage[n + 1] = 456;
+                var re = storage.subarray(1, n + 1), im = new Float64Array(n);
                 for (var i = 0; i < n; i++) { re[i] = Math.sin(i * .31); im[i] = Math.cos(i * .17); }
                 var a = re.slice(), b = im.slice();
                 if (!moraPreparationFFT(re, im)) throw Error('native FFT missing');
+                if (storage[0] !== 123 || storage[n + 1] !== 456) throw Error('FFT wrote outside view');
                 for (var k = 0; k < Math.min(8, n); k++) {
                     var r = 0, m = 0;
                     for (var j = 0; j < n; j++) { var t = -2 * Math.PI * j * k / n; r += a[j]*Math.cos(t)-b[j]*Math.sin(t); m += a[j]*Math.sin(t)+b[j]*Math.cos(t); }
@@ -91,13 +93,27 @@ Task.detached {
                 }
             }
             if (moraPreparationFFT(new Float64Array(3), new Float64Array(3))) throw Error('invalid FFT accepted');
+            if (moraPreparationFFT(new Float32Array(8), new Float64Array(8))) throw Error('invalid type accepted');
+            if (moraPreparationFFT(new Float64Array(8), new Float64Array(2))) throw Error('mismatched lengths accepted');
             return '{"passed":true}';
         }};
         """)
         let fftCheck = try fftCore.analyze(root.deletingLastPathComponent().appendingPathComponent("analysis-input.f32le"), frames: 1, ticket: NativePreparationTicket())
         precondition(fftCheck["passed"] as? Bool == true)
         print("Native FFT: complex DFT parity at 2/8/2048/4096 and invalid lengths passed")
-        let profile = try core.analyze(root.deletingLastPathComponent().appendingPathComponent("analysis-input.f32le"), frames: 44100 * 4, ticket: NativePreparationTicket())
+        let analysisFrames = CommandLine.arguments.count > 4 ? Int(CommandLine.arguments[4])! : 44100 * 4
+        precondition(analysisFrames > 0 && analysisFrames <= 44100 * 180)
+        let analysisStarted = ProcessInfo.processInfo.systemUptime
+        var stage = "starting", stageStarted = analysisStarted
+        let profile = try core.analyze(root.deletingLastPathComponent().appendingPathComponent("analysis-input.f32le"), frames: analysisFrames, ticket: NativePreparationTicket(), progress: { next in
+            guard next != stage else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            print("Native MIR stage \(stage): \(Int((now - stageStarted) * 1000))ms")
+            stage = next; stageStarted = now
+        })
+        let analysisEnded = ProcessInfo.processInfo.systemUptime
+        print("Native MIR stage \(stage): \(Int((analysisEnded - stageStarted) * 1000))ms")
+        print("Native MIR total: \(analysisFrames / 44100)s audio, \(Int((analysisEnded - analysisStarted) * 1000))ms wall time (macOS test host)")
         try JSONSerialization.data(withJSONObject: profile).write(to: root.deletingLastPathComponent().appendingPathComponent("analysis-actual.json"))
         await job.run(folder: folder, manifest: ["from": 1, "items": [item("B"), item("C")],
             "loopItems": [item("A"), item("B"), item("C")], "settings": ["enabled": false],

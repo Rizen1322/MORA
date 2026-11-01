@@ -26,7 +26,7 @@ export class FFT {
   /** Forward transform (sign -1). `re` and `im` are modified in place. */
   forward(re: Float64Array, im: Float64Array): void {
     const native = (globalThis as typeof globalThis & { moraPreparationFFT?: (re: Float64Array, im: Float64Array) => boolean }).moraPreparationFFT;
-    if (native?.(re, im)) return;
+    if (re.length === this.n && im.length === this.n && native?.(re, im)) return;
     const n = this.n;
     const rev = this.rev;
     for (let i = 0; i < n; i++) {

@@ -690,7 +690,7 @@ final class NativeMixHost {
     private func fail() {
         initialTicket?.cancel(); initialTicket = nil; initialConfig = [:]
         preparation?.cancel(); preparation = nil; continueWhenPrepared = false; nextWhenPrepared = false
-        wantsPlaying = false; failed = true; epoch += 1
+        wantsPlaying = false; failed = true; knownManifest = nil; epoch += 1
         player?.stop(); engine?.pause(); renderer = nil
         save(); MoraPlaybackJournal.record("native.mix.failed")
         let generation = epoch
@@ -798,7 +798,7 @@ final class NativeMixHost {
     }
     func stop(_ completion: @escaping Reply) {
         work.async {
-            self.initialTicket?.cancel(); self.initialTicket = nil; self.initialConfig = [:]
+            self.initialTicket?.cancel(); self.initialTicket = nil; self.initialConfig = [:]; self.knownManifest = nil
             self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false; self.nextWhenPrepared = false
             self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis()
             self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()

@@ -201,3 +201,37 @@ it('hands twelve future radio entries to native before relying on page polling',
   expect(mix.prepareQueue.mock.calls[0][1]).toHaveLength(12);
   expect(api.waveNext).toHaveBeenCalledTimes(3);
 });
+
+it('distinguishes native refreshes from explicit edits, including an edit during handoff', async () => {
+  const prepareQueue = vi.fn<NonNullable<NativeMix['prepareQueue']>>(async () => state());
+  const mix = { upload: vi.fn(async () => {}), start: vi.fn(async () => state()), update: vi.fn(async () => state()),
+    prepareQueue, settings: vi.fn(async () => {}), stop: vi.fn(), state: vi.fn(async () => state()), command: vi.fn(async () => state()) } satisfies NativeMix;
+  vi.stubGlobal('window', { moraNativePlayback: { route: 'webkit', mix } });
+  const controller = new PlayerController(id => ({ id, title: id, duration: seconds, status: 'ok', analysis: {} } as Track), vi.fn());
+  const h = controller as unknown as { nativeSyncing: Promise<void> | null; nativeTimer: ReturnType<typeof setInterval>; saveTimer: ReturnType<typeof setTimeout> | null };
+  timer = () => { clearInterval(h.nativeTimer); if (h.saveTimer) clearTimeout(h.saveTimer); };
+  await controller.playTracks(['a', 'b', 'c'], 0, { type: 'album', label: 'album' });
+  await h.nativeSyncing;
+  const ownership = controller.queueVersion;
+  controller.onSettingsChanged(-14); await h.nativeSyncing;
+  expect(prepareQueue.mock.calls.at(-1)?.[5]).toBe(false);
+  controller.clearUpcoming(); await h.nativeSyncing;
+  expect(prepareQueue.mock.calls.at(-1)?.[1]).toEqual([]);
+  expect(prepareQueue.mock.calls.at(-1)?.[5]).toBe(true);
+  expect(controller.queueVersion).toBe(ownership); // Catalog continuation still owns this edited queue.
+  controller.addToQueue(['b', 'c']); await h.nativeSyncing;
+  controller.cycleRepeat(); await h.nativeSyncing;
+  controller.cycleRepeat(); await h.nativeSyncing;
+  expect(prepareQueue.mock.calls.at(-1)?.[1]).toEqual([]);
+  expect(prepareQueue.mock.calls.at(-1)?.[3]).toHaveLength(1);
+  expect(prepareQueue.mock.calls.at(-1)?.[5]).toBe(true);
+  controller.cycleRepeat(); await h.nativeSyncing;
+  let finish!: (s: NativeMixState) => void;
+  prepareQueue.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  controller.onSettingsChanged(-12);
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+  controller.clearUpcoming();
+  finish(state()); await h.nativeSyncing;
+  expect(prepareQueue.mock.calls.at(-1)?.[1]).toEqual([]);
+  expect(prepareQueue.mock.calls.at(-1)?.[5]).toBe(true);
+});

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { FFT } from '../src/dsp/fft.ts';
 import { StereoIsolator } from '../src/dsp/crossover.ts';
 import { Limiter } from '../src/dsp/limiter.ts';
@@ -15,6 +15,23 @@ const sine = (hz: number, sec: number, sr: number, amp = 1) => {
 };
 
 describe('FFT', () => {
+  it('uses the native hook only for matching buffers and falls back when declined', () => {
+    const native = vi.fn(() => false);
+    vi.stubGlobal('moraPreparationFFT', native);
+    try {
+      const fft = new FFT(2), re = Float64Array.of(1, 2, 99, 100), im = new Float64Array(4);
+      fft.forward(re, im);
+      expect(native).not.toHaveBeenCalled();
+      expect([...re]).toEqual([3, -1, 99, 100]);
+      const view = Float64Array.of(5, 1, 2, 6).subarray(1, 3), imaginary = new Float64Array(2);
+      fft.forward(view, imaginary);
+      expect(native).toHaveBeenCalledWith(view, imaginary);
+      expect([...view]).toEqual([3, -1]);
+      native.mockReturnValue(true);
+      fft.forward(view, imaginary);
+      expect([...view]).toEqual([3, -1]);
+    } finally { vi.unstubAllGlobals(); }
+  });
   it('round-trips a random signal', () => {
     const f = new FFT(1024);
     const re = new Float64Array(1024).map(() => Math.random() - 0.5);

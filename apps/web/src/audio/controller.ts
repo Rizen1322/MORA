@@ -291,6 +291,7 @@ export class PlayerController {
   private nativePolledAt = 0;
   private nativeManifestKey = '';
   private nativeQueueRevision = 0;
+  private nativeQueueEditRevision = 0;
   private nativeSkip = false;
   /** Plans behind each native track's blend (page-side only, for the player UI). */
   private nativePlans = new WeakMap<NativeItem, TransitionPlan>();
@@ -416,9 +417,11 @@ export class PlayerController {
   }
 
   private async nativeSyncOnce(): Promise<void> {
-    const revision = this.nativeRevision, at = this.nativeAt, queueRevision = this.queueRevision;
-    if (at < 0) return;
+    const revision = this.nativeRevision;
+    if (this.nativeAt < 0) return;
     if (this.isWave()) await this.topUpWave();
+    if (revision !== this.nativeRevision) return;
+    const at = this.nativeAt, queueRevision = this.nativeQueueEditRevision;
     if (this.nativeMix.prepareQueue) {
       const key = JSON.stringify([this.queueRevision, this.state.queue.map(e => e.entryId), this.state.repeat, this.state.shuffle, this.loudnessTarget]);
       if (key === this.nativeManifestKey) return;
@@ -1707,6 +1710,7 @@ export class PlayerController {
 
   /** After any queue edit: if the prepared next track changed, cancel it and prepare again. */
   private onQueueChanged(): void {
+    this.nativeQueueEditRevision++;
     this.scheduleSave();
     this.preparationRevision++;
     if (this.native) {

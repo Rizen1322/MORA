@@ -46,7 +46,8 @@ try {
   const binary = join(folder, 'check');
   await bundle({ entryPoints: [resolve(root, 'apps/mobile/src/native-preparation-core.ts')], outfile: join(folder, 'preparation.js'),
     bundle: true, format: 'iife', platform: 'neutral', globalName: 'MoraPreparation', target: 'es2022' });
-  const frames = 44100 * 4, input = new Float32Array(frames * 2);
+  const seconds = process.argv.includes('--long-analysis') ? 180 : 4;
+  const frames = 44100 * seconds, input = new Float32Array(frames * 2);
   for (let i = 0; i < frames; i++) {
     const beat = Math.exp(-(i % 22050) / 600) * Math.sin(i * 2 * Math.PI * 80 / 44100) * .25;
     input[i * 2] = beat + Math.sin(i * 2 * Math.PI * 261.63 / 44100) * .08;
@@ -55,12 +56,14 @@ try {
   const inputBytes = Buffer.from(input.buffer);
   await writeFile(join(folder, 'analysis-input.f32le'), inputBytes);
   const source = await readFile(join(folder, 'preparation.js'), 'utf8');
+  const referenceStart = performance.now();
   const expected = JSON.parse(runInNewContext(`${source}\nMoraPreparation.analyzeJSON(JSON.stringify({ frames: ${frames} }))`, {
     moraPreparationRead: (offset, frames) => inputBytes.subarray(offset * 8, (offset + frames) * 8).toString('base64'),
     moraPreparationCancelled: () => false,
     moraPreparationProgress: () => {},
-  }, { timeout: 120000 }));
-  const build = spawnSync('swiftc', [resolve(root, 'apps/mobile/ios/App/App/NativeMediaHTTP.swift'),
+  }, { timeout: seconds > 4 ? 300000 : 120000 }));
+  console.log(`Node MIR reference: ${seconds}s audio, ${Math.round(performance.now() - referenceStart)}ms wall time`);
+  const build = spawnSync('swiftc', [...(seconds > 4 ? ['-O'] : []), resolve(root, 'apps/mobile/ios/App/App/NativeMediaHTTP.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativeMediaLoader.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativePCMDecoder.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativePreparationCore.swift'),
@@ -73,7 +76,7 @@ try {
   const code = await new Promise((resolve, reject) => {
     const hash = createHash('md5').update('XGRlBW9FXlekgbPrRHuSiAtest/audio.mp3salt123').digest('hex');
     const child = spawn(binary, [`http://127.0.0.1:${server.address().port}`, files,
-      `https://edge.storage.yandex.net/get-mp3/${hash}/1a/test/audio.mp3`], { stdio: 'inherit' });
+      `https://edge.storage.yandex.net/get-mp3/${hash}/1a/test/audio.mp3`, String(frames)], { stdio: 'inherit' });
     child.on('error', reject); child.on('close', resolve);
   });
   assert.equal(code, 0);
