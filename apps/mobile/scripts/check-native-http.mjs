@@ -16,6 +16,13 @@ wave.write('RIFF', 0); wave.writeUInt32LE(wave.length - 8, 4); wave.write('WAVEf
 wave.writeUInt16LE(1, 20); wave.writeUInt16LE(1, 22); wave.writeUInt32LE(22050, 24); wave.writeUInt32LE(44100, 28);
 wave.writeUInt16LE(2, 32); wave.writeUInt16LE(16, 34); wave.write('data', 36); wave.writeUInt32LE(22050, 40);
 for (let i = 0; i < 11025; i++) wave.writeInt16LE(Math.round(Math.sin(i * .05) * 4000), 44 + i * 2);
+// 14 s at 48 kHz mono: the last 2 s stay on the server until the progressive offer releases them.
+const growing = Buffer.alloc(44 + 48000 * 14 * 2), growingHead = 44 + 48000 * 12 * 2;
+growing.write('RIFF', 0); growing.writeUInt32LE(growing.length - 8, 4); growing.write('WAVEfmt ', 8); growing.writeUInt32LE(16, 16);
+growing.writeUInt16LE(1, 20); growing.writeUInt16LE(1, 22); growing.writeUInt32LE(48000, 24); growing.writeUInt32LE(96000, 28);
+growing.writeUInt16LE(2, 32); growing.writeUInt16LE(16, 34); growing.write('data', 36); growing.writeUInt32LE(growing.length - 44, 40);
+for (let i = 0; i < 48000 * 14; i++) growing.writeInt16LE(Math.round(Math.sin(i * .03) * 4000), 44 + i * 2);
+let releaseGrowing = () => {};
 let coverAccepted = false, coverReleased = false;
 let imagesInFlight = 0;
 const server = createServer((req, res) => {
@@ -26,6 +33,12 @@ const server = createServer((req, res) => {
     assert.equal(req.headers.authorization, undefined);
     res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': payload.length }); res.end(payload);
   } else if (req.url === '/list.m3u8') { assert.equal(req.headers['x-mora-test'], 'required'); res.end('#EXTM3U\n#EXTINF:1,\nfirst.aac\n#EXTINF:1,\nsecond.aac\n#EXT-X-ENDLIST\n'); }
+  else if (req.url === '/growing-wave') {
+    res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': growing.length }); res.write(growing.subarray(0, growingHead));
+    const timer = setTimeout(() => releaseGrowing(), 30000);
+    releaseGrowing = () => { clearTimeout(timer); if (!res.writableEnded) res.end(growing.subarray(growingHead)); };
+  }
+  else if (req.url === '/growing-release') { releaseGrowing(); res.end('released'); }
   else if (req.url === '/wave') { res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': wave.length }); res.end(wave); }
   else if (req.url === '/slow-cover') {
     // Old code waits for this optional resource before accepting ready PCM.

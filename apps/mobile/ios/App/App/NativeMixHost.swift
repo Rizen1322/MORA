@@ -58,6 +58,8 @@ final class NativeMixHost {
     private var artworkLoader = NativeQueueArtwork()
     private var sourceBytes: [Int: Int] = [:]
     private var pendingUploads: Set<Int> = []
+    // Songs playing while they still decode, by file key: their downloads stop when the file is dropped.
+    private var growing: [Int: NativePreparationTicket] = [:]
     private var preparedFileKey = 500000
     private var sourceKey = 0
     private var continueWhenPrepared = false
@@ -210,7 +212,21 @@ final class NativeMixHost {
         let used = Set(keys.enumerated().filter { $0.offset >= index - 1 }.map { $0.element })
         for key in bytes.keys where !used.contains(key) && !pendingUploads.contains(key) {
             if let url = file(key) { try? FileManager.default.removeItem(at: url) }
-            bytes.removeValue(forKey: key)
+            bytes.removeValue(forKey: key); growing.removeValue(forKey: key)?.cancel()
+        }
+    }
+    /// More PCM of a song that started while decoding; final fixes its length (and duration).
+    private func grow(key: Int, frames: Int, final: Bool) {
+        work.async { [weak self] in
+            guard let self, self.growing[key] != nil else { return }
+            if final { self.growing.removeValue(forKey: key) }
+            guard let at = self.tracks.indices.first(where: { Self.key(self.tracks[$0], $0) == key }),
+                  frames >= self.tracks[at]["totalFrames"] as? Int ?? 0 else { return }
+            self.bytes[key] = frames * 8; self.tracks[at]["totalFrames"] = frames
+            if final { self.tracks[at].removeValue(forKey: "growing"); self.tracks[at].removeValue(forKey: "estimatedFrames") }
+            self.config["tracks"] = self.tracks
+            self.renderer?.grow(file: key, frames: frames, final: final)
+            if final { self.publish("grown"); MoraPlaybackJournal.record("native.preparation.grown", ["seq": at, "frames": frames]) }
         }
     }
     func start(id: String, config: [String: Any], completion: @escaping Reply) {
@@ -270,44 +286,56 @@ final class NativeMixHost {
             let pcm = folder.appendingPathComponent("\(key).f32le")
             let allowedHost = source["allowHTTP"] as? Bool == true ? (source["url"] as? String).flatMap { URL(string: $0)?.host } : nil
             let hosts = Set([allowedHost].compactMap { $0 })
+            // On work: starts the prepared song; early starts it while it still decodes (it then grows).
+            let begin: (Int, Bool) -> Bool = { [weak self] frames, early in
+                guard let self else { return false }
+                let estimate = early ? NativeMixTimeline.estimatedFrames(item, decoded: frames) : frames
+                guard self.initialTicket === ticket, !ticket.cancelled, self.id == id, self.folder == folder,
+                      frames > 0, estimate <= Int.max / 8,
+                      self.bytes.values.reduce(0, +) + estimate * 8 <= 768 * 1024 * 1024 else {
+                    if early { return false } // the finished file decides
+                    try? FileManager.default.removeItem(at: pcm)
+                    if self.initialTicket === ticket { self.initialTicket = nil; self.initialConfig = [:] }
+                    self.reply(completion, .failure(Failure.invalid)); return false
+                }
+                var next = self.initialConfig
+                next["paused"] = next["paused"] as? Bool == true || self.interrupted || self.mediaResetPending
+                var track: [String: Any] = ["file": key, "totalFrames": frames, "gainDb": allowed ? next["gainDb"] as? Double ?? 0.0 : 0.0,
+                    "trackId": trackId, "entryId": entryId, "title": item["title"] ?? "", "artist": item["artist"] ?? ""]
+                if early { track["growing"] = true; track["estimatedFrames"] = estimate }
+                if let artwork = item["artwork"] { track["artwork"] = artwork }
+                let previous = self.tracks.indices.contains(self.index) && self.available(self.index)
+                    && self.tracks[self.index]["entryId"] as? String != entryId ? self.tracks[self.index] : nil
+                let oldArtwork = self.artworks.indices.contains(self.index) ? self.artworks[self.index] : nil
+                self.bytes[key] = frames * 8; self.pendingUploads.insert(key)
+                next["tracks"] = (previous.map { [$0] } ?? []) + [track]; next["index"] = previous == nil ? 0 : 1
+                self.initialTicket = nil; self.initialConfig = [:]
+                if early { self.growing[key] = ticket }
+                self.startOnQueue(id: id, config: next, completion: completion)
+                if !self.failed, self.tracks.indices.contains(self.index), Self.key(self.tracks[self.index], self.index) == key {
+                    if previous != nil { self.artworks[0] = oldArtwork }
+                    var artworkTrack = track
+                    if let cover = item["coverUrl"] { artworkTrack["coverUrl"] = cover }
+                    if let host = URL(string: item["coverUrl"] as? String ?? "")?.host, hosts.contains(host) { artworkTrack["artworkHTTPHost"] = host }
+                    self.requestArtwork(artworkTrack, at: self.index)
+                } else if !self.tracks.enumerated().contains(where: { Self.key($0.element, $0.offset) == key }) {
+                    self.bytes.removeValue(forKey: key); self.pendingUploads.remove(key); self.growing.removeValue(forKey: key)?.cancel()
+                    try? FileManager.default.removeItem(at: pcm)
+                }
+                return true
+            }
             Task.detached(priority: .userInitiated) { [weak self] in
                 let http = NativeMediaHTTP(allowedHTTPHosts: hosts)
                 defer { http.invalidate(); try? FileManager.default.removeItem(at: downloaded) }
                 do {
-                    let media = try await NativeMediaLoader(http: http).load(source, to: downloaded, folder: folder, ticket: ticket)
-                    let frames = try NativePCMDecoder.decode(media, to: pcm, sampleRate: 48000, cancelled: { ticket.cancelled })
+                    let (frames, owned) = try await NativeQueuePreparation.produce(source, loader: NativeMediaLoader(http: http), folder: folder,
+                        downloaded: downloaded, pcm: pcm, ticket: ticket, early: { [weak self] frames in
+                            guard let self else { return false }
+                            return await withCheckedContinuation { continuation in self.work.async { continuation.resume(returning: begin(frames, true)) } }
+                        }, grow: { [weak self] frames, final in self?.grow(key: key, frames: frames, final: final) })
+                    if owned { return }
                     guard let self else { try? FileManager.default.removeItem(at: pcm); return }
-                    self.work.async {
-                        guard self.initialTicket === ticket, !ticket.cancelled, self.id == id, self.folder == folder,
-                              frames > 0, frames <= Int.max / 8,
-                              self.bytes.values.reduce(0, +) + frames * 8 <= 768 * 1024 * 1024 else {
-                            try? FileManager.default.removeItem(at: pcm)
-                            if self.initialTicket === ticket { self.initialTicket = nil; self.initialConfig = [:] }
-                            self.reply(completion, .failure(Failure.invalid)); return
-                        }
-                        var next = self.initialConfig
-                        next["paused"] = next["paused"] as? Bool == true || self.interrupted || self.mediaResetPending
-                        var track: [String: Any] = ["file": key, "totalFrames": frames, "gainDb": allowed ? next["gainDb"] as? Double ?? 0.0 : 0.0,
-                            "trackId": trackId, "entryId": entryId, "title": item["title"] ?? "", "artist": item["artist"] ?? ""]
-                        if let artwork = item["artwork"] { track["artwork"] = artwork }
-                        let previous = self.tracks.indices.contains(self.index) && self.available(self.index)
-                            && self.tracks[self.index]["entryId"] as? String != entryId ? self.tracks[self.index] : nil
-                        let oldArtwork = self.artworks.indices.contains(self.index) ? self.artworks[self.index] : nil
-                        self.bytes[key] = frames * 8; self.pendingUploads.insert(key)
-                        next["tracks"] = (previous.map { [$0] } ?? []) + [track]; next["index"] = previous == nil ? 0 : 1
-                        self.initialTicket = nil; self.initialConfig = [:]
-                        self.startOnQueue(id: id, config: next, completion: completion)
-                        if !self.failed, self.tracks.indices.contains(self.index), Self.key(self.tracks[self.index], self.index) == key {
-                            if previous != nil { self.artworks[0] = oldArtwork }
-                            var artworkTrack = track
-                            if let cover = item["coverUrl"] { artworkTrack["coverUrl"] = cover }
-                            if let host = URL(string: item["coverUrl"] as? String ?? "")?.host, hosts.contains(host) { artworkTrack["artworkHTTPHost"] = host }
-                            self.requestArtwork(artworkTrack, at: self.index)
-                        } else if !self.tracks.enumerated().contains(where: { Self.key($0.element, $0.offset) == key }) {
-                            self.bytes.removeValue(forKey: key); self.pendingUploads.remove(key)
-                            try? FileManager.default.removeItem(at: pcm)
-                        }
-                    }
+                    self.work.async { _ = begin(frames, false) }
                 } catch {
                     try? FileManager.default.removeItem(at: pcm)
                     self?.work.async { [weak self] in
@@ -433,36 +461,15 @@ final class NativeMixHost {
                     }, accept: { [weak self] at, track in
                         guard let self else { return false }
                         return await withCheckedContinuation { continuation in
-                            self.work.async {
-                                guard self.preparation === job, !job.ticket.cancelled, at == self.tracks.count else { continuation.resume(returning: false); return }
-                                let key = Self.key(track, at)
-                                var appended = false
-                                do {
-                                    guard let frames = track["totalFrames"] as? Int, let url = self.file(key),
-                                          (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) == frames * 8,
-                                          self.bytes.values.reduce(0, +) + frames * 8 <= 768 * 1024 * 1024 else { throw Failure.invalid }
-                                    self.bytes[key] = frames * 8
-                                    let added = try self.validated([track], from: at)
-                                    if !self.done, let renderer = self.renderer, !(try renderer.update(from: at, tracks: added)) { throw Failure.invalid }
-                                    self.tracks += added; self.config["tracks"] = self.tracks; self.artworks.append(self.artwork(track))
-                                    self.requestArtwork(track, at: at)
-                                    appended = true
-                                    if (self.pendingSkips > 0 ? at >= self.skipTarget : self.done && self.ended && self.continueWhenPrepared) {
-                                        try self.select(index: at, position: 0, playing: self.wantsPlaying || self.continueWhenPrepared)
-                                    }
-                                    else { self.publish("prepared") }
-                                    self.prune(); continuation.resume(returning: true)
-                                } catch {
-                                    if appended {
-                                        self.fail() // Metadata already owns the file; do not delete it underneath a renderer.
-                                        continuation.resume(returning: true); return
-                                    }
-                                    self.bytes.removeValue(forKey: key)
-                                    MoraPlaybackJournal.record("native.preparation.failed", ["reason": "commit"])
-                                    continuation.resume(returning: false)
-                                }
-                            }
+                            self.work.async { continuation.resume(returning: self.commit(job, at: at, track: track, early: false)) }
                         }
+                    }, early: { [weak self] at, track in
+                        guard let self else { return false }
+                        return await withCheckedContinuation { continuation in
+                            self.work.async { continuation.resume(returning: self.commit(job, at: at, track: track, early: true)) }
+                        }
+                    }, grow: { [weak self] key, frames, final in
+                        self?.grow(key: key, frames: frames, final: final)
                     }, upgrade: { [weak self] at, track in
                         self?.applyAnalysis(analysis, at: at, track: track)
                     }, event: { [weak self] kind, reason in
@@ -490,6 +497,39 @@ final class NativeMixHost {
                 }
                 self.reply(completion, .success(self.viewState()))
             } catch { self.reply(completion, .failure(error)) }
+        }
+    }
+    /// Appends a prepared song on work. An early (still decoding) song is taken only when playback
+    /// waits for it; otherwise it finishes decoding first and arrives as a whole file.
+    private func commit(_ job: NativeQueuePreparation, at: Int, track: [String: Any], early: Bool) -> Bool {
+        guard preparation === job, !job.ticket.cancelled, at == tracks.count else { return false }
+        let wanted = pendingSkips > 0 ? at >= skipTarget : done && ended && continueWhenPrepared
+        if early && !wanted { return false }
+        let key = Self.key(track, at)
+        var appended = false
+        do {
+            guard let frames = track["totalFrames"] as? Int, let url = file(key),
+                  let size = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int,
+                  early ? size >= frames * 8 : size == frames * 8,
+                  bytes.values.reduce(0, +) + (early ? track["estimatedFrames"] as? Int ?? frames : frames) * 8 <= 768 * 1024 * 1024 else { throw Failure.invalid }
+            bytes[key] = frames * 8
+            let added = try validated([track], from: at)
+            if !done, let renderer, !(try renderer.update(from: at, tracks: added)) { throw Failure.invalid }
+            tracks += added; config["tracks"] = tracks; artworks.append(artwork(track))
+            requestArtwork(track, at: at)
+            appended = true
+            if early { growing[key] = job.detach() }
+            if wanted { try select(index: at, position: 0, playing: wantsPlaying || continueWhenPrepared) }
+            else { publish("prepared") }
+            prune(); return true
+        } catch {
+            if appended {
+                fail() // Metadata already owns the file; do not delete it underneath a renderer.
+                return true
+            }
+            bytes.removeValue(forKey: key)
+            MoraPlaybackJournal.record("native.preparation.failed", ["reason": early ? "earlyCommit" : "commit"])
+            return false
         }
     }
     private func recordAnalysis(_ worker: NativeMixAnalysis, reason: String) {
@@ -617,6 +657,7 @@ final class NativeMixHost {
             let block = try autoreleasepool { try renderer.render() }
             maxRenderMs = max(maxRenderMs, (ProcessInfo.processInfo.systemUptime - began) * 1000)
             for event in block.events {
+                if event["type"] as? String == "starved" { underruns += 1 }
                 MoraPlaybackJournal.record("native.mix.renderEvent", ["kind": event["type"] as? String ?? "unknown",
                     "reason": event["reason"] as? String ?? "none", "late": event["late"] as? Bool ?? false, "clock": rendered])
             }
@@ -732,6 +773,7 @@ final class NativeMixHost {
     private func fail() {
         initialTicket?.cancel(); initialTicket = nil; initialConfig = [:]
         preparation?.cancel(); preparation = nil; continueWhenPrepared = false; skipTarget = -1
+        for ticket in growing.values { ticket.cancel() }; growing.removeAll()
         wantsPlaying = false; failed = true; knownManifest = nil; epoch += 1
         player?.stop(); engine?.pause(); renderer = nil
         save(); MoraPlaybackJournal.record("native.mix.failed")
@@ -803,8 +845,8 @@ final class NativeMixHost {
                     try self.select(index: previous, position: 0, playing: self.wantsPlaying)
                 case "seekto":
                     guard let time, time.isFinite else { throw Failure.invalid }
-                    let duration = NativeMixTimeline.duration(self.tracks[self.index], sampleRate: self.sr)
-                    try self.select(index: self.index, position: max(0, min(max(0, duration - 0.001), time)), playing: self.wantsPlaying)
+                    let limit = NativeMixTimeline.seekLimit(self.tracks[self.index], sampleRate: self.sr)
+                    try self.select(index: self.index, position: max(0, min(limit, time)), playing: self.wantsPlaying)
                 default: throw Failure.invalid
                 }
                 self.publish(action)
@@ -846,6 +888,7 @@ final class NativeMixHost {
         work.async {
             self.initialTicket?.cancel(); self.initialTicket = nil; self.initialConfig = [:]; self.knownManifest = nil
             self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false; self.skipTarget = -1
+            for ticket in self.growing.values { ticket.cancel() }; self.growing.removeAll()
             self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis()
             self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
             DispatchQueue.main.async { [weak self] in self?.refillLease(waiting: false) }

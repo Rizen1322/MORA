@@ -106,3 +106,19 @@ for reason in ["http_404", "http_403", "http_0", "decode_-11829", "preparation",
     precondition(NativeMixTimeline.retryDelay(reason, attempt: 0) == nil, "\(reason) was retried")
 }
 print("Native retry: network and server errors back off 2/5/15 s, unavailable sources are skipped")
+
+let decoded = 12 * 48000
+let growingTrack: [String: Any] = ["totalFrames": decoded, "growing": true, "estimatedFrames": 200 * 48000]
+precondition(NativeMixTimeline.duration(growingTrack, sampleRate: 48000) == 200, "A growing song shows its estimate")
+precondition(NativeMixTimeline.seekLimit(growingTrack, sampleRate: 48000) == 11, "Seeks must stay inside decoded PCM")
+var finished = growingTrack; finished.removeValue(forKey: "growing")
+precondition(NativeMixTimeline.duration(finished, sampleRate: 48000) == 12 && abs(NativeMixTimeline.seekLimit(finished, sampleRate: 48000) - 11.999) < 1e-9)
+precondition(NativeMixTimeline.duration(["totalFrames": decoded, "growing": true], sampleRate: 48000) == 12)
+precondition(NativeMixTimeline.estimatedFrames(["duration": 180.5], decoded: decoded) == 8_664_000)
+precondition(NativeMixTimeline.estimatedFrames(["duration": 5.0], decoded: decoded) == decoded)
+precondition(NativeMixTimeline.estimatedFrames(["duration": Double.nan], decoded: decoded) == decoded)
+precondition(NativeMixTimeline.estimatedFrames([:], decoded: decoded) == decoded)
+precondition(NativeMixTimeline.progressiveStartFrames == 10 * 48000)
+precondition(NativeMixTimeline.progressive(["kind": "hls"]) == NativeMixTimeline.progressiveStart)
+precondition(!NativeMixTimeline.progressive(["kind": "local"]) && !NativeMixTimeline.progressive(["kind": "upload"]) && !NativeMixTimeline.progressive(nil))
+print("Native progressive start: remote sources only, estimated duration while growing, seeks clamped to decoded PCM")

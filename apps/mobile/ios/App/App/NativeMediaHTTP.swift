@@ -23,11 +23,12 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
     private final class Transfer {
         let destination: URL, partial: URL, file: FileHandle, limit: Int, ticket: NativePreparationTicket
         let completion: (Result<Void, Error>) -> Void
+        let sink: ((Data) -> Void)?
         var bytes = 0
         init(destination: URL, partial: URL, file: FileHandle, limit: Int, ticket: NativePreparationTicket,
-             completion: @escaping (Result<Void, Error>) -> Void) {
+             sink: ((Data) -> Void)?, completion: @escaping (Result<Void, Error>) -> Void) {
             self.destination = destination; self.partial = partial; self.file = file; self.limit = limit
-            self.ticket = ticket; self.completion = completion
+            self.ticket = ticket; self.sink = sink; self.completion = completion
         }
     }
     private let delegateQueue: OperationQueue = {
@@ -52,8 +53,9 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
         return url.scheme == "https" || (url.scheme == "http" && (allowedHTTPHosts.contains(host)
             || (allowLoopback && ["127.0.0.1", "localhost", "::1"].contains(host))))
     }
+    /// sink receives the bytes as they arrive (progressive decoding); the whole file is still written.
     func download(_ url: URL, to destination: URL, headers: [String: String] = [:], limit: Int = 128 * 1024 * 1024,
-                  ticket: NativePreparationTicket) async throws {
+                  ticket: NativePreparationTicket, sink: ((Data) -> Void)? = nil) async throws {
         guard valid(url), limit > 0 else { throw Failure.invalidURL }
         if ticket.cancelled { throw Failure.cancelled }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -68,7 +70,7 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
                     request.allHTTPHeaderFields = headers
                     let task = self.session.dataTask(with: request)
                     self.transfers[task.taskIdentifier] = Transfer(destination: destination, partial: partial, file: file, limit: limit,
-                        ticket: ticket, completion: { continuation.resume(with: $0) })
+                        ticket: ticket, sink: sink, completion: { continuation.resume(with: $0) })
                     ticket.add(task); task.resume()
                 } catch { continuation.resume(throwing: error) }
             }
@@ -114,6 +116,7 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
             guard !transfer.ticket.cancelled else { throw Failure.cancelled }
             guard transfer.bytes + data.count <= transfer.limit else { throw Failure.tooLarge }
             try transfer.file.write(contentsOf: data); transfer.bytes += data.count
+            transfer.sink?(data)
         } catch { finish(dataTask, .failure(error)); dataTask.cancel() }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {

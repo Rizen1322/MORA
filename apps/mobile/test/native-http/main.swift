@@ -231,6 +231,26 @@ Task.detached {
         let imageFiles = await imageSink.result()
         precondition(imageFiles == Set(1...5), "Deferred current/future covers were dropped")
         images.cancel()
+        // Progressive start: the song is offered after 10 s of PCM while its tail is still on the server.
+        let growingFolder = root.appendingPathComponent("growing")
+        try FileManager.default.createDirectory(at: growingFolder, withIntermediateDirectories: true)
+        let growingPCM = growingFolder.appendingPathComponent("1.f32le")
+        var offered = 0, grown: [(frames: Int, final: Bool)] = []
+        let produced = try await NativeQueuePreparation.produce(["kind": "direct", "url": base.appendingPathComponent("growing-wave").absoluteString],
+            loader: loader, folder: growingFolder, downloaded: growingFolder.appendingPathComponent("song.media"), pcm: growingPCM,
+            ticket: NativePreparationTicket(), early: { frames in
+                let size = (try? FileManager.default.attributesOfItem(atPath: growingPCM.path)[.size] as? Int) ?? 0
+                precondition(size >= frames * 8, "Offered PCM is not on disk yet")
+                offered = frames
+                _ = try? await client.data(base.appendingPathComponent("growing-release"), ticket: NativePreparationTicket())
+                return true
+            }, grow: { frames, final in grown.append((frames, final)) })
+        precondition(offered >= NativeMixTimeline.progressiveStartFrames && offered <= 12 * 48000, "Not offered before the download ended: \(offered)")
+        precondition(produced.owned && produced.frames == 14 * 48000, "Progressive song: \(produced)")
+        precondition(grown.last?.frames == produced.frames && grown.last?.final == true && grown.dropLast().allSatisfy { !$0.final })
+        precondition(zip(grown, grown.dropFirst()).allSatisfy { $0.frames <= $1.frames })
+        precondition((try FileManager.default.attributesOfItem(atPath: growingPCM.path)[.size] as? Int) == produced.frames * 8)
+        print("Native progressive start: offered at \(offered) frames during the download, grown to the final length")
         print("Native preparation: delayed optional artwork does not hold ready PCM")
         print("Native queue: failed MIR/planner preserve seven playable future songs")
         print("Native queue: eight preparations, repeat cycles and playback permits passed without WebContent")

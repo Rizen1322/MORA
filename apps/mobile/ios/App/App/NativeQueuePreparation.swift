@@ -47,6 +47,7 @@ final class NativeQueuePreparation: @unchecked Sendable {
     private var running = true
     private var repeats = false
     private var updated = ProcessInfo.processInfo.systemUptime
+    private var item: NativePreparationTicket? // the song being prepared; nil once the host plays it while growing
     var snapshot: [String: Any] {
         lock.lock(); var result = cached; result["running"] = running
         result["hasMore"] = running && ((cached["remaining"] as? Int ?? 0) > 0 || repeats)
@@ -66,7 +67,42 @@ final class NativeQueuePreparation: @unchecked Sendable {
         gate = NativePreparationGate(index: index); repeats = loopCount > 0
         cached = ["state": "starting", "ready": 0, "remaining": max(remaining, loopCount)]
     }
-    func cancel(keepAnalysis: Bool = false) { ticket.cancel(); gate.cancel(); if !keepAnalysis { analysis.cancel() } }
+    func cancel(keepAnalysis: Bool = false) {
+        ticket.cancel(); gate.cancel()
+        lock.lock(); let current = item; lock.unlock(); current?.cancel()
+        if !keepAnalysis { analysis.cancel() }
+    }
+    /// The host started the song still downloading: its download no longer stops with this job.
+    func detach() -> NativePreparationTicket { lock.lock(); defer { item = nil; lock.unlock() }; return item ?? NativePreparationTicket() }
+    /// Downloads and decodes one song. A progressive source offers itself through early() once
+    /// 10 s are decoded; when the host takes it (owned) it receives grow() up to the final length.
+    static func produce(_ source: [String: Any], loader: NativeMediaLoader, folder: URL, downloaded: URL, pcm: URL,
+                        ticket: NativePreparationTicket, early: @escaping (Int) async -> Bool,
+                        grow: @escaping (Int, Bool) -> Void) async throws -> (frames: Int, owned: Bool) {
+        let stream = NativeMixTimeline.progressive(source) ? NativeStreamDecoder(destination: pcm, cancelled: { ticket.cancelled }) : nil
+        let load = Task { () async throws -> URL in
+            defer { stream?.endInput() }
+            return try await loader.load(source, to: downloaded, folder: folder, ticket: ticket, sink: stream?.feed)
+        }
+        var owned = false, reported = 0
+        while let stream, stream.receiving {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            let frames = stream.frames
+            if owned { if frames - reported >= 48000 { grow(frames, false); reported = frames } }
+            else if frames >= NativeMixTimeline.progressiveStartFrames, !ticket.cancelled, await early(frames) { owned = true; reported = frames }
+        }
+        do {
+            let media = try await load.value
+            if let stream, !stream.refused, let frames = try? stream.finish() { if owned { grow(frames, true) }; return (frames, owned) }
+            guard !owned else { throw NativePCMDecoder.Failure.invalid }
+            try? FileManager.default.removeItem(at: pcm) // a stream that failed after its first output
+            return (try NativePCMDecoder.decode(media, to: pcm, sampleRate: 48000, cancelled: { ticket.cancelled }), false)
+        } catch {
+            guard owned, let stream else { throw error }
+            // The host already plays this file: the song ends where decoding stopped.
+            let frames = stream.frames; grow(frames, true); return (frames, true)
+        }
+    }
     private func state(_ code: String, ready: Int, remaining: Int, reason: String = "none") {
         lock.lock(); updated = ProcessInfo.processInfo.systemUptime; if code == "failed" { failureCount += 1 }
         cached = ["state": code, "ready": ready, "remaining": remaining, "reason": reason, "failedCount": failureCount]; lock.unlock()
@@ -74,6 +110,8 @@ final class NativeQueuePreparation: @unchecked Sendable {
     func run(folder: URL, manifest: [String: Any], seed: [String: Any], script: String,
              allocate: @escaping @Sendable () async -> Int?,
              accept: @escaping @Sendable (Int, [String: Any]) async -> Bool,
+             early: @escaping @Sendable (Int, [String: Any]) async -> Bool = { _, _ in false },
+             grow: @escaping @Sendable (Int, Int, Bool) -> Void = { _, _, _ in },
              upgrade: @escaping @Sendable (Int, [String: Any]) -> Void = { _, _ in },
              event: @escaping @Sendable (String, String) -> Void) async {
         defer { finished(); event("finished", "none") }
@@ -92,6 +130,8 @@ final class NativeQueuePreparation: @unchecked Sendable {
         configure(remaining: raw.count, loopCount: loop.count)
         var before = previous, previousPCM = seed
         if let frames = seed["totalFrames"] as? Int { before["duration"] = Double(frames) / 48000 }
+        // A seed still decoding has no final length: no reserve crossfade or MIR pair into the next song.
+        if seed["growing"] as? Bool == true { before.removeValue(forKey: "duration") }
         do {
             while !ticket.cancelled {
                 if cursor >= batch.count {
@@ -99,41 +139,53 @@ final class NativeQueuePreparation: @unchecked Sendable {
                     if loop.isEmpty || wrapped == produced { break }
                     batch = loop; cursor = 0; wrapped = produced
                 }
-                let item = batch[cursor]; cursor += 1
+                let entry = batch[cursor]; cursor += 1
                 processed += 1
                 state("waiting", ready: produced, remaining: batch.count - cursor + 1)
-                guard await gate.wait(at, depth: NativeMixTimeline.aheadDepth(item["source"] as? [String: Any])), !ticket.cancelled else { break }
+                guard await gate.wait(at, depth: NativeMixTimeline.aheadDepth(entry["source"] as? [String: Any])), !ticket.cancelled else { break }
                 guard let fileKey = await allocate(), (0..<1_000_000).contains(fileKey),
-                      let source = item["source"] as? [String: Any] else { throw NativeMediaLoader.Failure.source }
+                      let source = entry["source"] as? [String: Any] else { throw NativeMediaLoader.Failure.source }
                 let downloaded = folder.appendingPathComponent("\(UUID().uuidString).media")
                 let pcm = folder.appendingPathComponent("\(fileKey).f32le")
                 var committed = false, created = false
+                let item = NativePreparationTicket()
+                lock.lock(); self.item = item; lock.unlock()
+                if ticket.cancelled { item.cancel() }
                 do {
                     defer {
                         try? FileManager.default.removeItem(at: downloaded)
                         if created && !committed { try? FileManager.default.removeItem(at: pcm) }
                     }
                     state("downloading", ready: produced, remaining: max(0, batch.count - cursor + 1)); event("stage", "downloading")
-                    let media = try await loader.load(source, to: downloaded, folder: folder, ticket: ticket)
-                    state("decoding", ready: produced, remaining: max(0, batch.count - cursor + 1)); event("stage", "decoding")
-                    let frames = try NativePCMDecoder.decode(media, to: pcm, sampleRate: 48000, cancelled: { self.ticket.cancelled })
                     created = true
-                    guard !ticket.cancelled else { throw NativeMediaHTTP.Failure.cancelled }
-                    var next = item
-                    next["id"] = item["trackId"]; next["duration"] = Double(frames) / 48000
-                    var track: [String: Any] = ["file": fileKey, "totalFrames": frames,
-                        "title": item["title"] ?? "", "artist": item["artist"] ?? "", "entryId": item["entryId"] ?? "",
-                        "trackId": item["trackId"] ?? "", "gainDb": 0.0]
+                    let index = at
+                    func describe(_ frames: Int) -> [String: Any] {
+                        var track: [String: Any] = ["file": fileKey, "totalFrames": frames,
+                            "title": entry["title"] ?? "", "artist": entry["artist"] ?? "", "entryId": entry["entryId"] ?? "",
+                            "trackId": entry["trackId"] ?? "", "gainDb": 0.0]
+                        if let artwork = entry["artwork"] { track["artwork"] = artwork }
+                        else if let text = entry["coverUrl"] as? String, let url = URL(string: text) {
+                            track["coverUrl"] = text
+                            if let host = url.host, hosts.contains(host) { track["artworkHTTPHost"] = host }
+                        }
+                        return track
+                    }
+                    let (frames, owned) = try await Self.produce(source, loader: loader, folder: folder, downloaded: downloaded, pcm: pcm,
+                        ticket: item, early: { frames in
+                            var track = describe(frames); track["growing"] = true
+                            track["estimatedFrames"] = NativeMixTimeline.estimatedFrames(entry, decoded: frames)
+                            return await early(index, track)
+                        }, grow: { frames, final in grow(fileKey, frames, final) })
+                    // A song the host already plays is committed even if this job was replaced meanwhile.
+                    committed = owned
+                    if !owned { guard !ticket.cancelled else { throw NativeMediaHTTP.Failure.cancelled } }
+                    var next = entry
+                    next["id"] = entry["trackId"]; next["duration"] = Double(frames) / 48000
+                    var track = describe(frames)
                     if let reserve = NativeMixTimeline.reserve(before: before, next: next, frames: frames, settings: settings) {
                         track.merge(reserve) { _, new in new }
                     }
-                    if let artwork = item["artwork"] { track["artwork"] = artwork }
-                    else if let text = item["coverUrl"] as? String, let url = URL(string: text) {
-                        track["coverUrl"] = text
-                        if let host = url.host, hosts.contains(host) { track["artworkHTTPHost"] = host }
-                    }
-                    guard !ticket.cancelled else { throw NativeMediaHTTP.Failure.cancelled }
-                    committed = await accept(at, track)
+                    if !owned { committed = await accept(at, track) }
                     guard committed else {
                         if !ticket.cancelled { state("failed", ready: produced, remaining: batch.count - cursor, reason: "commit"); event("failed", "commit") }
                         break
@@ -253,6 +305,8 @@ final class NativeMixAnalysis: @unchecked Sendable {
     func enqueue(folder: URL, before: [String: Any], previousPCM: [String: Any], next: [String: Any], pcm: [String: Any],
                  index: Int, script: String, settings: [String: Any],
                  upgrade: @escaping @Sendable (Int, [String: Any]) -> Void, event: @escaping @Sendable (String, String) -> Void) {
+        // MIR hashes and reads the whole file: never a song that is still decoding.
+        guard previousPCM["growing"] as? Bool != true, pcm["growing"] as? Bool != true else { return }
         do {
             let request = try Request(a: Source(folder: folder, value: before, pcm: previousPCM),
                 b: Source(folder: folder, value: next, pcm: pcm), index: index, script: script, settings: settings,

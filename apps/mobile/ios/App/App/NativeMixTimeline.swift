@@ -95,9 +95,32 @@ enum NativeMixTimeline {
         return nil
     }
 
+    /// A growing song shows its catalog estimate until the decoder reports the final length.
     static func duration(_ track: [String: Any], sampleRate: Double) -> Double {
-        guard let frames = (track["totalFrames"] as? NSNumber)?.doubleValue,
+        guard var frames = (track["totalFrames"] as? NSNumber)?.doubleValue,
               frames.isFinite, frames > 0, sampleRate.isFinite, sampleRate > 0 else { return 0 }
+        if track["growing"] as? Bool == true, let estimate = (track["estimatedFrames"] as? NSNumber)?.doubleValue, estimate.isFinite {
+            frames = max(frames, estimate)
+        }
         return frames / sampleRate
+    }
+
+    /// Seeks stay inside the decoded PCM; a growing song cannot jump past it.
+    static func seekLimit(_ track: [String: Any], sampleRate: Double) -> Double {
+        guard track["growing"] as? Bool == true else { return max(0, duration(track, sampleRate: sampleRate) - 0.001) }
+        return max(0, ((track["totalFrames"] as? NSNumber)?.doubleValue ?? 0) / sampleRate - 1)
+    }
+
+    /// Progressive start: a remote song the player is waiting for starts after 10 s of decoded PCM
+    /// instead of after its whole download. Switch off here if devices show problems.
+    static let progressiveStart = true
+    static let progressiveStartFrames = 10 * 48000
+    static func progressive(_ source: [String: Any]?) -> Bool {
+        progressiveStart && !["local", "upload"].contains(source?["kind"] as? String ?? "local")
+    }
+    /// Frames a growing song is budgeted and displayed with: the catalog duration, at least what is decoded.
+    static func estimatedFrames(_ item: [String: Any], decoded: Int) -> Int {
+        guard let seconds = (item["duration"] as? NSNumber)?.doubleValue, seconds.isFinite, seconds > 0, seconds < 86400 else { return decoded }
+        return max(decoded, Int((seconds * 48000).rounded()))
     }
 }

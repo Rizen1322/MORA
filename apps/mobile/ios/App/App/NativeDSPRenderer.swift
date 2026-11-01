@@ -83,6 +83,38 @@ final class FileSource: PcmSource {
     }
 }
 
+/// A song still being decoded. Until its final length is known a read past the decoded
+/// frames fails, so the deck starves and waits instead of reaching the end.
+final class GrowingSource: PcmSource {
+    let url: URL
+    private var data: NSData
+    private var available: Int
+    private var complete = false
+    var totalFrames: Int { complete ? available : Int.max }
+    init(url: URL, frames: Int) throws {
+        self.url = url
+        data = try NSData(contentsOf: url, options: .alwaysMapped)
+        available = min(frames, data.length / 8)
+        guard available > 0 else { throw NativeRenderError.invalid("Short native PCM") }
+    }
+    func grow(_ frames: Int, final: Bool) {
+        // The mapping covers the file as it was; map again once more is decoded.
+        if frames * 8 > data.length, let next = try? NSData(contentsOf: url, options: .alwaysMapped) { data = next }
+        available = max(available, min(frames, data.length / 8))
+        complete = final
+    }
+    func read(_ start: Int, _ len: Int, _ outL: FBuf, _ outR: FBuf, _ offset: Int) -> Bool {
+        if !complete && start + len > available { return false }
+        let samples = data.bytes.assumingMemoryBound(to: Float.self)
+        for i in 0..<len {
+            let p = start + i
+            if p < 0 || p >= available { outL[offset + i] = 0; outR[offset + i] = 0 }
+            else { outL[offset + i] = samples[p * 2]; outR[offset + i] = samples[p * 2 + 1] }
+        }
+        return true
+    }
+}
+
 /// Silent placeholder of an unloaded deck.
 final class EmptySource: PcmSource {
     var totalFrames: Int { 0 }
@@ -1692,14 +1724,14 @@ enum NativeRenderError: Error { case invalid(String) }
 /// Track i plays on deck i % 2 with token "T\(i)"; `current` is the outgoing/main track.
 /// Confined to the host's serial producer queue; never runs on the audio callback.
 final class NativeQueueRenderer {
-    private struct Track { let totalFrames: Int; let gainDb: Double; let file: Int; let transition: ArmedTransition? }
+    private struct Track { let totalFrames: Int; let gainDb: Double; let file: Int; let transition: ArmedTransition?; var growing = false }
     private let folder: URL
     private let sampleRate: Double
     private let core: MixerCore
     private var tracks: [Track]
     private var current: Int
     private var advance = false, promote = false, endedLast = false, done = false
-    private var tail = -1
+    private var tail = -1, starved = false
     private var events: [[String: Any]] = []
     private let left = FBuf(8192, 0), right = FBuf(8192, 0) // one host buffer
     var trackCount: Int { tracks.count }
@@ -1725,7 +1757,8 @@ final class NativeQueueRenderer {
             throw NativeRenderError.invalid("Invalid native track")
         }
         return Track(totalFrames: frames, gainDb: gain, file: raw["file"] as? Int ?? i,
-                     transition: (raw["transition"] as? [String: Any]).flatMap { ArmedTransition($0) })
+                     transition: (raw["transition"] as? [String: Any]).flatMap { ArmedTransition($0) },
+                     growing: raw["growing"] as? Bool == true)
     }
     /// Tone, speed/pitch and volume from a config or a later settings change.
     func apply(_ settings: [String: Any]) {
@@ -1746,10 +1779,19 @@ final class NativeQueueRenderer {
         }
     }
     private func loadTrack(_ i: Int, _ cue: Double) throws {
-        let t = tracks[i]
-        let source = try FileSource(url: folder.appendingPathComponent("\(t.file).f32le"))
+        let t = tracks[i], url = folder.appendingPathComponent("\(t.file).f32le")
+        if t.growing { core.load(i % 2, "T\(i)", try GrowingSource(url: url, frames: t.totalFrames), t.gainDb, cue); return }
+        let source = try FileSource(url: url)
         guard source.totalFrames == t.totalFrames else { throw NativeRenderError.invalid("Short native PCM") }
         core.load(i % 2, "T\(i)", source, t.gainDb, cue)
+    }
+    /// More PCM of a growing file was decoded; final also fixes its length, so the song can end.
+    func grow(file: Int, frames: Int, final: Bool) {
+        for i in tracks.indices where tracks[i].file == file && tracks[i].growing {
+            tracks[i] = Track(totalFrames: frames, gainDb: tracks[i].gainDb, file: file, transition: tracks[i].transition, growing: !final)
+        }
+        let url = folder.appendingPathComponent("\(file).f32le")
+        for deck in core.decks { if let source = deck.store.inner as? GrowingSource, source.url == url { source.grow(frames, final: final) } }
     }
     /// Loads the track after `current` on the free deck and arms its transition when still ahead.
     private func loadNext() throws {
@@ -1811,6 +1853,10 @@ final class NativeQueueRenderer {
             if promote { promote = false; current += 1; try loadNext() }
             mark(length)
             core.process(block, blockR, 128)
+            if core.decks[core.main].starved != starved {
+                starved.toggle()
+                if starved { events.append(["type": "starved", "reason": "decoding"]) }
+            }
             for i in 0..<128 {
                 guard block[i].isFinite && blockR[i].isFinite else { throw NativeRenderError.invalid("Nonfinite native output") }
                 left[length + i] = block[i]; right[length + i] = blockR[i]
