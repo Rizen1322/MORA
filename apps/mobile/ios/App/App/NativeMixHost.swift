@@ -469,7 +469,8 @@ final class NativeMixHost {
                             guard let self, self.preparation === job else { return }
                             if kind == "finished" && !job.hasRemaining {
                                 self.nextWhenPrepared = false
-                                if self.ended { self.continueWhenPrepared = false }
+                                // Nothing more will arrive: release the output held for it.
+                                if self.ended { self.continueWhenPrepared = false; self.engine?.pause() }
                             }
                             if ["ready", "failed", "finished"].contains(kind) { self.publish("preparation") }
                             else { self.save() }
@@ -632,7 +633,9 @@ final class NativeMixHost {
                 // The page appended a track after the renderer finished: continue without a blend.
                 if tracks.indices.contains(index + 1) { do { try select(index: index + 1, position: 0, playing: true) } catch { fail() }; return }
                 continueWhenPrepared = preparation?.hasRemaining == true
-                wantsPlaying = false; ended = true; player?.pause(); engine?.pause(); publish("ended"); return
+                wantsPlaying = false; ended = true; player?.pause()
+                if continueWhenPrepared { holdOutput() } else { engine?.pause() }
+                publish("ended"); return
             }
         }
         // Between ticks state() refreshes the snapshot on demand.
@@ -755,6 +758,7 @@ final class NativeMixHost {
                             if self.tracks.indices.contains(self.index + 1) { try self.select(index: self.index + 1, position: 0, playing: true) }
                             else if self.preparation?.hasRemaining == true {
                                 self.continueWhenPrepared = true; self.wantsPlaying = false
+                                try self.engine?.start(); self.holdOutput()
                             } else { try self.select(index: self.index, position: 0, playing: true) }
                         }
                         else if !wasPlaying { try self.select(index: self.index, position: self.position, playing: true) }
@@ -881,6 +885,17 @@ final class NativeMixHost {
             guard let self, self.refillTask == task else { return }; self.endRefillLease()
         }
     }
+    /// A track ended before its successor finished downloading. A paused engine lets iOS suspend
+    /// the locked app, and the download freezes with it until the user opens the app again.
+    /// The running engine (silent: nothing is scheduled) keeps the app alive for a bounded wait.
+    private func holdOutput() {
+        let generation = epoch
+        work.asyncAfter(deadline: .now() + Self.holdSeconds) { [weak self] in
+            guard let self, self.epoch == generation, self.ended, self.continueWhenPrepared else { return }
+            self.engine?.pause(); MoraPlaybackJournal.record("native.mix.holdExpired"); self.publish("ended")
+        }
+    }
+    static let holdSeconds: Double = 240
     private func endRefillLease() {
         guard refillTask != .invalid else { return }
         UIApplication.shared.endBackgroundTask(refillTask); refillTask = .invalid
