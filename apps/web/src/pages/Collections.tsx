@@ -8,6 +8,7 @@ import { ConfirmModal, Cover, PromptModal } from '../components/common.tsx';
 import { TrackList } from '../components/TrackList.tsx';
 import { CollectionHeader } from './Library.tsx';
 import { PlaylistMix } from '../components/PlaylistMix.tsx';
+import { TransitionEditor } from '../components/TransitionEditor.tsx';
 import { LikeAllTracks } from '../components/LikeAll.tsx';
 
 export function PlaylistPage() {
@@ -23,6 +24,7 @@ export function PlaylistPage() {
   const [drag, setDrag] = useState<number | null>(null);
   const [query, setQuery] = useState('');
   const [mix, setMix] = useState(false);
+  const [transitionEntry, setTransitionEntry] = useState<number | null>(null);
   const loadRevision = useRef(0);
 
   const load = useCallback(async () => {
@@ -49,10 +51,11 @@ export function PlaylistPage() {
   if (!pl || pl.id !== id) return <div className="main-inner collection-skeleton" role="status" aria-label="Загружаем плейлист"><i /><i /></div>;
   const tracks = rows.map((r) => r.t);
   const play = (i: number, shuffle = false) => {
-    const selected = reorder ? tracks : visibleRows.map(r => r.t);
+    const selectedRows = reorder ? rows : visibleRows;
+    const selected = selectedRows.map(r => r.t);
     if (!selected.length) return;
     if (shuffle !== controller.state.shuffle) controller.toggleShuffle();
-    void controller.playTracks(selected.map((t) => t.id), i, { type: 'playlist', id: pl.id, label: pl.name });
+    void controller.playTracks(selected.map((t) => t.id), i, { type: 'playlist', id: pl.id, label: pl.name }, selectedRows.map(r => r.e.entryId));
   };
   const saveOrder = async (entryIds: number[]) => {
     setPl({ ...pl, entries: entryIds.map((eid) => pl.entries.find((x) => x.entryId === eid)!) });
@@ -86,6 +89,7 @@ export function PlaylistPage() {
         </button>
       </CollectionHeader>
       {mix && <PlaylistMix name={pl.name} rows={mixRows} onClose={() => setMix(false)} />}
+      {transitionEntry !== null && (() => { const at = rows.findIndex(r => r.e.entryId === transitionEntry); const a = rows[at], b = rows[at + 1]; return a && b ? <TransitionEditor key={`${id}:${a.e.entryId}:${b.e.entryId}`} from={a.t} to={b.t} edge={{ playlistId: id, fromItemId: a.e.entryId, toItemId: b.e.entryId }} onClose={() => setTransitionEntry(null)} /> : null; })()}
       {!tracks.length && <div className="studio-empty"><h2>У каждой истории есть первый трек</h2><p>Добавьте музыку через меню «⋯» у трека.</p><a className="btn btn-secondary" href="#/library">Выбрать из медиатеки <ArrowUpRight size={16} /></a></div>}
       {tracks.length > 0 && !reorder && <div className="collection-search"><label className="search"><MagnifyingGlass size={18} /><span className="sr-only">Поиск в плейлисте</span><input type="search" placeholder="Найти в плейлисте" value={query} onChange={e => setQuery(e.target.value)} /></label><span className="caption dim">{tracksWord(visibleRows.length)}</span></div>}
       {reorder ? (
@@ -130,6 +134,8 @@ export function PlaylistPage() {
           rowKey={(_, i) => String(visibleRows[i].e.entryId)}
           onPlay={(i) => play(i)}
           extraMenu={(_t, i) => (
+            <>
+            {import.meta.env.VITE_TRANSITION_EDITOR !== '0' && rows.findIndex(r => r.e.entryId === visibleRows[i].e.entryId) < rows.length - 1 && <button role="menuitem" onClick={() => setTransitionEntry(visibleRows[i].e.entryId)}><PencilSimple size={18} /> Редактировать переход к следующему</button>}
             <button
               role="menuitem"
               onClick={async () => {
@@ -141,6 +147,7 @@ export function PlaylistPage() {
             >
               <X size={18} /> Убрать из плейлиста
             </button>
+            </>
           )}
         />
       )}

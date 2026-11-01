@@ -11,8 +11,10 @@ import { withVoiceAnswer } from './answer.ts';
 import { withHarmonicHandoff } from './harmonic.ts';
 import { withTapeStop } from './tape-stop.ts';
 import { planEchoOut } from './unlocked.ts';
+import { humanTransitionScenarios } from './human-scenarios.ts';
 import { ratingBias, type RatingStats } from './feedback.ts';
-import { bodyDensity, fullMixCost, fullMixPair, localClashFraction, pickupLost, voiceUnknown, withBassShift, type FullMixCost } from './fullmix.ts';
+import { bodyDensity, fullMixCost, fullMixPair, hasMaterialMixRegression, localClashFraction, pickupLost, voiceUnknown, withBassShift, type FullMixCost } from './fullmix.ts';
+import { rhythmOverlap } from './rhythm-overlap.ts';
 import {
   PLANNER_VERSION,
   type AutoMixSettings,
@@ -226,8 +228,8 @@ export function planTransition(a: PlannerTrack, b: PlannerTrack, settings: AutoM
   return drain(rankPlans(a,b,settings,requestedAt,feedback))[0];
 }
 
-/** P10 finalists for a render check: the selected plan first, up to two ranked full-mix alternatives
- * and the selected plan's bass exchange one beat earlier/later (P6). One plan unless the pair is
+/** P10 finalists for a render check: the selected plan first, two ranked full-mix alternatives,
+ * the original baseline control and bass exchange one beat earlier/later (P6), at most six plans. One plan unless the pair is
  * planned as a full mix (a voice unknown). */
 export function planFinalists(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings, feedback?: RatingStats | null): TransitionPlan[] {
   return drain(planFinalistsSteps(a,b,settings,feedback));
@@ -240,13 +242,39 @@ export function* planFinalistsSteps(a: PlannerTrack, b: PlannerTrack, settings: 
   const beat=(b.analysis?.beat?.period??0.5)/pointValue(top.tempoB,top.swapAt);
   const shifted=top.method==='beatmatch_blend'||top.method==='crossfade'
     ?[-1,1].map(k=>withBassShift(top,k*beat)).filter((q):q is TransitionPlan=>!!q):[];
-  return [top,...ranked.slice(1,3),...shifted];
+  const fb=feedback&&(Object.keys(feedback.features).length||Object.keys(feedback.reasons??{}).length)?feedback:undefined;
+  const fullMix=top.debug.fullMix as {this?:string;selected?:string;candidates?:{name:string;automaticEligible?:boolean;cost?:Partial<FullMixCost>|null}[]};
+  const rateFeedback=top.debug.ratingFeedback as {candidates?:{name:string;bias:number;features?:Record<string,number>}[]} | undefined;
+  for(const q of shifted){
+    const dt=q.debug.bassShift as number, name=`bass-shift-${r3(dt)}`;
+    const measured=fullMixCost(q,a.analysis!,b.analysis!,sanitizedSettings(settings));
+    const inheritedName=fullMix.this??'baseline';
+    const inherited=fullMix.candidates?.find(c=>c.name===inheritedName);
+    const entry={name,automaticEligible:inherited?.automaticEligible,cost:measured};
+    q.debug={...q.debug,fullMix:{...fullMix,this:name,candidates:[...(fullMix.candidates??[]),entry]}};
+    if(fb){
+      const rating=ratingBias(fb,q,a.analysis,b.analysis);
+      q.debug.ratingFeedback={...rateFeedback,candidates:[...(rateFeedback?.candidates??[]),{name,bias:rating.bias,features:rating.features}]};
+    }
+  }
+  // Keep the original geometry as a rendered control even when a handoff/shorter/neighbor
+  // recipe outranked it on proxies. Otherwise a clean audible baseline can disappear before PCM is checked.
+  const control=ranked.find(p=>(p.debug.fullMix as {this?:string}|undefined)?.this==='baseline');
+  const alternatives=ranked.slice(1,3);
+  if(control&&control!==top&&!alternatives.includes(control))alternatives.push(control);
+  // Audition distinct event-driven strategies, not only two variations of the same long blend.
+  const families = new Set([top, ...alternatives].map(p => String((p.debug.humanScenario as {kind?:string}|undefined)?.kind ?? 'baseline')));
+  for(const plan of ranked){
+    const family=(plan.debug.humanScenario as {kind?:string}|undefined)?.kind;
+    if(family&&!families.has(family)&&alternatives.length<4){alternatives.push(plan);families.add(family);}
+  }
+  return [top,...alternatives,...shifted];
 }
 
 function* rankPlans(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings, requestedAt?: number, feedback?: RatingStats | null): Generator<void, TransitionPlan[]> {
   const p=finishPlan(buildTransition(a,b,settings,requestedAt),a.analysis,b.analysis,settings,requestedAt);
   // no ratings: exactly the previous choice (no bias, no debug entry)
-  const fb=feedback&&Object.keys(feedback.features).length?feedback:undefined;
+  const fb=feedback&&(Object.keys(feedback.features).length||Object.keys(feedback.reasons??{}).length)?feedback:undefined;
   if(requestedAt===undefined&&settings.enabled&&fullMixPair(a.analysis,b.analysis,settings)){yield;return yield* chooseFullMixPlan(p,a,b,settings,fb);}
   return [chooseMusicalPlan(p,a,b,settings,requestedAt,fb)];
 }
@@ -259,7 +287,7 @@ function feedbackFor(fb:RatingStats|undefined,named:{name:string;plan:Transition
   return {bias:(q:TransitionPlan)=>bias.get(q)??0,debug:{policy:'listener-ratings-1',version:fb.version,candidates:rows}};
 }
 
-/** P1: a full mix (a voice unknown) chooses among the baseline and at most three alternatives that
+/** A full mix (a voice unknown) compares a dedicated lead handoff and alternatives that
  * reuse the existing techniques: a lock half as long, a neighbouring exit a phrase away, an unlocked blend (shaky pulse only),
  * B from its real start. The stemless cost (fullmix.ts) judges where A really leaves, B's pickup, the
  * one-second energy path, two bass lines, possible lead overlap and local key clashes. Unknown voices
@@ -269,13 +297,17 @@ function* chooseFullMixPlan(p:TransitionPlan,a:PlannerTrack,b:PlannerTrack,setti
   if(!A||!B||p.debug.processingAllowed===false||!['crossfade','beatmatch_blend'].includes(p.method)||p.loopA)return [p];
   const build=(alt:AutoMixSettings,fixed?:Ctx['fixed'])=>finishPlan(buildTransition(a,b,alt,undefined,undefined,fixed),A,B,alt);
   const entries:[string,TransitionPlan][]=[['baseline',p]];
+  // Unknown voices cannot be "removed" by killing a broad EQ band. Different source events and
+  // whole-deck handoffs compete with the baseline; musical correctness still requires listening.
+  for(const candidate of humanTransitionScenarios(p,A,B,s)){
+    if(!candidate.auditionOnly){entries.push([candidate.name,candidate.plan]);yield;}
+  }
   if(p.method==='beatmatch_blend'&&p.beatAlign&&!p.beatAlign.regions&&A.beat){
     const bars=p.beatAlign.overlapBeats/4,barA=A.beat.period*4;
-    // half the shared section at most (16 -> 8 bars), and only to fix a measured fault of the long one:
-    // its own search already traded A's skipped ending against length, and short blends were rated "резко"
+    // Unknown voices need a shorter competitor even when the beat grid and levels look stable.
     const baseCost=fullMixCost(p,A,B,s);
     const fault=!!baseCost&&(baseCost.unsupported>0||baseCost.holeDb>6||baseCost.jumpDb>2||baseCost.doubleBass/p.duration>0.2);
-    if(bars>4&&(fault||(p.debug.fullMixRules as {looseGrid?:boolean}|undefined)?.looseGrid)){
+    if(bars>4&&(voiceUnknown(A,s)||voiceUnknown(B,s)||fault||(p.debug.fullMixRules as {looseGrid?:boolean}|undefined)?.looseGrid)){
       const half=Math.max(4,bars/2),q=build(s,{exit:p.aExit,entry:p.bEntry,bars:half});yield;
       if(q.method==='beatmatch_blend'&&q.beatAlign?.overlapBeats===half*4)entries.push(['shorter',q]);
     }
@@ -296,22 +328,51 @@ function* chooseFullMixPlan(p:TransitionPlan,a:PlannerTrack,b:PlannerTrack,setti
     // keeping B's opening must not cost a working lock (Voyager -> Technologic lost its 16-bar glide)
     if(['crossfade','beatmatch_blend'].includes(q.method)&&q.bEntry<p.bEntry-1&&(p.method!=='beatmatch_blend'||q.method==='beatmatch_blend'))entries.push(['preserve-start',q]);
   }
-  const rated=entries.slice(0,4).map(([name,plan])=>({name,plan,cost:fullMixCost(plan,A,B,s)}));
+  const rated=entries.slice(0,9).map(([name,plan])=>({name,plan,cost:fullMixCost(plan,A,B,s)}));
   const base=rated[0];
   // listener ratings shift the soft cost only; they never lift a candidate with more measured faults than the baseline
   const ratings=feedbackFor(fb,rated,A,B),adj=(c:{plan:TransitionPlan;cost:FullMixCost})=>c.cost.total-ratings.bias(c.plan);
   const safe=(c:{cost:FullMixCost})=>!ratings.debug||!base.cost||c.cost.total<base.cost.total-0.1
     ||c.cost.unsupported<=base.cost.unsupported&&c.cost.holeDb<=base.cost.holeDb+0.5&&c.cost.jumpDb<=base.cost.jumpDb+0.5;
+  // Exposure is a conservative unknown-lead proxy, not evidence that another
+  // musical geometry sounds better. Retain a functioning preparation unless
+  // measured level/support or preserved material improves substantially.
+  const automatic=(c:typeof rated[number])=>{
+    if(c===base||!base.cost||!c.cost)return c===base;
+    const x=base.cost,y=c.cost,q=c.plan;
+    if(hasMaterialMixRegression(x,y))return false;
+    const loose=(p.debug.fullMixRules as {looseGrid?:boolean}|undefined)?.looseGrid===true;
+    if(loose&&c.name==='unlocked')return true;
+    if(p.debug.drumPattern&&!q.debug.drumPattern)return false;
+    if(p.beatAlign&&!q.beatAlign)return false;
+    if(p.beatAlign?.phraseAligned&&!q.beatAlign?.phraseAligned)return false;
+    if(q.bEntry>p.bEntry+0.1)return false;
+    // A prepared washout avoids overlapping incompatible grooves; a full-deck
+    // cut cannot inherit that evidence merely by being shorter. Likewise retain
+    // the level compensation unless its replacement improves the measured dip.
+    if(p.debug.washout&&!q.debug.washout)return false;
+    if(p.debug.loudnessHold&&!q.debug.loudnessHold&&!(x.holeDb>3&&y.holeDb<x.holeDb-1.5))return false;
+    const substantial=(x.holeDb>3&&y.holeDb<x.holeDb-1.5)
+      ||(x.unsupported>=1&&y.unsupported<=x.unsupported-0.75)
+      ||(x.jumpDb>2&&y.jumpDb<x.jumpDb-1)
+      ||(x.cutA>0.5&&y.cutA<x.cutA-0.3)
+      ||(x.skippedUnknownB>2&&y.skippedUnknownB<x.skippedUnknownB-2);
+    const noNewFault=y.holeDb<=x.holeDb+0.5&&y.jumpDb<=x.jumpDb+0.5&&y.unsupported<=x.unsupported+0.25
+      &&y.cutA<=x.cutA+0.1&&y.pickup<=x.pickup&&y.openingSuppression<=x.openingSuppression+0.5;
+    return substantial&&noNewFault;
+  };
   const valid=rated.filter((c):c is typeof c&{cost:FullMixCost}=>!!c.cost).sort((x,y)=>adj(x)-adj(y));
-  const best=valid.find(c=>c===base||safe(c));
+  const best=valid.find(c=>automatic(c)&&safe(c));
   const winner=base.cost&&best&&best.name!=='baseline'&&adj(best)<adj(base as typeof best)-0.1?best:base;
   const reason=!base.cost?'полосы не измерены: исходный план':winner===base?'альтернативы полного микса не дали заметного улучшения':
-    winner.name==='shorter'?'полный микс: короче общий участок, A уходит по окончании своего раздела'
+    winner.plan.debug.humanScenario?winner.plan.reasons.at(-1)??'переход привязан к измеренной структуре'
+    :winner.name==='shorter'?'полный микс: короче общий участок, A уходит по окончании своего раздела'
     :winner.name==='neighbor-exit'?'полный микс: выход на соседней фразе, где текущий трек слышно заканчивает раздел'
     :winner.name==='unlocked'?'полный микс: без стыковки ритмов, ровнее путь громкости и баса'
     :'полный микс: следующий трек входит со своего начала, без срезанного затакта и вступления';
   const debug={policy:'full-mix-1',selected:winner.name,reason,margin:0.1,
-    candidates:rated.map(c=>({name:c.name,method:c.plan.method,variant:c.plan.debug.variant,duration:c.plan.duration,bEntry:c.plan.bEntry,cost:c.cost}))};
+    candidates:rated.map(c=>({name:c.name,method:c.plan.method,variant:c.plan.debug.variant,duration:c.plan.duration,bEntry:c.plan.bEntry,automaticEligible:automatic(c),cost:c.cost,
+      rhythmOverlap:rhythmOverlap(c.plan,A,B)}))};
   const label=(c:typeof rated[number])=>({...c.plan,id:c===base?c.plan.id:`${c.plan.id}_${c.name}`,
     reasons:c===winner&&c!==base?[...c.plan.reasons,reason]:c.plan.reasons,debug:{...c.plan.debug,fullMix:{...debug,selected:c===winner?winner.name:debug.selected,this:c.name},
       ...(ratings.debug?{ratingFeedback:{...ratings.debug,selected:winner.name,margin:0.1}}:{})}});
@@ -969,7 +1030,8 @@ function cutScore(A: TrackAnalysis, endOfBlend: number): number {
   const cut = A.audibleEnd - endOfBlend;
   if (cut <= 2) return 1;
   const dens = curveMean(A.curves.midDensity, A.curves.rate, endOfBlend, A.audibleEnd);
-  return dens < 0.18 ? clamp(1 - cut / 45) : clamp(1 - cut / 14);
+  const fraction = cut / (dens < 0.18 ? 45 : 14);
+  return 1 - fraction - 0.25 * Math.max(0, fraction - 1) ** 1.3;
 }
 
 /** Skipping quiet/sparse lead-in is cheaper than dropping an already full song. */
@@ -1176,7 +1238,7 @@ function pickHandoffEntry(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, aStart: 
  * beats in [from, to). Null without accents or with fewer than 3 beats per position. */
 export function barPattern(g: Pick<BeatGrid, 'beats' | 'downbeats' | 'accents'>, from: number, to: number): number[][] | null {
   const acc = g.accents;
-  if (!acc || acc.kick.length !== g.beats.length) return null;
+  if (!acc || acc.kick.length !== g.beats.length || acc.snare.length !== g.beats.length) return null;
   const down = new Set(g.downbeats.map((t) => Math.round(t * 1000)));
   const sum = [[0, 0, 0, 0], [0, 0, 0, 0]], n = [0, 0, 0, 0];
   let pos = -1;
@@ -1185,7 +1247,7 @@ export function barPattern(g: Pick<BeatGrid, 'beats' | 'downbeats' | 'accents'>,
     if (pos < 0 || t < from || t >= to) return;
     sum[0][pos] += acc.kick[i]; sum[1][pos] += acc.snare[i]; n[pos]++;
   });
-  return Math.min(...n) < 3 ? null : sum.map((f) => f.map((v, i) => v / n[i]));
+  return Math.min(...n) < 3 || sum.some(f => f.some(v => !Number.isFinite(v))) ? null : sum.map((f) => f.map((v, i) => v / n[i]));
 }
 
 /** Kick on kick, snare on snare: Pearson match of A's bar pattern with B's pattern rotated by k
@@ -1206,6 +1268,16 @@ export function drumAlignment(a: number[][], b: number[][]): number[] | null {
 }
 /** A rotation must beat the analysed bar phase by this much (and match on its own) to move B. */
 const DRUM_SHIFT_MARGIN = 0.5, DRUM_SHIFT_MIN = 0.3;
+
+/** Recheck the content actually consumed after moving the cue. Rotating the old
+ * average is only a proposal: a fill or section change can enter the new window. */
+export function verifiedDrumShift(a: number[][], b: Pick<BeatGrid, 'beats' | 'downbeats' | 'accents'>,
+  entry: number, span: number, rotation: number, originalMatch: number): number | null {
+  const pattern = barPattern(b, entry, entry + span);
+  const match = pattern && drumAlignment(a, pattern)?.[rotation];
+  return match !== null && match !== undefined && Number.isFinite(match) && Number.isFinite(originalMatch)
+    && match >= DRUM_SHIFT_MIN && match - originalMatch >= DRUM_SHIFT_MARGIN ? match : null;
+}
 
 function planBeatmatch(
   ctx: Ctx,
@@ -1346,13 +1418,22 @@ function planBeatmatch(
           (B.audibleEnd - B.audibleStart) * 0.45));
         // Both directions give the same bar alignment. Prefer the one with less of B's measured
         // singing inside the overlap (later voice, A's phrase can finish), then the smaller move.
-        const time = [{ t: best.n.time + k * pB, move: k }, { t: best.n.time - (4 - k) * pB, move: 4 - k }]
+        const eligible = [{ t: best.n.time + k * pB, move: k }, { t: best.n.time - (4 - k) * pB, move: 4 - k }]
           .filter(({ t }) => t >= B.audibleStart && t <= entryLimit && !(ctx.requestedAt === undefined && s.stemMixing !== false && voiceTooSoon(B, t, !A.vocalActivity))
-            && t + nativeB <= B.audibleEnd && (!ctx.regionB || t >= ctx.regionB.start - 0.001 && t + nativeB <= ctx.regionB.end + 0.001))
-          .map((o) => ({ ...o, cost: (voices ? vocalMean(B, o.t, o.t + nativeB) : 0) + 0.01 * o.move }))
-          .sort((x, y) => x.cost - y.cost)[0]?.t;
-        if (time === undefined) drum.blocked = preserve ? 'preserve-opening' : 'no-room';
-        else { best.n = { ...best.n, time: r3(time), tags: [...best.n.tags, `drum-shift:${k}`] }; drum.k = k; }
+            && t + nativeB <= B.audibleEnd - Math.min(12, (B.audibleEnd - B.audibleStart) * 0.2)
+            && (!ctx.regionB || t >= ctx.regionB.start - 0.001 && t + nativeB <= ctx.regionB.end + 0.001));
+        const selected = eligible.map(o => ({ ...o, actualMatch: verifiedDrumShift(pa!, B.beat!, r3(o.t), nativeB, k, match[0]),
+          cost: (voices ? vocalMean(B, o.t, o.t + nativeB) : 0) + 0.01 * o.move }))
+          .filter(o => o.actualMatch !== null).sort((x, y) => x.cost - y.cost)[0];
+        if (!selected) drum.blocked = preserve ? 'preserve-opening' : eligible.length ? 'changed-window-pattern' : 'no-room';
+        else {
+          best.n = { ...best.n, time: r3(selected.t), tags: [...best.n.tags, `drum-shift:${k}`] };
+          best.conflict = clamp(curveMean(A.curves.midDensity, A.curves.rate, best.e.time, best.e.time + nativeA)
+            * curveMean(B.curves.midDensity, B.curves.rate, best.n.time, best.n.time + nativeB) * 6);
+          best.localClash = fullMix ? localClashFraction(A, best.e.time, nativeA, B, best.n.time, nativeB) : 0;
+          best.arrival = arrivalFit(B, best.n.time, nativeB / 2, nativeB).time;
+          drum.k = k; drum.actualWindowMatch = r3(selected.actualMatch!);
+        }
       }
       best.drum = drum;
     }

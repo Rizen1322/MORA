@@ -5,6 +5,7 @@ import type { Services } from '../app.ts';
 import { PRIORITY } from '../analysis.ts';
 import { getSettings } from '../automix.ts';
 import { kvGet, kvSet, q } from '../db.ts';
+import { applySavedRecipe, assertRecordingsUnchanged, recipeContext, recordingSnapshot, type RecipeContext } from '../phrase-recipes.ts';
 
 const ALLOWED_RATES = new Set([22050, 32000, 44100, 48000, 88200, 96000]);
 
@@ -171,12 +172,17 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
     return { pcm: { L, R, sampleRate: sr }, start: start / sr };
   };
 
-  app.get<{ Querystring: { from: string; to: string } }>('/api/automix/plan', async (req, reply) => {
+  app.get<{ Querystring: { from: string; to: string } & Partial<RecipeContext> }>('/api/automix/plan', async (req, reply) => {
     try {
+      const context = recipeContext(req.query);
+      const recordings = recordingSnapshot(s, req.query.from, req.query.to);
       const r = await automix.planChecked(lib.mediaId(req.query.from), lib.mediaId(req.query.to), readSpan);
-      return { ...r, plan: relabel(r.plan, req.query.from, req.query.to) };
+      assertRecordingsUnchanged(s, req.query.from, req.query.to, recordings);
+      const base = relabel(r.plan, req.query.from, req.query.to);
+      const plan = applySavedRecipe(s, base, context);
+      return { ...r, cached: plan === base && r.cached, plan };
     } catch (e) {
-      return reply.code(404).send({ error: (e as Error).message });
+      return reply.code((e as Error & { statusCode?: number }).statusCode ?? 404).send({ error: (e as Error).message });
     }
   });
 

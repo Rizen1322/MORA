@@ -51,6 +51,8 @@ export const METHOD_LABEL: Record<string, string> = {
 };
 
 export function methodShort(p: { method: string; beatAlign?: { overlapBeats: number; glide?:boolean; bridge?:unknown }; duration: number; debug?: Record<string, unknown> }): string {
+  const phrase = p.debug?.phraseMix as { preset?: string } | undefined;
+  if (phrase) return `${({ bass_swap: 'Передача баса', drop_in: 'Вход на дроп', tail_to_start: 'Хвост → начало' } as Record<string, string>)[phrase.preset ?? ''] ?? 'Переход по фразам'} · ${p.duration.toFixed(1)} с`;
   // a crossfade is several different moves; name the one actually planned
   const variant = p.method !== 'crossfade' ? undefined : p.debug?.loopBridge ? 'Инструментальная петля' : p.debug?.washout ? 'Уход через фильтр' : p.debug?.naturalFade ? 'Переход в затухании' : undefined;
   const echo = p.debug?.voiceAnswer || (p.debug?.stems as { voiceEcho?: unknown } | undefined)?.voiceEcho ? ' · эхо голоса' : '';

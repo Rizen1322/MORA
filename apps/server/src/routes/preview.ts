@@ -1,7 +1,10 @@
-import type { FastifyInstance } from 'fastify';
-import { fallbackWithoutVocalStems, finalistSpans, stepAsync, type PcmSpan, type TransitionPlan } from '@automix/core';
+import type { FastifyInstance, FastifyReply } from 'fastify';
+import { fallbackWithoutVocalStems, finalistSpans, stepAsync, type PcmSpan, type PhraseMixRecipe, type TransitionPlan } from '@automix/core';
 import { renderTransitionSteps, type StereoPcm } from '@automix/core/engine/arm.ts';
 import type { Services } from '../app.ts';
+import { applySavedRecipe, assertRecordingsUnchanged, compileRecipe, recipeContext, recordingSnapshot, type RecipeContext } from '../phrase-recipes.ts';
+import { renderRust } from '../rust-render.ts';
+import { rustCorePath } from '../rust-core.ts';
 
 /** Seconds of the outgoing track before the blend and of the incoming one after it. */
 const PRE = 4, POST = 5;
@@ -45,25 +48,36 @@ export function registerPreviewRoutes(app: FastifyInstance, s: Services): void {
     return { pcm: { L, R, sampleRate: sr }, start: start / sr };
   };
 
-  app.get<{ Querystring: { from: string; to: string; sr?: string } }>('/api/automix/preview', async (req, reply) => {
-    const { from, to } = req.query;
+  type PreviewRequest = { from: string; to: string; sr?: string | number; recipe?: PhraseMixRecipe } & Partial<RecipeContext>;
+  const preview = async (input: PreviewRequest, reply: FastifyReply) => {
+    const { from, to } = input;
     if (typeof from !== 'string' || typeof to !== 'string' || !from || !to) return reply.code(400).send({ error: 'нужны ID двух треков' });
-    const sr = Number(req.query.sr) === 44100 ? 44100 : 48000;
+    const sr = Number(input.sr) === 44100 ? 44100 : 48000;
     try {
+      const context = recipeContext(input);
+      const recordings = recordingSnapshot(s, from, to);
       const planned = await automix.planChecked(lib.mediaId(from), lib.mediaId(to), async () => null);
-      let plan: TransitionPlan = planned.plan;
+      assertRecordingsUnchanged(s, from, to, recordings);
+      const base = { ...planned.plan, fromTrackId: from, toTrackId: to };
+      let plan: TransitionPlan = input.recipe === undefined ? applySavedRecipe(s, base, context) : compileRecipe(s, base, input.recipe);
       if (plan.vocalA || plan.vocalB) plan = fallbackWithoutVocalStems(plan);
       const spans = finalistSpans([plan]);
       const [a, b] = await Promise.all([span(from, spans.a[0] - PRE, spans.a[1], sr), span(to, spans.b[0], spans.b[1] + POST, sr)]);
       if (!a || !b) return reply.code(409).send({ error: 'звук треков ещё не готов' });
       const shifted = { ...plan, aExit: plan.aExit - a.start, bEntry: plan.bEntry - b.start };
-      const r = await stepAsync(renderTransitionSteps(a.pcm as StereoPcm, b.pcm as StereoPcm, shifted, PRE, POST));
+      const r = rustCorePath() ? await renderRust(a.pcm, b.pcm, shifted, PRE, POST) : await stepAsync(renderTransitionSteps(a.pcm as StereoPcm, b.pcm as StereoPcm, shifted, PRE, POST));
+      assertRecordingsUnchanged(s, from, to, recordings);
       return reply.header('Content-Type', 'audio/wav').header('Cache-Control', 'no-store')
         .header('X-Transition-Start', String(Math.max(0, r.transitionStartFrame) / sr)).header('X-Transition-Method', plan.method)
+        .header('X-Transition-Start-Seconds', String(Math.max(0, r.transitionStartFrame) / sr))
+        .header('X-Transition-Plan', plan.id)
+        .header('X-Transition-Duration', String(plan.duration))
         .send(wav(r.L, r.R, sr));
     } catch (e) {
       const err = e as Error & { statusCode?: number };
       return reply.code(err.statusCode ?? 502).send({ error: err.message });
     }
-  });
+  };
+  app.get<{ Querystring: PreviewRequest }>('/api/automix/preview', (req, reply) => preview(req.query, reply));
+  app.post<{ Body: PreviewRequest }>('/api/automix/preview', (req, reply) => preview(req.body ?? {} as PreviewRequest, reply));
 }

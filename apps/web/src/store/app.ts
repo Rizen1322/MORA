@@ -234,6 +234,7 @@ export function connectEvents(): () => void {
         if (e.job.state === 'done') reloadLib();
       }
       else if (e.type === 'playlists') void st.loadPlaylists();
+      else if (e.type === 'transition-recipe' && typeof e.playlistId === 'string') controller.refreshPlaylistTransitions(e.playlistId);
       else if (e.type === 'providers') void st.loadProviders(true);
       else if (e.type === 'analysis') {
         if (e.trackId) {

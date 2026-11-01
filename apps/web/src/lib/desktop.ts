@@ -9,6 +9,11 @@ export interface AppUpdateStatus {
   error: string | null;
 }
 export interface DesktopBridge {
+  audioStart?(device?: string): Promise<{ sampleRate: number; engine: 'rust'; queueFrames: number }>;
+  audioCommand?(command: import('../audio/engine.worklet.ts').EngineCommand | { cmd: 'output'; device: string } | { cmd: 'suspend' | 'resume' }): Promise<void>;
+  audioStop?(): Promise<void>;
+  audioDevices?(): Promise<{ deviceId: string; label: string }[]>;
+  onAudio?(cb: (event: import('../audio/engine.worklet.ts').EngineEvent | { type: 'fatal'; error: string } | { type: 'waveform'; samples: number[] }) => void): () => void;
   appUpdateStatus(): Promise<AppUpdateStatus>;
   appUpdateCheck(): Promise<AppUpdateStatus>;
   appUpdateDownload(): Promise<AppUpdateStatus>;

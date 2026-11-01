@@ -3,6 +3,7 @@ import { FloppyDisk, Trash, X } from '@phosphor-icons/react';
 import { BUILTIN_PRESETS, EQ_BANDS, EQ_MAX_DB, FLAT_TONE, eqPeakDb, type ToneSettings } from '@automix/core';
 import { controller, useApp } from '../store/app.ts';
 import { PromptModal, Switch } from './common.tsx';
+import { desktop } from '../lib/desktop.ts';
 
 const bandLabel = (f: number) => (f >= 1000 ? `${f / 1000}k` : String(f));
 const fmtDb = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1).replace('.', ',')}`;
@@ -96,17 +97,17 @@ export function SoundPanel() {
   );
 }
 
-/** Output device via AudioContext.setSinkId where the platform offers it; otherwise the system default. */
+/** Desktop device IDs belong to WASAPI; browser IDs belong to Web Audio. */
 function OutputDevice() {
-  const [devices, setDevices] = useState<MediaDeviceInfo[] | null>(null);
+  const [devices, setDevices] = useState<{ deviceId: string; label: string }[] | null>(null);
   const [current, setCurrent] = useState(controller.outputDevice);
-  const supported = typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype && !!navigator.mediaDevices?.enumerateDevices;
+  const supported = !!desktop?.audioDevices || (typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype && !!navigator.mediaDevices?.enumerateDevices);
   useEffect(() => {
     if (!supported) return;
-    const load = () => void navigator.mediaDevices.enumerateDevices().then((d) => setDevices(d.filter((x) => x.kind === 'audiooutput')));
+    const load = () => void (desktop?.audioDevices ? desktop.audioDevices() : navigator.mediaDevices.enumerateDevices().then(d => d.filter(x => x.kind === 'audiooutput'))).then(setDevices).catch(() => setDevices([]));
     load();
-    navigator.mediaDevices.addEventListener('devicechange', load);
-    return () => navigator.mediaDevices.removeEventListener('devicechange', load);
+    navigator.mediaDevices?.addEventListener('devicechange', load);
+    return () => navigator.mediaDevices?.removeEventListener('devicechange', load);
   }, [supported]);
   const named = useMemo(() => (devices ?? []).filter((d) => d.deviceId && d.deviceId !== 'default' && d.label), [devices]);
   if (!supported) return <div className="sound-row"><span>Устройство вывода</span><span className="small muted">как в Windows</span></div>;

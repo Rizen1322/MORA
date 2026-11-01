@@ -52,6 +52,16 @@ export function sweepPower(v: number, hz: readonly number[]): number {
   }, 0) / hz.length;
 }
 
+/** Full-mix audibility proxy. Killing the middle EQ band does not remove a voice or melody:
+ * its remaining harmonics still occupy the low/high bands. Never interpret EQ=0 as a silent singer. */
+export function leadBandRetention(p: TransitionPlan, deck: Deck, t: number): number {
+  const filter = laneValue(p, deck, 'filter', t);
+  const weighted = 0.1 * laneValue(p, deck, 'low', t) ** 2 * sweepPower(filter, LOW_HZ)
+    + 0.65 * laneValue(p, deck, 'mid', t) ** 2 * sweepPower(filter, MID_HZ)
+    + 0.25 * laneValue(p, deck, 'high', t) ** 2 * sweepPower(filter, HIGH_HZ);
+  return Math.sqrt(Math.max(0, weighted));
+}
+
 /** Linear power a deck contributes at output time t after its fader, band EQ and filter. */
 function deckPower(p: TransitionPlan, an: TrackAnalysis, deck: Deck, t: number): { total: number; low: number; mid: number } | null {
   const delay = deck === 'B' ? p.bDelay ?? 0 : 0, tt = t - delay;
@@ -66,6 +76,27 @@ function deckPower(p: TransitionPlan, an: TrackAnalysis, deck: Deck, t: number):
   const mid = b[1] * laneValue(p, deck, 'mid', tt) ** 2 * g * sweepPower(f, MID_HZ);
   const high = b[2] * laneValue(p, deck, 'high', tt) ** 2 * g * sweepPower(f, HIGH_HZ);
   return { total: low + mid + high, low, mid };
+}
+
+/** Band-power estimate, not an audibility or voice detector. Only counts times
+ * when B's gain and all EQ bands have arrived and B itself has measured energy.
+ * Includes normalization, both source clocks, EQ and filter; ignores echo tails. */
+export function outgoingAfterArrival(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis): { seconds: number; loudSeconds: number; quietBandSeconds: number; totalAudibleSeconds: number; residualSeconds: number } | null {
+  let seconds = 0, loudSeconds = 0, quietBandSeconds = 0;
+  for (let start = 0; start < p.duration; start += 0.5) {
+    const dt = Math.min(0.5, p.duration - start), t = start + dt / 2, tb = t - (p.bDelay ?? 0);
+    if (tb < 0 || ['gain', 'low', 'mid', 'high'].some(l => laneValue(p, 'B', l as AutomationLane['lane'], tb) < 0.95)
+      || Math.abs(laneValue(p, 'B', 'filter', tb)) > 0.01) continue;
+    const a = deckPower(p, A, 'A', t), b = deckPower(p, B, 'B', t);
+    if (!a || !b) return null;
+    if (b.total < 10 ** ((B.bodyRmsDb + p.gainB - 15) / 10)) continue;
+    seconds += dt;
+    // Roughly -24 to -6 dB under B: a quieter but potentially noticeable layer.
+    if (a.total >= b.total * 10 ** (-6 / 10)) loudSeconds += dt;
+    else if (a.total >= b.total * 10 ** (-24 / 10)) quietBandSeconds += dt;
+  }
+  return { seconds: r3(seconds), loudSeconds: r3(loudSeconds), quietBandSeconds: r3(quietBandSeconds),
+    totalAudibleSeconds: r3(loudSeconds + quietBandSeconds), residualSeconds: r3(quietBandSeconds) };
 }
 
 /** Output time and A source position where A has really left: its audible power stays 10 dB
@@ -151,26 +182,37 @@ const density = (an: TrackAnalysis, src: number) => {
   return i >= 0 && i < c.midDensity.length ? c.midDensity[i] : 0;
 };
 
-/** Seconds where both decks are audible at full mid level in passages at least as dense as their own
- * body, while at least one voice is unknown: two possible lead parts at once (rule 1). Density is
- * relative to each song: most songs sit near 0.24 overall. A heuristic, not a voice detector. */
-export function leadRiskSeconds(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis): number {
-  let s = 0;
+/** Continuous possible-lead exposure, including attenuated but still audible mids.
+ * Density is a relative structural proxy, never evidence that a voice is absent. */
+export function leadExposure(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis): { seconds: number; run: number } {
+  let seconds = 0, run = 0, longest = 0;
   for (let t = 0.25; t < p.duration; t += 0.5) {
     const tb = t - (p.bDelay ?? 0);
-    if (tb < 0) continue;
-    const ma = laneValue(p, 'A', 'gain', t) * laneValue(p, 'A', 'mid', t), mb = laneValue(p, 'B', 'gain', tb) * laneValue(p, 'B', 'mid', tb);
-    if (ma < 0.5 || mb < 0.5) continue;
-    if (density(A, p.aExit + integrateTempo(p.tempoA, t)) >= bodyDensity(A) && density(B, p.bEntry + integrateTempo(p.tempoB, tb)) >= bodyDensity(B)) s += 0.5;
+    const audible = (an: TrackAnalysis, deck: Deck, tt: number) => {
+      if (tt < 0) return 0;
+      const src = (deck === 'A' ? p.aExit : p.bEntry) + integrateTempo(deck === 'A' ? p.tempoA : p.tempoB, tt);
+      if (src < an.audibleStart || src >= an.audibleEnd) return 0;
+      const audible = laneValue(p, deck, 'gain', tt) * leadBandRetention(p, deck, tt);
+      return clamp(audible) * clamp(density(an, src) / Math.max(0.05, bodyDensity(an)));
+    };
+    const overlap = Math.min(audible(A, 'A', t), audible(B, 'B', tb));
+    const dt = Math.min(0.5, p.duration - (t - 0.25));
+    seconds += overlap * dt;
+    run = overlap > 0.1 ? run + overlap * dt : 0;
+    longest = Math.max(longest, run);
   }
-  return s;
+  return { seconds: r3(seconds), run: r3(longest) };
+}
+
+export function leadRiskSeconds(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis): number {
+  return leadExposure(p, A, B).seconds;
 }
 
 export interface FullMixCost {
   total: number;
   /** 1 - structural closure where A really leaves (P2). */
   closureMiss: number;
-  /** Seconds of A's remaining music skipped after it really left, weighted by its density. */
+  /** Progressive cost of A's remaining music skipped after it really left, scaled by density. */
   cutA: number;
   pickup: number;
   holeDb: number;
@@ -180,8 +222,30 @@ export interface FullMixCost {
   jumpDb: number;
   doubleBass: number;
   leadRisk: number;
+  /** Longest continuous weighted exposure to two possible leads, seconds. */
+  leadRun: number;
   tonalClash: number;
   skippedUnknownB: number;
+  /** Weighted seconds of substantial incoming material consumed under a deeply attenuated deck.
+   * This is processing damage to the opening, not an identified number of missing words. */
+  openingSuppression: number;
+  /** Weighted seconds where the dominant deck has its middle band heavily removed. */
+  spectralDamage: number;
+}
+
+/** Compare measured proxies against the already prepared control, never against
+ * a universal absolute limit. Unknown or legacy measurements do not establish
+ * a regression; lead exposure is not evidence of a voice. Half-second sampling
+ * and estimates warrant margins rather than treating tiny changes as facts. */
+export function hasMaterialMixRegression(base: Partial<FullMixCost> | null | undefined, candidate: Partial<FullMixCost> | null | undefined): boolean {
+  if (!base || !candidate) return false;
+  const increased = (field: keyof FullMixCost, margin: number, ratio = 0) => {
+    const x = base[field], y = candidate[field];
+    return typeof x === 'number' && Number.isFinite(x) && typeof y === 'number' && Number.isFinite(y)
+      && y > x + Math.max(margin, x * ratio);
+  };
+  return increased('leadRisk', 1, 0.2) || increased('leadRun', 1, 0.2)
+    || increased('doubleBass', 1) || increased('tonalClash', 1) || increased('spectralDamage', 1);
 }
 
 /** Stemless plan cost on one-second windows. Lower is better; null when curves are not measured. */
@@ -198,7 +262,7 @@ export function fullMixCost(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysi
   const endB = p.bEntry + integrateTempo(p.tempoB, D - (p.bDelay ?? 0));
   const after = power(B, endB, Math.min(B.audibleEnd, endB + 4)) + p.gainB;
   const bodyLowA = power(A, A.audibleStart, A.audibleEnd, A.curves.lowDb), bodyLowB = power(B, B.audibleStart, B.audibleEnd, B.curves.lowDb);
-  let hole = 0, unsupported = 0, jump = 0, doubleBass = 0, prev: number | null = null;
+  let hole = 0, unsupported = 0, jump = 0, doubleBass = 0, openingSuppression = 0, spectralDamage = 0, prev: number | null = null;
   for (let t = 0.25; t < D; t += 0.5) {
     const a = deckPower(p, A, 'A', t), b = deckPower(p, B, 'B', t);
     if (!a || !b) return null;
@@ -209,6 +273,16 @@ export function fullMixCost(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysi
     prev = level;
     const srcA = p.aExit + integrateTempo(p.tempoA, t), tb = t - (p.bDelay ?? 0);
     const srcB = tb < 0 ? -1 : p.bEntry + integrateTempo(p.tempoB, tb);
+    const dt = Math.min(0.5, D - (t - 0.25));
+    if (tb >= 0 && tb < 12 && srcB < B.audibleEnd && power(B, srcB - 0.25, srcB + 0.25) > B.bodyRmsDb - 12) {
+      const content = clamp(density(B, srcB) / Math.max(0.05, bodyDensity(B)));
+      const delivery = laneValue(p, 'B', 'gain', tb) * leadBandRetention(p, 'B', tb);
+      openingSuppression += dt * content * clamp(1 - delivery / 0.5);
+    }
+    for (const [deck, tt, contribution, other] of [['A', t, a, b], ['B', tb, b, a]] as const) {
+      if (tt >= 0 && contribution.total > other.total && laneValue(p, deck, 'gain', tt) >= 0.5)
+        spectralDamage += dt * clamp((0.6 - laneValue(p, deck, 'mid', tt)) / 0.6);
+    }
     // A's own music is over (not the fader: the recording) while B is still far from its body
     if (power(A, srcA - 0.5, srcA + 0.5) < before - p.gainA - 12 && (srcB < 0 || power(B, srcB - 0.5, srcB + 0.5) < after - p.gainB - 8)) unsupported += 0.5;
     // two full bass lines at once, both decks near their own bass level
@@ -218,22 +292,25 @@ export function fullMixCost(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysi
   const exit = effectiveExit(p, A);
   const closureMiss = A.structure ? 1 - closureAt(A.structure, exit.source) : 0.5;
   const rest = Math.max(0, A.audibleEnd - exit.source);
-  const restDensity = rest > 0 ? density(A, (exit.source + A.audibleEnd) / 2) : 0;
-  const cutA = rest <= 2 ? 0 : clamp(rest / (restDensity < 0.18 ? 45 : 14));
+  const restDensity = rest > 0 ? meanDensity(A, exit.source, A.audibleEnd) : 0;
+  const cutScale = rest / (restDensity < 0.18 ? 45 : 14);
+  const cutA = rest <= 2 ? 0 : cutScale + 0.25 * Math.max(0, cutScale - 1) ** 1.3;
   const unknownB = voiceUnknown(B, s), skipped = Math.max(0, p.bEntry - B.audibleStart);
   // a skipped opening as dense as B's body may hold its first words; a sparse intro is cheap to skip
   const skippedDensity = skipped > 5 ? meanDensity(B, B.audibleStart, p.bEntry) / bodyDensity(B) : 0;
   const skippedUnknownB = unknownB && skipped > 5 ? (skipped - 5) * clamp((skippedDensity - 0.7) / 0.3) : 0;
-  const pickup = pickupLost(B, p.bEntry), leadRisk = leadRiskSeconds(p, A, B), tonalClash = tonalClashSeconds(p, A, B);
-  // Overlap risks count as shares of the overlap: a cost in seconds would make every short cut look safer
-  // than a long blend, which the listener rated worse ("резко").
+  const exposure = leadExposure(p, A, B);
+  const pickup = pickupLost(B, p.bEntry), leadRisk = exposure.seconds, leadRun = exposure.run, tonalClash = tonalClashSeconds(p, A, B);
+  // Both exposure share and absolute/continuous duration matter: a long collision is not diluted by its window.
   const total = 0.25 * closureMiss + 0.2 * cutA + 0.15 * pickup + 0.05 * Math.max(0, hole) + 0.1 * unsupported + 0.03 * Math.max(0, jump)
-    + 0.3 * doubleBass / D + 0.3 * leadRisk / D + 0.2 * tonalClash / D + 0.005 * skippedUnknownB
+    + 0.3 * doubleBass / D + 0.2 * leadRisk / D + 0.025 * leadRisk + 0.02 * leadRun + 0.2 * tonalClash / D + 0.005 * skippedUnknownB
+    + 0.06 * Math.max(0, openingSuppression - 1) + 0.05 * spectralDamage
     // listener ratings: blends under ~10 s were heard as abrupt switches ("резко")
     + 0.15 * clamp((10 - D) / 10);
   if (!Number.isFinite(total)) return null;
   return { total: r3(total), closureMiss: r3(closureMiss), cutA: r3(cutA), pickup, holeDb: r3(Math.max(0, hole)), unsupported, jumpDb: r3(Math.max(0, jump)),
-    doubleBass, leadRisk, tonalClash, skippedUnknownB: r3(skippedUnknownB) };
+    doubleBass, leadRisk, leadRun, tonalClash, skippedUnknownB: r3(skippedUnknownB),
+    openingSuppression: r3(openingSuppression), spectralDamage: r3(spectralDamage) };
 }
 
 /** P6: the same plan with its bass exchange moved by dt seconds (both low lanes, clamped to the overlap). */

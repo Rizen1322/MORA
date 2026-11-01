@@ -224,7 +224,7 @@ export class YtDlp {
    * Downloads the best audio-only format as published (no re-encoding) into a
    * fresh staging folder and returns the file with yt-dlp's metadata.
    */
-  async download(url: string, stagingDir: string, opts: { priority: Priority; signal?: AbortSignal; maxMb?: number; onProgress?: (fraction: number) => void; skipWarm?: boolean }): Promise<{ file: string; info: Record<string, unknown> }> {
+  async download(url: string, stagingDir: string, opts: { priority: Priority; signal?: AbortSignal; maxMb?: number; onProgress?: (fraction: number) => void; skipWarm?: boolean; preserveContainer?: boolean }): Promise<{ file: string; info: Record<string, unknown> }> {
     const target = checkedMediaUrl(url);
     await fsp.mkdir(stagingDir, { recursive: true });
     const warmed = opts.skipWarm ? null : this.warmInfo(target);
@@ -233,7 +233,8 @@ export class YtDlp {
     const fields = 'id,title,track,artist,artists,album,uploader,channel,channel_is_verified,duration,ext,acodec,abr,asr,webpage_url,thumbnail,extractor_key,availability,age_limit';
     let raw: string;
     try { raw = await this.run([
-      '-f', 'bestaudio/best', '-x', '--no-part', '--no-mtime', '--max-filesize', `${opts.maxMb ?? 200}M`,
+      // A growing reader cannot switch byte offsets from WebM into extracted Opus.
+      '-f', 'bestaudio/best', ...(opts.preserveContainer ? ['--fixup', 'never'] : ['-x']), '--no-part', '--no-mtime', '--max-filesize', `${opts.maxMb ?? 200}M`,
       '-P', stagingDir, '-o', '%(id)s.%(ext)s', '--print', `after_move:%(.{${fields}})j`, '--print', 'after_move:filepath', '--no-simulate',
       ...(opts.onProgress ? ['--progress', '--newline', '--progress-template', 'download:MORAPROG %(progress._percent_str)s'] : []),
       ...(warmed ? ['--load-info-json', infoFile] : ['--', target]),

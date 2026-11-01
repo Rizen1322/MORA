@@ -27,6 +27,7 @@ const run = (args) => {
 };
 
 fs.mkdirSync(out, { recursive: true });
+run([path.join(desktop, 'scripts/build-rust.mjs')]);
 if (!skipWeb) {
   // Own outDir: apps/web/dist may be served by a running browser-mode server.
   run([path.join(root, 'node_modules/vite/bin/vite.js'), 'build', '--config', 'apps/web/vite.config.ts', '--outDir', path.join(out, 'web'), '--logLevel', 'warn', 'apps/web']);

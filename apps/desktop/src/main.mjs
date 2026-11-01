@@ -13,10 +13,14 @@ import { ResolverUpdater } from './resolver-update.mjs';
 import electronUpdater from 'electron-updater';
 import { AppUpdates } from './app-update.mjs';
 import { watchPower } from './idle-power.mjs';
+import { RustAudio } from './rust-audio.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const resources = app.isPackaged ? process.resourcesPath : path.join(here, '..', 'build');
 const assets = path.join(here, '..', 'assets');
+const rustAudio = new RustAudio(path.join(resources, 'audio', 'mora-audio.exe'), event => {
+  if (win && !win.isDestroyed()) win.webContents.send('automix:audio', event);
+});
 
 // Caches reach many GB: keep the profile in Local AppData, not Roaming.
 // AUTOMIX_PROFILE_DIR gives tests an isolated profile and data folder.
@@ -129,6 +133,7 @@ async function startBackend(port = 0) {
     AUTOMIX_ROOT: resources,
     AUTOMIX_WEB_DIST: path.join(resources, 'web'),
     AUTOMIX_ANALYSIS_WORKER: path.join(resources, 'backend', 'analysisWorker.mjs'),
+    AUTOMIX_RUST_CORE: path.join(resources, 'audio', 'mora-audio.exe'),
     AUTOMIX_DATA_DIR: dataDir,
     AUTOMIX_LAUNCH_TOKEN: launchToken,
     AUTOMIX_PORT: String(port),
@@ -258,7 +263,8 @@ function createWindow() {
     if (cmd === 'browser-backward' && win.webContents.navigationHistory.canGoBack()) win.webContents.navigationHistory.goBack();
     if (cmd === 'browser-forward' && win.webContents.navigationHistory.canGoForward()) win.webContents.navigationHistory.goForward();
   });
-  win.webContents.on('render-process-gone', (_e, d) => log(`renderer gone: ${d.reason}`));
+  win.webContents.on('render-process-gone', (_e, d) => { log(`renderer gone: ${d.reason}`); void rustAudio.stop(); });
+  win.webContents.on('did-start-navigation', (_e, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) void rustAudio.stop(); });
 }
 
 /** The caption buttons are native and sit above the page. Over the full player
@@ -364,6 +370,10 @@ function handle(channel, fn) {
 }
 
 function registerIpc() {
+  handle('audio:start', device => rustAudio.start(device));
+  handle('audio:command', command => rustAudio.command(command));
+  handle('audio:stop', () => rustAudio.stop());
+  handle('audio:devices', () => rustAudio.devices());
   handle('app-update:status', () => appUpdates.status());
   handle('app-update:check', () => appUpdates.check());
   handle('app-update:download', () => appUpdates.download());
@@ -540,7 +550,7 @@ async function main() {
   }
 
   // Stop music before Windows sleeps; never resume on wake by itself.
-  powerMonitor.on('suspend', () => command('pause'));
+  powerMonitor.on('suspend', () => { command('pause'); if (rustAudio.process) void rustAudio.command({ cmd: 'pause', paused: true }).catch(() => {}); });
 
   appUpdates.start();
   app.on('before-quit', () => { quitting = true; appUpdates.dispose(); });
@@ -552,7 +562,7 @@ async function main() {
     globalShortcut.unregisterAll();
     powerWatch?.stop();
     tray?.destroy();
-    void stopBackend().finally(() => app.quit());
+    void Promise.allSettled([rustAudio.stop(), stopBackend()]).finally(() => app.quit());
   });
   app.on('window-all-closed', () => { if (!settings.closeToTray || quitting) app.quit(); });
 }

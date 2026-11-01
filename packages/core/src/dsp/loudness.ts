@@ -146,6 +146,15 @@ export class Decimator2 {
 
   /** Pushes samples; returns decimated output samples appended to `out`. */
   push(x: Float32Array, len: number, out: (v: number) => void): void {
+    const native = (globalThis as typeof globalThis & { moraPreparationDecimate?: (
+      input: Float32Array, length: number, coefficients: Float64Array, history: Float64Array, pos: number, phase: number,
+    ) => { output: Float64Array; pos: number; phase: number } | null }).moraPreparationDecimate;
+    const result = native?.(x, len, this.h, this.buf, this.pos, this.phase);
+    if (result) {
+      this.pos = result.pos; this.phase = result.phase;
+      for (const value of result.output) out(value);
+      return;
+    }
     const h = this.h;
     const n = h.length;
     const buf = this.buf;

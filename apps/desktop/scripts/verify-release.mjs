@@ -13,6 +13,11 @@ const name = `MORA-Setup-${pkg.version}.exe`;
 const installer = path.join(dist, name);
 const resources = path.join(dist, 'win-unpacked', 'resources');
 const archive = path.join(resources, 'app.asar');
+assert.ok(fs.statSync(path.join(resources, 'audio', 'mora-audio.exe')).size > 0, 'Native Rust audio engine is missing');
+const nativeHash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+assert.equal(nativeHash(path.join(resources, 'audio', 'mora-audio.exe')), nativeHash(path.join(desktop, 'build', 'audio', 'mora-audio.exe')), 'Packaged Rust engine differs from the build');
+for (const file of ['THIRD_PARTY_LICENSES.txt', 'RUST-LIBRARY-COPYRIGHT.html'])
+  assert.ok(fs.statSync(path.join(resources, 'audio', file)).size > 0, `Native license notice missing: ${file}`);
 const packaged = JSON.parse(extractFile(archive, 'package.json').toString());
 const updater = JSON.parse(extractFile(archive, path.join('node_modules', 'electron-updater', 'package.json')).toString());
 assert.equal(packaged.version, pkg.version, 'Packaged app version differs from source');

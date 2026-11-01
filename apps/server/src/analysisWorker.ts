@@ -38,6 +38,11 @@ async function run(job: Job): Promise<void> {
   current = state;
   const post = (m: object) => parentPort!.postMessage({ jobId: job.jobId, ...m });
   try {
+    if (process.env.AUTOMIX_RUST_CORE) {
+      const analysis = await runNative(job, state, post);
+      post({ type: 'done', analysis });
+      return;
+    }
     const acc = new AnalysisAccumulator(Math.max(30, job.duration + 5));
     const proc = spawn(job.ffmpeg, ['-v', 'error', '-nostdin', '-i', job.input, '-vn', '-ac', '2', '-ar', '44100', '-f', 'f32le', 'pipe:1'], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -96,4 +101,47 @@ async function run(job: Job): Promise<void> {
   } finally {
     if (current === state) current = null;
   }
+}
+
+/** Pipe decoder PCM directly to the native accumulator; never retain full-rate stereo in JS. */
+async function runNative(job: Job, state: NonNullable<typeof current>, post: (message: object) => void) {
+  if (cancelFlag && Atomics.load(cancelFlag, 0) === job.jobId) throw new Cancelled();
+  const native = spawn(process.env.AUTOMIX_RUST_CORE!, ['--analyze', '-', '-', String(job.duration)], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const decoder = spawn(job.ffmpeg, ['-v', 'error', '-nostdin', '-i', job.input, '-vn', '-ac', '2', '-ar', '44100', '-f', 'f32le', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  state.kill = () => { decoder.kill('SIGKILL'); native.kill('SIGKILL'); };
+  let error = '', decodeError = '', bytes = 0, size = 0, progress = 0;
+  const output: Buffer[] = [];
+  const closed = (child: typeof native | typeof decoder) => new Promise<number | null>(resolve => { child.once('close', resolve); child.once('error', e => { error = e.message; resolve(-1); }); });
+  const nativeClosed = closed(native), decoderClosed = closed(decoder);
+  const poll = setInterval(() => { if (cancelFlag && Atomics.load(cancelFlag, 0) === job.jobId) { state.cancelled = true; state.kill(); } }, 25);
+  native.stderr.on('data', (b: Buffer) => { error = (error + b.toString()).slice(-1500); });
+  decoder.stderr.on('data', (b: Buffer) => { decodeError = (decodeError + b.toString()).slice(-1500); });
+  native.stdin.on('error', () => decoder.kill('SIGKILL'));
+  native.stdout.on('data', (b: Buffer) => {
+    size += b.length;
+    if (size > 128 * 1024 * 1024) { error = 'Слишком большой результат анализа'; state.kill(); }
+    else output.push(b);
+  });
+  decoder.stdout.on('data', (b: Buffer) => {
+    bytes += b.length;
+    const p = Math.min(.5, bytes / 8 / Math.max(1, job.duration * 44100) * .5);
+    if (p - progress > .05) { progress = p; post({ type: 'progress', progress }); }
+  });
+  decoder.stdout.pipe(native.stdin);
+  try {
+    const decodeCode = await decoderClosed;
+    if (state.cancelled) throw new Cancelled();
+    if (decodeCode !== 0) { native.kill('SIGKILL'); throw new Error(decodeError.trim().split('\n').pop() || error || `ffmpeg завершился с кодом ${decodeCode}`); }
+    post({ type: 'progress', progress: .55 });
+    const code = await nativeClosed;
+    if (state.cancelled) throw new Cancelled();
+    const body = Buffer.concat(output).toString('utf8');
+    if (code !== 0) {
+      try { error = JSON.parse(body).error || error; } catch { /* native startup errors may have no JSON */ }
+      throw new Error(error || `Rust-анализатор завершился с кодом ${code}`);
+    }
+    const analysis = JSON.parse(body);
+    if (!analysis || !Number.isFinite(analysis.duration) || !analysis.loudness || !analysis.curves || !analysis.version) throw new Error('Некорректный результат Rust-анализа');
+    return analysis;
+  } finally { clearInterval(poll); state.kill(); await Promise.allSettled([nativeClosed, decoderClosed]); }
 }

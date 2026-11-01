@@ -1,4 +1,5 @@
-import type { SoundSettings } from '@automix/core';
+import type { SoundSettings, PhraseMixRecipe } from '@automix/core';
+export interface TransitionRecipeContext { playlistId: string; fromItemId: number; toItemId: number }
 import type { TrackAnalysis, TransitionPlan, AutoMixSettings, TransitionRating, TransitionRatingReason } from '@automix/core';
 import type { CatalogAlbumPage, CatalogArtistPage, CatalogSearchResult, CatalogSearchType } from '@automix/core';
 export interface ReactionSync { status: 'synced' | 'pending' | 'error' | 'local'; error?: string }
@@ -313,7 +314,15 @@ export const api = {
   rebuildVocals: (id: string) => req<{ status: string; quality?: { status: string; progress?: number; error?: string } }>('POST', `/api/tracks/${encodeURIComponent(id)}/stems/rebuild`),
   prepare: (id: string, sampleRate: number, role: 'current' | 'next' | 'candidate') =>
     req<{ totalFrames: number; complete: boolean; analysis: string }>('POST', `/api/tracks/${id}/prepare`, { sampleRate, role }),
-  plan: (from: string, to: string) => req<{ plan: TransitionPlan; cached: boolean; pending: string[] }>('GET', `/api/automix/plan?from=${from}&to=${to}`),
+  plan: (from: string, to: string, edge?: { playlistId: string; fromItemId: number; toItemId: number }) => {
+    const query = new URLSearchParams({ from, to });
+    if (edge) { query.set('playlistId', edge.playlistId); query.set('fromItemId', String(edge.fromItemId)); query.set('toItemId', String(edge.toItemId)); }
+    return req<{ plan: TransitionPlan; cached: boolean; pending: string[] }>('GET', `/api/automix/plan?${query}`);
+  },
+  phrasePlan: (from: string, to: string, recipe?: PhraseMixRecipe) => req<{ plan: TransitionPlan; cached: boolean; pending: string[] }>('POST', '/api/automix/phrase-plan', { from, to, recipe }),
+  phraseRecipe: (edge: TransitionRecipeContext) => req<{ recipe: PhraseMixRecipe | null; stale?: boolean; audioHashes: { a: string; b: string } }>('GET', `/api/automix/recipe?${new URLSearchParams({ playlistId: edge.playlistId, fromItemId: String(edge.fromItemId), toItemId: String(edge.toItemId) })}`),
+  savePhraseRecipe: (edge: TransitionRecipeContext, recipe: PhraseMixRecipe) => req<{ recipe: PhraseMixRecipe; plan: TransitionPlan }>('PUT', '/api/automix/recipe', { ...edge, recipe }),
+  resetPhraseRecipe: (edge: TransitionRecipeContext) => req<{ ok: boolean }>('DELETE', `/api/automix/recipe?${new URLSearchParams({ playlistId: edge.playlistId, fromItemId: String(edge.fromItemId), toItemId: String(edge.toItemId) })}`),
   logTransition: (plan: TransitionPlan, outcome: Record<string, unknown>) => req<{ id: number }>('POST', '/api/automix/log', { plan, outcome }),
   rateTransition: (id: number, rating: TransitionRating | null, reason: TransitionRatingReason | null = null) => req('POST', `/api/automix/log/${id}/rating`, { rating, reason }),
   mixNow: (from:string,to:string,position:number) => req<{plan:TransitionPlan}>('POST','/api/automix/mix-now',{from,to,position}),

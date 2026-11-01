@@ -8,6 +8,7 @@ import { useRoute } from '../lib/router.ts';
 import { controller, trackOf, useApp } from '../store/app.ts';
 import { TransitionSummary, type RatingTarget } from '../components/TransitionSummary.tsx';
 import '../styles/prefs.css';
+import { PlaybackDiagnostics } from '../components/PlaybackDiagnostics.tsx';
 
 const PRE = 8;
 const POST = 8;
@@ -546,6 +547,7 @@ export function DiagnosticsPage() {
   return (
     <div className="main-inner prefs-page diag-page">
       <h1 className="page-title">Диагностика AutoMix</h1>
+      <PlaybackDiagnostics />
       <HealthSummary checks={healthChecks(health, offline, p.audioHealth, chosen?.plan, automixOn)} />
       <h2 className="pref-group-title">Переходы</h2>
       <div className="tabs diag-picker" aria-label="Какой переход показать">
@@ -581,7 +583,11 @@ export function DiagnosticsPage() {
           {p.audioHealth ? <>
             <div className="pref-row"><div className="pref-text"><div className="pref-title">Нехватка звука</div><div className="pref-desc">Сколько раз плееру не хватило готового звука</div></div><div className="pref-control tnum">{p.audioHealth.pcmUnderruns}</div></div>
             <div className="pref-row"><div className="pref-text"><div className="pref-title">Долгие блоки</div><div className="pref-desc">Задержка вычисления, не обязательно слышимая</div></div><div className="pref-control tnum">{p.audioHealth.slowBlocks} · до {p.audioHealth.maxRenderMs.toFixed(1)} мс</div></div>
-            <div className="pref-row"><div className="pref-text"><div className="pref-title">Буфер устройства</div></div><div className="pref-control tnum">{p.audioHealth.latencyMs.toFixed(0)} мс</div></div>
+            {p.audioHealth.p99Ms !== undefined && <>
+              <div className="pref-row"><div className="pref-text"><div className="pref-title">Rust DSP · p95 / p99</div><div className="pref-desc">Время обработки блока за последнюю секунду</div></div><div className="pref-control tnum">{p.audioHealth.p95Ms?.toFixed(3)} / {p.audioHealth.p99Ms.toFixed(3)} мс</div></div>
+              <div className="pref-row"><div className="pref-text"><div className="pref-title">Пропуски вывода Windows</div></div><div className="pref-control tnum">{p.audioHealth.deviceUnderruns ?? 0}</div></div>
+            </>}
+            <div className="pref-row"><div className="pref-text"><div className="pref-title">{p.audioHealth.p99Ms !== undefined ? 'Запас выходного буфера' : 'Буфер устройства'}</div></div><div className="pref-control tnum">{p.audioHealth.latencyMs.toFixed(0)} мс</div></div>
           </> : <div className="pref-row"><div className="pref-text"><div className="pref-desc">Счётчики появятся после начала воспроизведения.</div></div></div>}
           {health && <div className="pref-row"><div className="pref-text"><div className="pref-title">Анализ</div><div className="pref-desc">Анализатор {health.analyzer}, планировщик {health.planner}</div></div><div className="pref-control tnum">потоков {health.analysis.workers}</div></div>}
         </div>

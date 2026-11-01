@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { barPattern, drumAlignment, planTransition } from '../src/plan/planner.ts';
+import { barPattern, drumAlignment, planTransition, verifiedDrumShift } from '../src/plan/planner.ts';
 import { DEFAULT_AUTOMIX_SETTINGS as S, type BeatGrid, type PlannerTrack, type TrackAnalysis } from '../src/types.ts';
 import { fixture } from './helpers.ts';
 
@@ -48,6 +48,19 @@ const drumPos = (track: PlannerTrack, time: number) => {
 };
 
 describe('drum-pattern bar alignment', () => {
+  it('rejects a rotation when a new fill in the actually shifted window invalidates the old average', () => {
+    const a = song('a', 0).analysis!.beat!, b = song('b', 1).analysis!.beat!;
+    // Quiet intro followed by a normal-strength kick. Accents are relative to
+    // the whole track median, so these values need not average one per window.
+    for (const band of [b.accents!.kick, b.accents!.snare]) for (let i = 0; i <= 24; i++) band[i] *= 0.01;
+    const pa = barPattern(a, 0, 12)!, old = drumAlignment(pa, barPattern(b, 0, 12)!)!;
+    expect(verifiedDrumShift(pa, b, 0.5, 12, 1, old[0])).toBeCloseTo(1);
+    b.accents!.kick[24] = 1.6; // Outside old window, inside shifted window.
+    expect(drumAlignment(pa, barPattern(b, 0, 12)!)![1]).toBeCloseTo(1);
+    expect(verifiedDrumShift(pa, b, 0.5, 12, 1, old[0])).toBeNull();
+    b.accents!.snare.pop();
+    expect(barPattern(b, 0, 12)).toBeNull();
+  });
   it('measures a one-beat rotation between bar patterns', () => {
     const g = song('x', 0).analysis!.beat!, h = song('y', 1).analysis!.beat!;
     const m = drumAlignment(barPattern(g, 0, 40)!, barPattern(h, 0, 40)!)!;

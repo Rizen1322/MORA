@@ -4,6 +4,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { AnalysisService } from './analysis.ts';
 import { AutoMixService, getSettings } from './automix.ts';
+import { ReviewedTransitions } from './reviewed-transitions.ts';
 import { ensureDirs, loadConfig, type AppConfig } from './config.ts';
 import { kvGet, kvSet, openDb, type Db } from './db.ts';
 import { EventHub } from './events.ts';
@@ -14,6 +15,7 @@ import { ProviderRegistry } from './providers/index.ts';
 import { registerLibraryRoutes } from './routes/library.ts';
 import { registerPlaybackRoutes } from './routes/playback.ts';
 import { registerPreviewRoutes } from './routes/preview.ts';
+import { registerPhraseRecipeRoutes } from './routes/phrase-recipes.ts';
 import { registerMiscRoutes } from './routes/misc.ts';
 import { registerCatalogRoutes } from './routes/catalog.ts';
 import { registerPublicCatalogRoutes } from './routes/public-catalog.ts';
@@ -84,10 +86,10 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
   providers.yandex.catalog.localReactionFor = providers.yandex.localReactionFor;
   lib.reactionSyncFor = (trackId) => yandexReactions.status(trackId);
   lib.displayReactionFor = (trackId, local) => yandexReactions.displayReaction(trackId, local);
-  analysis.vocalActivityFor=(hash)=>stems.activity(hash);
+  analysis.vocalActivityFor=(hash)=>process.env.AUTOMIX_DESKTOP === '1' ? undefined : stems.activity(hash);
   analysis.setPower({ onlyWhenIdle: getSettings(db).analysis.onlyWhenIdle });
   lib.onTrackAdded = (t) => {analysis.ensure(t, 5);yandexReactions.attachTrack(t.id);};
-  const automix = new AutoMixService(db, lib, analysis);
+  const automix = new AutoMixService(db, lib, analysis, new ReviewedTransitions(path.join(cfg.dataDir, 'reviewed-transitions.json')));
   const wave = new WaveService(db, lib, analysis);
   // Without a vocal model the switch has nothing to prepare; "off" would only disable phrasing, loops
   // and master tempo, which work without stems, and the switch is hidden then.
@@ -149,6 +151,7 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
   registerLibraryRoutes(app, services);
   registerPlaybackRoutes(app, services);
   registerPreviewRoutes(app, services);
+  registerPhraseRecipeRoutes(app, services);
   registerMiscRoutes(app, services);
   registerCatalogRoutes(app, services);
   registerPublicCatalogRoutes(app, services);

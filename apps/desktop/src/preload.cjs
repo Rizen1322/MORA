@@ -10,6 +10,11 @@ const subscribe = (channel, check) => (cb) => {
 };
 
 contextBridge.exposeInMainWorld('automixDesktop', {
+  audioStart: (device) => ipcRenderer.invoke('audio:start', device),
+  audioCommand: (command) => ipcRenderer.invoke('audio:command', command),
+  audioStop: () => ipcRenderer.invoke('audio:stop'),
+  audioDevices: () => ipcRenderer.invoke('audio:devices'),
+  onAudio: subscribe('automix:audio', (v) => v && typeof v.type === 'string'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   appUpdateStatus: () => ipcRenderer.invoke('app-update:status'),
   appUpdateCheck: () => ipcRenderer.invoke('app-update:check'),

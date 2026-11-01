@@ -69,7 +69,77 @@ beforeEach(() => {
 });
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); vi.unstubAllGlobals(); });
 
+describe('playlist transition recipes', () => {
+  it('plans the exact playlist occurrences and omits the recipe in shuffle', async () => {
+    const { controller, h } = setup();
+    controller.state.context = { type: 'playlist', id: 'playlist', label: 'Playlist' };
+    controller.state.queue.forEach((entry, i) => { entry.sourcePlaylistId = 'playlist'; entry.playlistEntryId = i + 101; });
+    await h.prepareNext();
+    expect(api.plan).toHaveBeenCalledWith('a', 'b', { playlistId: 'playlist', fromItemId: 101, toItemId: 102 });
+    vi.mocked(api.plan).mockClear();
+    controller.toggleShuffle();
+    await vi.waitFor(() => expect(api.plan).toHaveBeenCalled());
+    expect(vi.mocked(api.plan).mock.calls.every(args => args.length === 2)).toBe(true);
+  });
+
+  it('reloads a saved transition still ahead while preserving the current song', async () => {
+    const { controller, h, slot } = setup();
+    controller.state.context = { type: 'playlist', id: 'playlist', label: 'Playlist' };
+    await h.prepareNext();
+    expect(h.next).not.toBeNull();
+    vi.mocked(api.plan).mockClear();
+    controller.refreshPlaylistTransitions('other');
+    expect(api.plan).not.toHaveBeenCalled();
+    controller.refreshPlaylistTransitions('playlist');
+    await vi.waitFor(() => expect(api.plan).toHaveBeenCalledWith('a', 'b'));
+    expect(h.current).toBe(slot);
+    expect(controller.state.index).toBe(0);
+  });
+
+  it('keeps an audible blend intact when its saved recipe is edited', async () => {
+    const { controller, h } = setup();
+    controller.state.context = { type: 'playlist', id: 'playlist', label: 'Playlist' };
+    await h.prepareNext();
+    const prepared = h.next;
+    controller.state.transition = { planId: prepared!.plan.id, plan: prepared!.plan, active: true,
+      late: false, startsIn: 0, progress: 0.5, fallback: null };
+    vi.mocked(api.plan).mockClear();
+    controller.refreshPlaylistTransitions('playlist');
+    expect(h.next).toBe(prepared);
+    expect(api.plan).not.toHaveBeenCalled();
+  });
+});
+
 describe('playback preparation and queue changes', () => {
+  it('prevents normal WebAudio output from starting during an independent native probe', async () => {
+    const { controller } = setup();
+    vi.stubGlobal('window', { moraNativePlayback: { probeActive: true } });
+    await expect(controller.unlockAudio()).rejects.toThrow('Остановите нативный тест');
+  });
+  it('reports native context suspension without undoing it or treating a later running state as user Play', async () => {
+    const { controller, h } = setup();
+    const resume = vi.fn(async () => {});
+    const ctx = { state: 'running', sampleRate: 48000, onstatechange: null as null | ((event: Event) => void), resume, destination: {},
+      audioWorklet: { addModule: async () => {} }, createAnalyser: () => ({ connect: vi.fn() }) };
+    const page = Object.assign(new EventTarget(), { moraNativePlayback: { route: 'webkit', contextState: 'running', snapshot: undefined as undefined | (() => any) } });
+    const changed = vi.fn(); page.addEventListener('mora-context-state', changed);
+    vi.stubGlobal('window', page);
+    vi.stubGlobal('AudioContext', vi.fn(function () { return ctx; }));
+    vi.stubGlobal('AudioWorkletNode', vi.fn(function () { return { connect: vi.fn(), port: { postMessage: vi.fn(), onmessage: null } }; }));
+    vi.stubGlobal('document', { addEventListener: vi.fn() });
+    (h as unknown as { ctx: null }).ctx = null;
+    await h.ensureEngine();
+    ctx.state = 'suspended'; ctx.onstatechange!(new Event('statechange'));
+    expect(resume).not.toHaveBeenCalled();
+    expect(page.moraNativePlayback.contextState).toBe('suspended');
+    expect(page.moraNativePlayback.snapshot!()).toMatchObject({ context: 'suspended', status: 'playing' });
+    expect(changed).toHaveBeenCalled();
+    controller.pause();
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    ctx.state = 'running'; ctx.onstatechange!(new Event('statechange'));
+    expect(controller.state.status).toBe('paused');
+    expect(resume).not.toHaveBeenCalled();
+  });
   it('bounds vocal lookahead to two distinct future tracks and follows repeat order',()=>{
     const {controller}=setup();
     const focus=controller as unknown as {focusAnalysis():void};
@@ -189,10 +259,37 @@ describe('playback preparation and queue changes', () => {
     expect(postMessage.mock.calls.map(([command]) => command)).toEqual([{ cmd: 'pause', paused: true }]);
   });
 
+  it('does not let an older paused tick override a newer Play command', async () => {
+    const { controller, h, slot } = setup();
+    vi.spyOn(h, 'ensureEngine').mockResolvedValue(undefined);
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    controller.pause();
+    await controller.resume();
+    const tick: MixerEvent = { type: 'tick', clock: 0, paused: true, main: 0,
+      decks: [{ token: slot.token, position: 48000, totalFrames: slot.totalFrames, playing: true, starved: false, ratio: 1, bufferedAhead: 48000 }],
+      transition: null, limiterDb: 0, peak: 0 };
+    h.onEngine(tick);
+    expect(controller.state.status).toBe('playing');
+    h.onEngine({ ...tick, paused: false });
+    expect(controller.state.status).toBe('playing');
+  });
+
+  it('does not turn a queued underrun into Play after the listener pressed Pause', () => {
+    const { controller, h, slot } = setup();
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    controller.pause();
+    h.onEngine({ type: 'underrun', deck: slot.deck, token: slot.token, position: 0 });
+    expect(controller.state.status).toBe('paused');
+    h.onEngine({ type: 'tick', clock: 0, paused: false, main: 0,
+      decks: [{ token: slot.token, position: 48000, totalFrames: slot.totalFrames, playing: true, starved: false, ratio: 1, bufferedAhead: 48000 }],
+      transition: null, limiterDb: 0, peak: .1 });
+    expect(controller.state.status).toBe('paused');
+  });
+
   it('resumes an AudioContext the system interrupted while playing, never one the listener paused', async () => {
     const { controller, h } = setup();
     const resume = vi.fn(async () => {});
-    const ctx = { state: 'running', sampleRate: 48000, onstatechange: null as null | (() => void), resume, destination: {},
+    const ctx = { state: 'running', sampleRate: 48000, onstatechange: null as null | ((event: Event) => void), resume, destination: {},
       audioWorklet: { addModule: async () => {} }, createAnalyser: () => ({ connect: vi.fn() }) };
     vi.stubGlobal('AudioContext', vi.fn(function () { return ctx; }));
     vi.stubGlobal('AudioWorkletNode', vi.fn(function () { return { connect: vi.fn(), port: { postMessage: vi.fn(), onmessage: null } }; }));
@@ -200,12 +297,17 @@ describe('playback preparation and queue changes', () => {
     (h as unknown as { ctx: null }).ctx = null;
     await h.ensureEngine();
     ctx.state = 'interrupted';
-    ctx.onstatechange!();
+    ctx.onstatechange!(new Event('statechange'));
     expect(resume).toHaveBeenCalledTimes(1);
+    vi.stubGlobal('window', { moraDiagnostics: { allowAutoResume: false, record: vi.fn(), nextId: () => 'js-test' } });
+    ctx.onstatechange!(new Event('statechange'));
+    expect(resume).toHaveBeenCalledTimes(1);
+    await controller.resume(); // Explicit Play still resumes with diagnostic recovery disabled.
+    expect(resume).toHaveBeenCalledTimes(2);
     cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
     controller.pause();
-    ctx.onstatechange!();
-    expect(resume).toHaveBeenCalledTimes(1);
+    ctx.onstatechange!(new Event('statechange'));
+    expect(resume).toHaveBeenCalledTimes(2);
   });
 
   it('takes the exact PCM length of a finished decode instead of padding the estimate', async () => {

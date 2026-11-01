@@ -185,4 +185,8 @@ export class SubsonicProvider implements Provider {
     await downloadTo(this.url('download', { id: String(src.external_id) }), file);
     return file;
   }
+  async nativeSource(src: SourceRow): Promise<import('@automix/core/native-preparation.ts').NativeMediaSource> {
+    const url = this.url('download', { id: String(src.external_id) });
+    return { kind: 'direct', url, allowHTTP: url.startsWith('http:') };
+  }
 }

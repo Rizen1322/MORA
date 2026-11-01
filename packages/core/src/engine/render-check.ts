@@ -1,5 +1,6 @@
 import { Biquad, BUTTERWORTH_Q, lowpass } from '../dsp/biquad.ts';
 import { kWeighting } from '../dsp/loudness.ts';
+import { hasMaterialMixRegression, type FullMixCost } from '../plan/fullmix.ts';
 import { drain, integrateTempo } from '../plan/timing.ts';
 import type { TransitionPlan } from '../types.ts';
 import { renderTransitionSteps, type StereoPcm } from './arm.ts';
@@ -107,26 +108,72 @@ function* renderMetricsSteps(plan: TransitionPlan, a: PcmSpan, b: PcmSpan): Gene
   const flams = Math.max(0, Math.round(flamsIn(from, to) - ownRate * (to - from)));
   const limiterDb = r.metrics.maxLimiterReductionDb;
   const cost = 0.3 * Math.max(0, -dip - 1.5) + 0.3 * Math.max(0, bump - 1) + 0.2 * Math.max(0, limiterDb - 2) + 0.3 * hole
-    + 0.05 * flams + (r.metrics.underruns ? 1 : 0);
+    + 0.025 * flams + 0.25 * flams / Math.max(1, plan.duration) + (r.metrics.underruns ? 10 : 0);
   return { dipLU: r2(dip), bumpLU: r2(bump), limiterDb: r2(limiterDb), lowHoleSeconds: r2(hole), flams, underruns: r.metrics.underruns, cost: r2(cost) };
 }
 
-/** Keeps the planner's choice unless its render fails clearly (0.3) where another finalist does not.
- * Async: it yields between renders so an in-process server (the iPhone app) keeps serving PCM.
- * A replacement keeps at least 3/4 of the overlap: short blends were rated "резко", and a shorter
- * overlap trivially has fewer measured faults. */
-export async function chooseByRender(finalists: TransitionPlan[], a: PcmSpan, b: PcmSpan): Promise<TransitionPlan> {
-  const rated: { plan: TransitionPlan; m: RenderMetrics | null }[] = [];
-  for (const plan of finalists) rated.push({ plan, m: await stepAsync(renderMetricsSteps(plan, a, b)) });
+type RatedPlan = { plan: TransitionPlan; m: RenderMetrics | null };
+
+/** Carry the measured planner cost and actual recipe rating into the final decision. Bass-shift
+ * variants inherit the same geometry and rating, while their execution is measured afresh. */
+function measuredMixCost(plan: TransitionPlan): Partial<FullMixCost> | null {
+  const full = plan.debug.fullMix as { this?: string; candidates?: { name: string; cost?: Partial<FullMixCost> | null }[] } | undefined;
+  return full?.candidates?.find(c => c.name === full.this)?.cost ?? null;
+}
+function musicalCost(plan: TransitionPlan): number {
+  const full = plan.debug.fullMix as { this?: string; candidates?: { name: string; cost?: { total: number } | null }[] } | undefined;
+  const rating = plan.debug.ratingFeedback as { candidates?: { name: string; bias: number }[] } | undefined;
+  const cost = full?.candidates?.find(c => c.name === full.this)?.cost?.total ?? 0;
+  const bias = rating?.candidates?.find(c => c.name === full?.this)?.bias ?? 0;
+  return (Number.isFinite(cost) ? cost : 0) - (Number.isFinite(bias) ? bias : 0);
+}
+
+/** Shared final policy, separately testable with measured metrics. Large geometry changes must be
+ * proposed and selected by the planner; rendering cannot quietly double its overlap. */
+export function selectRenderedFinalist(rated: RatedPlan[]): RatedPlan {
   const base = rated[0];
-  // nor a deeper dip than the planner's choice: trading double kicks for a -6.5 LU hole was measured in a render
-  const valid = rated.filter(c => c.m && (c === base || c.plan.duration >= 0.75 * base.plan.duration && (!base.m || c.m.dipLU >= base.m.dipLU - 2)))
-    .sort((x, y) => x.m!.cost - y.m!.cost);
-  const winner = base.m && valid[0] && valid[0] !== base && valid[0].m!.cost < base.m.cost - 0.3 ? valid[0] : base;
+  if (!base) throw new Error('No transition finalists');
+  if (!base.m) return base;
+  const bm = base.m;
+  const eligible = (plan: TransitionPlan) => {
+    const full = plan.debug.fullMix as { this?: string; candidates?: { name: string; automaticEligible?: boolean }[] } | undefined;
+    return full?.candidates?.find(c => c.name === full.this)?.automaticEligible !== false
+      && (plan.debug.humanScenario as { auditionOnly?: boolean } | undefined)?.auditionOnly !== true;
+  };
+  const safe = rated.filter(c => c === base || c.m
+    && eligible(c.plan)
+    && !hasMaterialMixRegression(measuredMixCost(base.plan), measuredMixCost(c.plan))
+    && (c.plan.debug.humanScenario || base.plan.debug.humanScenario
+      ? c.plan.duration >= 0.5 && c.plan.duration <= 64
+      : c.plan.duration >= 0.75 * base.plan.duration && c.plan.duration <= 1.25 * base.plan.duration + 0.5)
+    && c.m.underruns <= bm.underruns && c.m.dipLU >= bm.dipLU - 2
+    && c.m.bumpLU <= Math.max(1.5, bm.bumpLU + 0.5)
+    && c.m.limiterDb <= Math.max(2.5, bm.limiterDb + 0.5)
+    && c.m.flams <= Math.max(bm.flams + 4, bm.flams * 1.5)
+    && c.m.lowHoleSeconds <= bm.lowHoleSeconds + 0.5);
+  const score = (c: RatedPlan) => c.m!.cost + musicalCost(c.plan);
+  safe.sort((x, y) => score(x) - score(y));
+  const best = safe[0];
+  if (best === base || !best.m) return base;
+  const musicSafe = musicalCost(best.plan) <= musicalCost(base.plan) + 0.1;
+  const clearFlams = musicSafe && bm.flams >= 4 && best.m.flams <= bm.flams * 0.6
+    && best.m.flams / Math.max(1, best.plan.duration) < bm.flams / Math.max(1, base.plan.duration) * 0.7
+    && best.m.dipLU >= bm.dipLU - 0.5 && best.m.bumpLU <= bm.bumpLU + 0.25
+    && best.m.limiterDb <= bm.limiterDb + 0.25 && best.m.lowHoleSeconds <= bm.lowHoleSeconds + 0.1;
+  return score(best) < score(base) - (clearFlams ? 0.05 : 0.15) ? best : base;
+}
+
+/** Async: yield between renders so an in-process server keeps serving PCM. */
+export async function chooseByRender(finalists: TransitionPlan[], a: PcmSpan, b: PcmSpan,
+  measure?: (plan: TransitionPlan, a: PcmSpan, b: PcmSpan) => Promise<RenderMetrics | null>): Promise<TransitionPlan> {
+  const rated: RatedPlan[] = [];
+  for (const plan of finalists) rated.push({ plan, m: measure ? await measure(plan, a, b) : await stepAsync(renderMetricsSteps(plan, a, b)) });
+  const base = rated[0], winner = selectRenderedFinalist(rated);
   const label = (p: TransitionPlan) => p.debug.bassShift !== undefined ? `bass ${p.debug.bassShift}` : String((p.debug.fullMix as { this?: string } | undefined)?.this ?? p.id);
-  const renderCheck = { policy: 'render-finalists-2', selected: label(winner.plan), margin: 0.3,
-    candidates: rated.map(c => ({ name: label(c.plan), method: c.plan.method, duration: c.plan.duration, metrics: c.m })) };
+  const renderCheck = { policy: 'render-finalists-3', selected: label(winner.plan), margin: 0.15,
+    reason: winner === base ? 'planner preference retained within geometry and technical limits' : 'lower combined musical, rating and render cost within geometry and technical limits',
+    candidates: rated.map(c => ({ name: label(c.plan), method: c.plan.method, duration: c.plan.duration, musicalCost: musicalCost(c.plan), metrics: c.m })) };
   return { ...winner.plan, id: winner === base ? winner.plan.id : `${winner.plan.id}_render`,
-    reasons: winner === base ? winner.plan.reasons : [...winner.plan.reasons, 'проверка рендером: у выбранного плана были технические провалы (бас, громкость, ограничитель или двойные удары), у этого варианта их нет'],
+    reasons: winner === base ? winner.plan.reasons : [...winner.plan.reasons, 'проверка рендером: выбран вариант с меньшим суммарным музыкальным и техническим риском'],
     debug: { ...winner.plan.debug, renderCheck } };
 }

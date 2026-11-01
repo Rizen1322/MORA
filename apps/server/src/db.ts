@@ -116,6 +116,17 @@ CREATE TABLE IF NOT EXISTS playlist_tracks (
 );
 CREATE INDEX IF NOT EXISTS idx_pl_tracks ON playlist_tracks(playlist_id, position);
 
+CREATE TABLE IF NOT EXISTS transition_recipes (
+  playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+  from_entry INTEGER NOT NULL REFERENCES playlist_tracks(id) ON DELETE CASCADE,
+  to_entry INTEGER NOT NULL REFERENCES playlist_tracks(id) ON DELETE CASCADE,
+  from_hash TEXT NOT NULL,
+  to_hash TEXT NOT NULL,
+  recipe TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (playlist_id, from_entry, to_entry)
+);
+
 CREATE TABLE IF NOT EXISTS kv (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,

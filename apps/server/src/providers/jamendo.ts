@@ -154,4 +154,9 @@ export class JamendoProvider implements Provider {
     await downloadTo(full.audio, file);
     return file;
   }
+  async nativeSource(src: SourceRow): Promise<import('@automix/core/native-preparation.ts').NativeMediaSource> {
+    const [full] = await this.api('tracks', { id: String(src.external_id), audioformat: 'mp32' });
+    if (!full?.audio) throw new Error('Трек недоступен на Jamendo');
+    return { kind: 'direct', url: full.audio, ext: '.mp3' };
+  }
 }

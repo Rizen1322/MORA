@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | Electron 44.9.2 (Chromium, Node.js 24) | MIT; Chromium — BSD и др., см. `LICENSES.chromium.html` рядом с MORA.exe | приложение |
 | electron-updater 6.8.9 | MIT | `resources/app.asar`, обновление MORA через GitHub Releases |
+| Rust audio engine: CPAL, rtrb, serde, base64 и зависимости | MIT / Apache-2.0 и лицензии отдельных компонентов | `resources/audio/THIRD_PARTY_LICENSES.txt`, полные тексты для собранного target |
 | FFmpeg 9.0.2, сборка BtbN `win64-lgpl-shared` | LGPL v3 (собрана с `--enable-version3`, без GPL-компонентов и без x264/x265) | `resources/ffmpeg` (`LICENSE.txt`, `SOURCE.txt` — ссылка на исходники и SHA-256) |
 | yt-dlp 2026.08.19, официальная сборка `yt_dlp_win.zip` | Unlicense; встроенные компоненты PyInstaller-сборки — см. THIRD_PARTY_LICENSES.txt проекта yt-dlp | `resources/yt-dlp` (`SOURCE.txt` — ссылка и SHA-256) |
 | Fastify, @fastify/static, music-metadata и их зависимости | MIT / ISC / BSD | `resources/backend/backend.mjs.LEGAL.txt` |

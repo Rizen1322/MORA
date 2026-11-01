@@ -59,6 +59,7 @@ export interface ExternalTrack {
 }
 
 export interface Provider {
+  nativeSource?(src: SourceRow): Promise<import('@automix/core/native-preparation.ts').NativeMediaSource>;
   readonly id: string;
   info(force?: boolean): Promise<ProviderInfo>;
   capabilities(): Capabilities;

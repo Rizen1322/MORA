@@ -34,13 +34,13 @@ const selected = (p: TransitionPlan) => (p.debug.fullMix as { selected: string }
 
 describe('listener ratings as a soft preference between finalists', () => {
   const plain = planFinalists(a, b, S);
-  const base = plain[0];
+  // Rate distinct recipes even when the unassisted chooser already prefers the unlocked one.
+  const base = plain.find(p => (p.debug.fullMix as { this: string }).this === 'baseline')!;
   const unlocked = plain.find(p => (p.debug.fullMix as { this: string }).this === 'unlocked')!;
 
   it('describes plans by method, tempo gap, key, length and vocal masks', () => {
-    expect(selected(base)).toBe('baseline');
     expect(unlocked.method).toBe('crossfade');
-    expect(ratingFeatures(base, a.analysis, b.analysis)).toEqual(['method:beatmatch_blend', 'bpm:beatmatch_blend:8-12', 'key:beatmatch_blend:mid', 'length:10-20', 'vocals:none']);
+    expect(ratingFeatures(base, a.analysis, b.analysis)).toEqual(expect.arrayContaining([`method:${base.method}`, `bpm:${base.method}:8-12`, `key:${base.method}:mid`, 'vocals:none']));
     expect(ratingFeatures(unlocked, a.analysis, b.analysis)[1]).toBe('bpm:crossfade:8-12');
     // the tempo gap of an unlocked plan comes from the analyses; without them it is left out
     expect(ratingFeatures(unlocked).some(f => f.startsWith('bpm:'))).toBe(false);
@@ -66,12 +66,12 @@ describe('listener ratings as a soft preference between finalists', () => {
     expect(one.version).not.toBe(ratingStats(rows(base, 'bad', 2))!.version);
   });
 
-  it('does not change the choice for one or two bad ratings', () => {
+  it('keeps scarce feedback bounded and only selects an existing valid alternative', () => {
     for (const n of [1, 2]) {
       const p = planFinalists(a, b, S, ratingStats(rows(base, 'bad', n)));
-      expect(p[0].id).toBe(base.id);
-      expect(selected(p[0])).toBe('baseline');
-      expect(p[0].debug.ratingFeedback).toMatchObject({ policy: 'listener-ratings-1', selected: 'baseline' });
+      expect((base.debug.fullMix as { candidates: { name: string }[] }).candidates.map(c => c.name)).toContain(selected(p[0]));
+      const changes = p[0].debug.ratingFeedback as { candidates: { bias: number }[] };
+      expect(changes.candidates.every(c => Math.abs(c.bias) < 0.1)).toBe(true);
     }
   });
 
@@ -88,5 +88,48 @@ describe('listener ratings as a soft preference between finalists', () => {
     expect(record.candidates.find(c => c.name === 'baseline')!.bias).toBeLessThan(0);
     expect(record.candidates.find(c => c.name === 'unlocked')!.bias).toBeGreaterThan(0);
     expect(planTransition(a, b, S, undefined, fb).id).toBe(top.id);
+  });
+});
+
+describe('reason-aware recipe evidence', () => {
+  const control = planFinalists(a, b, S).find(p => (p.debug.fullMix as {this:string}).this === 'baseline')!;
+  const p: TransitionPlan = { ...control, bDelay: 0, automation: [
+    { deck: 'A' as const, lane: 'gain' as const, points: [[0, 1], [control.duration, 1]] as [number, number][] },
+    { deck: 'B' as const, lane: 'gain' as const, points: [[0, 1], [control.duration, 1]] as [number, number][] },
+  ] };
+  const features = (plan: TransitionPlan) => ratingFeatures(plan, a.analysis, b.analysis);
+  const identity = (plan: TransitionPlan) => features(plan).find(f => f.startsWith('pair-recipe:'));
+
+  it('targets a voice complaint at overlap without teaching method or length dislikes', () => {
+    const stats = ratingStats([{ rating: 'bad', reason: 'голоса наложились', features: features(p) }])!;
+    expect(stats.features).toEqual({});
+    expect(Object.keys(stats.reasons!['голоса наложились']!)).toEqual(expect.arrayContaining([expect.stringMatching(/^mid-overlap:/), expect.stringMatching(/^pair-recipe:/)]));
+    expect(Object.keys(stats.reasons!['голоса наложились']!).some(f => /^(method|length|bpm):/.test(f))).toBe(false);
+    const other = ratingStats([{ rating: 'bad', reason: 'резко', features: features(p) }])!;
+    expect(other.version).not.toBe(stats.version);
+  });
+
+  it('distinguishes same-length automation and scopes exact evidence to ordered pair and version', () => {
+    const open = { ...p, automation: p.automation.map(l => l.lane === 'mid' ? { ...l, points: [[0, 1], [p.duration, 1]] as [number, number][] } : l) };
+    const closed = { ...p, automation: [...p.automation.filter(l => l.lane !== 'mid'), { deck: 'A' as const, lane: 'mid' as const, points: [[0, 0], [p.duration, 0]] as [number, number][] }] };
+    expect(features(open).find(f => f.startsWith('mid-overlap:'))).not.toBe(features(closed).find(f => f.startsWith('mid-overlap:')));
+    for (const different of [closed, { ...p, fromTrackId: p.toTrackId, toTrackId: p.fromTrackId }, { ...p, version: 'future' }, { ...p, bEntry: p.bEntry + 1 }]) expect(identity(different)).not.toBe(identity(p));
+    const stats = ratingStats(Array.from({ length: 8 }, () => ({ rating: 'bad' as const, reason: 'голоса наложились' as const, features: features(open) })))!;
+    expect(ratingBias(stats, open, a.analysis, b.analysis).bias).toBeLessThan(ratingBias(stats, closed, a.analysis, b.analysis).bias);
+  });
+
+  it('leaves missing historical cuts, entries, key and tempo unknown and uses executed mask availability', () => {
+    const historical = { ...p, beatAlign: undefined, keyInfo: undefined, vocalA: [[0, 0]] as [number, number][] };
+    const fs = ratingFeatures(historical, null, null, { outcome: { stems: { masks: { A: false, B: false } } } });
+    expect(fs).toContain('vocals:none');
+    expect(fs.some(f => /^(cut|entry|key|bpm):/.test(f))).toBe(false);
+  });
+  it('carries measured complaint risks across planner upgrades without carrying exact recipe identity', () => {
+    const open = { ...p, automation: p.automation.map(l => l.lane === 'mid' ? { ...l, points: [[0, 1], [p.duration, 1]] as [number, number][] } : l) };
+    const closed = { ...p, automation: [...p.automation.filter(l => l.lane !== 'mid'), { deck: 'A' as const, lane: 'mid' as const, points: [[0, 0], [p.duration, 0]] as [number, number][] }] };
+    const old = { ...open, version: 'previous-planner' };
+    const stats = ratingStats(Array.from({ length: 8 }, () => ({ rating: 'bad' as const, reason: 'голоса наложились' as const, features: features(old) })))!;
+    expect(identity(old)).not.toBe(identity(open));
+    expect(ratingBias(stats, open, a.analysis, b.analysis).bias).toBeLessThan(ratingBias(stats, closed, a.analysis, b.analysis).bias);
   });
 });

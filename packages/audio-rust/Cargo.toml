@@ -1,0 +1,24 @@
+[package]
+name = "mora-audio"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[[bin]]
+name = "mora-audio"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+base64 = "0.22"
+cpal = "0.16"
+rtrb = "0.3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
