@@ -80,6 +80,7 @@ Task.detached {
         let decimatorReference = try String(contentsOf: root.deletingLastPathComponent().appendingPathComponent("decimator-reference.js"), encoding: .utf8)
         let fftCore = try NativePreparationCore(script: decimatorReference + "\n" + """
         var MoraPreparation = {analyzeJSON: function() {
+            try {
             for (var n of [2, 8, 2048, 4096]) {
                 var storage = new Float64Array(n + 2); storage[0] = 123; storage[n + 1] = 456;
                 var re = storage.subarray(1, n + 1), im = new Float64Array(n);
@@ -96,16 +97,20 @@ Task.detached {
             if (moraPreparationFFT(new Float64Array(3), new Float64Array(3))) throw Error('invalid FFT accepted');
             if (moraPreparationFFT(new Float32Array(8), new Float64Array(8))) throw Error('invalid type accepted');
             if (moraPreparationFFT(new Float64Array(8), new Float64Array(2))) throw Error('mismatched lengths accepted');
-            var reference = new MoraDecimatorReference.Decimator2(), history = new Float64Array(62), pos = 0, phase = 0, offset = 0;
+            var reference = new MoraDecimatorReference.Decimator2(), historyStorage = new Float64Array(64), coefficientStorage = new Float64Array(33);
+            historyStorage[0] = 123; historyStorage[63] = 456; coefficientStorage[0] = 789; coefficientStorage[32] = 987;
+            var history = historyStorage.subarray(1, 63), coefficients = coefficientStorage.subarray(1, 32), pos = 0, phase = 0, offset = 0;
+            coefficients.set(reference.h);
             for (var length of [0, 1, 2, 7, 31, 4, 127, 65536, 1]) {
                 var backing = new Float32Array(length + 2);
                 for (var i = 0; i < backing.length; i++) backing[i] = Math.sin((offset + i) * .19);
                 var input = backing.subarray(1, length + 1), expected = [];
                 reference.push(input, length, function(value) { expected.push(value); });
-                var result = moraPreparationDecimate(input, length, reference.h, history, pos, phase);
+                var result = moraPreparationDecimate(input, length, coefficients, history, pos, phase);
                 if (!result || !(result.output instanceof Float64Array) || result.output.length !== expected.length) throw Error('decimator output');
                 for (var i = 0; i < expected.length; i++) if (Math.abs(expected[i] - result.output[i]) > 1e-14) throw Error('decimator parity');
                 if (result.pos !== reference.pos || result.phase !== reference.phase) throw Error('decimator state');
+                if (historyStorage[0] !== 123 || historyStorage[63] !== 456 || coefficientStorage[0] !== 789 || coefficientStorage[32] !== 987) throw Error('decimator wrote outside view');
                 for (var i = 0; i < 31; i++) if (history[i] !== reference.buf[i] || history[i + 31] !== reference.buf[i]) throw Error('decimator history');
                 pos = result.pos; phase = result.phase; offset += length;
             }
@@ -121,10 +126,11 @@ Task.detached {
                 for (var i = 0; i < history.length; i++) if (history[i] !== snapshot[i]) throw Error('invalid decimator mutated history');
             }
             return '{"passed":true}';
+            } catch (error) { return JSON.stringify({error: String(error)}); }
         }};
         """)
         let fftCheck = try fftCore.analyze(root.deletingLastPathComponent().appendingPathComponent("analysis-input.f32le"), frames: 1, ticket: NativePreparationTicket())
-        precondition(fftCheck["passed"] as? Bool == true)
+        precondition(fftCheck["passed"] as? Bool == true, "Synthetic DSP fixture: \(fftCheck["error"] as? String ?? "missing result")")
         print("Native FFT and decimator: complex DFT, irregular blocks, Double output, history and invalid-input checks passed")
         let analysisFrames = CommandLine.arguments.count > 4 ? Int(CommandLine.arguments[4])! : 44100 * 4
         precondition(analysisFrames > 0 && analysisFrames <= 44100 * 180)

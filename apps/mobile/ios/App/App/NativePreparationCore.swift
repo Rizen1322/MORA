@@ -43,17 +43,20 @@ final class NativePreparationCore {
                 guard JSValueGetTypedArrayType(ctx, value.jsValueRef, nil) == kJSTypedArrayTypeFloat64Array,
                       let object = JSValueToObject(ctx, value.jsValueRef, nil) else { return nil }
                 let count = JSObjectGetTypedArrayLength(ctx, object, nil)
-                guard count >= 2, count <= 262144, count & (count - 1) == 0,
-                      let pointer = JSObjectGetTypedArrayBytesPtr(ctx, object, nil) else { return nil }
-                return Array(UnsafeBufferPointer(start: pointer.assumingMemoryBound(to: Double.self), count: count))
+                guard count >= 2, count <= 262144, count & (count - 1) == 0 else { return nil }
+                // JSC returns the backing-buffer base, not the view's first byte.
+                let offset = JSObjectGetTypedArrayByteOffset(ctx, object, nil)
+                guard let pointer = JSObjectGetTypedArrayBytesPtr(ctx, object, nil) else { return nil }
+                return Array(UnsafeBufferPointer(start: pointer.advanced(by: offset).assumingMemoryBound(to: Double.self), count: count))
             }
             guard var re = read(real), var im = read(imaginary), re.count == im.count else { return false }
             let n = re.count, plan = self.transforms[re.count] ?? NativeAnalysisFFT(re.count)
             self.transforms[n] = plan; plan.forward(&re, &im)
             func write(_ value: JSValue, _ data: [Double]) -> Bool {
-                guard let object = JSValueToObject(ctx, value.jsValueRef, nil),
-                      let pointer = JSObjectGetTypedArrayBytesPtr(ctx, object, nil) else { return false }
-                data.withUnsafeBytes { if let source = $0.baseAddress { memcpy(pointer, source, $0.count) } }; return true
+                guard let object = JSValueToObject(ctx, value.jsValueRef, nil) else { return false }
+                let offset = JSObjectGetTypedArrayByteOffset(ctx, object, nil)
+                guard let pointer = JSObjectGetTypedArrayBytesPtr(ctx, object, nil) else { return false }
+                data.withUnsafeBytes { if let source = $0.baseAddress { memcpy(pointer.advanced(by: offset), source, $0.count) } }; return true
             }
             return write(real, re) && write(imaginary, im)
         }
@@ -63,9 +66,10 @@ final class NativePreparationCore {
             let ctx = self.context.jsGlobalContextRef, count = Int(length)
             func doubles(_ value: JSValue, count: Int) -> [Double]? {
                 guard JSValueGetTypedArrayType(ctx, value.jsValueRef, nil) == kJSTypedArrayTypeFloat64Array,
-                      let object = JSValueToObject(ctx, value.jsValueRef, nil), JSObjectGetTypedArrayLength(ctx, object, nil) == count,
-                      let pointer = JSObjectGetTypedArrayBytesPtr(ctx, object, nil) else { return nil }
-                return Array(UnsafeBufferPointer(start: pointer.assumingMemoryBound(to: Double.self), count: count))
+                      let object = JSValueToObject(ctx, value.jsValueRef, nil), JSObjectGetTypedArrayLength(ctx, object, nil) == count else { return nil }
+                let offset = JSObjectGetTypedArrayByteOffset(ctx, object, nil)
+                guard let pointer = JSObjectGetTypedArrayBytesPtr(ctx, object, nil) else { return nil }
+                return Array(UnsafeBufferPointer(start: pointer.advanced(by: offset).assumingMemoryBound(to: Double.self), count: count))
             }
             guard JSValueGetTypedArrayType(ctx, input.jsValueRef, nil) == kJSTypedArrayTypeFloat32Array,
                   let inputObject = JSValueToObject(ctx, input.jsValueRef, nil), JSObjectGetTypedArrayLength(ctx, inputObject, nil) >= count,
@@ -74,8 +78,9 @@ final class NativePreparationCore {
             let samples: [Float]
             if count == 0 { samples = [] }
             else {
+                let offset = JSObjectGetTypedArrayByteOffset(ctx, inputObject, nil)
                 guard let pointer = JSObjectGetTypedArrayBytesPtr(ctx, inputObject, nil) else { return nil }
-                samples = Array(UnsafeBufferPointer(start: pointer.assumingMemoryBound(to: Float.self), count: count))
+                samples = Array(UnsafeBufferPointer(start: pointer.advanced(by: offset).assumingMemoryBound(to: Float.self), count: count))
             }
             guard samples.allSatisfy({ $0.isFinite }) else { return nil }
             var pos = Int(position), parity = Int(phase), output: [Double] = []
@@ -96,8 +101,10 @@ final class NativePreparationCore {
                 output.withUnsafeBytes { if let source = $0.baseAddress { memcpy(pointer, source, $0.count) } }
             }
             result.setValue(values, forProperty: "output"); result.setValue(pos, forProperty: "pos"); result.setValue(parity, forProperty: "phase")
-            guard let object = JSValueToObject(ctx, history.jsValueRef, nil), let pointer = JSObjectGetTypedArrayBytesPtr(ctx, object, nil) else { return nil }
-            buffer.withUnsafeBytes { if let source = $0.baseAddress { memcpy(pointer, source, $0.count) } }
+            guard let object = JSValueToObject(ctx, history.jsValueRef, nil) else { return nil }
+            let offset = JSObjectGetTypedArrayByteOffset(ctx, object, nil)
+            guard let pointer = JSObjectGetTypedArrayBytesPtr(ctx, object, nil) else { return nil }
+            buffer.withUnsafeBytes { if let source = $0.baseAddress { memcpy(pointer.advanced(by: offset), source, $0.count) } }
             return result
         }
         context.setObject(decimate, forKeyedSubscript: "moraPreparationDecimate" as NSString)
