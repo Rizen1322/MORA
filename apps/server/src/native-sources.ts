@@ -4,6 +4,7 @@ import type { NativeMediaSource, NativePreparationItem } from '@automix/core/nat
 import fs from 'node:fs/promises';
 import type { FastifyInstance } from 'fastify';
 
+const RESOLVE_TIMEOUT_MS = 20000;
 interface Entry { trackId: string; entryId: string; file: number }
 function localFile(s: Services, trackId: string): string | null {
   const t = s.lib.media(trackId);
@@ -22,9 +23,9 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
     while (next < entries.length) {
       const index = next++, entry = entries[index], track = s.lib.media(entry.trackId);
       if (!track || !(track.duration > 0)) throw Error('Неподдерживаемый трек в очереди');
-      let source: NativeMediaSource;
+      let source!: NativeMediaSource;
       const sources = s.lib.sources(track.id), remote = sources.find(source => source.kind === 'remote');
-      try {
+      const resolving = (async () => {
       const local = localFile(s, track.id);
       if (local && await fs.stat(local).then(stat => stat.isFile()).catch(() => false)) source = { kind: 'upload', trackId: track.id };
       else if (remote && ['youtube', 'soundcloud'].includes(remote.provider)) {
@@ -39,7 +40,13 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
         if (!provider?.nativeSource) throw Error('Источник пока не поддерживает нативную подготовку');
         source = await provider.nativeSource(remote);
       } else throw Error('Не найден источник аудио');
+      })();
+      resolving.catch(() => {});
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([resolving, new Promise((_, reject) => { timer = setTimeout(() => reject(Error('timeout')), RESOLVE_TIMEOUT_MS); })]);
       } catch { source = { kind: 'unavailable' }; }
+      finally { clearTimeout(timer); }
       const analysis = s.analysis.get(track.content_hash);
       const size = analysis ? JSON.stringify(analysis).length : 0;
       const includeAnalysis = analysisBytes + size <= 2 * 1024 * 1024;
@@ -62,7 +69,8 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
   }));
   const previous = s.lib.media(previousId);
   if (!previous) throw Error('Текущий трек не найден');
-  return { items, previous: { trackId: previousId, duration: previous.duration,
+  // Dead entries are not handed to native; the page removes them by entryId.
+  return { items: items.filter(item => item && item.source.kind !== 'unavailable'), previous: { trackId: previousId, duration: previous.duration,
     mixingAllowed: s.lib.mixingPolicy.get(previous.provider) === true, analysis: s.analysis.get(previous.content_hash) },
     settings: getSettings(s.db).automix };
 }

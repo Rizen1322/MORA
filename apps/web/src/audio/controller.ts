@@ -419,11 +419,12 @@ export class PlayerController {
   private async nativeSyncOnce(): Promise<void> {
     const revision = this.nativeRevision;
     if (this.nativeAt < 0) return;
-    if (this.isWave()) await this.topUpWave();
+    // Never wait for the whole refill: each added batch triggers another sync, so handoffs grow with what is ready.
+    if (this.isWave()) { void this.topUpWave(); if (this.waveRequest && this.state.index >= this.state.queue.length - 1) return; }
     if (revision !== this.nativeRevision) return;
     const at = this.nativeAt, queueRevision = this.nativeQueueEditRevision;
     if (this.nativeMix.prepareQueue) {
-      const key = JSON.stringify([this.queueRevision, this.state.queue.map(e => e.entryId), this.state.repeat, this.state.shuffle, this.loudnessTarget]);
+      let key = JSON.stringify([this.queueRevision, this.state.queue.map(e => e.entryId), this.state.repeat, this.state.shuffle, this.loudnessTarget]);
       if (key === this.nativeManifestKey) return;
       const current = this.state.queue[this.state.index];
       if (!current) return;
@@ -431,9 +432,16 @@ export class PlayerController {
       const loop = this.state.repeat === 'one' ? [current] : this.state.repeat === 'all' ? this.state.queue : [];
       this.set({ nextPending: ['Подготовка очереди для фонового воспроизведения'] });
       try {
-        await this.nativeMix.prepareQueue(at + 1, entries.map(e => ({ trackId: e.trackId, entryId: e.entryId })), current.trackId,
+        const handoff = await this.nativeMix.prepareQueue(at + 1, entries.map(e => ({ trackId: e.trackId, entryId: e.entryId })), current.trackId,
           loop.map(e => ({ trackId: e.trackId, entryId: e.entryId })), this.nativeAbort.signal, queueRevision !== this.nativeQueueRevision);
         if (revision !== this.nativeRevision) return;
+        const dead = new Set(handoff?.dropped);
+        if (dead.size) {
+          // Native never received these; drop them so page and native queues stay aligned.
+          const queue = this.state.queue.filter((e, i) => i <= this.state.index || !dead.has(e.entryId));
+          this.set({ queue }); this.scheduleSave();
+          key = JSON.stringify([this.queueRevision, queue.map(e => e.entryId), this.state.repeat, this.state.shuffle, this.loudnessTarget]);
+        }
         this.nativeQueueRevision = queueRevision; this.nativeManifestKey = key; this.set({ nextPending: [], error: null });
         tracePlayback('native.queue.handoff', { outcome: 'accepted' });
       } catch {
@@ -1517,7 +1525,7 @@ export class PlayerController {
     await this.topUpWave();
   }
 
-  private waveReserve(): number { return this.native && this.nativeMix.prepareQueue ? 12 : 6; }
+  private waveReserve(): number { return this.native && this.nativeMix.prepareQueue ? 30 : 6; }
 
   private waveNeedsMore(): boolean {
     // shortcut: radio selection still needs WebContent; hand off a longer known reserve until native radio selection exists.
@@ -1559,7 +1567,7 @@ export class PlayerController {
     let addedAny = false;
     try {
       // Bounded requests/downloads: a reserve, not an offline copy of the catalog.
-      for (let attempt = 0; attempt < 3 && relevant() && this.waveNeedsMore(); attempt++) {
+      for (let attempt = 0; attempt < (this.native && this.nativeMix.prepareQueue ? 9 : 3) && relevant() && this.waveNeedsMore(); attempt++) {
         const ahead = this.state.queue.length - this.state.index - 1;
         const count = Math.max(1, Math.min(4, this.waveReserve() - ahead));
         let added: QueueEntry[];
