@@ -5,27 +5,29 @@ import CryptoKit
 /// One sleeping producer, released by native audible-track changes, not by page timers.
 final class NativePreparationGate: @unchecked Sendable {
     private let lock = NSLock()
-    private var upper: Int
+    private var audible: Int
+    private var depth = 2
     private var stopped = false
     private var waiter: (Int, CheckedContinuation<Bool, Never>)?
     var snapshot: [String: Int] {
         lock.lock(); defer { lock.unlock() }
-        return ["gateUpper": upper, "gateWaiting": waiter?.0 ?? -1]
+        return ["gateUpper": audible + depth, "gateWaiting": waiter?.0 ?? -1]
     }
-    init(index: Int) { upper = index + 2 }
+    init(index: Int) { audible = index }
     func advance(_ index: Int) {
-        lock.lock(); upper = max(upper, index + 2)
-        let wake = waiter.flatMap { $0.0 <= upper ? $0.1 : nil }
+        lock.lock(); audible = max(audible, index)
+        let wake = waiter.flatMap { $0.0 <= audible + depth ? $0.1 : nil }
         if wake != nil { waiter = nil }; lock.unlock(); wake?.resume(returning: true)
     }
     func cancel() {
         lock.lock(); stopped = true; let wake = waiter?.1; waiter = nil; lock.unlock(); wake?.resume(returning: false)
     }
-    func wait(_ index: Int) async -> Bool {
+    /// depth: how many songs past the audible one may be prepared (NativeMixTimeline.aheadDepth).
+    func wait(_ index: Int, depth: Int = 2) async -> Bool {
         await withCheckedContinuation { continuation in
-            lock.lock()
+            lock.lock(); self.depth = depth
             if stopped { lock.unlock(); continuation.resume(returning: false) }
-            else if index <= upper { lock.unlock(); continuation.resume(returning: true) }
+            else if index <= audible + depth { lock.unlock(); continuation.resume(returning: true) }
             else { waiter = (index, continuation); lock.unlock() }
         }
     }
@@ -93,7 +95,7 @@ final class NativeQueuePreparation: @unchecked Sendable {
                 let item = batch[cursor]; cursor += 1
                 processed += 1
                 state("waiting", ready: produced, remaining: batch.count - cursor + 1)
-                guard await gate.wait(at), !ticket.cancelled else { break }
+                guard await gate.wait(at, depth: NativeMixTimeline.aheadDepth(item["source"] as? [String: Any])), !ticket.cancelled else { break }
                 guard let fileKey = await allocate(), (0..<1_000_000).contains(fileKey),
                       let source = item["source"] as? [String: Any] else { throw NativeMediaLoader.Failure.source }
                 let downloaded = folder.appendingPathComponent("\(UUID().uuidString).media")
@@ -360,7 +362,7 @@ final class NativeQueueArtwork: @unchecked Sendable {
         guard !ticket.cancelled else { lock.unlock(); return }
         let request = ArtworkRequest(url: url, hosts: hosts, index: index, file: file, accept: accept)
         if pendingArtwork >= 2 {
-            // The gate permits current + two upcoming songs. Keep that latest
+            // The gate permits current + up to four upcoming songs. Keep that latest
             // window rather than accumulating the covers of rapidly skipped songs.
             deferredArtwork.append(request)
             if deferredArtwork.count > 3 { deferredArtwork.removeFirst() }

@@ -82,3 +82,9 @@ precondition((2...6).contains(nowPlayingPublishes(rate: 1, sourceRate: 1.03)), "
 precondition(nowPlayingPublishes(rate: 1, sourceRate: 1, seekAt: 20) == 2, "A jump was not republished")
 precondition(nowPlayingPublishes(rate: 1, sourceRate: 0) == 121, "A stalled clock was not corrected")
 print("Native Now Playing: one publish for a steady minute, bounded drift corrections, jumps and stalls republished")
+
+precondition(NativeMixTimeline.aheadDepth(["kind": "local", "file": 1]) == 2)
+precondition(NativeMixTimeline.aheadDepth(["kind": "upload"]) == 2)
+precondition(NativeMixTimeline.aheadDepth(["kind": "direct", "url": "https://example.com/a"]) == 4)
+precondition(NativeMixTimeline.aheadDepth(["kind": "hls"]) == 4 && NativeMixTimeline.aheadDepth(nil) == 4)
+print("Native preparation depth: two ahead for local files, four for downloads")
