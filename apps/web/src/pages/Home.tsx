@@ -4,10 +4,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useDragScroll } from '../lib/dragScroll.ts';
 import { startRadio, useRadio } from '../lib/radio.ts';
 import { RadioTuning } from '../components/RadioTuning.tsx';
-import { ArrowUpRight, Heart, MagnifyingGlass, Play, Pause, Waveform, Stack, Books } from '@phosphor-icons/react';
+import { ArrowUpRight, Heart, MagnifyingGlass, Play, Pause, Waveform, Stack, Books, DownloadSimple, ClockCounterClockwise } from '@phosphor-icons/react';
 import type { Track } from '../lib/api.ts';
 import { albumHref } from '../lib/router.ts';
-import { controller, trackOf, useApp } from '../store/app.ts';
+import { controller, phone, trackOf, useApp } from '../store/app.ts';
 import { Cover, Swap } from '../components/common.tsx';
 import { fmtTime, tracksWord } from '../lib/format.ts';
 import { ImportActions } from '../components/ImportActions.tsx';
@@ -140,7 +140,7 @@ export function HomePage() {
           <p className="eyebrow">{new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
           <h1 className="page-title home-greeting">{greeting()}<span className="studio-period">.</span></h1>
         </div>
-        <a className="btn btn-ghost home-search-link" href="#/search" aria-label="Найти музыку"><MagnifyingGlass size={18} /> Найти музыку</a>
+        {!phone && <a className="btn btn-ghost home-search-link" href="#/search" aria-label="Найти музыку"><MagnifyingGlass size={18} /> Найти музыку</a>}
       </header>
       <div className="home-featured">
         <WaveHero />
@@ -169,7 +169,8 @@ export function HomePage() {
           </a>
         )}
       </div>
-      {all.length > 0 && <nav className="home-shortcuts" aria-label="Ваша музыка"><a href="#/library"><Books size={19} /> Медиатека <span>{tracksWord(all.length)}</span><ArrowUpRight size={15} aria-hidden="true" /></a><a href="#/liked"><Heart size={19} aria-hidden="true" /> Любимое <span>{all.filter((track) => track.reaction > 0).length}</span><ArrowUpRight size={15} aria-hidden="true" /></a><a href="#/library/playlists"><Stack size={19} /> Плейлисты <span>{playlists.length}</span><ArrowUpRight size={15} /></a></nav>}
+      {phone && <nav className="home-tiles" aria-label="Ваша музыка">{([["#/liked", "Любимое", Heart, ""], ["#/downloads", "Загрузки", DownloadSimple, ""], ["#/history", "История", ClockCounterClockwise, "gold"], ["#/import", "Импорт", DownloadSimple, "gold up"]] as const).map(([href, label, Icon, tone]) => <a key={href} href={href}><span className={`tile ${tone}`} aria-hidden="true"><Icon size={24} /></span>{label}</a>)}</nav>}
+      {!phone && all.length > 0 && <nav className="home-shortcuts" aria-label="Ваша музыка"><a href="#/library"><Books size={19} /> Медиатека <span>{tracksWord(all.length)}</span><ArrowUpRight size={15} aria-hidden="true" /></a><a href="#/liked"><Heart size={19} aria-hidden="true" /> Любимое <span>{all.filter((track) => track.reaction > 0).length}</span><ArrowUpRight size={15} aria-hidden="true" /></a><a href="#/library/playlists"><Stack size={19} /> Плейлисты <span>{playlists.length}</span><ArrowUpRight size={15} /></a></nav>}
       {loaded && all.length === 0 && (
         <section className="section">
           <div className="empty">

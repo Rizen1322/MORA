@@ -8,7 +8,7 @@
 | yt-dlp 2026.08.19, официальная сборка `yt_dlp_win.zip` | Unlicense; встроенные компоненты PyInstaller-сборки — см. THIRD_PARTY_LICENSES.txt проекта yt-dlp | `resources/yt-dlp` (`SOURCE.txt` — ссылка и SHA-256) |
 | Fastify, @fastify/static, music-metadata и их зависимости | MIT / ISC / BSD | `resources/backend/backend.mjs.LEGAL.txt` |
 | React, zustand, three.js, Phosphor Icons | MIT | интерфейс |
-| Шрифты Onest, Unbounded (@fontsource-variable) | SIL OFL 1.1 | интерфейс |
+| Шрифты Onest, Unbounded (@fontsource-variable) | SIL OFL 1.1 | интерфейс; в сборке для iPhone те же woff2 лежат внутри приложения (`www/assets`), офлайн, без Google Fonts |
 
 FFmpeg вызывается как отдельный процесс и подключает свои DLL динамически; его можно заменить своей сборкой той же версии API, положив файлы в `resources/ffmpeg`.
 

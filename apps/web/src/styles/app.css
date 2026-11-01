@@ -236,6 +236,11 @@ body::after {
   display: none;
 }
 
+/* Groups the first three tabs for the iPhone's floating tab bar; a plain row everywhere else. */
+.tb-pill {
+  display: contents;
+}
+
 /* ---------------------------------------------------------------- sidebar */
 
 .brand {

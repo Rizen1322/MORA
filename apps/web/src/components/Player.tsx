@@ -27,6 +27,7 @@ import {
   PictureInPicture,
   ArrowsOut,
   PushPin,
+  DotsThree,
 } from '@phosphor-icons/react';
 import { desktop } from '../lib/desktop.ts';
 import { setSleep, sleepEndOfTrack, sleepLeft, sleepMinutes, useSleep } from '../lib/sleepTimer.ts';
@@ -36,12 +37,13 @@ import { artColors } from '../lib/color.ts';
 import { fmtTime, methodShort } from '../lib/format.ts';
 import { trackAlbumHref, go } from '../lib/router.ts';
 import type { Track } from '../lib/api.ts';
-import { controller, trackOf, useApp } from '../store/app.ts';
+import { controller, phone, trackOf, useApp } from '../store/app.ts';
 import { Cover, SplitWords, Swap, useDialogFocus, useReducedMotion } from './common.tsx';
 import { PlayerBackdrop } from './PlayerBackdrop.tsx';
 import { QueuePanel } from './QueuePanel.tsx';
 import { react } from './TrackList.tsx';
 import { LyricsPanel } from './LyricsPanel.tsx';
+import { TrackMenu } from './TrackMenu.tsx';
 import { usePlayerLayout } from '../lib/player-layout.ts';
 
 type Rgb = [number, number, number];
@@ -470,6 +472,8 @@ export function FullPlayer() {
   const [showQueue, setShowQueue] = useState(false);
   const [showLyrics, setShowLyrics] = useState(false);
   const [lyricsOpened, setLyricsOpened] = useState(false);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const automix = useApp((s) => s.settings?.automix.enabled ?? true);
   usePlayerLayout(dialogRef, reduced);
   // Caption buttons are native and paint above the page: make their strip
   // transparent here, otherwise its fixed dark color shows as a box over the
@@ -481,6 +485,19 @@ export function FullPlayer() {
     return () => { void d.setTitlebarOverlay(false).catch(() => {}); };
   }, []);
   if (!t) return null;
+  const queueButton = (
+    <button className="icon-btn" aria-label="Очередь" aria-pressed={showQueue} onClick={() => setShowQueue(!showQueue)}>
+      <Queue size={22} />
+    </button>
+  );
+  // On the iPhone these sit in the bottom row (iOS player layout); elsewhere next to «Нравится».
+  const tools = <>
+    <button className="icon-btn fp-lyrics-toggle" aria-label={showLyrics ? 'Показать обложку' : 'Показать текст песни'} title="Текст песни" aria-pressed={showLyrics} onClick={() => { if (!showLyrics) { setLyricsOpened(true); useApp.getState().setPanel(null); } setShowLyrics(!showLyrics); }}><MicrophoneStage size={23} /></button>
+    <button className="icon-btn" aria-pressed={t.reaction < 0} aria-label="Не нравится" onClick={() => void react(t, t.reaction < 0 ? 0 : -1)}>
+      <HeartBreak size={23} weight={t.reaction < 0 ? 'fill' : 'regular'} />
+    </button>
+    <button className="icon-btn" aria-label="Похожее на этот трек" title="Дальше — похожее на этот трек" disabled={t.reaction < 0} onClick={() => void startSimilar(t)}><Radio size={23} /></button>
+  </>;
   // Cover leans toward the pointer; written straight to style, no React re-render per move.
   const tilt = (e: React.PointerEvent<HTMLDivElement>) => {
     if (reduced || e.pointerType !== 'mouse') return;
@@ -509,10 +526,13 @@ export function FullPlayer() {
           <div className="dim caption">{p.context ? 'Играет из' : 'Сейчас играет'}</div>
           <div style={{ fontWeight: 700 }}>{p.context?.label ?? 'Очередь'}</div>
         </div>
-        <button className="icon-btn" aria-label="Очередь" aria-pressed={showQueue} onClick={() => setShowQueue(!showQueue)}>
-          <Queue size={22} />
-        </button>
+        {phone ? (
+          <button className="icon-btn" aria-label="Действия с треком" aria-haspopup="menu" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.right - 254, y: r.bottom + 4 }); }}>
+            <DotsThree size={24} weight="bold" />
+          </button>
+        ) : queueButton}
       </div>
+      {menu && <TrackMenu track={t} x={menu.x} y={menu.y} onClose={() => setMenu(null)} onPlay={() => { if (p.status === 'paused') controller.toggle(); }} />}
       {showQueue && <QueuePanel className="fp-queue" onClose={() => setShowQueue(false)} />}
       <div className="fp-body" ref={bodyRef}>
         <div className={`fp-art-stage ${showLyrics ? 'shows-lyrics' : ''}`}>
@@ -544,17 +564,13 @@ export function FullPlayer() {
               <button className={`icon-btn ${t.reaction > 0 ? 'liked' : ''}`} aria-pressed={t.reaction > 0} aria-label="Нравится" onClick={() => void react(t, t.reaction > 0 ? 0 : 1)}>
                 <Heart size={23} weight={t.reaction > 0 ? 'fill' : 'regular'} />
               </button>
-              <button className="icon-btn fp-lyrics-toggle" aria-label={showLyrics ? 'Показать обложку' : 'Показать текст песни'} title="Текст песни" aria-pressed={showLyrics} onClick={() => { if (!showLyrics) { setLyricsOpened(true); useApp.getState().setPanel(null); } setShowLyrics(!showLyrics); }}><MicrophoneStage size={23} /></button>
-              <button className="icon-btn" aria-pressed={t.reaction < 0} aria-label="Не нравится" onClick={() => void react(t, t.reaction < 0 ? 0 : -1)}>
-                <HeartBreak size={23} weight={t.reaction < 0 ? 'fill' : 'regular'} />
-              </button>
-              <button className="icon-btn" aria-label="Похожее на этот трек" title="Дальше — похожее на этот трек" disabled={t.reaction < 0} onClick={() => void startSimilar(t)}><Radio size={23} /></button>
+              {!phone && tools}
             </div>
             <Volume p={p} />
           </div>
           <Seekbar p={p} />
           <Controls p={p} big />
-          {next && <section className={`fp-up-next ${p.transition?.active ? 'is-mixing' : ''}`} aria-label={p.transition?.active ? 'Идёт переход' : 'Следующий трек'}>
+          {next && <section className={`fp-up-next ${p.transition?.active ? 'is-mixing' : ''} ${automix ? '' : 'automix-off'}`} aria-label={p.transition?.active ? 'Идёт переход' : 'Следующий трек'}>
             <button className="fp-next-track" onClick={() => setShowQueue(true)} aria-label={`Открыть очередь. Далее: ${next.title}`}>
               <Swap k={next.id} className="fp-next-cover"><Cover url={next.coverUrl} seed={next.album || next.id} size={48} /></Swap>
               <span><span className="fp-next-label">{p.transition?.active ? 'Уже входит в микс' : 'Следом за этим треком'}</span><Swap k={next.id} className="fp-next-copy"><span><strong className="ellipsis">{next.title}</strong><span className="caption muted ellipsis">{next.artist}</span></span></Swap></span>
@@ -570,6 +586,7 @@ export function FullPlayer() {
           {p.transition?.fallback && <div className="small" style={{ color: 'var(--danger)' }}>{p.transition.fallback}</div>}
         </div>
       </div>
+      {phone && <nav className="fp-bottom" aria-label="Текст, реакции и очередь">{tools}{queueButton}</nav>}
       <div />
     </div>
   );
