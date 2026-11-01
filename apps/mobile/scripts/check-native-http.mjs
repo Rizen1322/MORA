@@ -46,6 +46,8 @@ try {
   const binary = join(folder, 'check');
   await bundle({ entryPoints: [resolve(root, 'apps/mobile/src/native-preparation-core.ts')], outfile: join(folder, 'preparation.js'),
     bundle: true, format: 'iife', platform: 'neutral', globalName: 'MoraPreparation', target: 'es2022' });
+  await bundle({ entryPoints: [resolve(root, 'packages/core/test/reference/decimator-v1.ts')], outfile: join(folder, 'decimator-reference.js'),
+    bundle: true, format: 'iife', platform: 'neutral', globalName: 'MoraDecimatorReference', target: 'es2022' });
   const seconds = process.argv.includes('--long-analysis') ? 180 : 4;
   const frames = 44100 * seconds, input = new Float32Array(frames * 2);
   for (let i = 0; i < frames; i++) {

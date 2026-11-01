@@ -1,16 +1,27 @@
 import Foundation
 
 enum NativeMixTimeline {
-    static func preservingTail(_ incoming: [String: Any], after old: [String: Any]?) -> [String: Any] {
+    static func preservingTail(_ incoming: [String: Any], after old: [String: Any]?, currentEntryId: String? = nil) -> [String: Any] {
         guard incoming["replaceFuture"] as? Bool != true, let old,
               let start = incoming["from"] as? Int, let oldStart = old["from"] as? Int, start >= oldStart,
-              let items = incoming["items"] as? [[String: Any]], let previous = old["items"] as? [[String: Any]],
-              start - oldStart <= previous.count else { return incoming }
-        let remaining = Array(previous.dropFirst(start - oldStart))
-        guard items.count < remaining.count, zip(items, remaining).allSatisfy({ a, b in
+              let items = incoming["items"] as? [[String: Any]], let previous = old["items"] as? [[String: Any]] else { return incoming }
+        func same(_ a: [String: Any], _ b: [String: Any]) -> Bool {
             a["entryId"] as? String != nil && a["entryId"] as? String == b["entryId"] as? String
                 && a["trackId"] as? String == b["trackId"] as? String
-        }) else { return incoming }
+        }
+        let offset: Int
+        // Failed sources consume manifest entries but never consume native track indices.
+        if let first = items.first {
+            guard let match = previous.firstIndex(where: { same(first, $0) }) else { return incoming }
+            offset = match
+        } else if let currentEntryId {
+            if let match = previous.firstIndex(where: { $0["entryId"] as? String == currentEntryId }) { offset = match + 1 }
+            else if start == oldStart { offset = 0 }
+            else { return incoming }
+        } else { offset = start - oldStart }
+        guard offset <= previous.count else { return incoming }
+        let remaining = Array(previous.dropFirst(offset))
+        guard items.count < remaining.count, zip(items, remaining).allSatisfy({ same($0, $1) }) else { return incoming }
         var result = incoming; result["items"] = items + remaining.dropFirst(items.count); return result
     }
 

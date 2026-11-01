@@ -77,7 +77,8 @@ Task.detached {
         let job = NativeQueuePreparation(index: 0), sink = PreparedQueueCheck()
         let script = try String(contentsOf: root.deletingLastPathComponent().appendingPathComponent("preparation.js"), encoding: .utf8)
         let core = try NativePreparationCore(script: script)
-        let fftCore = try NativePreparationCore(script: """
+        let decimatorReference = try String(contentsOf: root.deletingLastPathComponent().appendingPathComponent("decimator-reference.js"), encoding: .utf8)
+        let fftCore = try NativePreparationCore(script: decimatorReference + "\n" + """
         var MoraPreparation = {analyzeJSON: function() {
             for (var n of [2, 8, 2048, 4096]) {
                 var storage = new Float64Array(n + 2); storage[0] = 123; storage[n + 1] = 456;
@@ -95,12 +96,36 @@ Task.detached {
             if (moraPreparationFFT(new Float64Array(3), new Float64Array(3))) throw Error('invalid FFT accepted');
             if (moraPreparationFFT(new Float32Array(8), new Float64Array(8))) throw Error('invalid type accepted');
             if (moraPreparationFFT(new Float64Array(8), new Float64Array(2))) throw Error('mismatched lengths accepted');
+            var reference = new MoraDecimatorReference.Decimator2(), history = new Float64Array(62), pos = 0, phase = 0, offset = 0;
+            for (var length of [0, 1, 2, 7, 31, 4, 127, 65536, 1]) {
+                var backing = new Float32Array(length + 2);
+                for (var i = 0; i < backing.length; i++) backing[i] = Math.sin((offset + i) * .19);
+                var input = backing.subarray(1, length + 1), expected = [];
+                reference.push(input, length, function(value) { expected.push(value); });
+                var result = moraPreparationDecimate(input, length, reference.h, history, pos, phase);
+                if (!result || !(result.output instanceof Float64Array) || result.output.length !== expected.length) throw Error('decimator output');
+                for (var i = 0; i < expected.length; i++) if (Math.abs(expected[i] - result.output[i]) > 1e-14) throw Error('decimator parity');
+                if (result.pos !== reference.pos || result.phase !== reference.phase) throw Error('decimator state');
+                for (var i = 0; i < 31; i++) if (history[i] !== reference.buf[i] || history[i + 31] !== reference.buf[i]) throw Error('decimator history');
+                pos = result.pos; phase = result.phase; offset += length;
+            }
+            var snapshot = history.slice();
+            for (var invalid of [
+                [new Float64Array(2), 2, reference.h, history, pos, phase],
+                [new Float32Array(2), 3, reference.h, history, pos, phase],
+                [new Float32Array([NaN]), 1, reference.h, history, pos, phase],
+                [new Float32Array(2), 2, reference.h, history, 31, phase],
+                [new Float32Array(2), 2, reference.h, history, pos, 2]
+            ]) {
+                if (moraPreparationDecimate.apply(null, invalid)) throw Error('invalid decimator accepted');
+                for (var i = 0; i < history.length; i++) if (history[i] !== snapshot[i]) throw Error('invalid decimator mutated history');
+            }
             return '{"passed":true}';
         }};
         """)
         let fftCheck = try fftCore.analyze(root.deletingLastPathComponent().appendingPathComponent("analysis-input.f32le"), frames: 1, ticket: NativePreparationTicket())
         precondition(fftCheck["passed"] as? Bool == true)
-        print("Native FFT: complex DFT parity at 2/8/2048/4096 and invalid lengths passed")
+        print("Native FFT and decimator: complex DFT, irregular blocks, Double output, history and invalid-input checks passed")
         let analysisFrames = CommandLine.arguments.count > 4 ? Int(CommandLine.arguments[4])! : 44100 * 4
         precondition(analysisFrames > 0 && analysisFrames <= 44100 * 180)
         let analysisStarted = ProcessInfo.processInfo.systemUptime

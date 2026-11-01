@@ -338,7 +338,8 @@ final class NativeMixHost {
     func prepareQueue(id: String, manifest incoming: [String: Any], completion: @escaping Reply) {
         work.async {
             do {
-                let manifest = NativeMixTimeline.preservingTail(incoming, after: self.knownManifest)
+                let manifest = NativeMixTimeline.preservingTail(incoming, after: self.knownManifest,
+                    currentEntryId: self.tracks.indices.contains(self.index) ? self.tracks[self.index]["entryId"] as? String : nil)
                 guard id == self.id, let folder = self.folder, !self.tracks.isEmpty, !self.preparing, !self.failed,
                       let requestedFrom = manifest["from"] as? Int, requestedFrom > 0,
                       let items = manifest["items"] as? [[String: Any]], items.count <= 1000,

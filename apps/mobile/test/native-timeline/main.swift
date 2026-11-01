@@ -34,3 +34,19 @@ precondition((NativeMixTimeline.preservingTail(partial, after: original)["items"
 partial["replaceFuture"] = false; partial["items"] = [["entryId": "other", "trackId": "other"]]
 precondition((NativeMixTimeline.preservingTail(partial, after: original)["items"] as! [[String: Any]]).count == 1)
 print("Native manifest: 74-track tail survives partial refresh; explicit replacement and changed entries respected")
+
+// B failed decoding, so C is native index 1 even though it was manifest item 2.
+let skippedItems: [[String: Any]] = ["B", "C", "D", "E", "F"].map { ["entryId": $0, "trackId": $0] }
+let skippedOriginal: [String: Any] = ["from": 1, "items": skippedItems]
+let skippedRefresh: [String: Any] = ["from": 2, "items": Array(skippedItems[2...3])]
+let skippedTail = NativeMixTimeline.preservingTail(skippedRefresh, after: skippedOriginal, currentEntryId: "C")["items"] as! [[String: Any]]
+precondition(skippedTail.map { $0["entryId"] as! String } == ["D", "E", "F"])
+let emptyRefresh: [String: Any] = ["from": 2, "items": [[String: Any]]()]
+let emptyTail = NativeMixTimeline.preservingTail(emptyRefresh, after: skippedOriginal, currentEntryId: "C")["items"] as! [[String: Any]]
+precondition(emptyTail.map { $0["entryId"] as! String } == ["D", "E", "F"], "Empty refresh replayed the audible track after a failed source")
+var explicitClear = emptyRefresh; explicitClear["replaceFuture"] = true
+precondition((NativeMixTimeline.preservingTail(explicitClear, after: skippedOriginal, currentEntryId: "C")["items"] as! [[String: Any]]).isEmpty)
+let beforeFirst: [String: Any] = ["from": 1, "items": [[String: Any]]()]
+precondition((NativeMixTimeline.preservingTail(beforeFirst, after: skippedOriginal, currentEntryId: "A")["items"] as! [[String: Any]]).count == 5)
+precondition((NativeMixTimeline.preservingTail(emptyRefresh, after: skippedOriginal, currentEntryId: "unknown")["items"] as! [[String: Any]]).isEmpty)
+print("Native manifest: failed sources preserve identity-aligned tails without replaying the audible entry")

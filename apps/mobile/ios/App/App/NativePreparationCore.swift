@@ -58,6 +58,49 @@ final class NativePreparationCore {
             return write(real, re) && write(imaginary, im)
         }
         context.setObject(fft, forKeyedSubscript: "moraPreparationFFT" as NSString)
+        let decimate: @convention(block) (JSValue, Int32, JSValue, JSValue, Int32, Int32) -> JSValue? = { [weak self] input, length, coefficients, history, position, phase in
+            guard let self, length >= 0, length <= 65536, position >= 0, position < 31, phase == 0 || phase == 1 else { return nil }
+            let ctx = self.context.jsGlobalContextRef, count = Int(length)
+            func doubles(_ value: JSValue, count: Int) -> [Double]? {
+                guard JSValueGetTypedArrayType(ctx, value.jsValueRef, nil) == kJSTypedArrayTypeFloat64Array,
+                      let object = JSValueToObject(ctx, value.jsValueRef, nil), JSObjectGetTypedArrayLength(ctx, object, nil) == count,
+                      let pointer = JSObjectGetTypedArrayBytesPtr(ctx, object, nil) else { return nil }
+                return Array(UnsafeBufferPointer(start: pointer.assumingMemoryBound(to: Double.self), count: count))
+            }
+            guard JSValueGetTypedArrayType(ctx, input.jsValueRef, nil) == kJSTypedArrayTypeFloat32Array,
+                  let inputObject = JSValueToObject(ctx, input.jsValueRef, nil), JSObjectGetTypedArrayLength(ctx, inputObject, nil) >= count,
+                  let taps = doubles(coefficients, count: 31), var buffer = doubles(history, count: 62),
+                  taps.allSatisfy({ $0.isFinite }), buffer.allSatisfy({ $0.isFinite }) else { return nil }
+            let samples: [Float]
+            if count == 0 { samples = [] }
+            else {
+                guard let pointer = JSObjectGetTypedArrayBytesPtr(ctx, inputObject, nil) else { return nil }
+                samples = Array(UnsafeBufferPointer(start: pointer.assumingMemoryBound(to: Float.self), count: count))
+            }
+            guard samples.allSatisfy({ $0.isFinite }) else { return nil }
+            var pos = Int(position), parity = Int(phase), output: [Double] = []
+            output.reserveCapacity((count + parity) / 2)
+            for sample in samples {
+                buffer[pos] = Double(sample); buffer[pos + 31] = Double(sample)
+                pos = pos + 1 == 31 ? 0 : pos + 1; parity ^= 1
+                if parity == 0 {
+                    var value = 0.0
+                    for k in 0..<31 { value += taps[k] * buffer[pos + k] }
+                    output.append(value)
+                }
+            }
+            guard let array = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeFloat64Array, output.count, nil),
+                  let values = JSValue(jsValueRef: array, in: self.context), let result = JSValue(newObjectIn: self.context) else { return nil }
+            if !output.isEmpty {
+                guard let pointer = JSObjectGetTypedArrayBytesPtr(ctx, array, nil) else { return nil }
+                output.withUnsafeBytes { if let source = $0.baseAddress { memcpy(pointer, source, $0.count) } }
+            }
+            result.setValue(values, forProperty: "output"); result.setValue(pos, forProperty: "pos"); result.setValue(parity, forProperty: "phase")
+            guard let object = JSValueToObject(ctx, history.jsValueRef, nil), let pointer = JSObjectGetTypedArrayBytesPtr(ctx, object, nil) else { return nil }
+            buffer.withUnsafeBytes { if let source = $0.baseAddress { memcpy(pointer, source, $0.count) } }
+            return result
+        }
+        context.setObject(decimate, forKeyedSubscript: "moraPreparationDecimate" as NSString)
         context.evaluateScript(script)
         guard exception == nil else { throw Failure.script }
         api = context.objectForKeyedSubscript("MoraPreparation")
