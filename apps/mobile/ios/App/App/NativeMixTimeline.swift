@@ -1,6 +1,19 @@
 import Foundation
 
 enum NativeMixTimeline {
+    static func preservingTail(_ incoming: [String: Any], after old: [String: Any]?) -> [String: Any] {
+        guard incoming["replaceFuture"] as? Bool != true, let old,
+              let start = incoming["from"] as? Int, let oldStart = old["from"] as? Int, start >= oldStart,
+              let items = incoming["items"] as? [[String: Any]], let previous = old["items"] as? [[String: Any]],
+              start - oldStart <= previous.count else { return incoming }
+        let remaining = Array(previous.dropFirst(start - oldStart))
+        guard items.count < remaining.count, zip(items, remaining).allSatisfy({ a, b in
+            a["entryId"] as? String != nil && a["entryId"] as? String == b["entryId"] as? String
+                && a["trackId"] as? String == b["trackId"] as? String
+        }) else { return incoming }
+        var result = incoming; result["items"] = items + remaining.dropFirst(items.count); return result
+    }
+
     /// Duration-only equal-power reserve; never waits for JavaScriptCore/MIR.
     static func reserve(before: [String: Any], next: [String: Any], frames: Int, settings: [String: Any]) -> [String: Any]? {
         guard settings["enabled"] as? Bool != false, before["mixingAllowed"] as? Bool == true,

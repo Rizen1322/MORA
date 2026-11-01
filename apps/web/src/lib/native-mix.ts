@@ -58,7 +58,7 @@ export interface NativeMix {
   /** Native download/decode and playback of the first recording, without page-side PCM. */
   startSource?(entry: NativeQueueEntry, config: NativeSourceConfig, signal?: AbortSignal): Promise<NativeMixState>;
   prepareQueue?(from: number, entries: NativeQueueEntry[], previousId: string,
-    loopEntries?: NativeQueueEntry[], signal?: AbortSignal): Promise<NativeMixState>;
+    loopEntries?: NativeQueueEntry[], signal?: AbortSignal, replaceFuture?: boolean): Promise<NativeMixState>;
   /** Isolates WebKit audio on first use, then appends PCM to a native file. */
   upload(file: number, offset: number, bytes: ArrayBuffer, signal?: AbortSignal): Promise<void>;
   /** (Re)starts native playback of uploaded files. */

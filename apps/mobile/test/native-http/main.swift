@@ -77,6 +77,26 @@ Task.detached {
         let job = NativeQueuePreparation(index: 0), sink = PreparedQueueCheck()
         let script = try String(contentsOf: root.deletingLastPathComponent().appendingPathComponent("preparation.js"), encoding: .utf8)
         let core = try NativePreparationCore(script: script)
+        let fftCore = try NativePreparationCore(script: """
+        var MoraPreparation = {analyzeJSON: function() {
+            for (var n of [2, 8, 2048, 4096]) {
+                var re = new Float64Array(n), im = new Float64Array(n);
+                for (var i = 0; i < n; i++) { re[i] = Math.sin(i * .31); im[i] = Math.cos(i * .17); }
+                var a = re.slice(), b = im.slice();
+                if (!moraPreparationFFT(re, im)) throw Error('native FFT missing');
+                for (var k = 0; k < Math.min(8, n); k++) {
+                    var r = 0, m = 0;
+                    for (var j = 0; j < n; j++) { var t = -2 * Math.PI * j * k / n; r += a[j]*Math.cos(t)-b[j]*Math.sin(t); m += a[j]*Math.sin(t)+b[j]*Math.cos(t); }
+                    if (Math.abs(r-re[k]) > 1e-8 || Math.abs(m-im[k]) > 1e-8) throw Error('FFT mismatch');
+                }
+            }
+            if (moraPreparationFFT(new Float64Array(3), new Float64Array(3))) throw Error('invalid FFT accepted');
+            return '{"passed":true}';
+        }};
+        """)
+        let fftCheck = try fftCore.analyze(root.deletingLastPathComponent().appendingPathComponent("analysis-input.f32le"), frames: 1, ticket: NativePreparationTicket())
+        precondition(fftCheck["passed"] as? Bool == true)
+        print("Native FFT: complex DFT parity at 2/8/2048/4096 and invalid lengths passed")
         let profile = try core.analyze(root.deletingLastPathComponent().appendingPathComponent("analysis-input.f32le"), frames: 44100 * 4, ticket: NativePreparationTicket())
         try JSONSerialization.data(withJSONObject: profile).write(to: root.deletingLastPathComponent().appendingPathComponent("analysis-actual.json"))
         await job.run(folder: folder, manifest: ["from": 1, "items": [item("B"), item("C")],

@@ -21,6 +21,7 @@ export interface NativePreparationItem {
   artwork?: { base64: string; mime: string };
 }
 export interface NativePreparationManifest {
+  replaceFuture?: boolean;
   from: number;
   items: NativePreparationItem[];
   loopItems?: NativePreparationItem[];

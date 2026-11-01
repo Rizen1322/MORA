@@ -120,7 +120,7 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
         });
       },
     } : {}),
-    prepareQueue: (from, entries, previousId, loopEntries = [], signal) => serialize(async () => {
+    prepareQueue: (from, entries, previousId, loopEntries = [], signal, replaceFuture = false) => serialize(async () => {
       signal?.throwIfAborted();
       if (!hooks.sources || !port.nativeSourceReserve || !port.nativeSourceAppend || !port.nativePrepareQueue) throw Error('Нативная подготовка очереди недоступна');
       if (!id) {
@@ -132,7 +132,7 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
       const unique = [...new Map([...entries, ...loopEntries].map(e => [entryKey(e), e])).values()];
       const manifest = await sourceManifest(unique, previousId, signal);
       const items = new Map(unique.map((entry, index) => [entryKey(entry), manifest.items[index]]));
-      const state = await port.nativePrepareQueue({ id, manifest: { ...manifest, from,
+      const state = await port.nativePrepareQueue({ id, manifest: { ...manifest, from, replaceFuture,
         items: entries.map(e => items.get(entryKey(e))!), loopItems: loopEntries.map(e => items.get(entryKey(e))!) } });
       const kept = new Set(manifest.items.flatMap(item => item.source.kind === 'local' ? [item.source.file] : []));
       for (const [trackId, key] of assets) if (!kept.has(key)) assets.delete(trackId);

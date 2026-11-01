@@ -290,6 +290,7 @@ export class PlayerController {
   private nativeTimer: ReturnType<typeof setInterval> | null = null;
   private nativePolledAt = 0;
   private nativeManifestKey = '';
+  private nativeQueueRevision = 0;
   private nativeSkip = false;
   /** Plans behind each native track's blend (page-side only, for the player UI). */
   private nativePlans = new WeakMap<NativeItem, TransitionPlan>();
@@ -415,7 +416,7 @@ export class PlayerController {
   }
 
   private async nativeSyncOnce(): Promise<void> {
-    const revision = this.nativeRevision, at = this.nativeAt;
+    const revision = this.nativeRevision, at = this.nativeAt, queueRevision = this.queueRevision;
     if (at < 0) return;
     if (this.isWave()) await this.topUpWave();
     if (this.nativeMix.prepareQueue) {
@@ -428,9 +429,9 @@ export class PlayerController {
       this.set({ nextPending: ['Подготовка очереди для фонового воспроизведения'] });
       try {
         await this.nativeMix.prepareQueue(at + 1, entries.map(e => ({ trackId: e.trackId, entryId: e.entryId })), current.trackId,
-          loop.map(e => ({ trackId: e.trackId, entryId: e.entryId })), this.nativeAbort.signal);
+          loop.map(e => ({ trackId: e.trackId, entryId: e.entryId })), this.nativeAbort.signal, queueRevision !== this.nativeQueueRevision);
         if (revision !== this.nativeRevision) return;
-        this.nativeManifestKey = key; this.set({ nextPending: [], error: null });
+        this.nativeQueueRevision = queueRevision; this.nativeManifestKey = key; this.set({ nextPending: [], error: null });
         tracePlayback('native.queue.handoff', { outcome: 'accepted' });
       } catch {
         if (revision !== this.nativeRevision || this.nativeAbort.signal.aborted) return;

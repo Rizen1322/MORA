@@ -62,6 +62,7 @@ final class NativeMixHost {
     private var continueWhenPrepared = false
     private var nextWhenPrepared = false
     private var initialTicket: NativePreparationTicket?
+    private var knownManifest: [String: Any]?
     private var initialConfig: [String: Any] = [:]
     // Main queue only. Do not remove WebKit's or the baseline probe's targets.
     private var targets: [(MPRemoteCommand, Any)] = []
@@ -131,7 +132,7 @@ final class NativeMixHost {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: NativePreparationFiles.attributes)
                 self.folder = folder; self.bytes = [:]; self.sourceBytes = [:]; self.pendingUploads = []; self.preparedFileKey = 500000; self.sourceKey = 0
                 self.preparing = true; self.failed = false
-                self.ownershipRevision += 1
+                self.knownManifest = nil; self.ownershipRevision += 1
                 self.epoch += 1; self.save()
                 self.reply(completion, .success(["id": self.id]))
             } catch { self.reply(completion, .failure(error)) }
@@ -215,7 +216,7 @@ final class NativeMixHost {
                 let start = config["index"] as? Int ?? 0
                 guard raw.indices.contains(start), self.engine == nil || sr == self.sr else { throw Failure.invalid }
                 let metadata = try self.validated(raw, from: 0)
-                self.initialTicket?.cancel(); self.initialTicket = nil; self.initialConfig = [:]
+                self.initialTicket?.cancel(); self.initialTicket = nil; self.initialConfig = [:]; self.knownManifest = nil
                 self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false
                 self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis(); self.analysisSettings = [:]; self.analysisPolicies = [:]
                 self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
@@ -334,9 +335,10 @@ final class NativeMixHost {
         }
     }
     /// Replaces the known future queue, then native playback callbacks release preparation permits.
-    func prepareQueue(id: String, manifest: [String: Any], completion: @escaping Reply) {
+    func prepareQueue(id: String, manifest incoming: [String: Any], completion: @escaping Reply) {
         work.async {
             do {
+                let manifest = NativeMixTimeline.preservingTail(incoming, after: self.knownManifest)
                 guard id == self.id, let folder = self.folder, !self.tracks.isEmpty, !self.preparing, !self.failed,
                       let requestedFrom = manifest["from"] as? Int, requestedFrom > 0,
                       let items = manifest["items"] as? [[String: Any]], items.count <= 1000,
@@ -361,6 +363,7 @@ final class NativeMixHost {
                 }
                 configuration["from"] = from; configuration["items"] = future; configuration["previous"] = previous
                 if !self.done, let renderer = self.renderer, !(try renderer.update(from: from, tracks: [])) { throw Failure.invalid }
+                self.knownManifest = manifest
                 self.preparation?.cancel(keepAnalysis: true)
                 let settings = configuration["settings"] as! [String: Any]
                 let settingsChanged = !NSDictionary(dictionary: self.analysisSettings).isEqual(to: settings)

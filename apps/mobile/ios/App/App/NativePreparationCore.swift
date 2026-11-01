@@ -5,6 +5,7 @@ import JavaScriptCore
 final class NativePreparationCore {
     private let context: JSContext
     private var api: JSValue!
+    private var transforms: [Int: NativeAnalysisFFT] = [:]
     private var file: FileHandle?
     private var ticket: NativePreparationTicket?
     private var exception: String?
@@ -35,6 +36,28 @@ final class NativePreparationCore {
         context.setObject(cancelled, forKeyedSubscript: "moraPreparationCancelled" as NSString)
         let report: @convention(block) (String) -> Void = { [weak self] stage in self?.progress?(stage) }
         context.setObject(report, forKeyedSubscript: "moraPreparationProgress" as NSString)
+        let fft: @convention(block) (JSValue, JSValue) -> Bool = { [weak self] real, imaginary in
+            guard let self else { return false }
+            let ctx = self.context.jsGlobalContextRef
+            func read(_ value: JSValue) -> [Double]? {
+                guard JSValueGetTypedArrayType(ctx, value.jsValueRef, nil) == kJSTypedArrayTypeFloat64Array,
+                      let object = JSValueToObject(ctx, value.jsValueRef, nil) else { return nil }
+                let count = JSObjectGetTypedArrayLength(ctx, object, nil)
+                guard count >= 2, count <= 262144, count & (count - 1) == 0,
+                      let pointer = JSObjectGetTypedArrayBytesPtr(ctx, object, nil) else { return nil }
+                return Array(UnsafeBufferPointer(start: pointer.assumingMemoryBound(to: Double.self), count: count))
+            }
+            guard var re = read(real), var im = read(imaginary), re.count == im.count else { return false }
+            let n = re.count, plan = self.transforms[re.count] ?? NativeAnalysisFFT(re.count)
+            self.transforms[n] = plan; plan.forward(&re, &im)
+            func write(_ value: JSValue, _ data: [Double]) -> Bool {
+                guard let object = JSValueToObject(ctx, value.jsValueRef, nil),
+                      let pointer = JSObjectGetTypedArrayBytesPtr(ctx, object, nil) else { return false }
+                data.withUnsafeBytes { if let source = $0.baseAddress { memcpy(pointer, source, $0.count) } }; return true
+            }
+            return write(real, re) && write(imaginary, im)
+        }
+        context.setObject(fft, forKeyedSubscript: "moraPreparationFFT" as NSString)
         context.evaluateScript(script)
         guard exception == nil else { throw Failure.script }
         api = context.objectForKeyedSubscript("MoraPreparation")
@@ -63,6 +86,36 @@ final class NativePreparationCore {
             throw Failure.analysis // Do not export script exceptions, source paths or addresses.
         }
         return object
+        }
+    }
+}
+
+/// Same radix-2 transform as core/dsp/fft.ts, computed outside the JS interpreter.
+private final class NativeAnalysisFFT {
+    let n: Int, reverse: [Int], cosine: [Double], sine: [Double]
+    init(_ n: Int) {
+        self.n = n
+        let bits = Int(log2(Double(n)))
+        reverse = (0..<n).map { i in
+            var r = 0
+            for b in 0..<bits { r |= ((i >> b) & 1) << (bits - 1 - b) }; return r
+        }
+        cosine = (0..<(n / 2)).map { cos(-2 * .pi * Double($0) / Double(n)) }
+        sine = (0..<(n / 2)).map { sin(-2 * .pi * Double($0) / Double(n)) }
+    }
+    func forward(_ re: inout [Double], _ im: inout [Double]) {
+        for i in 0..<n { let j = reverse[i]; if j > i { re.swapAt(i, j); im.swapAt(i, j) } }
+        var size = 2
+        while size <= n {
+            let half = size / 2, step = n / size
+            for start in stride(from: 0, to: n, by: size) {
+                for k in 0..<half {
+                    let wr = cosine[k * step], wi = sine[k * step], a = start + k, b = a + half
+                    let xr = re[b] * wr - im[b] * wi, xi = re[b] * wi + im[b] * wr
+                    re[b] = re[a] - xr; im[b] = im[a] - xi; re[a] += xr; im[a] += xi
+                }
+            }
+            size *= 2
         }
     }
 }

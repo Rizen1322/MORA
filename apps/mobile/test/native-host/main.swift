@@ -301,7 +301,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
             let data = pcm.subdata(in: offset..<min(pcm.count, offset + 262144))
             _ = try await call { host.append(id: id, track: 0, offset: offset, base64: data.base64EncodedString(), completion: $0) }
         }
-        _ = try await call { host.start(id: id, config: ["sampleRate": 48000.0, "position": 0.0, "index": 0, "paused": slowAnalysisEOF,
+        _ = try await call { host.start(id: id, config: ["sampleRate": 48000.0, "position": 0.0, "index": 0, "paused": true,
             "tracks": [["file": 0, "totalFrames": frames, "gainDb": 0.0, "entryId": "E0", "trackId": "T0", "title": "Track 0"]]], completion: $0) }
         // Production mirrors source leases after start(), which deliberately clears old leases.
         let reserved = try await call { host.reserveSources(id: id, count: 7, completion: $0) }
@@ -314,6 +314,9 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
                 "artist": "Fixture", "duration": 3.0, "mixingAllowed": slowAnalysis, "source": ["kind": "local", "file": key]])
         }
         _ = try await call { host.prepareQueue(id: id, manifest: ["from": 1, "items": items, "settings": ["enabled": slowAnalysis],
+            "previous": ["trackId": "T0", "duration": 3.0, "mixingAllowed": slowAnalysis]], completion: $0) }
+        // A short refresh must not cancel the undecoded tail of a full queue.
+        _ = try await call { host.prepareQueue(id: id, manifest: ["from": 1, "items": Array(items.prefix(2)), "settings": ["enabled": slowAnalysis],
             "previous": ["trackId": "T0", "duration": 3.0, "mixingAllowed": slowAnalysis]], completion: $0) }
         if slowAnalysis {
             var analyzing = false
@@ -328,7 +331,7 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
             }
             try require(analyzing, "Slow MIR fixture never entered its blocked analyzer")
         }
-        if slowAnalysisEOF { _ = try await call { host.command("play", source: "fixture", completion: $0) } }
+        _ = try await call { host.command("play", source: "fixture", completion: $0) }
         write("ready")
         // Public UIKit app switch; simctl launch of an already-running Settings
         // process doesn't reliably activate it. No page exists in this app.

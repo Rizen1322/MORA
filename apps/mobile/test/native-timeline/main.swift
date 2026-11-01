@@ -23,3 +23,14 @@ precondition(NativeMixTimeline.reserve(before: previous, next: ["mixingAllowed":
 precondition(NativeMixTimeline.reserve(before: ["duration": Double.nan, "mixingAllowed": true], next: candidate, frames: 48000, settings: [:]) == nil)
 precondition(NativeMixTimeline.reserve(before: previous, next: candidate, frames: 1, settings: [:]) == nil)
 print("Native reserve: timing, equal power, disabled/forbidden/invalid inputs passed")
+
+let full: [[String: Any]] = (1...74).map { ["entryId": "E\($0)", "trackId": "T\($0)"] }
+let original: [String: Any] = ["from": 1, "items": full]
+var partial: [String: Any] = ["from": 2, "items": Array(full.dropFirst().prefix(2))]
+let preserved = NativeMixTimeline.preservingTail(partial, after: original)["items"] as! [[String: Any]]
+precondition(preserved.count == 73 && preserved.last?["entryId"] as? String == "E74")
+partial["replaceFuture"] = true
+precondition((NativeMixTimeline.preservingTail(partial, after: original)["items"] as! [[String: Any]]).count == 2)
+partial["replaceFuture"] = false; partial["items"] = [["entryId": "other", "trackId": "other"]]
+precondition((NativeMixTimeline.preservingTail(partial, after: original)["items"] as! [[String: Any]]).count == 1)
+print("Native manifest: 74-track tail survives partial refresh; explicit replacement and changed entries respected")
