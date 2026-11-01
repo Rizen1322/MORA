@@ -48,6 +48,7 @@ final class NativeMixHost {
     private var underruns = 0
     private var maxRenderMs = 0.0
     private var lastLogFrame: Int64 = -1
+    private var nowPlaying: (key: String, position: Double, rate: Double, at: Double, row: Double)?
     private var prunedIndex = -1
     private var newestKey = -1
     private var preparation: NativeQueuePreparation?
@@ -168,8 +169,11 @@ final class NativeMixHost {
         }
     }
     private func artwork(_ track: [String: Any]) -> MPMediaItemArtwork? {
-        guard let artwork = track["artwork"] as? [String: Any], let base64 = artwork["base64"] as? String,
-              let image = NativeArtworkImage.decode(base64) else { return nil }
+        guard let artwork = track["artwork"] as? [String: Any], let base64 = artwork["base64"] as? String else { return nil }
+        return Self.artwork(NativeArtworkImage.decode(base64))
+    }
+    private static func artwork(_ image: CGImage?) -> MPMediaItemArtwork? {
+        guard let image else { return nil }
         let thumbnail = UIImage(cgImage: image)
         return MPMediaItemArtwork(boundsSize: thumbnail.size) { requested in
             let size = CGSize(width: max(1, min(thumbnail.size.width, requested.width.isFinite ? requested.width : 512)),
@@ -185,10 +189,12 @@ final class NativeMixHost {
         let loader = artworkLoader, file = Self.key(track, at), entry = track["entryId"] as? String
         let hosts = Set([track["artworkHTTPHost"] as? String].compactMap { $0 })
         loader.load(url, hosts: hosts, index: at, file: file) { [weak self] at, file, data in
+            // Decode on the loader's utility task, not on the render queue.
+            let artwork = Self.artwork(NativeArtworkImage.decode(data))
             self?.work.async { [weak self] in
                 guard let self, self.artworkLoader === loader, self.tracks.indices.contains(at),
                       Self.key(self.tracks[at], at) == file, self.tracks[at]["entryId"] as? String == entry else { return }
-                self.artworks[at] = self.artwork(["artwork": ["base64": data.base64EncodedString()]])
+                self.artworks[at] = artwork
                 if at == self.index { self.publish("artwork") }
             }
         }
@@ -515,7 +521,7 @@ final class NativeMixHost {
         if tracks.indices.contains(index + 1) { result["nextTrack"] = tracks[index + 1] }
         return result
     }
-    func state(_ completion: @escaping Reply) { work.async { self.reply(completion, .success(self.viewState())) } }
+    func state(_ completion: @escaping Reply) { work.async { self.updatePosition(); self.save(); self.reply(completion, .success(self.viewState())) } }
     func diagnosticState(_ completion: @escaping Reply) {
         work.async {
             let previous = self.snapshot["stateSavedAt"]
@@ -585,7 +591,9 @@ final class NativeMixHost {
     private func fill() throws {
         guard let renderer, let format, let player else { throw Failure.playback }
         let generation = epoch
-        while pending < 8 && !done {
+        // 5 x 8192 frames (~0.85 s at 48 kHz): after a completion 4 blocks (~0.68 s) stay
+        // queued, more than the former 7 x 4096, with half the callbacks and allocations.
+        while pending < 5 && !done {
             let began = ProcessInfo.processInfo.systemUptime
             let block = try autoreleasepool { try renderer.render() }
             maxRenderMs = max(maxRenderMs, (ProcessInfo.processInfo.systemUptime - began) * 1000)
@@ -627,8 +635,8 @@ final class NativeMixHost {
                 wantsPlaying = false; ended = true; player?.pause(); engine?.pause(); publish("ended"); return
             }
         }
+        // Between ticks state() refreshes the snapshot on demand.
         if presented - lastLogFrame >= Int64(sr / 2) { publish("tick"); lastLogFrame = presented }
-        else { save() }
         // Keep the predecessor for interpolation; storage stays bounded by scheduled audio.
         if let keep = marks.lastIndex(where: { $0.frame < completed - 4096 }), keep > 0 { marks.removeFirst(keep) }
     }
@@ -671,12 +679,23 @@ final class NativeMixHost {
         let publishedInfo = info
         let canAdvance = tracks.indices.contains(index + 1) || preparation?.hasRemaining == true
         let canReverse = canGoBack
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.active, self.snapshot["epoch"] as? Int == generation else { return }
-            self.refillLease(waiting: state["waitingForPreparation"] as? Bool == true)
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = publishedInfo
-            MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = canAdvance
-            MPRemoteCommandCenter.shared().previousTrackCommand.isEnabled = canReverse
+        // A tick republishes Now Playing only on a visible change or clock drift (tempo
+        // stretch, stall); its journal row is kept every 5 s otherwise.
+        let key = "\(generation)|\(index)|\(title)|\(artist)|\(state["duration"] ?? 0)|\(playbackRate)|\(info[MPMediaItemPropertyArtwork] != nil)|\(tracks.count)|\(canAdvance)|\(canReverse)|\(state["waitingForPreparation"] ?? false)"
+        let now = ProcessInfo.processInfo.systemUptime
+        if reason == "tick", let sent = nowPlaying, sent.key == key,
+           NativeMixTimeline.nowPlayingCurrent(sentPosition: sent.position, sentAt: sent.at, rate: sent.rate, position: position, now: now) {
+            guard now - sent.row >= 5 else { return }
+            nowPlaying?.row = now
+        } else {
+            nowPlaying = (key, position, playbackRate, now, now)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.active, self.snapshot["epoch"] as? Int == generation else { return }
+                self.refillLease(waiting: state["waitingForPreparation"] as? Bool == true)
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = publishedInfo
+                MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = canAdvance
+                MPRemoteCommandCenter.shared().previousTrackCommand.isEnabled = canReverse
+            }
         }
         let prep = state["preparation"] as? [String: Any] ?? [:]
         MoraPlaybackJournal.record("native.mix.state", ["reason": reason, "seq": index, "position": position, "duration": state["duration"] ?? 0,

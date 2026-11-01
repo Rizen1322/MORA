@@ -112,7 +112,7 @@ export class NativeMixerRuntime {
     }
   }
   render() {
-    const left = new Float32Array(4096), right = new Float32Array(4096);
+    const left = new Float32Array(8192), right = new Float32Array(8192); // NativeQueueRenderer block size
     const marks: NativeMark[] = [];
     const mark = (offset: number) => {
       const main = this.core.main;

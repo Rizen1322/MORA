@@ -1701,7 +1701,7 @@ final class NativeQueueRenderer {
     private var advance = false, promote = false, endedLast = false, done = false
     private var tail = -1
     private var events: [[String: Any]] = []
-    private let left = FBuf(4096, 0), right = FBuf(4096, 0)
+    private let left = FBuf(8192, 0), right = FBuf(8192, 0) // one host buffer
     var trackCount: Int { tracks.count }
 
     init(folder: URL, config: [String: Any]) throws {

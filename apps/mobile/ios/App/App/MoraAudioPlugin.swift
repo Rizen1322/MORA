@@ -417,7 +417,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 /// only means that its callback accepted the event, not that WebContent received it.
 enum MoraPlaybackJournal {
     static let enabled = Bundle.main.object(forInfoDictionaryKey: "MoraPlaybackDiagnostics") as? Bool == true
-    private static let queue = DispatchQueue(label: "ru.mora.playback-diagnostics")
+    private static let queue = DispatchQueue(label: "ru.mora.playback-diagnostics", qos: .utility)
     private static let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("MORA/playback-diagnostics.json")
     private static var events: [[String: Any]] = {
@@ -444,11 +444,12 @@ enum MoraPlaybackJournal {
         queue.async {
             events.append(safe)
             if events.count > 1200 { events.removeFirst(events.count - 1200) }
-            // Flush at most twice a second even during a command burst.
+            // Rewriting the whole journal (up to ~0.5 MB, encrypted) is costly: at most every 10 s,
+            // plus a flush when the app leaves the foreground.
             if write == nil {
                 let job = DispatchWorkItem { persist(); write = nil }
                 write = job
-                queue.asyncAfter(deadline: .now() + 0.5, execute: job)
+                queue.asyncAfter(deadline: .now() + 10, execute: job)
             }
         }
     }
