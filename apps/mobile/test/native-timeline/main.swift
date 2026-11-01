@@ -88,3 +88,13 @@ precondition(NativeMixTimeline.aheadDepth(["kind": "upload"]) == 2)
 precondition(NativeMixTimeline.aheadDepth(["kind": "direct", "url": "https://example.com/a"]) == 4)
 precondition(NativeMixTimeline.aheadDepth(["kind": "hls"]) == 4 && NativeMixTimeline.aheadDepth(nil) == 4)
 print("Native preparation depth: two ahead for local files, four for downloads")
+
+precondition(NativeMixTimeline.pendingSkips(0, ahead: 0, remaining: 5) == 1)
+precondition(NativeMixTimeline.pendingSkips(1, ahead: 0, remaining: 5) == 2)
+precondition(NativeMixTimeline.pendingSkips(2, ahead: 1, remaining: 1) == 2, "Skip target passed the end of the queue")
+precondition(NativeMixTimeline.pendingSkips(0, ahead: 0, remaining: 0) == 0, "Next accepted with nothing left")
+precondition(NativeMixTimeline.pendingSkips(NativeMixTimeline.maxPendingSkips, ahead: 0, remaining: 50) == NativeMixTimeline.maxPendingSkips)
+var presses = 0
+for _ in 0..<5 { presses = NativeMixTimeline.pendingSkips(presses, ahead: 0, remaining: 3) }
+precondition(presses == 3, "Five quick presses over three remaining songs: \(presses)")
+print("Native skips: each press moves the target, bounded by remaining songs and storage")

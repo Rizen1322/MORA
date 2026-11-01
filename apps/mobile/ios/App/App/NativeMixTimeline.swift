@@ -72,9 +72,16 @@ enum NativeMixTimeline {
     }
 
     /// Remote sources are downloaded in full before decoding, so quick skips need more of them ready.
-    /// Storage stays bounded: prune() keeps only the previous track onward, at most depth + 2 files.
+    /// Storage stays bounded: prune() keeps only the previous track onward: depth + 2 files, plus pending skips.
     static func aheadDepth(_ source: [String: Any]?) -> Int {
         ["local", "upload"].contains(source?["kind"] as? String ?? "") ? 2 : 4
+    }
+
+    /// Lock-screen Next presses while the target song is still preparing: each moves it one further,
+    /// bounded by the songs that can still arrive and by storage (skipped songs stay on disk until the target plays).
+    static let maxPendingSkips = 8
+    static func pendingSkips(_ current: Int, ahead: Int, remaining: Int) -> Int {
+        max(current, min(current + 1, maxPendingSkips, max(0, ahead) + max(0, remaining)))
     }
 
     static func duration(_ track: [String: Any], sampleRate: Double) -> Double {

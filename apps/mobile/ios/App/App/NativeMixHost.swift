@@ -61,7 +61,9 @@ final class NativeMixHost {
     private var preparedFileKey = 500000
     private var sourceKey = 0
     private var continueWhenPrepared = false
-    private var nextWhenPrepared = false
+    // Absolute index that waiting Next presses aim for; a crossfade into the next song keeps it.
+    private var skipTarget = -1
+    private var pendingSkips: Int { max(0, skipTarget - index) }
     private var initialTicket: NativePreparationTicket?
     private var knownManifest: [String: Any]?
     private var initialConfig: [String: Any] = [:]
@@ -110,7 +112,7 @@ final class NativeMixHost {
             "renderedFrames": rendered, "queuedFrames": queued, "presentedFrames": presented,
             "epoch": epoch, "ownership": ownershipRevision, "underruns": underruns, "maxRenderMs": maxRenderMs, "failed": failed,
             "artworkReady": artworks.indices.contains(index) && artworks[index] != nil, "count": tracks.count, "ended": ended,
-            "waitingForPreparation": continueWhenPrepared && ended, "pendingNext": nextWhenPrepared,
+            "waitingForPreparation": continueWhenPrepared && ended, "pendingSkips": pendingSkips,
             "entryId": tracks.indices.contains(index) ? tracks[index]["entryId"] as? String ?? "" : ""]
         var result = state
         result["stateSavedAt"] = Date().timeIntervalSince1970
@@ -385,7 +387,7 @@ final class NativeMixHost {
                     self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis(); self.analysisSettings = settings
                 }
                 let analysis = self.analysisWorker
-                self.nextWhenPrepared = false // A replacement manifest owns new navigation intent.
+                self.skipTarget = -1 // A replacement manifest owns new navigation intent.
                 let referenced = Set((items + (manifest["loopItems"] as? [[String: Any]] ?? [])).compactMap { item -> Int? in
                     guard let source = item["source"] as? [String: Any], source["kind"] as? String == "local" else { return nil }
                     return source["file"] as? Int
@@ -412,7 +414,7 @@ final class NativeMixHost {
                     }
                 }
                 if future.isEmpty && (manifest["loopItems"] as? [[String: Any]] ?? []).isEmpty {
-                    self.preparation = nil; self.continueWhenPrepared = false; self.nextWhenPrepared = false; self.prune(); self.publish("handoff"); self.reply(completion, .success(self.viewState())); return
+                    self.preparation = nil; self.continueWhenPrepared = false; self.skipTarget = -1; self.prune(); self.publish("handoff"); self.reply(completion, .success(self.viewState())); return
                 }
                 let job = NativeQueuePreparation(index: self.index, remaining: future.count,
                     loopCount: (manifest["loopItems"] as? [[String: Any]] ?? []).count, analysis: self.analysisWorker); self.preparation = job
@@ -445,7 +447,7 @@ final class NativeMixHost {
                                     self.tracks += added; self.config["tracks"] = self.tracks; self.artworks.append(self.artwork(track))
                                     self.requestArtwork(track, at: at)
                                     appended = true
-                                    if self.nextWhenPrepared || (self.done && self.ended && self.continueWhenPrepared) {
+                                    if (self.pendingSkips > 0 ? at >= self.skipTarget : self.done && self.ended && self.continueWhenPrepared) {
                                         try self.select(index: at, position: 0, playing: self.wantsPlaying || self.continueWhenPrepared)
                                     }
                                     else { self.publish("prepared") }
@@ -468,7 +470,12 @@ final class NativeMixHost {
                         self?.work.async { [weak self] in
                             guard let self, self.preparation === job else { return }
                             if kind == "finished" && !job.hasRemaining {
-                                self.nextWhenPrepared = false
+                                // Failed sources left the target unreachable: land on the furthest prepared song.
+                                if self.pendingSkips > 0 && self.tracks.count - 1 > self.index {
+                                    do { try self.select(index: self.tracks.count - 1, position: 0, playing: self.wantsPlaying || self.continueWhenPrepared) }
+                                    catch { self.fail(); return }
+                                }
+                                self.skipTarget = -1
                                 // Nothing more will arrive: release the output held for it.
                                 if self.ended { self.continueWhenPrepared = false; self.engine?.pause() }
                             }
@@ -580,7 +587,7 @@ final class NativeMixHost {
         player?.stop(); engine?.pause()
         pending = 0; rendered = 0; queued = 0; completed = 0; presented = 0; marks.removeAll(); done = false; ended = false
         lastLogFrame = -1
-        self.index = index; self.position = position; self.blend = nil; self.nextWhenPrepared = false; self.continueWhenPrepared = false
+        self.index = index; self.position = position; self.blend = nil; self.skipTarget = -1; self.continueWhenPrepared = false
         var next = config; next["index"] = index; next["position"] = position
         guard let folder else { throw Failure.invalid }
         renderer = try NativeQueueRenderer(folder: folder, config: next)
@@ -631,7 +638,10 @@ final class NativeMixHost {
             do { try fill() } catch { fail(); return }
             if done && pending == 0 {
                 // The page appended a track after the renderer finished: continue without a blend.
-                if tracks.indices.contains(index + 1) { do { try select(index: index + 1, position: 0, playing: true) } catch { fail() }; return }
+                if tracks.indices.contains(index + 1) {
+                    let target = skipTarget // The natural advance is one step towards it.
+                    do { try select(index: index + 1, position: 0, playing: true); skipTarget = target } catch { fail() }; return
+                }
                 continueWhenPrepared = preparation?.hasRemaining == true
                 wantsPlaying = false; ended = true; player?.pause()
                 if continueWhenPrepared { holdOutput() } else { engine?.pause() }
@@ -672,7 +682,7 @@ final class NativeMixHost {
         if index != prunedIndex { prune() }
         let state = snapshot, generation = epoch
         let title = tracks.indices.contains(index) ? tracks[index]["title"] as? String ?? "MORA" : "MORA"
-        let artist = tracks.indices.contains(index) ? tracks[index]["artist"] as? String ?? "" : ""
+        let artist = pendingSkips > 0 ? "Загрузка следующего трека…" : tracks.indices.contains(index) ? tracks[index]["artist"] as? String ?? "" : ""
         var info: [String: Any] = [MPMediaItemPropertyTitle: title, MPMediaItemPropertyArtist: artist,
             MPMediaItemPropertyPersistentID: NSNumber(value: index + 1), MPMediaItemPropertyPlaybackDuration: state["duration"] ?? 0,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: position, MPNowPlayingInfoPropertyPlaybackRate: playbackRate,
@@ -680,7 +690,7 @@ final class NativeMixHost {
             MPNowPlayingInfoPropertyPlaybackQueueIndex: index, MPNowPlayingInfoPropertyPlaybackQueueCount: tracks.count]
         if artworks.indices.contains(index), let artwork = artworks[index] { info[MPMediaItemPropertyArtwork] = artwork }
         let publishedInfo = info
-        let canAdvance = tracks.indices.contains(index + 1) || preparation?.hasRemaining == true
+        let canAdvance = tracks.indices.contains(index + 1) || preparation?.hasRemaining == true || pendingSkips > 0
         let canReverse = canGoBack
         // A tick republishes Now Playing only on a visible change or clock drift (tempo
         // stretch, stall); its journal row is kept every 5 s otherwise.
@@ -710,7 +720,7 @@ final class NativeMixHost {
     }
     private func fail() {
         initialTicket?.cancel(); initialTicket = nil; initialConfig = [:]
-        preparation?.cancel(); preparation = nil; continueWhenPrepared = false; nextWhenPrepared = false
+        preparation?.cancel(); preparation = nil; continueWhenPrepared = false; skipTarget = -1
         wantsPlaying = false; failed = true; knownManifest = nil; epoch += 1
         player?.stop(); engine?.pause(); renderer = nil
         save(); MoraPlaybackJournal.record("native.mix.failed")
@@ -739,10 +749,10 @@ final class NativeMixHost {
                 self.updatePosition()
                 if source != "interruption" { self.resumeAfterInterruption = false }
                 switch action {
-                case "pause": self.continueWhenPrepared = false; self.wantsPlaying = false; self.player?.pause(); self.engine?.pause()
+                case "pause": self.continueWhenPrepared = false; self.skipTarget = -1; self.wantsPlaying = false; self.player?.pause(); self.engine?.pause()
                 case "play", "toggle":
                     if action == "toggle" && self.wantsPlaying {
-                        self.continueWhenPrepared = false
+                        self.continueWhenPrepared = false; self.skipTarget = -1
                         self.wantsPlaying = false; self.player?.pause(); self.engine?.pause()
                     } else {
                         let wasPlaying = self.wantsPlaying
@@ -765,14 +775,17 @@ final class NativeMixHost {
                         else { self.wantsPlaying = true; try self.fill(); try self.engine?.start(); self.player?.play() }
                     }
                 case "nexttrack":
-                    if self.tracks.indices.contains(self.index + 1) {
+                    if self.pendingSkips == 0 && self.tracks.indices.contains(self.index + 1) {
                         try self.select(index: self.index + 1, position: 0, playing: self.wantsPlaying || self.continueWhenPrepared)
-                    } else if self.preparation?.hasRemaining == true {
-                        // Keep the current audible track running until its replacement is ready.
+                    } else {
+                        // Keep the current audible track running until the target is ready; each press moves it one further.
                         // Stopping the engine here could suspend preparation in the background.
-                        self.nextWhenPrepared = true
-                        self.preparation?.gate.advance(self.index + 1)
-                    } else { throw Failure.invalid }
+                        let skips = NativeMixTimeline.pendingSkips(self.pendingSkips, ahead: self.tracks.count - 1 - self.index,
+                                                                   remaining: self.preparation?.remainingItems ?? 0)
+                        guard skips > 0 else { throw Failure.invalid }
+                        self.skipTarget = self.index + skips
+                        self.preparation?.gate.advance(self.skipTarget)
+                    }
                 case "previoustrack":
                     let previous = self.position > 3 ? self.index : self.index - 1
                     guard self.available(previous) else { throw Failure.invalid }
@@ -821,7 +834,7 @@ final class NativeMixHost {
     func stop(_ completion: @escaping Reply) {
         work.async {
             self.initialTicket?.cancel(); self.initialTicket = nil; self.initialConfig = [:]; self.knownManifest = nil
-            self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false; self.nextWhenPrepared = false
+            self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false; self.skipTarget = -1
             self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis()
             self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
             DispatchQueue.main.async { [weak self] in self?.refillLease(waiting: false) }
@@ -869,7 +882,7 @@ final class NativeMixHost {
             guard self.folder != nil, !self.tracks.isEmpty || self.initialTicket != nil else { return }
             if self.initialTicket != nil { self.initialConfig["paused"] = true }
             self.wantsPlaying = false; self.resumeAfterInterruption = false; self.interrupted = false
-            self.continueWhenPrepared = false; self.nextWhenPrepared = false; self.mediaResetPending = true
+            self.continueWhenPrepared = false; self.skipTarget = -1; self.mediaResetPending = true
             self.discardGraph(); self.ownsSession = false
             self.publish("mediaReset") // Preserve the queue; only a subsequent user Play activates audio.
         }
@@ -932,9 +945,9 @@ final class NativeMixHost {
             self.work.asyncAfter(deadline: .now() + 0.05) {
                 guard self.epoch == generation, self.wantsPlaying, !self.interrupted, !self.mediaResetPending else { return }
                 do {
-                    let pendingNext = self.nextWhenPrepared
+                    let target = self.skipTarget
                     try self.select(index: self.index, position: self.position, playing: true)
-                    self.nextWhenPrepared = pendingNext; self.publish("configurationRecovered")
+                    self.skipTarget = target; self.publish("configurationRecovered")
                 }
                 catch { self.fail() }
             }

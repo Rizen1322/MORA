@@ -55,6 +55,12 @@ final class NativeQueuePreparation: @unchecked Sendable {
         for (key, value) in gate.snapshot { result[key] = value }; return result
     }
     var hasRemaining: Bool { !ticket.cancelled && snapshot["hasMore"] as? Bool == true }
+    /// Songs not yet handed to the host; a repeating queue never runs out.
+    var remainingItems: Int {
+        guard hasRemaining else { return 0 }
+        lock.lock(); defer { lock.unlock() }
+        return repeats ? NativeMixTimeline.maxPendingSkips : cached["remaining"] as? Int ?? 0
+    }
     init(index: Int, remaining: Int = 0, loopCount: Int = 0, analysis: NativeMixAnalysis = NativeMixAnalysis()) {
         self.analysis = analysis
         gate = NativePreparationGate(index: index); repeats = loopCount > 0
