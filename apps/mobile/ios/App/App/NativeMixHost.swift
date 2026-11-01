@@ -278,7 +278,7 @@ final class NativeMixHost {
                         }
                         var next = self.initialConfig
                         next["paused"] = next["paused"] as? Bool == true || self.interrupted || self.mediaResetPending
-                        var track: [String: Any] = ["file": key, "totalFrames": frames, "gainDb": allowed ? next["gainDb"] as? Double ?? 0 : 0,
+                        var track: [String: Any] = ["file": key, "totalFrames": frames, "gainDb": allowed ? next["gainDb"] as? Double ?? 0.0 : 0.0,
                             "trackId": trackId, "entryId": entryId, "title": item["title"] ?? "", "artist": item["artist"] ?? ""]
                         if let artwork = item["artwork"] { track["artwork"] = artwork }
                         let previous = self.tracks.indices.contains(self.index) && self.available(self.index)
