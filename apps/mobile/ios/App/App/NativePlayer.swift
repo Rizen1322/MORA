@@ -48,7 +48,7 @@ final class NativePlayerModel: ObservableObject {
         host.playerState { [weak self] result in
             guard let self, case .success(let value) = result else { return }
             let next = NativePlayerState(value)
-            if !next.active { self.close("close"); return }
+            if !next.active { self.stop(); self.close("close"); return }
             if next != self.state { self.state = next }
             let key = "\(next.entryId)|\(next.artworkReady)"
             if key != self.artworkKey {
@@ -64,7 +64,7 @@ final class NativePlayerModel: ObservableObject {
     }
     func transport(_ action: String) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        if action == "toggle" { state.playing.toggle() }
+        if action == "play" || action == "pause" { state.playing = action == "play" }
         send(action)
     }
     func scrubbed(to time: Double) {
@@ -171,7 +171,7 @@ struct NativePlayerView: View {
         .padding(.bottom, 8)
         .foregroundStyle(.white)
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
-        .background { background.ignoresSafeArea() }
+        .background { backdrop.ignoresSafeArea() }
         .onAppear { model.start() }
         .onDisappear { model.finish() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in model.stop() }
@@ -179,7 +179,7 @@ struct NativePlayerView: View {
         .sheet(isPresented: $queueOpen) { NativeQueueView(model: model) }
     }
 
-    private var background: some View {
+    private var backdrop: some View {
         ZStack {
             LinearGradient(colors: [Color(red: 0.10, green: 0.24, blue: 0.17), .moraBackground], startPoint: .top, endPoint: .bottom)
             if let image = model.artwork {
@@ -240,7 +240,7 @@ struct NativePlayerView: View {
             }
             .accessibilityLabel("Предыдущий")
             Spacer()
-            Button { model.transport("toggle") } label: {
+            Button { model.transport(playing ? "pause" : "play") } label: {
                 Image(systemName: playing ? "pause.fill" : "play.fill").font(.system(size: 34))
                     .foregroundStyle(Color.moraBackground)
                     .frame(width: 80, height: 80)
