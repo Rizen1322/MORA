@@ -178,6 +178,8 @@ final class NativeMixAnalysis: @unchecked Sendable {
     private static var scriptKey = ""
     private static var cache: [String: [String: Any]] = [:]
     private static var cacheOrder: [String] = []
+    /// Set once at launch by the app (NativeRustAnalysis); test hosts without the static library keep the script analyzer.
+    static var compiled: (version: String, analyze: (URL, Int, @escaping () -> Bool) -> [String: Any]?)?
     private let lock = NSLock()
     private var pending: [Request] = []
     private var active: Request?
@@ -318,7 +320,16 @@ final class NativeMixAnalysis: @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: temporary) }
         let frames = try NativePCMDecoder.resample(source.url, from: 48000, to: temporary, sampleRate: 44100, cancelled: { request.ticket.cancelled })
         stage("analyzing", request, role: role)
-        let result = try core.analyze(temporary, frames: frames, ticket: request.ticket) { [self] name in stage(name, request, role: role) }
+        let result: [String: Any]
+        if let compiled = Self.compiled, compiled.version == core.analyzerVersion {
+            stage("compiledAnalysis", request, role: role)
+            guard let value = compiled.analyze(temporary, frames, { request.ticket.cancelled }) else {
+                throw request.ticket.cancelled ? NativeMediaHTTP.Failure.cancelled : NativePreparationCore.Failure.analysis
+            }
+            result = value
+        } else {
+            result = try core.analyze(temporary, frames: frames, ticket: request.ticket) { [self] name in stage(name, request, role: role) }
+        }
         if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
         Self.cache[key] = result; Self.cacheOrder.append(key)
         if Self.cacheOrder.count > 32 { Self.cache.removeValue(forKey: Self.cacheOrder.removeFirst()) }

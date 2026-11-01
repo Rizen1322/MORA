@@ -1,0 +1,29 @@
+[package]
+name = "mora-audio"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[[bin]]
+name = "mora-audio"
+path = "src/main.rs"
+required-features = ["device"]
+
+[features]
+# The desktop host needs the WASAPI device; the iOS static library only links the analyzer.
+default = ["device"]
+device = ["dep:cpal", "dep:rtrb"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+base64 = "0.22"
+cpal = { version = "0.16", optional = true }
+rtrb = { version = "0.3", optional = true }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
