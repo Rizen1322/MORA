@@ -5,13 +5,15 @@ import { DotsThree, Heart, Play, Pause, Warning, CircleNotch } from '@phosphor-i
 import { api, type Track } from '../lib/api.ts';
 import { fmtTime } from '../lib/format.ts';
 import { trackAlbumHref } from '../lib/router.ts';
-import { controller, useApp } from '../store/app.ts';
+import { controller, phone, useApp } from '../store/app.ts';
+import { useRowGesture } from '../lib/row-gesture.ts';
 import { Cover, Equalizer } from './common.tsx';
 import { TrackMenu } from './TrackMenu.tsx';
 
 export type SortKey = 'title' | 'artist' | 'album' | 'added' | 'duration' | 'bpm' | 'plays';
 
-const ROW_H = 56;
+// iPhone rows are taller (64 pt: 48 pt artwork + padding), matching the iOS list rhythm.
+const ROW_H = phone ? 64 : 56;
 
 export interface TrackListProps {
   tracks: Track[];
@@ -55,6 +57,8 @@ export function TrackList({ tracks, onPlay, showAlbum = true, numbered = true, s
   const [menu, setMenu] = useState<{ t: Track; i: number; x: number; y: number } | null>(null);
   const [range, setRange] = useState<[number, number]>([0, 60]);
   useScrollParent(ref, tracks.length > 0);
+  const gesture = useRowGesture();
+  const toast = useApp((s) => s.toast);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -109,6 +113,14 @@ export function TrackList({ tracks, onPlay, showAlbum = true, numbered = true, s
             className={`track-row ${isCur ? 'playing' : ''} ${unavailable ? 'unavailable' : ''}`}
             onDoubleClick={() => !unavailable && onPlay(i)}
             onContextMenu={(e) => openMenu(e, t, i)}
+            {...(phone ? gesture({
+              tap: () => { if (!unavailable) { if (isCur) controller.toggle(); else onPlay(i); } },
+              hold: (row) => setMenu({ t, i, x: 16, y: row.getBoundingClientRect().bottom + 6 }),
+              swipe: (a) => {
+                controller.addToQueue([t.id], a === 'next');
+                toast(a === 'next' ? `«${t.title}» сыграет следующим` : 'Добавлено в очередь');
+              },
+            }) : {})}
           >
             <span className="t-num muted">
               {isCur ? (

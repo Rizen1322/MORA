@@ -1,8 +1,8 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { DotsSixVertical, X, Trash, Sparkle, Headphones, Stop, CircleNotch } from '@phosphor-icons/react';
+import { DotsSixVertical, X, Trash, Sparkle, Headphones, Stop, CircleNotch, Shuffle, Repeat, RepeatOnce, Waveform } from '@phosphor-icons/react';
 import { fmtTime, methodShort, tracksWord } from '../lib/format.ts';
-import { controller, trackOf, useApp } from '../store/app.ts';
+import { controller, phone, trackOf, useApp } from '../store/app.ts';
 import { Cover, Equalizer } from './common.tsx';
 import { togglePreview, usePreview } from '../lib/transition-preview.ts';
 
@@ -22,8 +22,9 @@ export function QueuePanel({ onClose, className = '' }: { onClose?: () => void; 
   const p = useApp(useShallow((s) => ({
     queue: s.player.queue, index: s.player.index, status: s.player.status, context: s.player.context,
     nextPlan: s.player.nextPlan, transitionActive: !!s.player.transition?.active, waveLoading: s.player.waveLoading,
-    continuation: s.player.continuation,
+    continuation: s.player.continuation, shuffle: s.player.shuffle, repeat: s.player.repeat,
   })));
+  const automix = useApp((s) => s.settings?.automix);
   const setOpen = useApp((s) => s.setQueueOpen);
   const [drag, setDrag] = useState<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
@@ -66,6 +67,14 @@ export function QueuePanel({ onClose, className = '' }: { onClose?: () => void; 
         </div>
       </div>
       <div className="queue-scroll" ref={scrollRef} onScroll={onScroll}>
+        {phone && (
+          // iPhone: shuffle, repeat and AutoMix live here instead of the transport row (iOS player layout).
+          <div className="q-tools">
+            <button aria-pressed={p.shuffle} disabled={wave} onClick={() => controller.toggleShuffle()}><Shuffle size={18} />Перемешать</button>
+            <button aria-pressed={p.repeat !== 'off'} aria-label={p.repeat === 'off' ? 'Повтор выключен' : p.repeat === 'all' ? 'Повтор очереди' : 'Повтор трека'} onClick={() => controller.cycleRepeat()}>{p.repeat === 'one' ? <RepeatOnce size={18} /> : <Repeat size={18} />}Повтор</button>
+            {automix && <button className="gold" aria-pressed={automix.enabled} onClick={() => void useApp.getState().saveSettings({ automix: { ...automix, enabled: !automix.enabled } })}><Waveform size={18} />AutoMix</button>}
+          </div>
+        )}
         {curT ? (
           <>
             <div className="queue-label">Сейчас играет</div>

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { House, Waveform, Books, Heart, ClockCounterClockwise, Plugs, GearSix, Plus, MagnifyingGlass, DotsThreeCircle, X, CheckCircle, WarningCircle, Info, ChartLine, CaretLeft, CaretRight, DownloadSimple } from '@phosphor-icons/react';
+import { House, Waveform, Books, Heart, ClockCounterClockwise, Plugs, GearSix, Plus, MagnifyingGlass, DotsThreeCircle, X, CheckCircle, WarningCircle, Info, ChartLine, CaretLeft, CaretRight, DownloadSimple, User } from '@phosphor-icons/react';
 import { api } from '../lib/api.ts';
 import { filesFromDrop, importFiles } from '../lib/importer.ts';
 import { useRoute } from '../lib/router.ts';
 import { desktop } from '../lib/desktop.ts';
 import { CompactToggle } from './Player.tsx';
-import { useApp } from '../store/app.ts';
+import { phone, useApp } from '../store/app.ts';
 import { Cover, PromptModal } from './common.tsx';
 
 function active(path: string, prefix: string, exact = false): 'page' | undefined {
@@ -128,8 +128,46 @@ export function TitleBar() {
   );
 }
 
+/** Tab roots and catalog pages (which bring their own back button) get no back button in the iPhone top bar. */
+const NO_BACK = /^\/(liked|library(\/(tracks|albums|artists|playlists|search))?|search|catalog\/.*|public\/.*|soundcloud\/.*)?$/;
+
+/**
+ * iPhone: the scroll-edge bar fades in (with a compact title) once the large title scrolls away,
+ * and scrolling down folds the tab bar so the mini player joins its row (iOS 26 tab bar accessory).
+ */
+function usePhoneChrome(path: string) {
+  const [min, setMin] = useState(false);
+  const [title, setTitle] = useState('');
+  useEffect(() => {
+    const main = document.getElementById('main');
+    if (!phone || !main) return;
+    const root = document.documentElement;
+    let last = main.scrollTop;
+    const on = () => {
+      const y = main.scrollTop;
+      const scrolled = y > 40;
+      if (scrolled !== root.classList.contains('scrolled')) {
+        root.classList.toggle('scrolled', scrolled);
+        if (scrolled) setTitle(main.querySelector<HTMLElement>('.page-title')?.innerText.replace(/\s+/g, ' ').replace(/\.$/, '') ?? '');
+      }
+      if (y < 20) setMin(false);
+      else if (y - last > 8 && y > 120) setMin(true);
+      else if (last - y > 14) setMin(false);
+      last = y;
+    };
+    setMin(false);
+    root.classList.remove('scrolled'); // a new page: its own title
+    on();
+    main.addEventListener('scroll', on, { passive: true });
+    return () => main.removeEventListener('scroll', on);
+  }, [path]);
+  useEffect(() => { document.documentElement.classList.toggle('tabbar-min', min); }, [min]);
+  return { min, setMin, title };
+}
+
 export function TabBar() {
   const { path } = useRoute();
+  const { min, setMin, title } = usePhoneChrome(path);
   const items = [
     // The wave starts from the large card on Home, so its page belongs to that tab.
     { href: '#/', label: 'Главная', Icon: House, on: path === '/' || path === '/wave' },
@@ -138,15 +176,33 @@ export function TabBar() {
     { href: '#/search', label: 'Поиск', Icon: MagnifyingGlass, on: path === '/library/search' || path === '/search' || path.startsWith('/catalog') },
     { href: '#/more', label: 'Ещё', Icon: DotsThreeCircle, on: ['/more', '/settings', '/sources', '/history', '/diagnostics'].includes(path) },
   ];
+  const link = ({ href, label, Icon, on }: (typeof items)[number], className?: string) => (
+    <a key={href} className={className} href={href} aria-current={on ? 'page' : undefined} onClick={(e) => {
+      if (!phone) return;
+      // A folded tab bar unfolds first; tapping the open tab again scrolls back to the top.
+      if (min) { e.preventDefault(); setMin(false); }
+      else if (on) document.getElementById('main')?.scrollTo({ top: 0, behavior: 'smooth' });
+    }}>
+      <Icon size={24} weight={on ? 'fill' : 'regular'} />
+      <span className="tb-label">{label}</span>
+    </a>
+  );
   return (
-    <nav className="tabbar" aria-label="Разделы">
-      {items.map(({ href, label, Icon, on }) => (
-        <a key={href} href={href} aria-current={on ? 'page' : undefined}>
-          <Icon size={24} weight={on ? 'fill' : 'regular'} />
-          {label}
-        </a>
-      ))}
-    </nav>
+    <>
+      {phone && (
+        <div className="edge-bar">
+          {!NO_BACK.test(path) && <button className="icon-btn edge-back" aria-label="Назад" onClick={() => history.back()}><CaretLeft size={24} /></button>}
+          <span className="edge-title" aria-hidden="true">{title}</span>
+          {/* Home: profile and settings (the prototype's avatar sheet; «Ещё» on other layouts). */}
+          {path === '/' && <a className="home-profile" href="#/more" aria-label="Профиль и настройки"><span aria-hidden="true"><User size={20} weight="bold" /></span></a>}
+        </div>
+      )}
+      <nav className="tabbar" aria-label="Разделы">
+        <div className="tb-pill">{items.slice(0, 3).map((i) => link(i))}</div>
+        {link(items[3], 'tb-search')}
+        {link(items[4], 'tb-more')}
+      </nav>
+    </>
   );
 }
 
