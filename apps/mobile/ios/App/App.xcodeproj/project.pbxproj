@@ -20,6 +20,9 @@
 		A1F0C0DE2FF0000100000003 /* NativePlaybackProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F0C0DE2FF0000100000004 /* NativePlaybackProbe.swift */; };
 		D4F0C0DE2FF0000100000001 /* NativePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F0C0DE2FF0000100000002 /* NativePlayer.swift */; };
 		D4F0C0DE2FF0000100000003 /* NativePlayerState.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F0C0DE2FF0000100000004 /* NativePlayerState.swift */; };
+		E5F0C0DE2FF0000100000001 /* NativeShellState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F0C0DE2FF0000100000002 /* NativeShellState.swift */; };
+		E5F0C0DE2FF0000100000003 /* NativeShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F0C0DE2FF0000100000004 /* NativeShell.swift */; };
+		E5F0C0DE2FF0000100000005 /* NativeScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F0C0DE2FF0000100000006 /* NativeScreens.swift */; };
 		C3F0C0DE2FF0000100000001 /* NativeRustAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F0C0DE2FF0000100000002 /* NativeRustAnalysis.swift */; };
 		A1F0C0DE2FF0000100000005 /* NativeProbeWave.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F0C0DE2FF0000100000006 /* NativeProbeWave.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
@@ -47,6 +50,9 @@
 		A1F0C0DE2FF0000100000004 /* NativePlaybackProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlaybackProbe.swift; sourceTree = "<group>"; };
 		D4F0C0DE2FF0000100000002 /* NativePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlayer.swift; sourceTree = "<group>"; };
 		D4F0C0DE2FF0000100000004 /* NativePlayerState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlayerState.swift; sourceTree = "<group>"; };
+		E5F0C0DE2FF0000100000002 /* NativeShellState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeShellState.swift; sourceTree = "<group>"; };
+		E5F0C0DE2FF0000100000004 /* NativeShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeShell.swift; sourceTree = "<group>"; };
+		E5F0C0DE2FF0000100000006 /* NativeScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeScreens.swift; sourceTree = "<group>"; };
 		C3F0C0DE2FF0000100000002 /* NativeRustAnalysis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeRustAnalysis.swift; sourceTree = "<group>"; };
 		A1F0C0DE2FF0000100000006 /* NativeProbeWave.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeProbeWave.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
@@ -103,6 +109,9 @@
 				C3F0C0DE2FF0000100000002 /* NativeRustAnalysis.swift */,
 				D4F0C0DE2FF0000100000002 /* NativePlayer.swift */,
 				D4F0C0DE2FF0000100000004 /* NativePlayerState.swift */,
+				E5F0C0DE2FF0000100000002 /* NativeShellState.swift */,
+				E5F0C0DE2FF0000100000004 /* NativeShell.swift */,
+				E5F0C0DE2FF0000100000006 /* NativeScreens.swift */,
 				B2F0C0DE2FF0000100000002 /* NativeDSPRenderer.swift */,
 				B2F0C0DE2FF0000100000004 /* NativeMixHost.swift */,
 				B2F0C0DE2FF0000100000006 /* NativeArtworkImage.swift */,
@@ -210,6 +219,9 @@
 				C3F0C0DE2FF0000100000001 /* NativeRustAnalysis.swift in Sources */,
 				D4F0C0DE2FF0000100000001 /* NativePlayer.swift in Sources */,
 				D4F0C0DE2FF0000100000003 /* NativePlayerState.swift in Sources */,
+				E5F0C0DE2FF0000100000001 /* NativeShellState.swift in Sources */,
+				E5F0C0DE2FF0000100000003 /* NativeShell.swift in Sources */,
+				E5F0C0DE2FF0000100000005 /* NativeScreens.swift in Sources */,
 				B2F0C0DE2FF0000100000001 /* NativeDSPRenderer.swift in Sources */,
 				B2F0C0DE2FF0000100000003 /* NativeMixHost.swift in Sources */,
 				B2F0C0DE2FF0000100000005 /* NativeArtworkImage.swift in Sources */,

@@ -89,7 +89,7 @@ final class NativePlayerModel: ObservableObject {
     }
 }
 
-private extension Color {
+extension Color {
     static let moraBackground = Color(red: 5 / 255, green: 13 / 255, blue: 10 / 255)
     static let moraMint = Color(red: 74 / 255, green: 222 / 255, blue: 154 / 255)
     static let moraGold = Color(red: 245 / 255, green: 200 / 255, blue: 110 / 255)
