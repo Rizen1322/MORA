@@ -86,7 +86,7 @@ final class NativeQueuePreparation: @unchecked Sendable {
         })
         let http = NativeMediaHTTP(allowedHTTPHosts: hosts), loader = NativeMediaLoader(http: http)
         defer { http.invalidate() }
-        var produced = 0, processed = 0, consecutiveFailures = 0, at = from
+        var produced = 0, processed = 0, retries = 0, wrapped = -1, at = from
         var batch = raw, cursor = 0
         let loop = manifest["loopItems"] as? [[String: Any]] ?? []
         configure(remaining: raw.count, loopCount: loop.count)
@@ -95,8 +95,9 @@ final class NativeQueuePreparation: @unchecked Sendable {
         do {
             while !ticket.cancelled {
                 if cursor >= batch.count {
-                    if loop.isEmpty { break }
-                    batch = loop; cursor = 0
+                    // A whole repeat pass without one playable song would cycle forever.
+                    if loop.isEmpty || wrapped == produced { break }
+                    batch = loop; cursor = 0; wrapped = produced
                 }
                 let item = batch[cursor]; cursor += 1
                 processed += 1
@@ -144,11 +145,10 @@ final class NativeQueuePreparation: @unchecked Sendable {
                                          next: next, pcm: track, index: at, script: script, settings: settings,
                                          upgrade: upgrade, event: event)
                     }
-                    before = next; previousPCM = track; at += 1; produced += 1; consecutiveFailures = 0
+                    before = next; previousPCM = track; at += 1; produced += 1; retries = 0
                     state("ready", ready: produced, remaining: batch.count - cursor); event("ready", "none")
                 } catch {
                     if ticket.cancelled { break }
-                    consecutiveFailures += 1
                     let code: String
                     switch error {
                     case NativeMediaHTTP.Failure.http(let status): code = "http_\(status)"
@@ -160,8 +160,16 @@ final class NativeQueuePreparation: @unchecked Sendable {
                         let native = error as NSError
                         code = [AVFoundationErrorDomain, NSOSStatusErrorDomain].contains(native.domain) ? "decode_\(native.code)" : "preparation"
                     }
+                    if let delay = NativeMixTimeline.retryDelay(code, attempt: retries) {
+                        retries += 1
+                        state("retrying", ready: produced, remaining: batch.count - cursor + 1, reason: code); event("retry", code)
+                        let until = ProcessInfo.processInfo.systemUptime + delay
+                        while !ticket.cancelled && ProcessInfo.processInfo.systemUptime < until { try? await Task.sleep(nanoseconds: 250_000_000) }
+                        cursor -= 1; processed -= 1; continue
+                    }
+                    // An unavailable song is skipped; the producer stops only when the manifest is exhausted.
+                    retries = 0
                     state("failed", ready: produced, remaining: batch.count - cursor, reason: code); event("failed", code)
-                    if consecutiveFailures >= 3 { break }
                 }
             }
             if ticket.cancelled { state("cancelled", ready: produced, remaining: 0) }

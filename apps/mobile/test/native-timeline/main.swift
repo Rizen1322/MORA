@@ -98,3 +98,10 @@ var presses = 0
 for _ in 0..<5 { presses = NativeMixTimeline.pendingSkips(presses, ahead: 0, remaining: 3) }
 precondition(presses == 3, "Five quick presses over three remaining songs: \(presses)")
 print("Native skips: each press moves the target, bounded by remaining songs and storage")
+
+precondition((0..<4).map { NativeMixTimeline.retryDelay("network_-1001", attempt: $0) } == [2, 5, 15, nil])
+precondition(NativeMixTimeline.retryDelay("http_503", attempt: 0) == 2)
+for reason in ["http_404", "http_403", "http_0", "decode_-11829", "preparation", "encrypted", "size_limit", "commit"] {
+    precondition(NativeMixTimeline.retryDelay(reason, attempt: 0) == nil, "\(reason) was retried")
+}
+print("Native retry: network and server errors back off 2/5/15 s, unavailable sources are skipped")

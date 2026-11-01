@@ -84,6 +84,16 @@ enum NativeMixTimeline {
         max(current, min(current + 1, maxPendingSkips, max(0, ahead) + max(0, remaining)))
     }
 
+    /// Seconds before preparing a failed song again, nil to skip it. Network/transport and server
+    /// errors are retried three times (2, 5, 15 s); unavailable sources, HTTP 4xx and decode errors are skipped.
+    static func retryDelay(_ reason: String, attempt: Int) -> Double? {
+        let delays: [Double] = [2, 5, 15]
+        guard delays.indices.contains(attempt) else { return nil }
+        if reason.hasPrefix("network_") { return delays[attempt] }
+        if reason.hasPrefix("http_"), let status = Int(reason.dropFirst(5)), status >= 500 { return delays[attempt] }
+        return nil
+    }
+
     static func duration(_ track: [String: Any], sampleRate: Double) -> Double {
         guard let frames = (track["totalFrames"] as? NSNumber)?.doubleValue,
               frames.isFinite, frames > 0, sampleRate.isFinite, sampleRate > 0 else { return 0 }
