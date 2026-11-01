@@ -32,8 +32,11 @@ precondition(preserved.count == 73 && preserved.last?["entryId"] as? String == "
 partial["replaceFuture"] = true
 precondition((NativeMixTimeline.preservingTail(partial, after: original)["items"] as! [[String: Any]]).count == 2)
 partial["replaceFuture"] = false; partial["items"] = [["entryId": "other", "trackId": "other"]]
-precondition((NativeMixTimeline.preservingTail(partial, after: original)["items"] as! [[String: Any]]).count == 1)
-print("Native manifest: 74-track tail survives partial refresh; explicit replacement and changed entries respected")
+precondition((NativeMixTimeline.preservingTail(partial, after: original)["items"] as! [[String: Any]]).count == 74, "Unaligned page list dropped the native tail")
+let restored: [String: Any] = ["from": 2, "items": [full[1], full[4], full[2]]]
+let reordered = NativeMixTimeline.preservingTail(restored, after: original)["items"] as! [[String: Any]]
+precondition(reordered.count == 73 && Set(reordered.map { $0["entryId"] as! String }).count == 73, "Stale restored order lost or duplicated entries")
+print("Native manifest: 74-track tail survives partial, unaligned and reordered refreshes; explicit replacement respected")
 
 // B failed decoding, so C is native index 1 even though it was manifest item 2.
 let skippedItems: [[String: Any]] = ["B", "C", "D", "E", "F"].map { ["entryId": $0, "trackId": $0] }

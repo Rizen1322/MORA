@@ -220,6 +220,8 @@ it('distinguishes native refreshes from explicit edits, including an edit during
   expect(prepareQueue.mock.calls.at(-1)?.[5]).toBe(true);
   expect(controller.queueVersion).toBe(ownership); // Catalog continuation still owns this edited queue.
   controller.addToQueue(['b', 'c']); await h.nativeSyncing;
+  expect(prepareQueue.mock.calls.at(-1)?.[1].map(e => e.trackId)).toEqual(['b', 'c']);
+  expect(prepareQueue.mock.calls.at(-1)?.[5]).toBe(false); // An append keeps the native tail.
   controller.cycleRepeat(); await h.nativeSyncing;
   controller.cycleRepeat(); await h.nativeSyncing;
   expect(prepareQueue.mock.calls.at(-1)?.[1]).toEqual([]);

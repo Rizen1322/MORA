@@ -1494,7 +1494,7 @@ export class PlayerController {
     const entries = trackIds.map((id) => ({ entryId: uid(), trackId: id, origin }));
     const kept = replaceUpcoming ? this.state.queue.slice(0, this.state.index + 1) : this.state.queue;
     this.set({ context, queue: [...kept, ...entries] });
-    this.onQueueChanged();
+    this.onQueueChanged(replaceUpcoming);
     if (!this.current && this.waveExhausted && this.state.status === 'buffering') {
       const next = this.nextIndex();
       if (next !== null) { this.waveExhausted = false; void this.startAt(next, 0, 'finished'); }
@@ -1643,7 +1643,8 @@ export class PlayerController {
     if (playNext) q.splice(this.state.index + 1, 0, ...entries);
     else q.push(...entries);
     this.set({ queue: q });
-    this.onQueueChanged();
+    // Inserts never drop native entries, so a stale page list must not truncate the native tail.
+    this.onQueueChanged(false);
     if (!this.current && this.waveExhausted && this.state.context?.type === 'online-radio' && this.state.status === 'buffering') {
       const next = this.nextIndex();
       if (next !== null) { this.waveExhausted = false; void this.startAt(next, 0, 'finished'); }
@@ -1715,8 +1716,8 @@ export class PlayerController {
   }
 
   /** After any queue edit: if the prepared next track changed, cancel it and prepare again. */
-  private onQueueChanged(): void {
-    this.nativeQueueEditRevision++;
+  private onQueueChanged(replacesFuture = true): void {
+    if (replacesFuture) this.nativeQueueEditRevision++;
     this.scheduleSave();
     this.preparationRevision++;
     if (this.native) {

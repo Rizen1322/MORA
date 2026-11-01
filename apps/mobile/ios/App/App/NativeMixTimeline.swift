@@ -11,8 +11,7 @@ enum NativeMixTimeline {
         }
         let offset: Int
         // Failed sources consume manifest entries but never consume native track indices.
-        if let first = items.first {
-            guard let match = previous.firstIndex(where: { same(first, $0) }) else { return incoming }
+        if let first = items.first, let match = previous.firstIndex(where: { same(first, $0) }) {
             offset = match
         } else if let currentEntryId {
             if let match = previous.firstIndex(where: { $0["entryId"] as? String == currentEntryId }) { offset = match + 1 }
@@ -20,9 +19,11 @@ enum NativeMixTimeline {
             else { return incoming }
         } else { offset = start - oldStart }
         guard offset <= previous.count else { return incoming }
-        let remaining = Array(previous.dropFirst(offset))
-        guard items.count < remaining.count, zip(items, remaining).allSatisfy({ same($0, $1) }) else { return incoming }
-        var result = incoming; result["items"] = items + remaining.dropFirst(items.count); return result
+        // Only replaceFuture truncates: a restored/partial page list keeps every native entry it does not name.
+        let named = Set(items.compactMap { $0["entryId"] as? String })
+        let kept = previous.dropFirst(offset).filter { ($0["entryId"] as? String).map { !named.contains($0) } ?? false }
+        guard !kept.isEmpty else { return incoming }
+        var result = incoming; result["items"] = items + kept; return result
     }
 
     static func consumedPrefix(_ items: [[String: Any]], currentEntryId: String?, requestedFrom: Int, currentIndex: Int) -> Int? {
