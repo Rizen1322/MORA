@@ -316,14 +316,31 @@ html.mora-mobile img { -webkit-user-drag: none; }
     border: 1px solid var(--line);
     background: rgba(0, 0, 0, 0.35);
   }
+  html.mora-mobile .home-page .home-wave-source { position: relative; max-width: 100%; }
   html.mora-mobile .home-wave-source button {
+    position: relative;
     min-height: 36px;
-    padding: 0 14px;
+    padding: 0 16px;
     border-radius: 9px;
     font: 500 14px var(--font-ui);
+    white-space: nowrap;
     color: var(--text-2);
+    transition: color 0.2s;
   }
-  html.mora-mobile .home-wave-source button[aria-pressed='true'] { color: var(--text); background: var(--surface-4); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35); }
+  html.mora-mobile .home-wave-source button[aria-pressed='true'] { color: var(--text); background: none; box-shadow: none; }
+  /* Sliding selection: one composited transform instead of repainting two buttons. */
+  html.mora-mobile .home-wave-source .seg-thumb {
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    left: 3px;
+    width: calc((100% - 6px) / var(--seg-n));
+    border-radius: 9px;
+    background: var(--surface-4);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    transform: translateX(calc(var(--seg-i) * 100%));
+    transition: transform 0.45s var(--spring);
+  }
   html.mora-mobile .home-page .wave-hero .hero-actions { flex-direction: column; align-items: center; gap: 8px; margin-top: 0; }
   html.mora-mobile .home-page .wave-hero .btn-primary {
     min-height: 52px;
@@ -606,18 +623,20 @@ html.mora-mobile img { -webkit-user-drag: none; }
   html.mora-mobile .fp-next-track { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px; font: 500 13px var(--font-ui); color: var(--glow); }
   html.mora-mobile .automix-off .fp-next-track { color: var(--text-2); }
   html.mora-mobile .fp-next-track > :is(.fp-next-cover, svg) { display: none; }
-  html.mora-mobile .fp-next-track > span { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
-  html.mora-mobile .fp-next-label { flex: none; font-size: 13px; color: inherit; opacity: 0.8; }
-  html.mora-mobile .fp-next-label::after { content: ':'; }
-  html.mora-mobile .fp-next-copy { min-width: 0; }
-  html.mora-mobile .fp-next-copy strong { font-weight: 600; }
+  /* One line, one size: a muted label and the title, which truncates. */
+  html.mora-mobile .fp-up-next { display: flex; }
+  html.mora-mobile .fp-next-track { min-width: 0; max-width: 100%; }
+  html.mora-mobile .fp-next-track > span { display: flex; align-items: baseline; gap: 5px; min-width: 0; white-space: nowrap; }
+  html.mora-mobile .fp-next-label { flex: none; font-size: 13px; color: inherit; opacity: 0.75; }
+  html.mora-mobile :is(.fp-next-copy, .fp-next-copy > *) { display: block; min-width: 0; overflow: hidden; }
+  html.mora-mobile .fp-next-copy strong { display: block; margin: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
   html.mora-mobile .fp-next-copy .caption { display: none; }
   html.mora-mobile .fp-bottom { flex: none; display: flex; justify-content: space-around; padding: 10px 24px calc(var(--sab) + 6px); }
   html.mora-mobile .fp-bottom .icon-btn { width: 44px; height: 44px; border-radius: 50%; color: rgba(255, 255, 255, 0.7); }
   html.mora-mobile .fp-bottom .icon-btn[aria-pressed='true'] { background: rgba(255, 255, 255, 0.14); color: #fff; }
 
   /* Queue tools: shuffle / repeat / AutoMix (gold). */
-  html.mora-mobile .q-tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0 0 14px; }
+  html.mora-mobile .q-tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 2px 16px; }
   html.mora-mobile .q-tools button {
     min-height: 44px;
     display: flex;
@@ -628,18 +647,31 @@ html.mora-mobile img { -webkit-user-drag: none; }
     background: rgba(255, 255, 255, 0.08);
     font: 500 13px var(--font-ui);
     color: rgba(255, 255, 255, 0.8);
+    box-shadow: inset 0 0 0 1px transparent;
+    transition: background 0.2s, color 0.2s, box-shadow 0.2s, transform 0.35s var(--spring);
   }
+  html.mora-mobile .q-tools button:active { transform: scale(0.96); transition-duration: 80ms; }
   html.mora-mobile .q-tools button:disabled { opacity: 0.4; }
-  html.mora-mobile .q-tools button[aria-pressed='true'] { background: rgba(255, 255, 255, 0.9); color: #0a120e; }
-  html.mora-mobile .q-tools button.gold[aria-pressed='true'] { background: var(--glow); color: var(--on-glow); }
+  /* On: a tint and a hairline in the toggle's colour, so three bright slabs never compete. */
+  html.mora-mobile .q-tools button[aria-pressed='true'] { background: rgba(255, 255, 255, 0.16); color: #fff; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22); }
+  html.mora-mobile .q-tools button.gold[aria-pressed='true'] { background: var(--glow-wash); color: var(--glow); box-shadow: inset 0 0 0 1px rgba(245, 200, 110, 0.4); }
 }
 
 @media (max-width: 767px) {
   /* Motion: one-shot transitions only. The app-wide reduced-motion rules (system setting or
      Settings → motion) shorten all of these to 1 ms. */
   html.mora-mobile .mini-player { animation: mora-rise 320ms cubic-bezier(0.23, 1, 0.32, 1); }
-  html.mora-mobile .full-player { animation: mora-rise 420ms var(--ios); }
-  html.mora-mobile .full-player.is-closing { animation: mora-sink 240ms cubic-bezier(0.4, 0, 1, 1) forwards; pointer-events: none; }
+  /* The player is a sheet: it slides over the whole screen while the page behind recedes
+     (transform and opacity only; no filter, so nothing repaints per frame). */
+  html.mora-mobile .full-player { animation: mora-sheet-in 460ms var(--ios); }
+  html.mora-mobile .full-player.is-closing { animation: mora-sheet-out 300ms cubic-bezier(0.4, 0, 1, 1) forwards; pointer-events: none; }
+  html.mora-mobile .main { transform-origin: 50% 100%; transition: transform 0.5s var(--ios), opacity 0.5s var(--ios), border-radius 0.5s var(--ios); }
+  html.mora-mobile .app:has(> .full-player:not(.is-closing)) .main { transform: scale(0.94); opacity: 0.55; border-radius: 24px; }
+  /* Tab and page changes: a short fade of the new page only. */
+  html.mora-mobile .main > :last-child { animation: mora-fade 180ms ease-out; }
+  /* Rows answer a press with a slight dip, and a released swipe springs back into place. */
+  html.mora-mobile .track-row { transition: background 0.15s, transform 0.45s var(--ios); }
+  html.mora-mobile .track-row:active:not(.swiping) { transform: scale(0.985); transition-duration: 0.15s, 80ms; }
   html.mora-mobile .icon-btn.liked svg { animation: mora-pop 360ms cubic-bezier(0.34, 1.56, 0.64, 1); }
   /* play/pause icons are swapped elements: each new one pops in */
   html.mora-mobile :is(.play-circle, .mini-player .icon-btn) svg { animation: mora-icon 200ms ease-out; }
@@ -649,6 +681,8 @@ html.mora-mobile img { -webkit-user-drag: none; }
 @keyframes mora-pop { 40% { transform: scale(1.35); } }
 @keyframes mora-icon { from { opacity: 0; transform: scale(0.6); } }
 @keyframes mora-fade { from { opacity: 0; } }
+@keyframes mora-sheet-in { from { transform: translateY(100%); } }
+@keyframes mora-sheet-out { to { transform: translateY(100%); } }
 @keyframes mora-menu { from { opacity: 0; transform: scale(0.6); } }
 
 /* Hot phone or Low Power Mode (data-power, set by mora-bridge.js): no looping or decorative motion,

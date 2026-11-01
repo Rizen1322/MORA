@@ -1,6 +1,6 @@
 import { TrackArtists } from '../components/TrackArtists.tsx';
 import { useShallow } from 'zustand/react/shallow';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useDragScroll } from '../lib/dragScroll.ts';
 import { startRadio, useRadio } from '../lib/radio.ts';
 import { RadioTuning } from '../components/RadioTuning.tsx';
@@ -81,9 +81,11 @@ export function WaveHero() {
         <h2 className="wave-hero-title">Моя волна<span>.</span></h2>
         <p>Знакомое, любимое и то, что ещё предстоит открыть.</p>
         <div className="home-wave-source" role="group" aria-label="Источник волны">
-          <button aria-pressed={source === 'own'} onClick={() => { setSource('own'); setTuning(false); }}>Моя коллекция</button>
-          <button aria-pressed={source === 'online'} onClick={() => { setSource('online'); setTuning(false); }} title="Радио YouTube Music без аккаунта">Онлайн-радио</button>
-          {connected && <button aria-pressed={source === 'yandex'} onClick={() => setSource('yandex')}>Яндекс Музыка</button>}
+          {/* iPhone: short single-line labels under a sliding thumb (apps/mobile/src/mobile.css). */}
+          {phone && <i className="seg-thumb" aria-hidden="true" style={{ '--seg-i': ['own', 'online', 'yandex'].indexOf(source), '--seg-n': connected ? 3 : 2 } as CSSProperties} />}
+          <button aria-pressed={source === 'own'} aria-label="Моя коллекция" onClick={() => { setSource('own'); setTuning(false); }}>{phone ? 'Коллекция' : 'Моя коллекция'}</button>
+          <button aria-pressed={source === 'online'} aria-label="Онлайн-радио" onClick={() => { setSource('online'); setTuning(false); }} title="Радио YouTube Music без аккаунта">{phone ? 'Радио' : 'Онлайн-радио'}</button>
+          {connected && <button aria-pressed={source === 'yandex'} aria-label="Яндекс Музыка" onClick={() => setSource('yandex')}>{phone ? 'Яндекс' : 'Яндекс Музыка'}</button>}
         </div>
         <div className="hero-actions">
           {source === 'online' ? (

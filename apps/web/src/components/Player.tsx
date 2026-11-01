@@ -464,7 +464,7 @@ export function FullPlayer() {
     const el = dialogRef.current;
     if (reduced || !el || !document.documentElement.classList.contains('mora-mobile')) { setFull(false); return; }
     el.classList.add('is-closing');
-    setTimeout(() => setFull(false), 240);
+    setTimeout(() => setFull(false), 300);
   };
   const swipeTop = useSwipe(() => (atTop() ? { down: close } : {}));
   const swipeCover = useSwipe(() => ({ left: () => void controller.nextTrack(), right: () => void controller.prevTrack(), ...(atTop() ? { down: close } : {}) }));
@@ -573,13 +573,13 @@ export function FullPlayer() {
           {next && <section className={`fp-up-next ${p.transition?.active ? 'is-mixing' : ''} ${automix ? '' : 'automix-off'}`} aria-label={p.transition?.active ? 'Идёт переход' : 'Следующий трек'}>
             <button className="fp-next-track" onClick={() => setShowQueue(true)} aria-label={`Открыть очередь. Далее: ${next.title}`}>
               <Swap k={next.id} className="fp-next-cover"><Cover url={next.coverUrl} seed={next.album || next.id} size={48} /></Swap>
-              <span><span className="fp-next-label">{p.transition?.active ? 'Уже входит в микс' : 'Следом за этим треком'}</span><Swap k={next.id} className="fp-next-copy"><span><strong className="ellipsis">{next.title}</strong><span className="caption muted ellipsis">{next.artist}</span></span></Swap></span>
+              <span><span className="fp-next-label">{p.transition?.active ? 'Уже входит в микс' : phone ? (automix ? 'AutoMix · далее' : 'Далее') : 'Следом за этим треком'}</span><Swap k={next.id} className="fp-next-copy"><span><strong className="ellipsis">{next.title}</strong><span className="caption muted ellipsis">{next.artist}</span></span></Swap></span>
               <CaretRight size={18} aria-hidden="true" />
             </button>
           </section>}
           {!next && p.continuation && <section className="fp-up-next" aria-label="Следующий трек">
             <button className="fp-next-track" onClick={() => setShowQueue(true)} aria-label={`Открыть очередь. Далее: ${p.continuation}`}>
-              <span><span className="fp-next-label">Следом за этим треком</span><Swap k="continuation" className="fp-next-copy"><span><strong className="ellipsis">{p.continuation}</strong><span className="caption muted ellipsis">Подбираю похожую музыку…</span></span></Swap></span>
+              <span><span className="fp-next-label">{phone ? 'Далее' : 'Следом за этим треком'}</span><Swap k="continuation" className="fp-next-copy"><span><strong className="ellipsis">{p.continuation}</strong><span className="caption muted ellipsis">Подбираю похожую музыку…</span></span></Swap></span>
               <CaretRight size={18} aria-hidden="true" />
             </button>
           </section>}
