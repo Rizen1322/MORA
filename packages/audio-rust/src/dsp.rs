@@ -347,7 +347,8 @@ impl Echo {
     pub fn configure(&mut self, delay: f64, feedback: f64) {
         self.reset();
         self.delay = (round(delay) as usize).clamp(1, self.l.len() - 1);
-        self.feedback = feedback.clamp(0., 0.75);
+        // 0.85 keeps runaway away: the ring is high-passed (250 Hz) and low-passed (6 kHz) on every pass
+        self.feedback = feedback.clamp(0., 0.85);
     }
     pub fn process(&mut self, il: &[f32], ir: &[f32], l: &mut [f32], r: &mut [f32]) {
         self.process_at(il, ir, l, r, 0.);
