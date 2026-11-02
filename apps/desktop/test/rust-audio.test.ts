@@ -30,6 +30,10 @@ it('waits for native readiness, sends bounded PCM, acknowledges commands and shu
   expect(commands[0].request).toBeGreaterThan(0);
   await expect(host.command({ cmd: 'feed', L: Float32Array.of(NaN), R: r })).rejects.toThrow('PCM');
   await expect(host.command({ cmd: 'quit' })).rejects.toThrow();
+  const file = { cmd: 'feedFile', deck: 0, token: 'a', chunk: 0, path: 'private.pcm', format: 'f32le', frames: 2 };
+  await expect(host.command(file)).rejects.toThrow();
+  await host.feedFile(file);
+  expect(commands.at(-1)).toMatchObject(file);
   child.stdout.write('{"type":"tick","clock":128}\n');
   expect(events).toHaveBeenCalledWith({ type: 'tick', clock: 128 });
   await host.stop();

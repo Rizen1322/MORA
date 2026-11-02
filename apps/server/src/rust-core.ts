@@ -1,8 +1,15 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { RustComputeWorker } from './rust-compute-worker.ts';
 
 /** Set only by the desktop shell; web/mobile keep their own platform implementation. */
 export const rustCorePath = () => process.env.AUTOMIX_RUST_CORE || null;
 const MAX_RESULT = 256 * 1024 * 1024;
+let workers: { binary: string; plan: RustComputeWorker; render: RustComputeWorker } | undefined;
+
+export function stopRustCompute(): void {
+  const old = workers; workers = undefined;
+  old?.plan.close(); old?.render.close();
+}
 
 function result<T>(code: number | null, output: string, error?: Error): T {
   if (error) throw error;
@@ -20,6 +27,17 @@ export function rustCompute<T>(operation: string, input: Record<string, unknown>
 }
 
 export function rustComputeAsync<T>(operation: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+  const binary = rustCorePath();
+  if (!binary) return Promise.reject(new Error('Rust-ядро не настроено'));
+  if (!workers || workers.binary !== binary) {
+    stopRustCompute();
+    workers = { binary, plan: new RustComputeWorker(binary), render: new RustComputeWorker(binary) };
+  }
+  return workers[operation === 'render' ? 'render' : 'plan'].run<T>(operation, input, signal);
+}
+
+/** Kept for CLI parity benchmarks; production asynchronous calls reuse native workers. */
+export function rustComputeOnceAsync<T>(operation: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   const binary = rustCorePath();
   if (!binary) return Promise.reject(new Error('Rust-ядро не настроено'));
   if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('Отменено'));

@@ -17,13 +17,13 @@ const result = spawnSync(cargo, [...args, '--locked', '--manifest-path', path.jo
 if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status ?? 1);
 if (!process.argv.includes('--test')) {
-  const name = process.platform === 'win32' ? 'mora-audio.exe' : 'mora-audio';
+  const names = process.platform === 'win32' ? ['mora-audio.exe', 'mora-smtc.exe'] : ['mora-audio'];
   const destination = path.join(root, 'apps/desktop/build/audio');
   fs.mkdirSync(destination, { recursive: true });
   const metadata = spawnSync(cargo, ['metadata', '--locked', '--format-version', '1', '--filter-platform', version.stdout.match(/host: (\S+)/)?.[1] ?? 'x86_64-pc-windows-msvc', '--manifest-path', path.join(root, 'packages/audio-rust/Cargo.toml')], { cwd: root, env, encoding: 'utf8', windowsHide: true, maxBuffer: 8 * 1024 * 1024 });
   if (metadata.status !== 0) throw new Error('Не удалось собрать лицензии Rust-зависимостей');
   const data = JSON.parse(metadata.stdout), included = new Set(data.resolve.nodes.map(n => n.id));
-  fs.copyFileSync(path.join(data.target_directory, 'release', name), path.join(destination, name));
+  for (const name of names) fs.copyFileSync(path.join(data.target_directory, 'release', name), path.join(destination, name));
   const notices = ['MORA Rust audio engine — third-party licenses\n'];
   for (const pkg of data.packages.filter(p => p.source && included.has(p.id)).sort((a, b) => a.name.localeCompare(b.name))) {
     const folder = path.dirname(pkg.manifest_path);

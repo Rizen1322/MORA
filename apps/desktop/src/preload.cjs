@@ -10,6 +10,14 @@ const subscribe = (channel, check) => (cb) => {
 };
 
 contextBridge.exposeInMainWorld('automixDesktop', {
+  nativeMix: {
+    startSource: (entry, config) => ipcRenderer.invoke('native-mix:startSource', entry, config),
+    prepareQueue: (from, entries, previousId, loopEntries, _signal, replaceFuture) => ipcRenderer.invoke('native-mix:prepareQueue', from, entries, previousId, loopEntries, replaceFuture),
+    settings: (values) => ipcRenderer.invoke('native-mix:settings', values),
+    stop: () => ipcRenderer.invoke('native-mix:stop'),
+    state: () => ipcRenderer.invoke('native-mix:state'),
+    command: (action, seekTime) => ipcRenderer.invoke('native-mix:command', action, seekTime),
+  },
   audioStart: (device) => ipcRenderer.invoke('audio:start', device),
   audioCommand: (command) => ipcRenderer.invoke('audio:command', command),
   audioStop: () => ipcRenderer.invoke('audio:stop'),
@@ -35,7 +43,9 @@ contextBridge.exposeInMainWorld('automixDesktop', {
   setTitlebarOverlay: (transparent) => ipcRenderer.invoke('window:overlay', transparent === true),
   onCompact: subscribe('automix:compact', (v) => typeof v === 'boolean'),
   reportPlayer: (s) => ipcRenderer.send('player:state', { playing: s?.playing === true, title: String(s?.title ?? ''), artist: String(s?.artist ?? '') }),
-  onCommand: subscribe('automix:command', (v) => ['toggle', 'pause', 'next', 'prev'].includes(v)),
+  reportMediaTrack: (s) => ipcRenderer.send('player:track', { token: s?.token, title: s?.title, artist: s?.artist, album: s?.album, coverUrl: s?.coverUrl }),
+  onCommand: subscribe('automix:command', (v) => ['toggle', 'play', 'pause', 'next', 'prev'].includes(v)),
+  onSeek: subscribe('automix:seek', (v) => Number.isFinite(v) && v >= 0),
   onBackend: subscribe('automix:backend', (v) => typeof v === 'string'),
   onImport: subscribe('automix:import', (v) => v && typeof v.done === 'number'),
 });

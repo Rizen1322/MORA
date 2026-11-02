@@ -248,11 +248,11 @@ export class PcmCache {
     finally { e.readers--; }
   }
 
-  private async readEntry(e: Entry, startFrame: number, frames: number, timeoutMs: number): Promise<{ data: Buffer; totalFrames: number; complete: boolean }> {
+  private async waitForFrames(e: Entry, startFrame: number, frames: number, timeoutMs: number): Promise<void> {
     e.lastUse = Date.now();
     const want = (startFrame + frames) * this.width;
     const t0 = Date.now();
-    while (!e.done && e.bytes < want) {
+    while (!e.done && !e.error && e.bytes < want) {
       if (Date.now() - t0 > timeoutMs) throw new Error('timeout');
       await new Promise<void>((resolve) => {
         const wake = () => { clearTimeout(timer); e.waiters.delete(wake); resolve(); };
@@ -261,6 +261,23 @@ export class PcmCache {
       });
     }
     if (e.error) throw new Error(e.error);
+  }
+
+  /** Host-only source metadata, without copying decoded PCM through JavaScript. */
+  async nativeSource(e: Entry, startFrame = 0, frames = 1, timeoutMs = 30000) {
+    e.readers++;
+    try {
+      await this.waitForFrames(e, startFrame, frames, timeoutMs);
+      return { sourceId: e.key, path: e.done ? e.file : e.part, finalPath: e.file, partPath: e.part,
+        format: this.s16 ? 's16h' as const : 'f32le' as const,
+        totalFrames: Math.round(e.done ? e.bytes / this.width : e.estimatedFrames),
+        availableFrames: Math.floor(e.bytes / this.width), complete: e.done };
+    } finally { e.readers--; }
+  }
+
+  private async readEntry(e: Entry, startFrame: number, frames: number, timeoutMs: number): Promise<{ data: Buffer; totalFrames: number; complete: boolean }> {
+    await this.waitForFrames(e, startFrame, frames, timeoutMs);
+    const want = (startFrame + frames) * this.width;
     const readFrom = e.done ? e.file : e.part;
     const available = Math.max(0, Math.min(want, e.bytes) - startFrame * this.width);
     const buf = Buffer.alloc(available);

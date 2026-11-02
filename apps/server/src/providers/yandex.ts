@@ -72,6 +72,7 @@ export class YandexProvider implements Provider {
   private readonly base = process.env.YANDEX_API_BASE || 'https://api.music.yandex.net';
   private audio: YandexAudio;
   private imports = new Map<string, Promise<string>>();
+  private covers = new Map<string, Promise<string | null>>();
   private reactionGeneration = 0;
   private reactionSnapshotVersion = 0;
   private reactionAccounts = new Map<string, Promise<string>>();
@@ -428,7 +429,7 @@ export class YandexProvider implements Provider {
     const baseId = String(t.id).split(':')[0];
     const externalId = album?.id ? `${baseId}:${album.id}` : String(t.id);
     let coverUrl: string | null = null;
-    const coverUri = album?.coverUri ?? t.coverUri;
+    const coverUri = album?.coverUri || t.coverUri;
     if (coverUri) {
       try { coverUrl = validateYandexMediaUrl(`https://${coverUri.replace(/^https?:\/\//, '').replace('%%', '400x400')}`, this.base).href; } catch { /* optional cover */ }
     }
@@ -493,10 +494,41 @@ export class YandexProvider implements Provider {
       duration: media.probe.duration, year: album?.year ?? null, genre: album?.genre ?? '',
       trackNo: album?.trackPosition?.index ?? null, discNo: album?.trackPosition?.volume ?? null,
       coverId,
-      meta: { pageUrl: ext.pageUrl, suffix: 'mp3', audioHash: media.hash, bitrate: media.bitrate,
+      meta: { pageUrl: ext.pageUrl, coverUrl: ext.coverUrl, suffix: 'mp3', audioHash: media.hash, bitrate: media.bitrate,
         catalogArtists: (track.artists ?? []).filter((artist) => artist.id !== undefined && /^\d+$/.test(String(artist.id))).map((artist) => ({ id: String(artist.id), name: artist.name })),
         catalogAlbumId: album?.id ? String(album.id) : null },
       content: { hash: media.hash, size: media.size, probe: media.probe } }).id;
+  }
+
+  /** A transient cover timeout at import must not leave the player without artwork forever. */
+  async ensureCover(trackId: string): Promise<string | null> {
+    const track = this.lib.get(trackId);
+    if (!track || track.provider !== this.id) return null;
+    if (track.cover_id) {
+      const cached = this.lib.coverPath(track.cover_id);
+      if (cached) return cached;
+    }
+    const existing = this.covers.get(trackId);
+    if (existing) return existing;
+    const work = (async () => {
+      const source = this.lib.sources(trackId).find(s => s.kind === 'remote' && s.provider === this.id);
+      if (!source?.external_id) return null;
+      const id = this.checkedId(String(source.external_id));
+      let url: string | null = null;
+      try { const meta = JSON.parse(source.meta || '{}'); if (typeof meta.coverUrl === 'string') url = meta.coverUrl; } catch { /* old metadata */ }
+      if (!url) {
+        const [remote] = await this.call<YTrack[]>('POST', '/tracks', { 'track-ids': id }, this.token(), true);
+        if (!remote) return null;
+        url = this.external(remote, id.split(':')[1]).coverUrl;
+      }
+      const cover = url ? await this.audio.cover(url) : null;
+      if (!cover) return null;
+      const coverId = await this.lib.saveCover(cover.data, cover.type);
+      this.lib.setCover(trackId, coverId);
+      return this.lib.coverPath(coverId);
+    })().catch(() => null).finally(() => this.covers.delete(trackId));
+    this.covers.set(trackId, work);
+    return work;
   }
 
   async fetchAudio(src: SourceRow): Promise<string> {

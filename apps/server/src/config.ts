@@ -19,6 +19,8 @@ function loadDotEnv(file: string): void {
 if (!process.env.AUTOMIX_DESKTOP) loadDotEnv(path.join(ROOT, '.env'));
 
 export interface AppConfig {
+  /** Host-only capability, never injected into renderer requests or cookies. */
+  desktopPlaybackToken?: string;
   dataDir: string;
   host: string;
   port: number;

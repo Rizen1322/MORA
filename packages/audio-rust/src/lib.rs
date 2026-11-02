@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod compute;
 pub mod dsp;
 pub(crate) mod js_json;
 pub mod mixer;

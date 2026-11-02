@@ -70,6 +70,27 @@ beforeEach(() => {
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); vi.unstubAllGlobals(); });
 
 describe('playlist transition recipes', () => {
+  it('undoes future queue edits without restarting playback or writing listening history', () => {
+    const { controller, h } = setup();
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    const original = controller.state.queue;
+    const start = vi.spyOn(controller, 'startAt');
+    controller.removeAt(1);
+    expect(controller.state.queue.map(e => e.trackId)).toEqual(['a', 'c']);
+    expect(controller.state.canUndoQueue).toBe(true);
+    controller.undoQueue();
+    expect(controller.state.queue).toEqual(original);
+    expect(controller.state.canUndoQueue).toBe(false);
+    controller.move(1, 2); controller.undoQueue();
+    expect(controller.state.queue).toEqual(original);
+    controller.clearUpcoming(); controller.undoQueue();
+    expect(controller.state.queue).toEqual(original);
+    controller.removeAt(1); controller.addToQueue(['b']);
+    expect(controller.state.canUndoQueue).toBe(false);
+    expect(start).not.toHaveBeenCalled();
+    expect(api.startPlay).not.toHaveBeenCalled();
+    expect(api.endPlay).not.toHaveBeenCalled();
+  });
   it('plans the exact playlist occurrences and omits the recipe in shuffle', async () => {
     const { controller, h } = setup();
     controller.state.context = { type: 'playlist', id: 'playlist', label: 'Playlist' };
@@ -209,6 +230,41 @@ describe('playback preparation and queue changes', () => {
     await starting;
     expect(h.current.trackId).toBe('b');
     expect(controller.state.status).toBe('paused');
+  });
+  it('honours a second Next while a selected track is loading', async () => {
+    const { controller, h, slot } = setup();
+    const loading = deferred<typeof slot>();
+    const transport = h as typeof h & { loadSlot(): Promise<typeof slot>; waitFed(): Promise<void> };
+    vi.spyOn(h, 'ensureEngine').mockResolvedValue(undefined);
+    vi.spyOn(transport, 'loadSlot').mockReturnValueOnce(loading.promise).mockResolvedValueOnce({ ...slot, deck: 1, entryId: 'c-entry', trackId: 'c', token: 'c-token' });
+    vi.spyOn(transport, 'waitFed').mockResolvedValue(undefined);
+    vi.spyOn(h, 'prepareNext').mockResolvedValue(undefined);
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    const first = controller.startAt(1, 0);
+    await vi.waitFor(() => expect(controller.state.index).toBe(1));
+    await controller.nextTrack();
+    loading.resolve({ ...slot, deck: 1, entryId: 'b-entry', trackId: 'b', token: 'b-token' });
+    await first;
+    expect(controller.state.index).toBe(2);
+    expect(h.current.token).toBe('c-token');
+  });
+  it('honours a seek while the selected track is loading', async () => {
+    const { controller, h, slot, postMessage } = setup();
+    const loading = deferred<typeof slot>();
+    const transport = h as typeof h & { loadSlot(): Promise<typeof slot>; waitFed(): Promise<void> };
+    vi.spyOn(h, 'ensureEngine').mockResolvedValue(undefined);
+    vi.spyOn(transport, 'loadSlot').mockReturnValueOnce(loading.promise).mockResolvedValueOnce({ ...slot, deck: 1, entryId: 'b-entry', trackId: 'b', token: 'new-b-token' });
+    vi.spyOn(transport, 'waitFed').mockResolvedValue(undefined);
+    vi.spyOn(h, 'prepareNext').mockResolvedValue(undefined);
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    const first = controller.startAt(1, 0);
+    await vi.waitFor(() => expect(controller.state.index).toBe(1));
+    controller.seek(30);
+    await vi.waitFor(() => expect(h.current.token).toBe('new-b-token'));
+    loading.resolve({ ...slot, deck: 1, entryId: 'b-entry', trackId: 'b', token: 'old-b-token' });
+    await first;
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ cmd: 'start', token: 'new-b-token', frame: 30 * 48000 }), []);
+    expect(h.current.token).toBe('new-b-token');
   });
   it('selects the next track while paused without arming a transition or unpausing audio', async () => {
     const { controller, h, postMessage, slot } = setup();

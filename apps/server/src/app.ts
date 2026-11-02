@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { stopRustCompute } from './rust-core.ts';
 import path from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
@@ -29,6 +30,7 @@ import { YtDlp } from './public/ytdlp.ts';
 import { registerSearchRoutes } from './routes/search.ts';
 import { registerLyricsRoutes } from './routes/lyrics.ts';
 import { registerDownloadRoutes } from './routes/downloads.ts';
+import { registerListeningPreparationRoutes } from './routes/listening-preparation.ts';
 import { Downloads } from './public/downloads.ts';
 import { Imports } from './public/imports.ts';
 import { registerImportRoutes } from './routes/imports.ts';
@@ -160,6 +162,7 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
   registerSearchRoutes(app, services);
   registerLyricsRoutes(app, services);
   registerDownloadRoutes(app, services);
+  registerListeningPreparationRoutes(app, services);
   registerImportRoutes(app, services);
   registerYandexLikesImportRoutes(app, services);
 
@@ -181,6 +184,7 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
   ];
 
   const close = async () => {
+    stopRustCompute();
     for (const t of timers) clearInterval(t);
     await yandexLikesImport.stop();
     const stoppedDownloads = downloads.stop();

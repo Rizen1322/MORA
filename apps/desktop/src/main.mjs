@@ -5,7 +5,7 @@ import { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, native
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { placeWindow } from './bounds.mjs';
 import { proxyFromPac } from './public-network.mjs';
 import { publishLibrary } from './publish.mjs';
@@ -14,12 +14,25 @@ import electronUpdater from 'electron-updater';
 import { AppUpdates } from './app-update.mjs';
 import { watchPower } from './idle-power.mjs';
 import { RustAudio } from './rust-audio.mjs';
+import { WindowsMedia } from './windows-media.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const resources = app.isPackaged ? process.resourcesPath : path.join(here, '..', 'build');
 const assets = path.join(here, '..', 'assets');
+let desktopPlayback = null;
+let desktopPlaybackLoading = null;
+let hiddenTelemetryAt = 0;
 const rustAudio = new RustAudio(path.join(resources, 'audio', 'mora-audio.exe'), event => {
-  if (win && !win.isDestroyed()) win.webContents.send('automix:audio', event);
+  desktopPlayback?.onEvent(event);
+  windowsMedia.audioEvent(event);
+  if (!win || win.isDestroyed()) return;
+  const visible = win.isVisible() && !win.isMinimized();
+  if (!visible && event.type === 'waveform') return;
+  if (!visible && event.type === 'tick') {
+    if (Date.now() - hiddenTelemetryAt < 1000) return;
+    hiddenTelemetryAt = Date.now();
+  }
+  win.webContents.send('automix:audio', event);
 });
 
 // Caches reach many GB: keep the profile in Local AppData, not Roaming.
@@ -46,13 +59,72 @@ let backendState = 'starting';
 let player = { playing: false, title: '', artist: '' };
 let appUpdates;
 let updateConfirmation = false;
+let smtcAvailable = false;
 
 const userData = app.getPath('userData');
 const settingsFile = path.join(userData, 'desktop.json');
 const settings = Object.assign({ closeToTray: true, trayHintShown: false, window: null, dataDir: null }, readJson(settingsFile));
 const dataDir = settings.dataDir || path.join(userData, 'data');
 const launchToken = crypto.randomBytes(32).toString('hex');
+const desktopPlaybackToken = crypto.randomBytes(32).toString('hex');
+const mediaArtworkFiles = new Set();
+let mediaArtworkAbort = null;
+const windowsMedia = new WindowsMedia(path.join(resources, 'audio', 'mora-smtc.exe'), {
+  command, seek: position => {
+    if (desktopPlayback) void desktopPlayback.command('seekto', position).catch(e => log(`seek: ${e.message}`));
+    else win?.webContents.send('automix:seek', position);
+  },
+  available: available => { smtcAvailable = available; setMediaKeys(!available && !!player.title); },
+  state: state => {
+    const next = { playing: state.status === 'playing', title: state.title, artist: state.artist };
+    if (JSON.stringify(next) === JSON.stringify(player)) return;
+    player = next; updateTray(); setMediaKeys(!smtcAvailable && !!player.title);
+  }, artwork: mediaArtwork, log,
+});
 const resolverUpdater = new ResolverUpdater({ directory: path.join(userData, 'resolver-updates'), bundled: path.join(resources, 'yt-dlp', 'yt-dlp.exe') });
+
+function playbackHost() {
+  return desktopPlaybackLoading ??= import(pathToFileURL(path.join(resources, 'playback/desktop-playback.mjs')).href).then(({ DesktopPlayback }) => {
+    desktopPlayback = new DesktopPlayback(rustAudio, {
+      backend: () => {
+        if (!origin || !backend?.ready) throw new Error('Сервис медиатеки ещё не готов');
+        return { origin, accessToken: launchToken, pcmToken: desktopPlaybackToken };
+      }, ready: rate => { windowsMedia.reset(); windowsMedia.start(rate); }, track: track => windowsMedia.track(track),
+    });
+    return desktopPlayback;
+  }).catch(error => { desktopPlaybackLoading = null; throw error; });
+}
+
+async function mediaArtwork(coverUrl) {
+  mediaArtworkAbort?.abort();
+  if (!origin || !/^\/api\/(?:covers\/[a-zA-Z0-9_.-]+|tracks\/[a-zA-Z0-9_-]+\/cover|providers\/subsonic\/cover\/[^/?#]+)$/.test(coverUrl)) return '';
+  const abort = new AbortController(); mediaArtworkAbort = abort;
+  const timeout = setTimeout(() => abort.abort(), 8000);
+  try {
+    const response = await fetch(`${origin}${coverUrl}`, { headers: { 'X-Access-Token': launchToken }, signal: abort.signal, redirect: 'error' });
+    if (!response.ok || !/^image\//i.test(response.headers.get('content-type') || '')) return '';
+    if (Number(response.headers.get('content-length')) > 4 * 1024 * 1024) { abort.abort(); return ''; }
+    const chunks = []; let size = 0;
+    for await (const chunk of response.body) {
+      size += chunk.length;
+      if (size > 4 * 1024 * 1024) { abort.abort(); return ''; }
+      chunks.push(chunk);
+    }
+    const image = nativeImage.createFromBuffer(Buffer.concat(chunks));
+    const dimensions = image.getSize();
+    if (image.isEmpty() || dimensions.width > 4096 || dimensions.height > 4096) return '';
+    const png = image.resize({ width: 256, height: 256, quality: 'good' }).toPNG();
+    if (png.length > 512 * 1024 || abort.signal.aborted) return '';
+    const file = path.join(userData, `smtc-${process.pid}-${crypto.createHash('sha256').update(png).digest('hex')}.png`);
+    await fs.promises.writeFile(file, png);
+    mediaArtworkFiles.delete(file); mediaArtworkFiles.add(file);
+    while (mediaArtworkFiles.size > 8) {
+      const old = mediaArtworkFiles.values().next().value; mediaArtworkFiles.delete(old);
+      void fs.promises.unlink(old).catch(() => {});
+    }
+    return file;
+  } catch { return ''; } finally { clearTimeout(timeout); }
+}
 
 function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
@@ -136,6 +208,7 @@ async function startBackend(port = 0) {
     AUTOMIX_RUST_CORE: path.join(resources, 'audio', 'mora-audio.exe'),
     AUTOMIX_DATA_DIR: dataDir,
     AUTOMIX_LAUNCH_TOKEN: launchToken,
+    AUTOMIX_DESKTOP_PCM_TOKEN: desktopPlaybackToken,
     AUTOMIX_PORT: String(port),
     FFMPEG_PATH: path.join(ff, 'ffmpeg.exe'),
     FFPROBE_PATH: path.join(ff, 'ffprobe.exe'),
@@ -263,8 +336,8 @@ function createWindow() {
     if (cmd === 'browser-backward' && win.webContents.navigationHistory.canGoBack()) win.webContents.navigationHistory.goBack();
     if (cmd === 'browser-forward' && win.webContents.navigationHistory.canGoForward()) win.webContents.navigationHistory.goForward();
   });
-  win.webContents.on('render-process-gone', (_e, d) => { log(`renderer gone: ${d.reason}`); void rustAudio.stop(); });
-  win.webContents.on('did-start-navigation', (_e, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) void rustAudio.stop(); });
+  win.webContents.on('render-process-gone', (_e, d) => { log(`renderer gone: ${d.reason}`); if (!desktopPlayback) void rustAudio.stop(); });
+  win.webContents.on('did-start-navigation', (_e, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace && !desktopPlayback) void rustAudio.stop(); });
 }
 
 /** The caption buttons are native and sit above the page. Over the full player
@@ -328,6 +401,11 @@ function updateTray() {
 }
 
 function command(cmd) {
+  if (desktopPlayback) {
+    const action = { toggle: desktopPlayback.state().playing ? 'pause' : 'play', play: 'play', pause: 'pause', next: 'nexttrack', prev: 'previoustrack' }[cmd];
+    if (action) void desktopPlayback.command(action).catch(e => log(`transport: ${e.message}`));
+    return;
+  }
   win?.webContents.send('automix:command', cmd);
 }
 
@@ -370,10 +448,24 @@ function handle(channel, fn) {
 }
 
 function registerIpc() {
-  handle('audio:start', device => rustAudio.start(device));
-  handle('audio:command', command => rustAudio.command(command));
-  handle('audio:stop', () => rustAudio.stop());
+  handle('audio:start', async device => {
+    if (desktopPlayback?.state().active) throw new Error('Аудиопоток уже управляется нативным плеером');
+    windowsMedia.reset(); const ready = await rustAudio.start(device); windowsMedia.start(ready.sampleRate); return ready;
+  });
+  handle('audio:command', async command => {
+    if (command?.cmd === 'output') return (await playbackHost()).setDevice(command.device);
+    if (desktopPlayback?.state().active) throw new Error('Используйте управление нативным плеером');
+    return rustAudio.command(command);
+  });
+  handle('audio:stop', () => { windowsMedia.reset(); return desktopPlayback ? desktopPlayback.stop() : rustAudio.stop(); });
   handle('audio:devices', () => rustAudio.devices());
+  for (const method of ['startSource', 'prepareQueue', 'settings', 'stop', 'state', 'command']) {
+    handle(`native-mix:${method}`, async (...args) => {
+      const result = await (await playbackHost())[method](...args);
+      if (method === 'stop') windowsMedia.reset();
+      return result;
+    });
+  }
   handle('app-update:status', () => appUpdates.status());
   handle('app-update:check', () => appUpdates.check());
   handle('app-update:download', () => appUpdates.download());
@@ -446,12 +538,15 @@ function registerIpc() {
   handle('window:overlay', (transparent) => titlebarOverlay(transparent));
   ipcMain.on('player:state', (e, s) => {
     if (!trusted(e) || !s || typeof s !== 'object') return;
-    const next = { playing: s.playing === true, title: String(s.title ?? '').slice(0, 200), artist: String(s.artist ?? '').slice(0, 200) };
+    // Renderer metadata is a fallback until the native owner supplies its first tick.
+    if (windowsMedia.tick) return;
+    const next = { playing: false, title: String(s.title ?? '').slice(0, 200), artist: String(s.artist ?? '').slice(0, 200) };
     if (next.playing === player.playing && next.title === player.title && next.artist === player.artist) return;
     player = next;
-    setMediaKeys(!!next.title);
+    setMediaKeys(!smtcAvailable && !!next.title);
     updateTray();
   });
+  ipcMain.on('player:track', (e, track) => { if (trusted(e)) windowsMedia.track(track); });
 }
 
 // ------------------------------------------------------------------ library import
@@ -562,7 +657,11 @@ async function main() {
     globalShortcut.unregisterAll();
     powerWatch?.stop();
     tray?.destroy();
-    void Promise.allSettled([rustAudio.stop(), stopBackend()]).finally(() => app.quit());
+    mediaArtworkAbort?.abort();
+    void Promise.allSettled([windowsMedia.stop(), desktopPlayback ? desktopPlayback.stop() : rustAudio.stop(), stopBackend()]).finally(() => {
+      for (const file of mediaArtworkFiles) { try { fs.unlinkSync(file); } catch { /* optional thumbnail */ } }
+      app.quit();
+    });
   });
   app.on('window-all-closed', () => { if (!settings.closeToTray || quitting) app.quit(); });
 }

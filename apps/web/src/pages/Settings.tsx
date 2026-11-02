@@ -8,6 +8,7 @@ import { ConfirmModal, Switch } from '../components/common.tsx';
 import { TransitionSummary } from '../components/TransitionSummary.tsx';
 import { PlaylistBackup } from '../components/PlaylistBackup.tsx';
 import { AppUpdates } from '../components/AppUpdates.tsx';
+import { DiskManagement } from '../components/DiskManagement.tsx';
 import '../styles/prefs.css';
 
 // iPhone app: no vocal separation model, so no vocal switch (the phone keeps stemMixing on, see apps/mobile worker),
@@ -299,6 +300,7 @@ export function SettingsPage() {
           </Row>
         </Group>
 
+        {desktop && <DiskManagement />}
         <Group title="DJ-приёмы" footer={off ? 'Включите AutoMix, чтобы использовать DJ-приёмы.' : undefined}>
           <Row title="Обмен басом" desc="Бас двух треков не звучит одновременно, середина приглушается при конфликте мелодий.">
             <Switch checked={a.eqHandoff} disabled={off} onChange={(v) => set({ eqHandoff: v })} label="Обмен басом и EQ" />
@@ -352,7 +354,7 @@ export function SettingsPage() {
         <details className="pref-more">
           <summary>
             <span className="pref-title">Дополнительно</span>
-            <span className="pref-desc">Тонкая настройка переходов, кэш и служебные сведения</span>
+            <span className="pref-desc">{desktop ? 'Необязательные пределы AutoMix, служебные сведения и клавиши. Для обычного прослушивания менять не нужно.' : 'Тонкая настройка переходов, кэш и служебные сведения'}</span>
           </summary>
           <Group title="Тонкая настройка переходов" footer="Это пределы: точные точки и длину AutoMix выбирает по анализу музыки.">
             {(a.entryMode ?? 'smart') === 'smart' && <Row wide title="Пропуск вступления" desc="Насколько глубоко можно войти в следующий трек.">

@@ -124,6 +124,15 @@ export class AutoMixService {
     return { plan, cached: false, pending: r.pending };
   }
 
+  /** Prepares the musical choice without decoding a playlist; playback still verifies it on PCM. */
+  async preplan(fromId: string, toId: string): Promise<void> {
+    const r = this.prepare(fromId, toId);
+    if ('plan' in r || r.pending.length) return;
+    const plan = rustCorePath() ? await rustComputeAsync<TransitionPlan>('plan', { from: r.pa, to: r.pb, settings: r.settings, feedback: r.feedback })
+      : planTransition(r.pa, r.pb, r.settings, undefined, r.feedback);
+    this.store(r.key, { ...plan, debug: { ...plan.debug, renderCheck: { policy: 'render-finalists-2', skipped: 'pcm-not-ready' } } }, r.a.content_hash, r.b.content_hash);
+  }
+
   /** P10: a full-mix pair (a voice unknown) renders its finalists on PCM that is already decoding and
    * keeps the planner's choice unless it fails technically. Without that PCM the planner's choice is
    * cached marked as unchecked and checked by a later request; other pairs behave exactly like plan(). */
@@ -176,7 +185,8 @@ export class AutoMixService {
     if (reviewed && !this.reviewedRejected(reviewed)) return { plan: reviewed, cached: true, pending: [] };
     const feedback = this.ratingStats();
     const key = fnv1a(
-      [a.id, b.id, a.content_hash, b.content_hash, ANALYZER_VERSION, PLANNER_VERSION, JSON.stringify(settings), pa.mixingAllowed, pb.mixingAllowed,
+      // Invalidate automatic choices while preserving the exact IDs of listener-approved plans.
+      [a.id, b.id, a.content_hash, b.content_hash, ANALYZER_VERSION, PLANNER_VERSION, 'transition-styles-2-filter-handoff', JSON.stringify(settings), pa.mixingAllowed, pb.mixingAllowed,
         ...(process.env.AUTOMIX_DESKTOP === '1' ? ['desktop-full-mix-1'] : []),
         a.album, b.album, pa.albumArtist, pb.albumArtist, a.track_no, b.track_no, a.disc_no, b.disc_no, !!pa.analysis, !!pb.analysis,
         // new ratings make new plans; without any the key stays as before
@@ -261,6 +271,14 @@ export class AutoMixService {
     if(!a||!b)throw new Error('трек не найден');
     const from = this.plannerTrack(a), to = this.plannerTrack(b), settings = getSettings(this.db).automix;
     return rustCorePath() ? rustCompute<TransitionPlan>('plan', { from, to, position, settings, mode: 'requested' }) : planRequestedTransition(from,to,position,settings);
+  }
+
+  async manualAsync(fromId: string, toId: string, position: number, mode: 'skip' | 'requested'): Promise<TransitionPlan> {
+    if (!rustCorePath()) return mode === 'skip' ? this.skip(fromId, toId, position) : this.requested(fromId, toId, position);
+    const a = this.lib.get(fromId), b = this.lib.get(toId);
+    if (!a || !b) throw new Error('трек не найден');
+    return rustComputeAsync<TransitionPlan>('plan', { from: this.plannerTrack(a), to: this.plannerTrack(b),
+      position, settings: getSettings(this.db).automix, mode });
   }
 
   log(entry: { plan: TransitionPlan; outcome: Record<string, unknown> }): number {

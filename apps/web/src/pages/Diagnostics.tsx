@@ -522,8 +522,19 @@ export function DiagnosticsPage() {
   const [offline, setOffline] = useState(false);
   const automixOn = useApp((s) => s.settings?.automix.enabled !== false);
   useEffect(() => {
-    void api.transitions(30).then((r) => setLog(r.items)).catch(() => {});
-    void api.health().then((h) => { setHealth(h); setOffline(false); }, () => setOffline(true));
+    let active = true, loading = false;
+    const load = async () => {
+      if (loading || document.hidden) return;
+      loading = true;
+      try {
+        const [history, health] = await Promise.all([api.transitions(30), api.health()]);
+        if (active) { setLog(history.items); setHealth(health); setOffline(false); }
+      } catch { if (active) setOffline(true); }
+      finally { loading = false; }
+    };
+    void load();
+    const timer = setInterval(() => void load(), 5000);
+    return () => { active = false; clearInterval(timer); };
   }, [p.lastTransition]);
   if (trackId)
     return (

@@ -9,6 +9,7 @@ export interface AppUpdateStatus {
   error: string | null;
 }
 export interface DesktopBridge {
+  nativeMix?: Pick<import('./native-mix.ts').NativeMix, 'startSource' | 'prepareQueue' | 'settings' | 'stop' | 'state' | 'command'>;
   audioStart?(device?: string): Promise<{ sampleRate: number; engine: 'rust'; queueFrames: number }>;
   audioCommand?(command: import('../audio/engine.worklet.ts').EngineCommand | { cmd: 'output'; device: string } | { cmd: 'suspend' | 'resume' }): Promise<void>;
   audioStop?(): Promise<void>;
@@ -34,7 +35,9 @@ export interface DesktopBridge {
   importLibrary(): Promise<{ status: 'done' | 'cancelled' | 'error'; message?: string }>;
   restartBackend(): Promise<void>;
   reportPlayer(s: { playing: boolean; title: string; artist: string }): void;
-  onCommand(cb: (cmd: 'toggle' | 'pause' | 'next' | 'prev') => void): () => void;
+  reportMediaTrack?(s: { token: string; title: string; artist: string; album: string; coverUrl: string | null }): void;
+  onCommand(cb: (cmd: 'toggle' | 'play' | 'pause' | 'next' | 'prev') => void): () => void;
+  onSeek?(cb: (position: number) => void): () => void;
   onBackend(cb: (state: 'ready' | 'restarting' | 'importing' | 'failed' | 'starting') => void): () => void;
   onImport(cb: (p: { done: number; total: number }) => void): () => void;
 }

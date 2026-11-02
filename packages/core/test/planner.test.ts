@@ -91,10 +91,11 @@ describe('adaptive structural entries and limits', () => {
     const a = measuredTrack('a', 124);
     const b = measuredTrack('b', 160, 32);
     const p = planTransition(a, b, S);
-    expect(p.bEntry).toBeGreaterThanOrEqual(20);
-    expect(p.bEntry).toBeLessThanOrEqual(30);
+    // v19: 124 → 160 cannot lock: B drops in on its downbeat where the measured section arrives
+    expect(['drop-swap', 'loop-roll']).toContain(p.debug.variant);
+    expect(p.bEntry).toBeGreaterThanOrEqual(30);
+    expect(p.bEntry).toBeLessThanOrEqual(32.5);
     expect(p.entrySelection!.skippedSeconds).toBeCloseTo(p.bEntry, 2);
-    expect(p.entrySelection!.arrivalTime).toBeCloseTo(32, 0);
   });
 
   it('preserves the complete opening when requested and obeys a smaller skip budget', () => {
@@ -200,7 +201,8 @@ describe('loudness through band handoffs', () => {
     const make = { pop: pop160, dnb: dnb174, ambient, house: house124a };
     const a = make[from](), b = make[to]();
     const p = planTransition(plannerTrack('a', a), plannerTrack('b', b), S);
-    expect(p.debug.loudnessHold).toBeDefined();
+    // a drop swap has no blend middle: B starts at full level when A's dry signal stops
+    if (p.method !== 'echo_out') expect(p.debug.loudnessHold).toBeDefined();
     checkPlanShape(p); // raised faders never exceed a deck's own level
     const r = renderTransitionOffline(a.pcm, b.pcm, p, 8, 8);
     const levels = shortTerm(r), start = r.transitionStartFrame / r.sampleRate, end = start + p.duration;
@@ -217,8 +219,8 @@ describe('v2 filter washout between unlocked grooves', () => {
   it('never runs the two decks’ bass/kicks together (124 → 160 BPM)', () => {
     const a = house124a(), b = pop160();
     const p = planTransition(plannerTrack('a', a), plannerTrack('b', b), S);
-    expect(p.method).toBe('crossfade');
-    expect(p.debug.washout).toBe(true);
+    // v19: a drop swap (A's bass leaves on the last beat before the cut), formerly a filter washout
+    expect(['drop-swap', 'loop-roll']).toContain(p.debug.variant);
     // render each deck alone with its real lanes, the other deck muted
     const solo = (deck: 'A' | 'B') => renderTransitionOffline(a.pcm, b.pcm, { ...p, automation: [
       ...p.automation.filter((l) => l.deck === deck || l.lane !== 'gain'),
@@ -287,15 +289,25 @@ describe('transition planner', () => {
     expect(p.beatAlign!.stretchPercent).toBeLessThan(2);
   });
 
-  it('v2: uses a long unlocked blend for a large tempo gap (no echo of A’s groove over B, no abrupt cut)', () => {
-    const p = planTransition(plannerTrack('a', house124a()), plannerTrack('b', pop160()), S);
-    expect(p.method).toBe('crossfade');
-    expect(p.duration).toBeGreaterThanOrEqual(8);
-    expect(p.echo).toBeUndefined();
+  it('v19: a large tempo gap swaps on A’s phrase-end downbeat, B lands on its own downbeat (drop swap)', () => {
+    const a = house124a(), b = pop160();
+    const p = planTransition(plannerTrack('a', a), plannerTrack('b', b), S);
+    expect(p.method).toBe('echo_out');
+    expect(['drop-swap', 'loop-roll']).toContain(p.debug.variant);
     expect(p.tempoB).toEqual([[0, 1]]);
     expect(p.fallbackReason).toMatch(/темп/);
-    // the ending of A is heard: transition runs to A's audible end
-    expect(p.aExit + p.duration).toBeGreaterThan(house124a().analysis.audibleEnd - 1);
+    // phrase snapping: the cut is one of A's downbeats (a phrase start when A has phrases), B starts on a downbeat
+    // the swap point in A's source: the cut (echo out) or the boundary after the rolled bar (loop roll)
+    const cut = (p.debug.dropSwap as { cutSource?: number } | undefined)?.cutSource ?? (p.debug.loopRoll as { exitSource: number }).exitSource;
+    expect(a.analysis.beat!.downbeats.some(t => Math.abs(t - cut) < 0.002)).toBe(true);
+    if (a.analysis.phraseConfidence >= 0.2) expect(a.analysis.phrases.some(t => Math.abs(t - cut) < 0.002)).toBe(true);
+    expect(p.bEntry === b.analysis.audibleStart || b.analysis.beat!.downbeats.some(t => Math.abs(t - p.bEntry) < 0.002)).toBe(true);
+    // B is silent until A's dry signal is gone; A's filter sweep and echo announce the swap (not an abrupt cut)
+    expect(p.bDelay).toBe(p.swapAt);
+    const lane = (l: string) => p.automation.find(x => x.deck === 'A' && x.lane === l)!.points;
+    expect(lane('filter').at(-1)![1]).toBeGreaterThanOrEqual(0.5);
+    expect(p.echo).toBeDefined();
+    expect(p.swapAt).toBeGreaterThanOrEqual(3);
     checkPlanShape(p);
   });
 

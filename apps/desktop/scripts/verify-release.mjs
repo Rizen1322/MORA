@@ -13,9 +13,13 @@ const name = `MORA-Setup-${pkg.version}.exe`;
 const installer = path.join(dist, name);
 const resources = path.join(dist, 'win-unpacked', 'resources');
 const archive = path.join(resources, 'app.asar');
+assert.equal(fs.readFileSync(path.join(resources, 'playback', 'desktop-playback.mjs')).compare(
+  fs.readFileSync(path.join(desktop, 'build', 'playback', 'desktop-playback.mjs'))), 0, 'Packaged playback host differs from the build');
 assert.ok(fs.statSync(path.join(resources, 'audio', 'mora-audio.exe')).size > 0, 'Native Rust audio engine is missing');
 const nativeHash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 assert.equal(nativeHash(path.join(resources, 'audio', 'mora-audio.exe')), nativeHash(path.join(desktop, 'build', 'audio', 'mora-audio.exe')), 'Packaged Rust engine differs from the build');
+assert.ok(fs.statSync(path.join(resources, 'audio', 'mora-smtc.exe')).size > 0, 'Windows media integration is missing');
+assert.equal(nativeHash(path.join(resources, 'audio', 'mora-smtc.exe')), nativeHash(path.join(desktop, 'build', 'audio', 'mora-smtc.exe')), 'Packaged Windows media helper differs from the build');
 for (const file of ['THIRD_PARTY_LICENSES.txt', 'RUST-LIBRARY-COPYRIGHT.html'])
   assert.ok(fs.statSync(path.join(resources, 'audio', file)).size > 0, `Native license notice missing: ${file}`);
 const packaged = JSON.parse(extractFile(archive, 'package.json').toString());

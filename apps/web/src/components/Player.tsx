@@ -27,6 +27,7 @@ import {
   PictureInPicture,
   ArrowsOut,
   PushPin,
+  DotsThree,
 } from '@phosphor-icons/react';
 import { desktop } from '../lib/desktop.ts';
 import { setSleep, sleepEndOfTrack, sleepLeft, sleepMinutes, useSleep } from '../lib/sleepTimer.ts';
@@ -544,11 +545,19 @@ export function FullPlayer() {
               <button className={`icon-btn ${t.reaction > 0 ? 'liked' : ''}`} aria-pressed={t.reaction > 0} aria-label="Нравится" onClick={() => void react(t, t.reaction > 0 ? 0 : 1)}>
                 <Heart size={23} weight={t.reaction > 0 ? 'fill' : 'regular'} />
               </button>
-              <button className="icon-btn fp-lyrics-toggle" aria-label={showLyrics ? 'Показать обложку' : 'Показать текст песни'} title="Текст песни" aria-pressed={showLyrics} onClick={() => { if (!showLyrics) { setLyricsOpened(true); useApp.getState().setPanel(null); } setShowLyrics(!showLyrics); }}><MicrophoneStage size={23} /></button>
-              <button className="icon-btn" aria-pressed={t.reaction < 0} aria-label="Не нравится" onClick={() => void react(t, t.reaction < 0 ? 0 : -1)}>
+              {!desktop && <button className="icon-btn fp-lyrics-toggle" aria-label={showLyrics ? 'Показать обложку' : 'Показать текст песни'} title="Текст песни" aria-pressed={showLyrics} onClick={() => { if (!showLyrics) { setLyricsOpened(true); useApp.getState().setPanel(null); } setShowLyrics(!showLyrics); }}><MicrophoneStage size={23} /></button>}
+              {!desktop && <button className="icon-btn" aria-pressed={t.reaction < 0} aria-label="Не нравится" onClick={() => void react(t, t.reaction < 0 ? 0 : -1)}>
                 <HeartBreak size={23} weight={t.reaction < 0 ? 'fill' : 'regular'} />
-              </button>
-              <button className="icon-btn" aria-label="Похожее на этот трек" title="Дальше — похожее на этот трек" disabled={t.reaction < 0} onClick={() => void startSimilar(t)}><Radio size={23} /></button>
+              </button>}
+              {!desktop && <button className="icon-btn" aria-label="Похожее на этот трек" title="Дальше — похожее на этот трек" disabled={t.reaction < 0} onClick={() => void startSimilar(t)}><Radio size={23} /></button>}
+              {desktop && <details className="fp-more" onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); e.currentTarget.open = false; e.currentTarget.querySelector('summary')?.focus(); } }}>
+                <summary className="icon-btn" aria-label="Ещё действия с треком" title="Ещё действия"><DotsThree size={23} /></summary>
+                <div role="menu" onClick={(e) => { (e.currentTarget.closest('details') as HTMLDetailsElement).open = false; }}>
+                  <button role="menuitem" onClick={() => { if (!showLyrics) { setLyricsOpened(true); useApp.getState().setPanel(null); } setShowLyrics(!showLyrics); }}><MicrophoneStage size={18} /> {showLyrics ? 'Показать обложку' : 'Текст песни'}</button>
+                  <button role="menuitem" onClick={() => void react(t, t.reaction < 0 ? 0 : -1)}><HeartBreak size={18} /> {t.reaction < 0 ? 'Отменить «Не нравится»' : 'Не нравится'}</button>
+                  <button role="menuitem" disabled={t.reaction < 0} onClick={() => void startSimilar(t)}><Radio size={18} /> Похожее на этот трек</button>
+                </div>
+              </details>}
             </div>
             <Volume p={p} />
           </div>
@@ -567,7 +576,7 @@ export function FullPlayer() {
               <CaretRight size={18} aria-hidden="true" />
             </button>
           </section>}
-          {p.transition?.fallback && <div className="small" style={{ color: 'var(--danger)' }}>{p.transition.fallback}</div>}
+          {p.transition?.fallback && (desktop ? <div className="caption player-next-help">Звук продолжается с простым переходом. <button className="link" onClick={() => setShowQueue(true)}>Проверить следующий трек</button><details><summary>Подробнее</summary>{p.transition.fallback}</details></div> : <div className="small" style={{ color: 'var(--danger)' }}>{p.transition.fallback}</div>)}
         </div>
       </div>
       <div />

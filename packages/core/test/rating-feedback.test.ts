@@ -33,6 +33,11 @@ const rows = (plan: TransitionPlan, rating: TransitionRating, n: number) =>
 const selected = (p: TransitionPlan) => (p.debug.fullMix as { selected: string }).selected;
 
 describe('listener ratings as a soft preference between finalists', () => {
+  it('targets a cut-intro complaint only at entry and exact pair evidence', () => {
+    const stats = ratingStats([{ rating: 'bad', reason: 'обрезало начало', features: ['entry:v1:25+', 'pair-recipe:abc', 'rhythm:locked', 'length:long'] }])!;
+    expect(stats.features).toEqual({});
+    expect(Object.keys(stats.reasons!['обрезало начало']!)).toEqual(['entry:v1:25+', 'pair-recipe:abc']);
+  });
   const plain = planFinalists(a, b, S);
   // Rate distinct recipes even when the unassisted chooser already prefers the unlocked one.
   const base = plain.find(p => (p.debug.fullMix as { this: string }).this === 'baseline')!;

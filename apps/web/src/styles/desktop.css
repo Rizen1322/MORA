@@ -169,3 +169,27 @@
 /* The mobile mini player highlights its last button; here that is "Next", so move the accent to Play. */
 .compact .mini-player > div .icon-btn:last-child { width: 36px; height: 36px; margin-left: 0; background: none; color: var(--text-2) !important; }
 .compact .mini-player > div .icon-btn:nth-last-child(2) { width: 42px; height: 42px; border-radius: 14px; background: var(--accent-soft); color: var(--on-accent) !important; }
+
+/* A fixed dark surface keeps text readable even when cover colours are almost white. */
+.desktop .full-player { color:#f8faf9; --text-2:#c0c9c4; --text-3:#acb7b0; }
+.desktop .full-player .fp-info { border-radius:24px; background:linear-gradient(180deg,#0b1212a8,#0b1212e8); padding:20px; }
+.desktop .full-player .fp-top { background:linear-gradient(#0b1212d9,transparent); }
+.desktop .full-player .fp-up-next,.desktop .full-player .transition-summary { background:#101a18e8; }
+.desktop .player-bar { background:linear-gradient(110deg,#111c1bf5,#101817f5); }
+.desktop .player-next-help { text-align:center; margin:10px 0; color:#cbd6cf; }
+.desktop .fp-more { position: relative; }
+.desktop .fp-more > summary { display: grid; place-items: center; list-style: none; cursor: pointer; }
+.desktop .fp-more > summary::-webkit-details-marker { display: none; }
+.desktop .fp-more > div { position: absolute; z-index: 10; top: calc(100% + 6px); left: 0; width: 230px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--surface-2); box-shadow: 0 18px 40px rgba(0, 8, 4, .5); }
+.desktop .fp-more > div > button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; border-radius: 8px; text-align: left; }
+.desktop .fp-more > div > button:hover, .desktop .fp-more > div > button:focus-visible { background: rgba(196, 240, 214, .1); }
+.desktop .fp-more > div > button:disabled { opacity: .5; }
+.desktop .playlist-preparation { display:flex; flex-wrap:wrap; align-items:center; gap:12px 20px; margin:12px 0 24px; padding:18px; border:1px solid var(--line); border-radius:16px; background:var(--surface); }
+.desktop .playlist-preparation>div:first-child { flex:1; min-width:220px; }
+.desktop .playlist-preparation p { margin:6px 0 0; }
+.desktop .preparation-progress { width:100%; display:flex; align-items:center; gap:12px; font-size:12px; }
+.desktop .preparation-progress progress { accent-color:var(--accent); flex:1; }
+.desktop .queue-readiness { margin-top:3px; font-size:11px; }
+.desktop .queue-readiness.ready { color:#a7dabb; }
+.desktop .queue-readiness.unavailable { color:#ffc4a5; }
+.desktop .menu { background:#19382b; backdrop-filter:none; max-height:calc(100dvh - 16px); max-width:calc(100vw - 16px); overflow-y:auto; }

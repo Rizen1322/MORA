@@ -143,9 +143,8 @@ export function Menu({ x, y, onClose, children }: { x: number; y: number; onClos
   useEffect(() => {
     const el = ref.current;
     if (el) {
-      const r = el.getBoundingClientRect();
-      setPos({ x: Math.min(x, innerWidth - r.width - 8), y: Math.min(y, innerHeight - r.height - 8) });
-      el.querySelector<HTMLElement>('button, a')?.focus();
+      setPos({ x: Math.max(8, Math.min(x, innerWidth - el.offsetWidth - 8)), y: Math.max(8, Math.min(y, innerHeight - el.offsetHeight - 8)) });
+      el.querySelector<HTMLElement>('button:not(:disabled), a')?.focus();
     }
     const close = (e: Event) => {
       if (e instanceof KeyboardEvent && e.key !== 'Escape') return;
@@ -165,7 +164,7 @@ export function Menu({ x, y, onClose, children }: { x: number; y: number; onClos
     };
   }, [x, y, onClose]);
   const onKey = (e: React.KeyboardEvent) => {
-    const items = Array.from(ref.current?.querySelectorAll<HTMLElement>('button, a') ?? []);
+    const items = Array.from(ref.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a') ?? []);
     const i = items.indexOf(document.activeElement as HTMLElement);
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -175,10 +174,10 @@ export function Menu({ x, y, onClose, children }: { x: number; y: number; onClos
       items[(i - 1 + items.length) % items.length]?.focus();
     }
   };
-  return (
+  return createPortal(
     <div className="menu" role="menu" ref={ref} style={{ left: pos.x, top: pos.y }} onKeyDown={onKey} onClick={onClose}>
       {children}
-    </div>
+    </div>, document.body,
   );
 }
 

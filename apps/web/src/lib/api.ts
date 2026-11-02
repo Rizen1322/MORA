@@ -64,6 +64,8 @@ export interface ImportRow { position: number; title: string; artist: string; al
 export interface ImportJob { id: string; name: string; source: string; cover: string | null; total: number | null; complete: boolean; note?: string; state: 'matching' | 'ready' | 'creating' | 'done' | 'failed'; error: string | null; rows: ImportRow[]; playlistId: string | null; createdAt: number; counts?: { matched: number; uncertain: number; missing: number; pending: number } }
 export interface DownloadJob { id: string; key: string; title: string; state: 'queued' | 'downloading' | 'waiting' | 'paused' | 'done' | 'failed' | 'cancelled'; progress: number; error: string | null; trackId: string | null }
 export interface DownloadUsage { cacheBytes: number; pinnedBytes: number; limitBytes: number; freeBytes: number | null }
+export interface ListeningReadiness { trackId: string; state: 'loading' | 'ready' | 'unavailable'; analysis?: string; message: string; jobId?: string }
+export interface ListeningPreparation { total: number; ready: number; unavailable: number; cancelled: boolean; complete: boolean; tracks: ListeningReadiness[]; plansReady: number; plansTotal: number; plansFailed: number }
 export interface Lyrics {
   status: 'synced' | 'plain' | 'none';
   lines: { t: number; text: string }[];
@@ -287,6 +289,10 @@ export const api = {
   downloadAction: (id: string, action: 'pause' | 'resume' | 'cancel' | 'retry') => req<{ ok: true }>('POST', `/api/downloads/${id}/${action}`, {}),
   removeDownload: (trackId: string) => req<{ ok: true }>('DELETE', `/api/tracks/${trackId}/download`),
   downloadPlaylist: (id: string) => req<{ jobs: number }>('POST', `/api/playlists/${id}/download`, {}),
+  listeningReadiness: (trackIds: string[]) => req<{ tracks: ListeningReadiness[] }>('POST', '/api/listening/readiness', { trackIds }),
+  listeningPreparation: (id: string) => req<ListeningPreparation | null>('GET', `/api/playlists/${encodeURIComponent(id)}/prepare-listening`),
+  prepareListening: (id: string) => req<ListeningPreparation>('POST', `/api/playlists/${encodeURIComponent(id)}/prepare-listening`, {}),
+  cancelListeningPreparation: (id: string) => req<ListeningPreparation | null>('DELETE', `/api/playlists/${encodeURIComponent(id)}/prepare-listening`),
   setCacheLimit: (mb: number) => req<{ usage: DownloadUsage }>('PUT', '/api/downloads/settings', { cacheLimitMb: mb }),
   clearAudioCache: () => req<{ removed: number; usage: DownloadUsage }>('POST', '/api/downloads/clear-cache', {}),
   bindRecording: (id: string, assetId: string | null) => req<{ ok: true; mediaId: string }>('POST', `/api/tracks/${id}/binding`, { assetId }),

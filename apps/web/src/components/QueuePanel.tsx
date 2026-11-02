@@ -1,10 +1,12 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { DotsSixVertical, X, Trash, Sparkle, Headphones, Stop, CircleNotch } from '@phosphor-icons/react';
 import { fmtTime, methodShort, tracksWord } from '../lib/format.ts';
 import { controller, trackOf, useApp } from '../store/app.ts';
 import { Cover, Equalizer } from './common.tsx';
 import { togglePreview, usePreview } from '../lib/transition-preview.ts';
+import { desktop } from '../lib/desktop.ts';
+import { api, type ListeningReadiness } from '../lib/api.ts';
 
 /** Plays the rendered blend from the current track into `to`; again stops it. */
 function PreviewButton({ from, to, title }: { from: string; to: string; title: string }) {
@@ -23,6 +25,7 @@ export function QueuePanel({ onClose, className = '' }: { onClose?: () => void; 
     queue: s.player.queue, index: s.player.index, status: s.player.status, context: s.player.context,
     nextPlan: s.player.nextPlan, transitionActive: !!s.player.transition?.active, waveLoading: s.player.waveLoading,
     continuation: s.player.continuation,
+    canUndoQueue: s.player.canUndoQueue,
   })));
   const setOpen = useApp((s) => s.setQueueOpen);
   const [drag, setDrag] = useState<number | null>(null);
@@ -32,6 +35,20 @@ export function QueuePanel({ onClose, className = '' }: { onClose?: () => void; 
   const upcoming = p.queue.map((e, i) => ({ e, i })).filter(({ i }) => i > p.index);
   const playing = p.status === 'playing' || p.status === 'buffering';
   const wave = p.context?.type === 'wave' || p.context?.type === 'yandex-wave';
+  const [readiness, setReadiness] = useState<ListeningReadiness[]>([]);
+  const readinessIds = upcoming.slice(0, 40).map(({ e }) => e.trackId).join('\n');
+  useEffect(() => {
+    if (!desktop || !readinessIds) { setReadiness([]); return; }
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      try { const r = await api.listeningReadiness(readinessIds.split('\n')); if (alive) setReadiness(r.tracks); }
+      catch { if (alive) setReadiness([]); }
+      if (alive) timer = setTimeout(() => void refresh(), 3000);
+    };
+    void refresh();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [readinessIds]);
 
   // Rows outside the scrolled view are replaced by spacers, as in TrackList.
   const scrollRef = useRef<HTMLDivElement>(null), listRef = useRef<HTMLDivElement>(null);
@@ -55,6 +72,7 @@ export function QueuePanel({ onClose, className = '' }: { onClose?: () => void; 
       <div className="queue-head">
         <div><h2 className="section-title">Очередь</h2><p className="caption dim queue-subtitle">{upcoming.length ? `${tracksWord(upcoming.length)} впереди` : 'Всё, что звучит дальше'}</p></div>
         <div style={{ display: 'flex', gap: 4 }}>
+          {desktop && p.canUndoQueue && <button className="btn btn-ghost btn-sm" onClick={() => controller.undoQueue()} title="Вернуть последнее изменение очереди; история прослушиваний не меняется">Отменить</button>}
           {upcoming.length > 0 && (
             <button className="btn btn-ghost btn-sm" onClick={() => controller.clearUpcoming()} aria-label="Очистить очередь">
               <Trash size={16} /> Очистить
@@ -97,6 +115,7 @@ export function QueuePanel({ onClose, className = '' }: { onClose?: () => void; 
         {upcoming.slice(a, b).map(({ e, i }) => {
           const t = trackOf(e.trackId);
           if (!t) return null;
+          const ready = readiness.find(r => r.trackId === e.trackId);
           return (
             <div
               key={e.entryId}
@@ -144,8 +163,11 @@ export function QueuePanel({ onClose, className = '' }: { onClose?: () => void; 
                 <div className="caption muted ellipsis">
                   {t.artist}
                 </div>
+                {desktop && ready && <div className={`caption queue-readiness ${ready.state}`} title={ready.message}>{ready.state === 'ready' ? 'Готов' : ready.state === 'unavailable' ? 'Недоступен' : ready.message}</div>}
               </button>
               <span className="q-actions">
+                {desktop && ready?.state === 'loading' && ['Нужно загрузить', 'Загрузка приостановлена', 'Ожидает подключения'].includes(ready.message) && <button className="btn btn-ghost btn-sm" onClick={() => void (ready.jobId ? api.downloadAction(ready.jobId, 'resume') : api.download({ trackId: t.id })).catch(e => useApp.getState().toast((e as Error).message, 'error'))}>{ready.jobId ? 'Продолжить' : 'Скачать'}</button>}
+                {desktop && ready?.state === 'unavailable' && ready.jobId && <button className="btn btn-ghost btn-sm" onClick={() => void api.downloadAction(ready.jobId!, 'retry').catch(e => useApp.getState().toast((e as Error).message, 'error'))}>Повторить</button>}
                 {curT && t.mixingAllowed !== false && curT.mixingAllowed !== false && <PreviewButton from={curT.id} to={t.id} title={t.title} />}
                 <button className="icon-btn" aria-label={`Убрать из очереди: ${t.title}`} onClick={() => controller.removeAt(i)}>
                   <X size={16} />

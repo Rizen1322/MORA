@@ -3,6 +3,7 @@ import { TRANSITION_RATING_REASONS, type TransitionPlan, type TransitionRating, 
 import { ArrowRight, ThumbsDown, ThumbsUp, Waveform } from '@phosphor-icons/react';
 import { fmtTime, methodShort } from '../lib/format.ts';
 import { controller, trackOf, useApp } from '../store/app.ts';
+import { desktop } from '../lib/desktop.ts';
 
 export interface RatingTarget { logId: number; rating: TransitionRating | null; reason: TransitionRatingReason | null; onRated?: (rating: TransitionRating | null, reason: TransitionRatingReason | null) => void }
 
@@ -86,8 +87,8 @@ function RateTransition({ logId, rating, reason, onRated }: RatingTarget) {
       <button className="chip" aria-pressed={value.rating === 'bad'} aria-label="Плохо" title="Плохо" disabled={busy} onClick={() => void save(value.rating === 'bad' ? null : 'bad')}>
         <ThumbsDown size={16} weight={value.rating === 'bad' ? 'fill' : 'regular'} aria-hidden="true" />
       </button>
-      {value.rating === 'bad' && TRANSITION_RATING_REASONS.map((r) => (
-        <button key={r} className="chip" aria-pressed={value.reason === r} disabled={busy} onClick={() => void save('bad', value.reason === r ? null : r)}>{r}</button>
+      {value.rating === 'bad' && TRANSITION_RATING_REASONS.filter(r => desktop ? r !== 'резко' || value.reason === r : r !== 'обрезало начало').map((r) => (
+        <button key={r} className="chip" aria-pressed={value.reason === r} disabled={busy} onClick={() => void save('bad', value.reason === r ? null : r)}>{desktop ? ({ 'голоса наложились': 'два голоса', 'провал громкости': 'резкая громкость', 'сбился ритм': 'не попало в ритм' } as Partial<Record<TransitionRatingReason, string>>)[r] ?? r : r}</button>
       ))}
     </div>
   );

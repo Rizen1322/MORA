@@ -337,7 +337,9 @@ export class Library {
   }
 
   setCover(id: string, coverId: string): void {
-    q(this.db, 'UPDATE tracks SET cover_id = ?, updated_at = ? WHERE id = ? AND cover_id IS NULL').run(coverId, Date.now(), id);
+    const current = this.get(id);
+    if (!current || current.cover_id && this.coverPath(current.cover_id)) return;
+    q(this.db, 'UPDATE tracks SET cover_id = ?, updated_at = ? WHERE id = ? AND cover_id IS ?').run(coverId, Date.now(), id, current.cover_id);
     this.events.emit({ type: 'library', reason: 'cover', trackId: id });
     this.events.emit({ type: 'playlists' });
   }
@@ -505,7 +507,7 @@ export class Library {
       codec: t.codec,
       sampleRate: t.sample_rate,
       bitrate: t.bitrate,
-      coverUrl: t.cover_id ? `/api/covers/${t.cover_id}` : src?.kind === 'remote' && ['youtube', 'soundcloud'].includes(src.provider) ? `/api/tracks/${t.id}/cover` : null,
+      coverUrl: t.provider === 'yandex' ? `/api/tracks/${t.id}/cover` : t.cover_id ? `/api/covers/${t.cover_id}` : src?.kind === 'remote' && ['youtube', 'soundcloud'].includes(src.provider) ? `/api/tracks/${t.id}/cover` : null,
       provider: t.provider,
       sourceKind: src?.kind ?? 'none',
       sourceUrl,

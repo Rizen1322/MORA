@@ -275,7 +275,7 @@ export type TransitionMethod =
 
 /** Listener verdict on an executed transition; reasons are fixed tags so ratings can be aggregated. */
 export type TransitionRating = 'good' | 'bad';
-export const TRANSITION_RATING_REASONS = ['голоса наложились', 'провал громкости', 'резко', 'сбился ритм'] as const;
+export const TRANSITION_RATING_REASONS = ['голоса наложились', 'провал громкости', 'резко', 'сбился ритм', 'обрезало начало'] as const;
 export type TransitionRatingReason = (typeof TRANSITION_RATING_REASONS)[number];
 
 /** 'filter' is bipolar (-1 low-pass, 0 bypass, +1 high-pass).

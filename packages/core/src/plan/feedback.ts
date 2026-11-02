@@ -96,6 +96,7 @@ export function ratingFeatures(plan: TransitionPlan, A?: Tempo | null, B?: Tempo
 }
 
 const targeted = (reason: TransitionRatingReason, f: string) => f.startsWith('pair-recipe:') || (
+  reason === 'обрезало начало' ? /^entry:/.test(f) :
   reason === 'голоса наложились' ? /^(mid-overlap|vocals):/.test(f) :
   reason === 'резко' ? /^(slope|cut|entry):/.test(f) :
   reason === 'сбился ритм' ? /^(bpm|rhythm):/.test(f) : /^(gain-floor|shape|preset):/.test(f));

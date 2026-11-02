@@ -1,7 +1,6 @@
 import type { ArmedTransition } from '@automix/core/engine/mixer.ts';
 import type { ToneSettings } from '@automix/core/dsp/tone.ts';
 import type { PlaybackSettings } from '@automix/core/dsp/playback.ts';
-import type { NativeProbeState } from './playback-trace.ts';
 
 export interface NativeMixTrack {
   trackId?: string;
@@ -31,7 +30,14 @@ export interface NativeMixConfig {
 }
 export type NativeSourceConfig = Omit<NativeMixConfig, 'tracks' | 'index'> & { gainDb?: number };
 export type NativeMixSettings = Pick<NativeMixConfig, 'tone' | 'preDb' | 'playback' | 'volume'> & { gainDb?: number };
-export interface NativeMixState extends NativeProbeState {
+export interface NativeMixState {
+  lastTransition?: { plan: import('@automix/core').TransitionPlan; outcome: Record<string, unknown>; at: number; logId?: number };
+  active: boolean;
+  playing: boolean;
+  index: number;
+  position: number;
+  duration: number;
+  sampleRate?: number;
   analysis?: { state: string; role?: string; toIndex?: number; stageSeconds?: number; queued?: number; failedCount?: number };
   /** Audible native overlap; null explicitly means that no transition is playing. */
   blend?: { index: number; progress: number } | null;

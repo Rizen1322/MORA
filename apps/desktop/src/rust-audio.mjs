@@ -76,6 +76,15 @@ export class RustAudio {
     });
   }
   command(command) {
+    if (command?.cmd === 'feedFile') return Promise.reject(new Error('Недопустимая аудиокоманда'));
+    return this.send(command);
+  }
+  // Only the trusted host can issue file commands; paths never come from the page.
+  feedFile(command) {
+    if (command?.cmd !== 'feedFile') return Promise.reject(new Error('Некорректная аудиокоманда'));
+    return this.send(command);
+  }
+  send(command) {
     if (!this.process) return Promise.reject(new Error('Аудиодвижок не запущен'));
     if (!command || typeof command !== 'object' || typeof command.cmd !== 'string' || command.cmd === 'quit') return Promise.reject(new Error('Некорректная аудиокоманда'));
     if (this.pending.size >= 128) return Promise.reject(new Error('Очередь аудиокоманд переполнена'));

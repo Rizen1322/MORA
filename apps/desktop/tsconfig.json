@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "types": ["node", "electron"], "lib": ["ES2023"] },
-  "include": ["src/backend.ts"]
+  "compilerOptions": { "types": ["node", "electron"], "lib": ["ES2023", "DOM", "DOM.Iterable", "DOM.AsyncIterable"] },
+  "include": ["src/backend.ts", "src/desktop-playback.ts", "../web/src/lib/desktop.ts"]
 }

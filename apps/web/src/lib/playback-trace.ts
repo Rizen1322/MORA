@@ -1,3 +1,5 @@
+import type { NativeMix } from './native-mix.ts';
+
 /** Enabled only by the diagnostic iOS shell. Shared through window across the two JS bundles. */
 export type TraceFields = Record<string, string | number | boolean | undefined>;
 export type NavigationRoute = 'webkit' | 'native';
@@ -34,7 +36,13 @@ export interface PlaybackDiagnostics {
 }
 declare global { interface Window { moraDiagnostics?: PlaybackDiagnostics; moraNativePlayback?: NativePlaybackControls } }
 export function nativePlaybackControls(): NativePlaybackControls | undefined {
-  return typeof window === 'undefined' ? undefined : window.moraNativePlayback;
+  if (typeof window === 'undefined') return undefined;
+  if (window.moraNativePlayback) return window.moraNativePlayback;
+  const mix = (window as Window & { automixDesktop?: { nativeMix?: Omit<NativeMix, 'upload' | 'start' | 'update'> } }).automixDesktop?.nativeMix;
+  if (!mix?.startSource || !mix.prepareQueue) return undefined;
+  const unsupported = async (): Promise<never> => { throw new Error('Desktop uses native source preparation'); };
+  return { route: 'native', setRoute: async () => {}, mixActive: true,
+    mix: { ...mix, upload: unsupported, start: unsupported, update: unsupported } };
 }
 export function playbackDiagnostics(): PlaybackDiagnostics | undefined {
   return typeof window === 'undefined' ? undefined : window.moraDiagnostics;

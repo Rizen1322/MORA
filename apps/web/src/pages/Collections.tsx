@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MagnifyingGlass, ArrowUpRight, ArrowDown, ArrowUp, DotsSixVertical, PencilSimple, Trash, ListNumbers, Check, X } from '@phosphor-icons/react';
+import { MagnifyingGlass, ArrowUpRight, ArrowDown, ArrowUp, DotsSixVertical, DotsThree, PencilSimple, Trash, ListNumbers, Check, X } from '@phosphor-icons/react';
 import { api, type HistoryItem, type PlaylistDetail, type Track } from '../lib/api.ts';
 import { fmtDate, fmtTime, fmtTotal, tracksWord } from '../lib/format.ts';
 import { go, useRoute } from '../lib/router.ts';
 import { controller, useApp } from '../store/app.ts';
-import { ConfirmModal, Cover, PromptModal } from '../components/common.tsx';
+import { ConfirmModal, Cover, Menu, PromptModal } from '../components/common.tsx';
 import { TrackList } from '../components/TrackList.tsx';
 import { CollectionHeader } from './Library.tsx';
 import { PlaylistMix } from '../components/PlaylistMix.tsx';
 import { TransitionEditor } from '../components/TransitionEditor.tsx';
 import { LikeAllTracks } from '../components/LikeAll.tsx';
+import { desktop } from '../lib/desktop.ts';
+import { PlaylistPreparation } from '../components/PlaylistPreparation.tsx';
 
 export function PlaylistPage() {
   const { parts } = useRoute();
@@ -25,6 +27,8 @@ export function PlaylistPage() {
   const [query, setQuery] = useState('');
   const [mix, setMix] = useState(false);
   const [transitionEntry, setTransitionEntry] = useState<number | null>(null);
+  const [actions, setActions] = useState<{ x: number; y: number } | null>(null);
+  const actionsTrigger = useRef<HTMLButtonElement>(null);
   const loadRevision = useRef(0);
 
   const load = useCallback(async () => {
@@ -75,19 +79,19 @@ export function PlaylistPage() {
     <div className="main-inner collection-studio playlist-studio">
       <a className="studio-back" href="#/library/playlists">Все плейлисты <ArrowUpRight size={15} /></a>
       <CollectionHeader disabled={reorder ? !tracks.length : !visibleRows.length} kind="Плейлист" title={pl.name} sub={`${tracksWord(tracks.length)}, ${fmtTotal(tracks.reduce((a, t) => a + t.duration, 0))}`} cover={cover} seed={pl.id} onPlay={() => tracks.length && play(0)} onShuffle={() => tracks.length && play(Math.floor(Math.random() * (reorder ? tracks.length : visibleRows.length)), true)}>
-        <button className="btn btn-ghost btn-sm" onClick={() => setModal('rename')}>
-          <PencilSimple size={16} /> Переименовать
-        </button>
-        <button className="btn btn-ghost btn-sm" aria-pressed={reorder} onClick={() => setReorder(!reorder)} disabled={tracks.length < 2}>
-          {reorder ? <Check size={16} /> : <ListNumbers size={16} />} {reorder ? 'Готово' : 'Порядок'}
-        </button>
-        {tracks.length > 0 && <LikeAllTracks tracks={tracks} />}
-        <a className="btn btn-ghost btn-sm" href={`/api/backup/playlists?playlist=${encodeURIComponent(id)}`} download="MORA-playlist.json">Экспорт</a>
         <button className="btn btn-secondary btn-sm" disabled={tracks.length < 2} onClick={() => setMix(true)}>Собрать микс</button>
-        <button className="btn btn-danger btn-sm" onClick={() => setModal('delete')}>
-          <Trash size={16} /> Удалить
-        </button>
+        {reorder && <button className="btn btn-ghost btn-sm" onClick={() => setReorder(false)}><Check size={16} /> Готово</button>}
+        <button ref={actionsTrigger} className="btn btn-ghost btn-sm" aria-label="Действия с плейлистом" aria-expanded={!!actions} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setActions(actions ? null : { x: r.left, y: r.bottom + 4 }); }}><DotsThree size={22} /> Ещё</button>
       </CollectionHeader>
+      {actions && <Menu x={actions.x} y={actions.y} onClose={() => { setActions(null); actionsTrigger.current?.focus(); }}>
+        <button role="menuitem" onClick={() => setModal('rename')}><PencilSimple size={18} /> Переименовать</button>
+        <button role="menuitem" onClick={() => setReorder(!reorder)} disabled={tracks.length < 2}><ListNumbers size={18} /> Изменить порядок</button>
+        {tracks.length > 0 && <LikeAllTracks tracks={tracks} menu />}
+        <a role="menuitem" href={`/api/backup/playlists?playlist=${encodeURIComponent(id)}`} download="MORA-playlist.json">Экспортировать</a>
+        <hr />
+        <button role="menuitem" onClick={() => setModal('delete')}><Trash size={18} /> Удалить плейлист</button>
+      </Menu>}
+      {desktop && tracks.length > 0 && <PlaylistPreparation key={pl.id} id={pl.id} />}
       {mix && <PlaylistMix name={pl.name} rows={mixRows} onClose={() => setMix(false)} />}
       {transitionEntry !== null && (() => { const at = rows.findIndex(r => r.e.entryId === transitionEntry); const a = rows[at], b = rows[at + 1]; return a && b ? <TransitionEditor key={`${id}:${a.e.entryId}:${b.e.entryId}`} from={a.t} to={b.t} edge={{ playlistId: id, fromItemId: a.e.entryId, toItemId: b.e.entryId }} onClose={() => setTransitionEntry(null)} /> : null; })()}
       {!tracks.length && <div className="studio-empty"><h2>У каждой истории есть первый трек</h2><p>Добавьте музыку через меню «⋯» у трека.</p><a className="btn btn-secondary" href="#/library">Выбрать из медиатеки <ArrowUpRight size={16} /></a></div>}

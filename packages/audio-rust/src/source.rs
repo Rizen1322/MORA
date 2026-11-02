@@ -1,9 +1,86 @@
 use crate::vocal::Voice;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::io::{Read, Seek, SeekFrom};
 use std::{cell::RefCell, rc::Rc};
 
 pub const CHUNK: usize = 32768;
+
+pub(crate) fn read_pcm_file(
+    path: &str,
+    format: &str,
+    chunk: usize,
+    frames: usize,
+) -> Result<(Vec<f32>, Vec<f32>), String> {
+    if path.is_empty() || path.len() > 32768 || frames == 0 || frames > CHUNK {
+        return Err("Invalid PCM file request".into());
+    }
+    let width = match format {
+        "f32le" => 8,
+        "s16h" => 4,
+        _ => return Err("Invalid PCM file format".into()),
+    };
+    let offset = chunk
+        .checked_mul(CHUNK)
+        .and_then(|n| n.checked_mul(width))
+        .ok_or("Invalid PCM offset")?;
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    file.seek(SeekFrom::Start(offset as u64))
+        .map_err(|e| e.to_string())?;
+    let mut bytes = vec![0; frames * width];
+    file.read_exact(&mut bytes).map_err(|e| e.to_string())?;
+    let (mut left, mut right) = (Vec::with_capacity(frames), Vec::with_capacity(frames));
+    for frame in bytes.chunks_exact(width) {
+        let (l, r) = if width == 8 {
+            (
+                f32::from_le_bytes(frame[0..4].try_into().unwrap()),
+                f32::from_le_bytes(frame[4..8].try_into().unwrap()),
+            )
+        } else {
+            (
+                i16::from_le_bytes(frame[0..2].try_into().unwrap()) as f32 / 16384.,
+                i16::from_le_bytes(frame[2..4].try_into().unwrap()) as f32 / 16384.,
+            )
+        };
+        if !l.is_finite() || !r.is_finite() {
+            return Err("Non-finite PCM".into());
+        }
+        left.push(l);
+        right.push(r);
+    }
+    Ok((left, right))
+}
+
+#[cfg(test)]
+mod file_tests {
+    use super::*;
+    #[test]
+    fn reads_both_cache_formats_and_rejects_incomplete_data() {
+        let path = std::env::temp_dir().join(format!("mora-pcm-test-{}", std::process::id()));
+        std::fs::write(
+            &path,
+            [16384i16.to_le_bytes(), (-8192i16).to_le_bytes()].concat(),
+        )
+        .unwrap();
+        let name = path.to_str().unwrap();
+        assert_eq!(
+            read_pcm_file(name, "s16h", 0, 1).unwrap(),
+            (vec![1.], vec![-0.5])
+        );
+        assert!(read_pcm_file(name, "s16h", 0, 2).is_err());
+        std::fs::write(
+            &path,
+            [1.25f32.to_le_bytes(), (-0.25f32).to_le_bytes()].concat(),
+        )
+        .unwrap();
+        assert_eq!(
+            read_pcm_file(name, "f32le", 0, 1).unwrap(),
+            (vec![1.25], vec![-0.25])
+        );
+        assert!(read_pcm_file(name, "f32le", 1, 1).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
+}
 pub trait Source {
     fn read(&mut self, start: i64, l: &mut [f32], r: &mut [f32]) -> bool;
 }
