@@ -190,9 +190,10 @@ struct NativeTrackListView: View {
                 if !store.ui.loaded {
                     ProgressView().frame(maxWidth: .infinity).listRowBackground(Color.clear)
                 } else if shown.isEmpty {
-                    ContentUnavailableView(query.isEmpty ? (type == "liked" ? "Пока ничего любимого" : "Медиатека пуста") : "Ничего не найдено",
-                                           systemImage: type == "liked" ? "heart" : "music.note.list",
-                                           description: Text(query.isEmpty ? (type == "liked" ? "Отмечайте треки сердцем — они соберутся здесь." : "Добавьте музыку через импорт или поиск.") : "Попробуйте другой запрос."))
+                    let liked = type == "liked"
+                    let title: String = !query.isEmpty ? "Ничего не найдено" : liked ? "Пока ничего любимого" : "Медиатека пуста"
+                    let hint: String = !query.isEmpty ? "Попробуйте другой запрос." : liked ? "Отмечайте треки сердцем — они соберутся здесь." : "Добавьте музыку через импорт или поиск."
+                    ContentUnavailableView(title, systemImage: liked ? "heart" : "music.note.list", description: Text(hint))
                         .listRowBackground(Color.clear)
                 } else {
                     Section {
