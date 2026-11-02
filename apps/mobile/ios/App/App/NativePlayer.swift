@@ -23,8 +23,10 @@ enum NativePlayerSheet {
 final class NativePlayerModel: ObservableObject {
     @Published var state = NativePlayerState()
     @Published private(set) var artwork: UIImage?
+    /// The seek target from the moment the finger lifts until the host reports it.
     @Published var scrub: Double?
-    var editing = false
+    /// When `state.position` was read: the scrubber runs the clock on from there between polls.
+    private(set) var receivedAt = Date()
     weak var controller: UIViewController?
     var onFinish: ((String) -> Void)?
     private var action = "close"
@@ -49,6 +51,7 @@ final class NativePlayerModel: ObservableObject {
             guard let self, case .success(let value) = result else { return }
             let next = NativePlayerState(value)
             if !next.active { self.stop(); self.close("close"); return }
+            self.receivedAt = Date()
             if next != self.state { self.state = next }
             let key = "\(next.entryId)|\(next.artworkReady)"
             if key != self.artworkKey {
@@ -67,12 +70,8 @@ final class NativePlayerModel: ObservableObject {
         if action == "play" || action == "pause" { state.playing = action == "play" }
         send(action)
     }
-    func scrubbed(to time: Double) {
+    func seek(to time: Double) {
         scrub = time
-        if !editing { seek() } // VoiceOver adjusts without an editing phase.
-    }
-    func seek() {
-        guard let time = scrub else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         send("seekto", time: time) { [weak self] in self?.scrub = nil }
     }
@@ -146,7 +145,7 @@ struct NativePlayerView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
-            scrubber(s).padding(.top, 18)
+            NativeScrubber(state: s, receivedAt: model.receivedAt, pending: model.scrub) { model.seek(to: $0) }.padding(.top, 18)
             transport(playing: s.playing).padding(.vertical, 6)
             if let label = s.nextLabel {
                 Button { queueOpen = true } label: {
@@ -210,28 +209,6 @@ struct NativePlayerView: View {
             .accessibilityHidden(true)
     }
 
-    private func scrubber(_ s: NativePlayerState) -> some View {
-        let shown = model.scrub ?? s.position
-        return VStack(spacing: 6) {
-            Slider(value: Binding(get: { shown }, set: { model.scrubbed(to: $0) }), in: 0...max(s.duration, 1), onEditingChanged: { editing in
-                model.editing = editing
-                if !editing { model.seek() }
-            })
-            .tint(.white)
-            .disabled(s.duration <= 0)
-            .accessibilityLabel("Позиция")
-            .accessibilityValue("\(NativePlayerTime.text(shown)) из \(NativePlayerTime.text(s.duration))")
-            HStack {
-                Text(NativePlayerTime.text(shown))
-                Spacer()
-                Text(NativePlayerTime.text(s.duration))
-            }
-            .font(.caption.monospacedDigit().weight(.medium))
-            .foregroundStyle(.white.opacity(0.55))
-            .accessibilityHidden(true)
-        }
-    }
-
     private func transport(playing: Bool) -> some View {
         HStack {
             Spacer()
@@ -270,19 +247,13 @@ private struct NativeQueueView: View {
                 }
                 ForEach(model.state.upcoming) { row in
                     HStack(spacing: 12) {
-                        AsyncImage(url: row.cover) { image in
-                            image.resizable().scaledToFill()
-                        } placeholder: {
-                            ZStack { Color.white.opacity(0.08); Image(systemName: "music.note").foregroundStyle(.secondary) }
-                        }
-                        .frame(width: 42, height: 42)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .accessibilityHidden(true)
+                        NativeCover(url: row.cover, size: 44, radius: 6)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(row.title).font(.body.weight(.medium)).lineLimit(1)
                             Text(row.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                             if row.automix {
-                                Label("AutoMix", systemImage: "sparkles").font(.caption).foregroundStyle(Color.moraGold)
+                                HStack(spacing: 4) { Image(systemName: "sparkles"); Text("AutoMix") }
+                                    .font(.caption.weight(.medium)).foregroundStyle(Color.moraGold)
                             }
                         }
                     }
@@ -300,5 +271,78 @@ private struct NativeQueueView: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationBackground(.ultraThinMaterial)
+    }
+}
+
+/// Timeline: the finger owns the thumb while it drags (polls cannot pull it back), the clock runs on
+/// between polls, and the gold band marks where the AutoMix transition into the next track plays.
+private struct NativeScrubber: View {
+    let state: NativePlayerState
+    let receivedAt: Date
+    let pending: Double?
+    let seek: (Double) -> Void
+    @GestureState private var drag: Double?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let duration = max(state.duration, 1)
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !state.playing || drag != nil || pending != nil)) { context in
+            let live = min(state.duration, state.position + (state.playing ? max(0, context.date.timeIntervalSince(receivedAt)) : 0))
+            let shown = drag ?? pending ?? live
+            VStack(spacing: 6) {
+                GeometryReader { geo in
+                    let width = geo.size.width
+                    let x = width * min(1, max(0, shown / duration))
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.white.opacity(0.18)).frame(height: drag == nil ? 6 : 10)
+                        if let start = state.mixStart {
+                            Capsule().fill(Color.moraGold.opacity(0.85))
+                                .frame(width: max(4, width * state.mixLength / duration), height: drag == nil ? 6 : 10)
+                                .offset(x: width * start / duration)
+                        }
+                        Capsule().fill(.white).frame(width: x, height: drag == nil ? 6 : 10)
+                        Circle().fill(.white).frame(width: drag == nil ? 14 : 24, height: drag == nil ? 14 : 24)
+                            .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
+                            .offset(x: x - (drag == nil ? 7 : 12))
+                    }
+                    .frame(width: width, height: 44)
+                    .contentShape(Rectangle())
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: drag == nil)
+                    // GestureState resets when the sheet's own pan cancels the drag; a @State value stayed stuck there.
+                    .gesture(DragGesture(minimumDistance: 4)
+                        .updating($drag) { g, value, _ in
+                            guard state.duration > 0 else { return }
+                            if value == nil { UISelectionFeedbackGenerator().selectionChanged() }
+                            value = min(state.duration, max(0, g.location.x / width * state.duration))
+                        }
+                        .onEnded { g in
+                            guard state.duration > 0 else { return }
+                            seek(min(state.duration, max(0, g.location.x / width * state.duration)))
+                        })
+                }
+                .frame(height: 44)
+                HStack {
+                    Text(NativePlayerTime.text(shown))
+                    Spacer()
+                    if let start = state.mixStart {
+                        HStack(spacing: 3) { Image(systemName: "sparkles"); Text("AutoMix \(NativePlayerTime.text(start))") }
+                            .foregroundStyle(Color.moraGold.opacity(0.9))
+                        Spacer()
+                    }
+                    Text(NativePlayerTime.text(state.duration))
+                }
+                .font(.caption.monospacedDigit().weight(.medium))
+                .foregroundStyle(.white.opacity(0.55))
+                .accessibilityHidden(true)
+            }
+            .accessibilityElement()
+            .accessibilityLabel("Позиция")
+            .accessibilityValue("\(NativePlayerTime.text(shown)) из \(NativePlayerTime.text(state.duration))" + (state.mixStart.map { ", AutoMix с \(NativePlayerTime.text($0))" } ?? ""))
+            .accessibilityAdjustableAction { direction in
+                guard state.duration > 0 else { return }
+                seek(min(state.duration, max(0, shown + (direction == .increment ? 10 : -10))))
+            }
+        }
+        .disabled(state.duration <= 0)
     }
 }

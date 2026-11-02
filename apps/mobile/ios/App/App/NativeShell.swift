@@ -26,6 +26,7 @@ final class MoraRootViewController: UIViewController {
     /// Built on the page's first snapshot: until then (and if it never comes) the app is the web UI.
     func installShell(host: NativeMixHost, webView: WKWebView?) {
         shell.host = host
+        NativeShellStore.shared = shell
         shell.webView = webView
         guard content == nil else { return }
         let content = UIHostingController(rootView: NativeShellContent(store: shell))
@@ -88,6 +89,7 @@ enum NativeShellError: LocalizedError {
 
 /// Native side of lib/native-ui.ts. The page owns the data; this keeps its last snapshot.
 final class NativeShellStore: ObservableObject {
+    static weak var shared: NativeShellStore?
     @Published private(set) var library: [NativeTrack] = []
     @Published private(set) var playlists: [NativePlaylist] = []
     @Published private(set) var ui = NativeUiState()
@@ -265,14 +267,15 @@ enum NativeCovers {
     private static let cache: NSCache<NSString, UIImage> = { let c = NSCache<NSString, UIImage>(); c.countLimit = 400; return c }()
     @MainActor private static var loading: [String: Task<UIImage?, Never>] = [:]
 
-    @MainActor static func image(_ url: String, store: NativeShellStore) async -> UIImage? {
+    /// The page loads /api covers; the player sheet uses this without the shell's environment.
+    @MainActor static func image(_ url: String) async -> UIImage? {
         if let image = cache.object(forKey: url as NSString) { return image }
         if let task = loading[url] { return await task.value }
         let task = Task<UIImage?, Never> { @MainActor in
             var data: Data?
             if url.hasPrefix("https://"), let remote = URL(string: url) {
                 data = try? await URLSession.shared.data(from: remote).0
-            } else if url.hasPrefix("/api/"), let base64 = try? await store.call("cover", ["url": url]) as? String {
+            } else if url.hasPrefix("/api/"), let store = NativeShellStore.shared, let base64 = try? await store.call("cover", ["url": url]) as? String {
                 data = Data(base64Encoded: base64)
             }
             // Thumbnails only: full-size embedded covers would cost megabytes each in a long list.
@@ -294,7 +297,6 @@ struct NativeCover: View {
     var size: CGFloat = 48
     var radius: CGFloat = 8
     var image: UIImage? = nil
-    @EnvironmentObject private var store: NativeShellStore
     @State private var loaded: UIImage?
 
     var body: some View {
@@ -312,7 +314,7 @@ struct NativeCover: View {
         .task(id: url) {
             loaded = nil
             guard image == nil, let url else { return }
-            loaded = await NativeCovers.image(url, store: store)
+            loaded = await NativeCovers.image(url)
         }
     }
 }
