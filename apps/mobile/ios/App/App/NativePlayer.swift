@@ -46,8 +46,9 @@ final class NativePlayerModel: ObservableObject {
     }
     func stop() { timer?.invalidate(); timer = nil }
 
-    func refresh() {
+    func refresh(then: (() -> Void)? = nil) {
         host.playerState { [weak self] result in
+            defer { then?() }
             guard let self, case .success(let value) = result else { return }
             let next = NativePlayerState(value)
             if !next.active { self.stop(); self.close("close"); return }
@@ -63,7 +64,10 @@ final class NativePlayerModel: ObservableObject {
 
     /// The same command path as the lock screen.
     private func send(_ action: String, time: Double? = nil, then: (() -> Void)? = nil) {
-        host.command(action, time: time, source: "player") { [weak self] _ in then?(); self?.refresh() }
+        // `then` runs once the post-command state is shown, so a seek target never flashes back to the old position.
+        host.command(action, time: time, source: "player") { [weak self] _ in
+            if let self { self.refresh(then: then) } else { then?() }
+        }
     }
     func transport(_ action: String) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
