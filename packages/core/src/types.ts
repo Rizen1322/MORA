@@ -5,7 +5,7 @@
  */
 
 export const ANALYZER_VERSION = 'am-analyzer-14';
-export const PLANNER_VERSION = 'am-planner-v13-length-1';
+export const PLANNER_VERSION = 'am-planner-v18-drum-window-1';
 
 /** Frame rate of the per-track feature curves (energy, bands, waveform). */
 export const CURVE_RATE = 20;
@@ -275,7 +275,7 @@ export type TransitionMethod =
 
 /** Listener verdict on an executed transition; reasons are fixed tags so ratings can be aggregated. */
 export type TransitionRating = 'good' | 'bad';
-export const TRANSITION_RATING_REASONS = ['голоса наложились', 'провал громкости', 'резко', 'сбился ритм'] as const;
+export const TRANSITION_RATING_REASONS = ['голоса наложились', 'провал громкости', 'резко', 'сбился ритм', 'обрезало начало'] as const;
 export type TransitionRatingReason = (typeof TRANSITION_RATING_REASONS)[number];
 
 /** 'filter' is bipolar (-1 low-pass, 0 bypass, +1 high-pass).
@@ -320,7 +320,8 @@ export interface TransitionPlan {
    * common tempo glides from A's BPM to B's BPM.
    */
   tempoA?: [number, number][];
-  /** Finite instrumental A loop; source seconds, preroll included in vocal safety checks. */
+  /** Finite A loop in source seconds. Automatic instrumental loops check vocals
+   * including preroll; manual full-mix auditions may contain unknown vocals. */
   loopA?: { start: number; end: number; until: number; crossfade: number; roll?: { at: number; length: number }[] };
   /** Intentional finite rate/pitch slowdown, absolute A source seconds. */
   tapeStopA?: { start: number; end: number; crossfade: number };

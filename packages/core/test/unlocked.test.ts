@@ -88,7 +88,8 @@ describe('echo out between unlockable grooves', () => {
 
   it('keeps the existing unlocked blend without measured voices or for a moderate tempo gap', () => {
     const plain = planTransition(track('a', 152, { voice: [[20, 150]], stems: false }), track('b', 100, { voice: [], stems: false }), S);
-    expect(plain.method).not.toBe('echo_out');
+    // v19: without measured voices two steady grooves use the drop swap, not the vocal echo out
+    expect(['drop-swap', 'loop-roll']).toContain(plain.debug.variant);
     const near = planTransition(track('a', 120, { voice: [[20, 150]] }), track('b', 140, { voice: [[8, 170]] }), S);
     expect(near.method).not.toBe('echo_out');
   });

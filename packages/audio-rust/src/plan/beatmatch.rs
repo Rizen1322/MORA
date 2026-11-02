@@ -2,7 +2,7 @@ use super::{
     common::*,
     context::Ctx,
     entries::*,
-    fullmix::{local_clash_fraction, pickup_lost, voice_unknown},
+    fullmix::{body_density, local_clash_fraction, pickup_lost, voice_unknown},
     primitives::*,
     voice_measure::*,
 };
@@ -104,6 +104,18 @@ pub fn beatmatch(
     key: &Value,
     min_bars: f64,
 ) -> Option<Value> {
+    beatmatch_capped(ctx, a, b, rel, key, min_bars, f64::INFINITY, false)
+}
+fn beatmatch_capped(
+    ctx: &Ctx,
+    a: &Value,
+    b: &Value,
+    rel: &Value,
+    key: &Value,
+    min_bars: f64,
+    max_bars: f64,
+    vocal_aware: bool,
+) -> Option<Value> {
     let settings = ctx.s;
     let p_a = n(&a["beat"], "period");
     let bar_a = p_a * 4.;
@@ -189,6 +201,22 @@ pub fn beatmatch(
     let voices = settings["stemMixing"] != false
         && !a["vocalActivity"].is_null()
         && !b["vocalActivity"].is_null();
+    // v19: a full-energy A (no natural fade, bass at its body level through the overlap)
+    let full_energy_check = ctx.fixed.is_none()
+        && ctx.vocal_repair.is_none()
+        && ctx.requested_at.is_none()
+        && n(&natural_fade(a), "length") < 3.;
+    let body_low_a = if full_energy_check {
+        power_level(a, n(a, "audibleStart"), n(a, "audibleEnd"), "lowDb")
+    } else {
+        0.
+    };
+    let full_energy = |exit: f64, native_a: f64| {
+        full_energy_check
+            && !voices
+            && power_level(a, exit, exit + native_a, "lowDb") >= body_low_a
+    };
+    let body_dens_a = if vocal_aware { body_density(a).max(1e-6) } else { 1. };
     let mut best: Option<Best> = None;
     let mut tried = Vec::new();
     let glide = (ratio - 1.).abs() > 0.00001;
@@ -199,6 +227,7 @@ pub fn beatmatch(
         let duration = native_a / avg_a;
         if duration > n(settings, "maxBlendSeconds") + 0.0001
             || bars < min_bars
+            || bars > max_bars
             || min_bars > 1. && duration < 12.
             || bars > bar_cap && ctx.fixed.is_none()
             || key_clash && bars > 8.
@@ -377,7 +406,21 @@ pub fn beatmatch(
                     } else {
                         0.
                     }
-                    - 0.1 * local;
+                    - 0.1 * local
+                    - if vocal_aware {
+                        0.2 * clamp(
+                            density(
+                                a,
+                                exit + native_a / 2. - p_a,
+                                exit + native_a / 2. + p_a,
+                            ) / body_dens_a
+                                - 0.8,
+                            0.,
+                            1.,
+                        )
+                    } else {
+                        0.
+                    };
                 tried.push(json!({"exit":exit,"entry":time,"bars":bars,"cut":r3(n(a,"audibleEnd")-exit-native_a),"score":r3(score),"continuityCost":r3(continuity)}));
                 if best.as_ref().is_none_or(|p| score > p.score) {
                     best = Some(Best {
@@ -396,6 +439,13 @@ pub fn beatmatch(
         }
     }
     let mut best = best?;
+    if !vocal_aware && full_energy(n(&best.e, "time"), best.bars * bar_a) {
+        if let Some(shorter) =
+            beatmatch_capped(ctx, a, b, rel, key, min_bars, max_bars.min(8.), true)
+        {
+            return Some(shorter);
+        }
+    }
     if ctx.vocal_repair.is_none() && ctx.fixed.is_none() && n(rel, "m") == 1. {
         let native_a = best.bars * bar_a;
         let native_b = native_a * ratio;
@@ -573,8 +623,10 @@ pub fn beatmatch(
     let mut lanes = Vec::new();
     let mut reasons: Vec<String> = Vec::new();
     let mut echo_safe = true;
+    let mut filter_handoff = false;
     if settings["eqHandoff"] == true {
-        let fade_start = swap.max(bar_out(bars - 2.));
+        filter_handoff = vocal_aware || full_energy(n(&best.e, "time"), bars * bar_a);
+        let fade_start = swap.max(bar_out(bars - if filter_handoff { 1. } else { 2. }));
         lanes.push(lane("B", "gain", vec![shape(0., swap, sin_up, 8)]));
         lanes.push(lane(
             "A",
@@ -607,7 +659,12 @@ pub fn beatmatch(
             "high",
             vec![
                 vec![[0., 1.]],
-                shape(swap, duration, |x| 1. - 0.75 * smoothstep(x), 8),
+                shape(
+                    swap,
+                    duration,
+                    |x| 1. - if filter_handoff { 0.4 } else { 0.75 } * smoothstep(x),
+                    8,
+                ),
             ],
         ));
         let mid_duck = best.conflict > 0.35 || key_clash || best.local_clash >= 0.5;
@@ -615,11 +672,59 @@ pub fn beatmatch(
             if key_clash { 0.4 } else { 0.7 }
         } else if mid_duck {
             0.18
+        } else if filter_handoff {
+            0.25
         } else {
             0.4
         };
-        let turns = key_clash || best.local_clash >= 0.5;
-        if turns {
+        let turns = key_clash || best.local_clash >= 0.5 || filter_handoff;
+        if filter_handoff {
+            lanes.push(lane(
+                "A",
+                "filter",
+                vec![
+                    vec![[0., 0.]],
+                    shape(swap, duration, |x| 0.8 * smoothstep(x), 12),
+                ],
+            ));
+        }
+        if filter_handoff {
+            lanes.push(lane(
+                "B",
+                "mid",
+                vec![
+                    vec![[0., b_mid]],
+                    shape(
+                        (swap - beat).max(0.),
+                        duration.min(swap + 3. * beat),
+                        |x| b_mid + (1. - b_mid) * smoothstep(x),
+                        8,
+                    ),
+                ],
+            ));
+            let native_b = bars * bar_a * ratio;
+            let b_time = n(&best.entry, "time");
+            let b_dense = density(b, b_time + native_b / 2., b_time + native_b)
+                / body_density(b).max(1e-6)
+                > 0.9;
+            lanes.push(lane(
+                "A",
+                "mid",
+                vec![
+                    vec![[0., 1.]],
+                    if b_dense {
+                        shape(swap, duration.min(swap + beat), |x| 1. - 0.7 * smoothstep(x), 8)
+                    } else {
+                        shape(
+                            swap,
+                            duration.min(bar_out(half_bars + 2.)),
+                            |x| 1. - 0.45 * smoothstep(x),
+                            8,
+                        )
+                    },
+                ],
+            ));
+        } else if turns {
             let t0 = (swap - beat).max(0.);
             lanes.push(lane(
                 "B",
@@ -668,7 +773,9 @@ pub fn beatmatch(
             ));
         }
         reasons.push("бас плавно передаётся на сильной доле в середине перехода, чтобы уменьшить конфликт басовых линий".into());
-        if turns {
+        if filter_handoff {
+            reasons.push("текущий трек ещё на полной энергии: середины меняются по очереди на смене баса, затем текущий уходит через фильтр — две ведущие партии почти не звучат вместе".into());
+        } else if turns {
             reasons.push("тональности конфликтуют: середина треков меняется по очереди на смене баса, длина сведения не сокращается".into());
         } else if mid_duck {
             reasons.push("средние частоты обоих треков плотные: середина следующего трека входит приглушённой".into());
@@ -776,6 +883,9 @@ pub fn beatmatch(
     }
     if !p["echo"].is_null() {
         p["debug"]["variant"] = json!("echo-tail");
+    }
+    if filter_handoff {
+        p["debug"]["style"] = json!("filter-handoff");
     }
     p["debug"]["consumedA"] = json!(r3(bars * bar_a));
     p["debug"]["consumedB"] = json!(r3(bars * bar_a * ratio));

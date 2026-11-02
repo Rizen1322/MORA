@@ -127,6 +127,26 @@ pub fn plan_unlocked(ctx: &Ctx, a: &Value, b: &Value, key: &Value, reason: Optio
             return p;
         }
     }
+    // v19: steady grooves that cannot be locked swap on a downbeat instead of a 9-16 s unlocked blend
+    if ctx.s["eqHandoff"] == true
+        && (ctx.requested_at.is_some() || len < 3.)
+        && n(a, "rhythmStrength") > 0.45
+        && n(b, "rhythmStrength") > 0.45
+        && !(ctx.s["stemMixing"] != false
+            && !a["vocalActivity"].is_null()
+            && !b["vocalActivity"].is_null())
+        && [ga, gb].iter().all(|g| {
+            !g.is_null()
+                && g["stable"] == true
+                && n(g, "confidence") >= 0.6
+                && n(g, "jitterMs") <= 20.
+        })
+        && n(ga, "downbeatConfidence") >= 0.3
+    {
+        if let Some(p) = plan_drop_swap(ctx, a, b, key, reason) {
+            return p;
+        }
+    }
     plan_crossfade(ctx, a, b, key, reason)
 }
 pub fn plan_instrumental_bridge(
@@ -316,6 +336,268 @@ fn edit_spans(a: &Value) -> Points {
             .map(|p| [n(p, "start"), n(p, "end")])
             .collect()
     })
+}
+/// Drop swap (v19): steady grooves that cannot be locked never play together. Echo out: A's high-pass
+/// sweeps up over its last two (or four) bars, the high-pass takes its bass, its last beat goes into a
+/// 3/4-beat echo heard over B's first bar. Loop roll (no clean exit, tight grid): A's last bar before
+/// the boundary is caught and rolled 1 -> 1/2 -> 1/4 -> 1/8 bar, B drops at full on the one.
+pub fn plan_drop_swap(
+    ctx: &Ctx,
+    a: &Value,
+    b: &Value,
+    key: &Value,
+    reason: Option<&str>,
+) -> Option<Value> {
+    let ga = &a["beat"];
+    let gb = &b["beat"];
+    let beat = n(ga, "period");
+    let bar = 4. * beat;
+    let bar_b = 4. * n(gb, "period");
+    let sweep = if 2. * bar >= 3. { 2. * bar } else { 4. * bar };
+    let tail = if ctx.requested_at.is_none() { 3f64.max(6f64.min(2. * bar_b)) } else { 3. };
+    let l = round(bar * 75.) / 75.;
+    let max_blend = n(ctx.s, "maxBlendSeconds");
+    let rollable = n(ga, "confidence") >= 0.8
+        && n(ga, "jitterMs") <= 12.
+        && ctx.s["loopBridges"] != false
+        && ctx.s["djPhrasing"] != false
+        && l >= 1.2
+        && l <= 8.
+        && 3. * l + tail <= max_blend;
+    if sweep + tail > max_blend && !rollable {
+        return None;
+    }
+    let phrases = if n(a, "phraseConfidence") >= 0.2 {
+        nums(&a["phrases"])
+    } else {
+        vec![]
+    };
+    let start = n(a, "audibleStart");
+    let end = n(a, "audibleEnd");
+    let body_dens = density(a, start, end);
+    let lead = sweep.max(bar);
+    let mut best: Option<(f64, f64, bool, f64)> = None;
+    for (i, d) in nums(&ga["downbeats"]).into_iter().enumerate() {
+        let phrase = phrases.iter().any(|x| round(x * 1000.) == round(d * 1000.));
+        let skip = match ctx.requested_at {
+            None => {
+                !phrase && i % 4 != 0
+                    || d - lead < start + (end - start) * 0.5
+                    || d > end - 0.5
+                    || end - d > 24.
+            }
+            Some(now) => d - lead < now + 0.15 || d - lead > now + 0.15 + bar + 0.02 || d > end - 0.5,
+        };
+        if skip {
+            continue;
+        }
+        if !measured_curves(a, d - lead, d)
+            || power_level(a, d - lead, d, "rmsDb") < n(a, "bodyRmsDb") - 6.
+        {
+            continue;
+        }
+        if !a["vocalActivity"].is_null() && vocal_mean(a, d - 0.2, d + 0.25) >= 0.2 {
+            continue;
+        }
+        let dens = density(a, d - beat, d + beat) / body_dens.max(1e-6);
+        let score = if phrase { 0.3 } else { 0. }
+            - 0.5 * clamp((end - d) / 24., 0., 1.)
+            - 0.3 * clamp(dens - 0.7, 0., 1.);
+        if best.is_none_or(|(_, s0, _, _)| score > s0) {
+            best = Some((d, score, phrase, dens));
+        }
+    }
+    let (d, _, phrase, dens) = best?;
+    let looped = rollable && (!phrase || dens > 0.9);
+    if !looped && sweep + tail > max_blend {
+        return None;
+    }
+    let picked = if n(gb, "downbeatConfidence") >= 0.5 {
+        Some(pick_handoff(ctx, a, b, d, 0., tail, true))
+    } else {
+        None
+    };
+    let aligned = picked.as_ref().is_some_and(|p| p.aligned);
+    let entry = match picked {
+        Some(p) if p.aligned => p.cue,
+        _ => json!({"time":b["audibleStart"],"score":0.6,"kind":"start","tags":["drop-swap-start"]}),
+    };
+    let time = n(&entry, "time");
+    if power_level(b, time, time + 1., "rmsDb") < n(b, "bodyRmsDb") - 6.
+        || time + tail > n(b, "audibleEnd")
+    {
+        return None;
+    }
+    let energy_delta = power_level(b, time, time + 8. * bar_b, "rmsDb") + ctx.gain_b()
+        - (power_level(a, d - 2. * bar, d, "rmsDb") + ctx.gain_a());
+    let calm = n(gb, "bpm") < 0.85 * n(ga, "bpm") && energy_delta <= -3.;
+    let wash = looped && calm;
+    let roll = looped && !calm;
+    // v19.4 soft echo out: B enters from its own opening, never a trimmed intro; after more than 1 s of
+    // leading silence, on its first downbeat. A Next press keeps B's energetic arrival (v19.2).
+    let start_b = n(b, "audibleStart");
+    let opening = if start_b <= 1. {
+        start_b
+    } else {
+        nums(&gb["downbeats"]).into_iter().find(|t| *t >= start_b - 0.025).unwrap_or(start_b)
+    };
+    let b_in = if looped || ctx.requested_at.is_some() {
+        entry.clone()
+    } else {
+        json!({"time":opening,"score":0.6,"kind":if opening == start_b { "start" } else { "downbeat" },"tags":["drop-swap-start"]})
+    };
+    // v19.4: an echo out opens B over two of its bars; a Next keeps one bar
+    let echo_span = if looped {
+        0.
+    } else if ctx.requested_at.is_some() {
+        bar_b.min(tail)
+    } else {
+        (2. * bar_b).min(max_blend - sweep)
+    };
+    let soft_tail = if wash {
+        tail.max(8f64.min(3. * bar_b)).min(max_blend - 2. * l)
+    } else {
+        tail.max(echo_span)
+    };
+    if wash && (soft_tail < tail || time + soft_tail > n(b, "audibleEnd")) {
+        return None;
+    }
+    let t_end = if roll {
+        3. * l
+    } else if wash {
+        2. * l
+    } else {
+        sweep
+    };
+    let mut delay = if roll { beat / 2. } else { beat * 0.75 };
+    while delay < 0.25 {
+        delay *= 2.;
+    }
+    while delay > 0.6 {
+        delay /= 2.;
+    }
+    let feedback = (if roll || wash { 0.72f64 } else { 0.78 }).min(10f64.powf(
+        -1.5 / (if wash {
+            2.5
+        } else if roll {
+            1.5
+        } else {
+            3.
+        } * bar
+            / delay),
+    ));
+    let total = r3(t_end + soft_tail);
+    let mut p = ctx.base("echo_out");
+    p["bEntry"] = json!(r3(n(&b_in, "time")));
+    p["duration"] = json!(total);
+    p["swapAt"] = json!(r3(t_end));
+    p["bDelay"] = json!(r3(t_end));
+    p["echo"] = json!({"delay":r3(delay),"feedback":r3(feedback)});
+    if wash {
+        let s0 = round((d - l) * 300.) / 300.;
+        p["aExit"] = json!(r3(s0));
+        p["loopA"] = json!({"start":s0,"end":s0 + l,"until":s0 + 2. * l,"crossfade":0.006});
+        p["automation"] = json!([
+            lane("A", "gain", vec![vec![[0., 1.], [r3(t_end - 0.03), 1.], [r3(t_end), 0.], [total, 0.]]]),
+            lane("A", "filter", vec![vec![[0., 0.]], shape(l / 2., t_end, |x| -0.5 * smoothstep(x), 8), vec![[total, -0.5]]]),
+            lane("A", "echo", vec![
+                vec![[0., 0.], [r3(l), 0.]],
+                shape(l, t_end - 0.05, |x| 0.7 * smoothstep(x), 6),
+                vec![[r3(t_end), 0.7], [r3(t_end + 0.02), 0.], [total, 0.]],
+            ]),
+            lane("B", "gain", vec![
+                vec![[0., 0.], [0.02, 0.6]],
+                shape(0.02, (2. * bar_b).min(total - t_end), |x| 0.6 + 0.4 * sin_up(x), 8),
+                vec![[r3(total - t_end), 1.]],
+            ]),
+            lane("B", "filter", vec![
+                shape(0., bar_b.min(total - t_end), |x| -0.35 * (1. - smoothstep(x)), 6),
+                vec![[r3(total - t_end), 0.]],
+            ]),
+        ]);
+    } else if roll {
+        let s0 = round((d - l) * 300.) / 300.;
+        p["aExit"] = json!(r3(s0));
+        p["loopA"] = json!({"start":s0,"end":s0 + l,"until":s0 + 3. * l,"crossfade":0.006,
+            "roll":[{"at":s0 + l,"length":l / 2.},{"at":s0 + 2. * l,"length":l / 4.},{"at":s0 + 2.5 * l,"length":l / 8.}]});
+        p["automation"] = json!([
+            lane("A", "gain", vec![vec![[0., 1.], [r3(t_end - 0.03), 1.], [r3(t_end), 0.], [total, 0.]]]),
+            lane("A", "filter", vec![vec![[0., 0.]], shape(l, t_end, |x| 0.6 * smoothstep(x), 8), vec![[total, 0.6]]]),
+            lane("A", "echo", vec![
+                vec![[0., 0.], [r3(2. * l), 0.]],
+                shape(2. * l, t_end - 0.05, |x| 0.8 * smoothstep(x), 6),
+                vec![[r3(t_end), 0.8], [r3(t_end + 0.02), 0.], [total, 0.]],
+            ]),
+            lane("B", "gain", vec![vec![[0., 0.], [0.02, 1.], [r3(total - t_end), 1.]]]),
+        ]);
+    } else {
+        p["aExit"] = json!(r3(d - sweep));
+        p["automation"] = json!([
+            lane("A", "gain", vec![vec![[0., 1.], [r3(sweep - 0.03), 1.], [r3(sweep), 0.], [total, 0.]]]),
+            // v19.4 soft echo out: a gentle low-pass muffles A's echo tail, the send steps down over three
+            // beats after the cut, B is at 0.8 at once and full after a bar, with no bass gate or filter
+            lane("A", "filter", vec![vec![[0., 0.], [r3(sweep), -0.25], [r3(sweep + 0.4), -0.3], [total, -0.3]]]),
+            lane("A", "echo", vec![vec![
+                [0., 0.],
+                [r3(sweep - beat), 0.],
+                [r3(sweep - 0.05), 0.6],
+                [r3(sweep), 0.6],
+                [r3(sweep + beat), 0.4],
+                [r3(sweep + 2. * beat), 0.2],
+                [r3(sweep + 3. * beat), 0.],
+            ]]),
+            lane("B", "gain", vec![vec![[0., 0.], [0.01, 0.8], [r3(bar), 1.]]]),
+        ]);
+    }
+    p["confidence"] = json!(r3(0.7f64.min(n(ga, "confidence")).min(n(gb, "confidence"))));
+    finish_fields(&mut p, key, reason);
+    let cut = (end - d).max(0.);
+    let boundary = if phrase { "фразы" } else { "четырёх тактов" };
+    p["reasons"] = reasons(
+        if wash {
+            format!(
+                "петля с размывом: темпы {} и {} BPM не сводятся, следующий трек спокойнее — последний такт текущего повторяется без ускорения, уходит в фильтр и эхо, следующий мягко поднимается под хвост",
+                fixed(n(ga, "bpm"), 0),
+                fixed(n(gb, "bpm"), 0)
+            )
+        } else if roll {
+            format!(
+                "петля с ускорением: темпы {} и {} BPM не сводятся — последний такт текущего трека перед границей {} повторяется и дробится до 1/8 такта под нарастающий фильтр, следующий вступает в полную силу на своей сильной доле",
+                fixed(n(ga, "bpm"), 0),
+                fixed(n(gb, "bpm"), 0),
+                boundary
+            )
+        } else {
+            format!(
+                "смена на сильной доле: темпы {} и {} BPM не сводятся — текущий трек уходит в эхо на границе {}, следующий входит со своего начала",
+                fixed(n(ga, "bpm"), 0),
+                fixed(n(gb, "bpm"), 0),
+                boundary
+            )
+        },
+        reason,
+        vec![
+            if roll || wash {
+                "два ритма не звучат одновременно: под первым тактом следующего звучит только отфильтрованный хвост эха".into()
+            } else {
+                "два ритма не звучат одновременно: эхо текущего на 3/4 доли, приглушённое фильтром, звучит под первым тактом следующего".into()
+            },
+            if cut > 2. {
+                format!("пропускается {} с финала", round(cut))
+            } else {
+                "текущий трек звучит почти до конца".into()
+            },
+        ],
+    );
+    describe_entry(&mut p, b, &b_in, None);
+    p["debug"] = if wash {
+        json!({"variant":"loop-wash","style":"loop-wash","cut":r3(cut),"loopWash":{"exitSource":r3(d),"phrase":phrase,"dens":r3(dens),"bar":r3(l),"energyDelta":r3(energy_delta),"entryAligned":aligned}})
+    } else if roll {
+        json!({"variant":"loop-roll","style":"loop-roll","cut":r3(cut),"loopRoll":{"exitSource":r3(d),"phrase":phrase,"dens":r3(dens),"bar":r3(l),"entryAligned":aligned}})
+    } else {
+        json!({"variant":"drop-swap","style":"drop-swap","cut":r3(cut),"dropSwap":{"cutSource":r3(d),"phrase":phrase,"sweep":r3(sweep),"entryAligned":s(&b_in, "kind") == "downbeat"}})
+    };
+    Some(p)
 }
 pub fn plan_phrase_cut(
     ctx: &Ctx,

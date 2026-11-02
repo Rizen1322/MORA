@@ -11,8 +11,10 @@ import { withVoiceAnswer } from './answer.ts';
 import { withHarmonicHandoff } from './harmonic.ts';
 import { withTapeStop } from './tape-stop.ts';
 import { planEchoOut } from './unlocked.ts';
+import { humanTransitionScenarios } from './human-scenarios.ts';
 import { ratingBias, type RatingStats } from './feedback.ts';
-import { bodyDensity, fullMixCost, fullMixPair, localClashFraction, pickupLost, voiceUnknown, withBassShift, type FullMixCost } from './fullmix.ts';
+import { bodyDensity, fullMixCost, fullMixPair, hasMaterialMixRegression, localClashFraction, pickupLost, voiceUnknown, withBassShift, type FullMixCost } from './fullmix.ts';
+import { rhythmOverlap } from './rhythm-overlap.ts';
 import {
   PLANNER_VERSION,
   type AutoMixSettings,
@@ -226,8 +228,8 @@ export function planTransition(a: PlannerTrack, b: PlannerTrack, settings: AutoM
   return drain(rankPlans(a,b,settings,requestedAt,feedback))[0];
 }
 
-/** P10 finalists for a render check: the selected plan first, up to two ranked full-mix alternatives
- * and the selected plan's bass exchange one beat earlier/later (P6). One plan unless the pair is
+/** P10 finalists for a render check: the selected plan first, two ranked full-mix alternatives,
+ * the original baseline control and bass exchange one beat earlier/later (P6), at most six plans. One plan unless the pair is
  * planned as a full mix (a voice unknown). */
 export function planFinalists(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings, feedback?: RatingStats | null): TransitionPlan[] {
   return drain(planFinalistsSteps(a,b,settings,feedback));
@@ -240,13 +242,39 @@ export function* planFinalistsSteps(a: PlannerTrack, b: PlannerTrack, settings: 
   const beat=(b.analysis?.beat?.period??0.5)/pointValue(top.tempoB,top.swapAt);
   const shifted=top.method==='beatmatch_blend'||top.method==='crossfade'
     ?[-1,1].map(k=>withBassShift(top,k*beat)).filter((q):q is TransitionPlan=>!!q):[];
-  return [top,...ranked.slice(1,3),...shifted];
+  const fb=feedback&&(Object.keys(feedback.features).length||Object.keys(feedback.reasons??{}).length)?feedback:undefined;
+  const fullMix=top.debug.fullMix as {this?:string;selected?:string;candidates?:{name:string;automaticEligible?:boolean;cost?:Partial<FullMixCost>|null}[]};
+  const rateFeedback=top.debug.ratingFeedback as {candidates?:{name:string;bias:number;features?:Record<string,number>}[]} | undefined;
+  for(const q of shifted){
+    const dt=q.debug.bassShift as number, name=`bass-shift-${r3(dt)}`;
+    const measured=fullMixCost(q,a.analysis!,b.analysis!,sanitizedSettings(settings));
+    const inheritedName=fullMix.this??'baseline';
+    const inherited=fullMix.candidates?.find(c=>c.name===inheritedName);
+    const entry={name,automaticEligible:inherited?.automaticEligible,cost:measured};
+    q.debug={...q.debug,fullMix:{...fullMix,this:name,candidates:[...(fullMix.candidates??[]),entry]}};
+    if(fb){
+      const rating=ratingBias(fb,q,a.analysis,b.analysis);
+      q.debug.ratingFeedback={...rateFeedback,candidates:[...(rateFeedback?.candidates??[]),{name,bias:rating.bias,features:rating.features}]};
+    }
+  }
+  // Keep the original geometry as a rendered control even when a handoff/shorter/neighbor
+  // recipe outranked it on proxies. Otherwise a clean audible baseline can disappear before PCM is checked.
+  const control=ranked.find(p=>(p.debug.fullMix as {this?:string}|undefined)?.this==='baseline');
+  const alternatives=ranked.slice(1,3);
+  if(control&&control!==top&&!alternatives.includes(control))alternatives.push(control);
+  // Audition distinct event-driven strategies, not only two variations of the same long blend.
+  const families = new Set([top, ...alternatives].map(p => String((p.debug.humanScenario as {kind?:string}|undefined)?.kind ?? 'baseline')));
+  for(const plan of ranked){
+    const family=(plan.debug.humanScenario as {kind?:string}|undefined)?.kind;
+    if(family&&!families.has(family)&&alternatives.length<4){alternatives.push(plan);families.add(family);}
+  }
+  return [top,...alternatives,...shifted];
 }
 
 function* rankPlans(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings, requestedAt?: number, feedback?: RatingStats | null): Generator<void, TransitionPlan[]> {
   const p=finishPlan(buildTransition(a,b,settings,requestedAt),a.analysis,b.analysis,settings,requestedAt);
   // no ratings: exactly the previous choice (no bias, no debug entry)
-  const fb=feedback&&Object.keys(feedback.features).length?feedback:undefined;
+  const fb=feedback&&(Object.keys(feedback.features).length||Object.keys(feedback.reasons??{}).length)?feedback:undefined;
   if(requestedAt===undefined&&settings.enabled&&fullMixPair(a.analysis,b.analysis,settings)){yield;return yield* chooseFullMixPlan(p,a,b,settings,fb);}
   return [chooseMusicalPlan(p,a,b,settings,requestedAt,fb)];
 }
@@ -259,7 +287,7 @@ function feedbackFor(fb:RatingStats|undefined,named:{name:string;plan:Transition
   return {bias:(q:TransitionPlan)=>bias.get(q)??0,debug:{policy:'listener-ratings-1',version:fb.version,candidates:rows}};
 }
 
-/** P1: a full mix (a voice unknown) chooses among the baseline and at most three alternatives that
+/** A full mix (a voice unknown) compares a dedicated lead handoff and alternatives that
  * reuse the existing techniques: a lock half as long, a neighbouring exit a phrase away, an unlocked blend (shaky pulse only),
  * B from its real start. The stemless cost (fullmix.ts) judges where A really leaves, B's pickup, the
  * one-second energy path, two bass lines, possible lead overlap and local key clashes. Unknown voices
@@ -269,13 +297,17 @@ function* chooseFullMixPlan(p:TransitionPlan,a:PlannerTrack,b:PlannerTrack,setti
   if(!A||!B||p.debug.processingAllowed===false||!['crossfade','beatmatch_blend'].includes(p.method)||p.loopA)return [p];
   const build=(alt:AutoMixSettings,fixed?:Ctx['fixed'])=>finishPlan(buildTransition(a,b,alt,undefined,undefined,fixed),A,B,alt);
   const entries:[string,TransitionPlan][]=[['baseline',p]];
+  // Unknown voices cannot be "removed" by killing a broad EQ band. Different source events and
+  // whole-deck handoffs compete with the baseline; musical correctness still requires listening.
+  for(const candidate of humanTransitionScenarios(p,A,B,s)){
+    if(!candidate.auditionOnly){entries.push([candidate.name,candidate.plan]);yield;}
+  }
   if(p.method==='beatmatch_blend'&&p.beatAlign&&!p.beatAlign.regions&&A.beat){
     const bars=p.beatAlign.overlapBeats/4,barA=A.beat.period*4;
-    // half the shared section at most (16 -> 8 bars), and only to fix a measured fault of the long one:
-    // its own search already traded A's skipped ending against length, and short blends were rated "резко"
+    // Unknown voices need a shorter competitor even when the beat grid and levels look stable.
     const baseCost=fullMixCost(p,A,B,s);
     const fault=!!baseCost&&(baseCost.unsupported>0||baseCost.holeDb>6||baseCost.jumpDb>2||baseCost.doubleBass/p.duration>0.2);
-    if(bars>4&&(fault||(p.debug.fullMixRules as {looseGrid?:boolean}|undefined)?.looseGrid)){
+    if(bars>4&&(voiceUnknown(A,s)||voiceUnknown(B,s)||fault||(p.debug.fullMixRules as {looseGrid?:boolean}|undefined)?.looseGrid)){
       const half=Math.max(4,bars/2),q=build(s,{exit:p.aExit,entry:p.bEntry,bars:half});yield;
       if(q.method==='beatmatch_blend'&&q.beatAlign?.overlapBeats===half*4)entries.push(['shorter',q]);
     }
@@ -296,22 +328,51 @@ function* chooseFullMixPlan(p:TransitionPlan,a:PlannerTrack,b:PlannerTrack,setti
     // keeping B's opening must not cost a working lock (Voyager -> Technologic lost its 16-bar glide)
     if(['crossfade','beatmatch_blend'].includes(q.method)&&q.bEntry<p.bEntry-1&&(p.method!=='beatmatch_blend'||q.method==='beatmatch_blend'))entries.push(['preserve-start',q]);
   }
-  const rated=entries.slice(0,4).map(([name,plan])=>({name,plan,cost:fullMixCost(plan,A,B,s)}));
+  const rated=entries.slice(0,9).map(([name,plan])=>({name,plan,cost:fullMixCost(plan,A,B,s)}));
   const base=rated[0];
   // listener ratings shift the soft cost only; they never lift a candidate with more measured faults than the baseline
   const ratings=feedbackFor(fb,rated,A,B),adj=(c:{plan:TransitionPlan;cost:FullMixCost})=>c.cost.total-ratings.bias(c.plan);
   const safe=(c:{cost:FullMixCost})=>!ratings.debug||!base.cost||c.cost.total<base.cost.total-0.1
     ||c.cost.unsupported<=base.cost.unsupported&&c.cost.holeDb<=base.cost.holeDb+0.5&&c.cost.jumpDb<=base.cost.jumpDb+0.5;
+  // Exposure is a conservative unknown-lead proxy, not evidence that another
+  // musical geometry sounds better. Retain a functioning preparation unless
+  // measured level/support or preserved material improves substantially.
+  const automatic=(c:typeof rated[number])=>{
+    if(c===base||!base.cost||!c.cost)return c===base;
+    const x=base.cost,y=c.cost,q=c.plan;
+    if(hasMaterialMixRegression(x,y))return false;
+    const loose=(p.debug.fullMixRules as {looseGrid?:boolean}|undefined)?.looseGrid===true;
+    if(loose&&c.name==='unlocked')return true;
+    if(p.debug.drumPattern&&!q.debug.drumPattern)return false;
+    if(p.beatAlign&&!q.beatAlign)return false;
+    if(p.beatAlign?.phraseAligned&&!q.beatAlign?.phraseAligned)return false;
+    if(q.bEntry>p.bEntry+0.1)return false;
+    // A prepared washout avoids overlapping incompatible grooves; a full-deck
+    // cut cannot inherit that evidence merely by being shorter. Likewise retain
+    // the level compensation unless its replacement improves the measured dip.
+    if(p.debug.washout&&!q.debug.washout)return false;
+    if(p.debug.loudnessHold&&!q.debug.loudnessHold&&!(x.holeDb>3&&y.holeDb<x.holeDb-1.5))return false;
+    const substantial=(x.holeDb>3&&y.holeDb<x.holeDb-1.5)
+      ||(x.unsupported>=1&&y.unsupported<=x.unsupported-0.75)
+      ||(x.jumpDb>2&&y.jumpDb<x.jumpDb-1)
+      ||(x.cutA>0.5&&y.cutA<x.cutA-0.3)
+      ||(x.skippedUnknownB>2&&y.skippedUnknownB<x.skippedUnknownB-2);
+    const noNewFault=y.holeDb<=x.holeDb+0.5&&y.jumpDb<=x.jumpDb+0.5&&y.unsupported<=x.unsupported+0.25
+      &&y.cutA<=x.cutA+0.1&&y.pickup<=x.pickup&&y.openingSuppression<=x.openingSuppression+0.5;
+    return substantial&&noNewFault;
+  };
   const valid=rated.filter((c):c is typeof c&{cost:FullMixCost}=>!!c.cost).sort((x,y)=>adj(x)-adj(y));
-  const best=valid.find(c=>c===base||safe(c));
+  const best=valid.find(c=>automatic(c)&&safe(c));
   const winner=base.cost&&best&&best.name!=='baseline'&&adj(best)<adj(base as typeof best)-0.1?best:base;
   const reason=!base.cost?'полосы не измерены: исходный план':winner===base?'альтернативы полного микса не дали заметного улучшения':
-    winner.name==='shorter'?'полный микс: короче общий участок, A уходит по окончании своего раздела'
+    winner.plan.debug.humanScenario?winner.plan.reasons.at(-1)??'переход привязан к измеренной структуре'
+    :winner.name==='shorter'?'полный микс: короче общий участок, A уходит по окончании своего раздела'
     :winner.name==='neighbor-exit'?'полный микс: выход на соседней фразе, где текущий трек слышно заканчивает раздел'
     :winner.name==='unlocked'?'полный микс: без стыковки ритмов, ровнее путь громкости и баса'
     :'полный микс: следующий трек входит со своего начала, без срезанного затакта и вступления';
   const debug={policy:'full-mix-1',selected:winner.name,reason,margin:0.1,
-    candidates:rated.map(c=>({name:c.name,method:c.plan.method,variant:c.plan.debug.variant,duration:c.plan.duration,bEntry:c.plan.bEntry,cost:c.cost}))};
+    candidates:rated.map(c=>({name:c.name,method:c.plan.method,variant:c.plan.debug.variant,duration:c.plan.duration,bEntry:c.plan.bEntry,automaticEligible:automatic(c),cost:c.cost,
+      rhythmOverlap:rhythmOverlap(c.plan,A,B)}))};
   const label=(c:typeof rated[number])=>({...c.plan,id:c===base?c.plan.id:`${c.plan.id}_${c.name}`,
     reasons:c===winner&&c!==base?[...c.plan.reasons,reason]:c.plan.reasons,debug:{...c.plan.debug,fullMix:{...debug,selected:c===winner?winner.name:debug.selected,this:c.name},
       ...(ratings.debug?{ratingFeedback:{...ratings.debug,selected:winner.name,margin:0.1}}:{})}});
@@ -578,6 +639,16 @@ function planUnlocked(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis,
   if (ctx.requestedAt === undefined && A.beat && B.beat) {
     const echo = planEchoOut({ ...basePlan(ctx, 'echo_out'), keyInfo, fallbackReason }, A, B, settings, tempoRelation(A.beat.bpm, B.beat.bpm).stretchPercent);
     if (echo) return echo;
+  }
+  // v19: two steady grooves that cannot be locked were blended unlocked for 9-16 s: 13 of 14 such
+  // plans were rated bad ("сбился ритм", "резко"). They now swap on a downbeat instead. A natural
+  // fade (A thins out by itself) and a shaky grid keep the short crossfade; separated voices keep
+  // their vocal-aware handoffs (echo out, phrase cut, vocal gap).
+  if (settings.eqHandoff && (ctx.requestedAt !== undefined || fadeA.length < 3) && A.rhythmStrength > 0.45 && B.rhythmStrength > 0.45
+    && !(settings.stemMixing !== false && A.vocalActivity && B.vocalActivity)
+    && [A.beat, B.beat].every(g => g && g.stable && g.confidence >= 0.6 && g.jitterMs <= 20) && A.beat!.downbeatConfidence >= 0.3) {
+    const swap = planDropSwap(ctx, A, B, keyInfo, fallbackReason);
+    if (swap) return swap;
   }
   return planCrossfade(ctx, A, B, keyInfo, fallbackReason);
 }
@@ -969,7 +1040,8 @@ function cutScore(A: TrackAnalysis, endOfBlend: number): number {
   const cut = A.audibleEnd - endOfBlend;
   if (cut <= 2) return 1;
   const dens = curveMean(A.curves.midDensity, A.curves.rate, endOfBlend, A.audibleEnd);
-  return dens < 0.18 ? clamp(1 - cut / 45) : clamp(1 - cut / 14);
+  const fraction = cut / (dens < 0.18 ? 45 : 14);
+  return 1 - fraction - 0.25 * Math.max(0, fraction - 1) ** 1.3;
 }
 
 /** Skipping quiet/sparse lead-in is cheaper than dropping an already full song. */
@@ -1176,7 +1248,7 @@ function pickHandoffEntry(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, aStart: 
  * beats in [from, to). Null without accents or with fewer than 3 beats per position. */
 export function barPattern(g: Pick<BeatGrid, 'beats' | 'downbeats' | 'accents'>, from: number, to: number): number[][] | null {
   const acc = g.accents;
-  if (!acc || acc.kick.length !== g.beats.length) return null;
+  if (!acc || acc.kick.length !== g.beats.length || acc.snare.length !== g.beats.length) return null;
   const down = new Set(g.downbeats.map((t) => Math.round(t * 1000)));
   const sum = [[0, 0, 0, 0], [0, 0, 0, 0]], n = [0, 0, 0, 0];
   let pos = -1;
@@ -1185,7 +1257,7 @@ export function barPattern(g: Pick<BeatGrid, 'beats' | 'downbeats' | 'accents'>,
     if (pos < 0 || t < from || t >= to) return;
     sum[0][pos] += acc.kick[i]; sum[1][pos] += acc.snare[i]; n[pos]++;
   });
-  return Math.min(...n) < 3 ? null : sum.map((f) => f.map((v, i) => v / n[i]));
+  return Math.min(...n) < 3 || sum.some(f => f.some(v => !Number.isFinite(v))) ? null : sum.map((f) => f.map((v, i) => v / n[i]));
 }
 
 /** Kick on kick, snare on snare: Pearson match of A's bar pattern with B's pattern rotated by k
@@ -1207,6 +1279,16 @@ export function drumAlignment(a: number[][], b: number[][]): number[] | null {
 /** A rotation must beat the analysed bar phase by this much (and match on its own) to move B. */
 const DRUM_SHIFT_MARGIN = 0.5, DRUM_SHIFT_MIN = 0.3;
 
+/** Recheck the content actually consumed after moving the cue. Rotating the old
+ * average is only a proposal: a fill or section change can enter the new window. */
+export function verifiedDrumShift(a: number[][], b: Pick<BeatGrid, 'beats' | 'downbeats' | 'accents'>,
+  entry: number, span: number, rotation: number, originalMatch: number): number | null {
+  const pattern = barPattern(b, entry, entry + span);
+  const match = pattern && drumAlignment(a, pattern)?.[rotation];
+  return match !== null && match !== undefined && Number.isFinite(match) && Number.isFinite(originalMatch)
+    && match >= DRUM_SHIFT_MIN && match - originalMatch >= DRUM_SHIFT_MARGIN ? match : null;
+}
+
 function planBeatmatch(
   ctx: Ctx,
   A: TrackAnalysis,
@@ -1214,6 +1296,8 @@ function planBeatmatch(
   rel: TempoRelation,
   keyInfo: NonNullable<TransitionPlan['keyInfo']>,
   minBars = 1,
+  maxBars = Infinity,
+  vocalAware = false,
 ): TransitionPlan | null {
   const s = ctx.s;
   const pA = A.beat!.period;
@@ -1258,6 +1342,13 @@ function planBeatmatch(
   const bDown = ctx.vocalRepair || ctx.fixed ? B.beat!.beats : B.beat!.downbeats;
   const pB = B.beat!.period;
   const voices = s.stemMixing !== false && !!A.vocalActivity && !!B.vocalActivity;
+  // v19: A without an outro (no natural fade) whose bass still runs at its body level through the
+  // overlap is in a full section: 12 of 12 such locks were rated bad (two full mixes, two voices;
+  // separated voices already hand over one at a time).
+  // They get at most 8 bars and the filter handoff below.
+  const fullEnergyCheck = !ctx.fixed && !ctx.vocalRepair && ctx.requestedAt === undefined && naturalFade(A).length < 3;
+  const bodyLowA = fullEnergyCheck ? powerLevel(A, A.audibleStart, A.audibleEnd, A.curves.lowDb) : 0;
+  const fullEnergy = (exit: number, nativeA: number) => fullEnergyCheck && !voices && powerLevel(A, exit, exit + nativeA, A.curves.lowDb) >= bodyLowA;
   let best: { score: number; e: CueCandidate; n: CueCandidate; bars: number; conflict: number; cut: number; arrival?: number; localClash: number; drum?: Record<string, unknown> } | null = null;
   const tried: unknown[] = [];
   const glide = Math.abs(r - 1) > 0.00001;
@@ -1267,7 +1358,7 @@ function planBeatmatch(
     const nativeB = nativeA * r;
     const D = nativeA / avgA;
     if (D > s.maxBlendSeconds + 0.0001) continue;
-    if (bars < minBars || minBars > 1 && D < LONG_LOCK_MIN_SECONDS) continue;
+    if (bars < minBars || bars > maxBars || minBars > 1 && D < LONG_LOCK_MIN_SECONDS) continue;
     if (bars > barCap && !ctx.fixed) continue;
     if (keyClash && bars > 8) continue;
     const entries: CueCandidate[] = ctx.fixed
@@ -1320,13 +1411,21 @@ function planBeatmatch(
         const score = 0.1 * closure + 0.1 * e.score + 0.1 * n.score + 0.28 * cs + 0.12 * lenPref + 0.12 * (1 - conflict) + 0.11 * arrival.score + 0.08 * energyFit + 0.09 * phraseBonus - entrySkipCost(B, n.time, true, unknownB) - 0.45*continuityCost+0.2*voiceScore
           + (n.tags.includes('measured-vocal-lead') ? 0.18 : 0)
           - Math.min(0.4, 0.02*clash)
-          - (unknownB ? 0.12 * pickupLost(B, n.time) : 0) - 0.1 * localClash;
+          - (unknownB ? 0.12 * pickupLost(B, n.time) : 0) - 0.1 * localClash
+          // v19.2 vocal proxy (no stems on desktop): a full-energy A swaps in a sparse bar of its own
+          - (vocalAware ? 0.2 * clamp(curveMean(A.curves.midDensity, A.curves.rate, e.time + nativeA / 2 - pA, e.time + nativeA / 2 + pA) / Math.max(1e-6, bodyDensity(A)) - 0.8) : 0);
         tried.push({ exit: e.time, entry: n.time, bars, cut: r3(A.audibleEnd - e.time - nativeA), score: r3(score), continuityCost:r3(continuityCost) });
         if (!best || score > best.score) best = { score, e, n, bars, conflict, cut: A.audibleEnd - e.time - nativeA, arrival: arrival.time, localClash };
       }
     }
   }
   if (!best) return null;
+  // a full-energy A keeps at most 8 bars (a 16-bar lock of two full sections lasts 25-30 s) and its
+  // bass swap moves to a sparse bar of A (two voices clashed at the swap, listener v19.1)
+  if (!vocalAware && fullEnergy(best.e.time, best.bars * barA)) {
+    const again = planBeatmatch(ctx, A, B, rel, keyInfo, minBars, Math.min(maxBars, 8), true);
+    if (again) return again;
+  }
   // Analysed downbeats can be a beat off (low confidence, half-time feel). When the drum
   // patterns of the chosen overlap clash at the analysed phase but clearly agree k beats
   // later, B enters on that beat: kick meets kick, snare meets snare. Only the bar phase of
@@ -1346,13 +1445,22 @@ function planBeatmatch(
           (B.audibleEnd - B.audibleStart) * 0.45));
         // Both directions give the same bar alignment. Prefer the one with less of B's measured
         // singing inside the overlap (later voice, A's phrase can finish), then the smaller move.
-        const time = [{ t: best.n.time + k * pB, move: k }, { t: best.n.time - (4 - k) * pB, move: 4 - k }]
+        const eligible = [{ t: best.n.time + k * pB, move: k }, { t: best.n.time - (4 - k) * pB, move: 4 - k }]
           .filter(({ t }) => t >= B.audibleStart && t <= entryLimit && !(ctx.requestedAt === undefined && s.stemMixing !== false && voiceTooSoon(B, t, !A.vocalActivity))
-            && t + nativeB <= B.audibleEnd && (!ctx.regionB || t >= ctx.regionB.start - 0.001 && t + nativeB <= ctx.regionB.end + 0.001))
-          .map((o) => ({ ...o, cost: (voices ? vocalMean(B, o.t, o.t + nativeB) : 0) + 0.01 * o.move }))
-          .sort((x, y) => x.cost - y.cost)[0]?.t;
-        if (time === undefined) drum.blocked = preserve ? 'preserve-opening' : 'no-room';
-        else { best.n = { ...best.n, time: r3(time), tags: [...best.n.tags, `drum-shift:${k}`] }; drum.k = k; }
+            && t + nativeB <= B.audibleEnd - Math.min(12, (B.audibleEnd - B.audibleStart) * 0.2)
+            && (!ctx.regionB || t >= ctx.regionB.start - 0.001 && t + nativeB <= ctx.regionB.end + 0.001));
+        const selected = eligible.map(o => ({ ...o, actualMatch: verifiedDrumShift(pa!, B.beat!, r3(o.t), nativeB, k, match[0]),
+          cost: (voices ? vocalMean(B, o.t, o.t + nativeB) : 0) + 0.01 * o.move }))
+          .filter(o => o.actualMatch !== null).sort((x, y) => x.cost - y.cost)[0];
+        if (!selected) drum.blocked = preserve ? 'preserve-opening' : eligible.length ? 'changed-window-pattern' : 'no-room';
+        else {
+          best.n = { ...best.n, time: r3(selected.t), tags: [...best.n.tags, `drum-shift:${k}`] };
+          best.conflict = clamp(curveMean(A.curves.midDensity, A.curves.rate, best.e.time, best.e.time + nativeA)
+            * curveMean(B.curves.midDensity, B.curves.rate, best.n.time, best.n.time + nativeB) * 6);
+          best.localClash = fullMix ? localClashFraction(A, best.e.time, nativeA, B, best.n.time, nativeB) : 0;
+          best.arrival = arrivalFit(B, best.n.time, nativeB / 2, nativeB).time;
+          drum.k = k; drum.actualWindowMatch = r3(selected.actualMatch!);
+        }
       }
       best.drum = drum;
     }
@@ -1395,25 +1503,36 @@ function planBeatmatch(
 
   const lanes: AutomationLane[] = [];
   const reasons: string[] = [];
-  let echoSafe = true;
+  let echoSafe = true, filterHandoff = false;
   if (ctx.s.eqHandoff) {
     // EQ blend: B's fader rises through the first half (thin: no bass, soft mids/highs),
     // basses swap on the downbeat in the middle, then A thins out and leaves. A one-bar
     // rise put B at -6 dB within ~1 s of a 16-25 s blend: heard as switching B on.
-    const fadeStart = Math.max(swap, barOut(bars - 2));
+    // Filter handoff (v19): a full-energy A hands its mids to B over a bar around the bass swap and then
+    // leaves through a rising high-pass (the filter carries it out; its fader only closes in the last bar).
+    filterHandoff = vocalAware || fullEnergy(best.e.time, bars * barA);
+    const fadeStart = Math.max(swap, barOut(bars - (filterHandoff ? 1 : 2)));
     lanes.push(lane('B', 'gain', shape(0, swap, sinUp, 8)));
     lanes.push(lane('A', 'gain', [[0, 1]], shape(fadeStart, D, cosDown, 8)));
     lanes.push(lane('A', 'low', [[0, 1]], [[r3(swap - beat / 2), 1], [r3(swap + beat / 2), 0]]));
     lanes.push(lane('B', 'low', [[0, 0]], [[r3(swap - beat / 2), 0], [r3(swap + beat / 2), 1]]));
     lanes.push(lane('B', 'high', shape(0, swap, (x) => 0.25 + 0.75 * smoothstep(x))));
-    lanes.push(lane('A', 'high', [[0, 1]], shape(swap, D, (x) => 1 - 0.75 * smoothstep(x))));
+    lanes.push(lane('A', 'high', [[0, 1]], shape(swap, D, (x) => 1 - (filterHandoff ? 0.4 : 0.75) * smoothstep(x))));
     const midDuck = best.conflict > 0.35 || keyInfo.compatibility < 0.5 || best.localClash >= 0.5;
-    const bMid0 = s.stemMixing!==false&&A.vocalActivity&&B.vocalActivity ? (keyClash?0.4:0.7) : midDuck ? 0.18 : 0.4;
+    const bMid0 = s.stemMixing!==false&&A.vocalActivity&&B.vocalActivity ? (keyClash?0.4:0.7) : midDuck ? 0.18 : filterHandoff ? 0.25 : 0.4;
     // v13 (P2): clashing keys take turns in the mids around the bass swap (B's mids stay back until
     // it, then take over while A's leave) instead of a shorter lock. With separated voices B's
     // mids keep 0.4 before the swap: its first words are not EQ'd away.
-    const turns = keyClash || best.localClash >= 0.5;
-    if (turns) {
+    const turns = keyClash || best.localClash >= 0.5 || filterHandoff;
+    // S-curve in log frequency (the lane value is exponential in Hz): about 20 Hz -> 1.9 kHz
+    if (filterHandoff) lanes.push(lane('A', 'filter', [[0, 0]], shape(swap, D, (x) => 0.8 * smoothstep(x), 12)));
+    if (filterHandoff) {
+      // the leads overlap for one bar around the swap; A's mids ease to 0.55, the high-pass does the rest
+      lanes.push(lane('B', 'mid', [[0, bMid0]], shape(Math.max(0, swap - beat), Math.min(D, swap + 3 * beat), (x) => bMid0 + (1 - bMid0) * smoothstep(x))));
+      // B's middle is dense after the swap (a voice is likely): A's mids leave within a beat there
+      const nativeB = bars * barA * r, bDense = curveMean(B.curves.midDensity, B.curves.rate, best.n.time + nativeB / 2, best.n.time + nativeB) / Math.max(1e-6, bodyDensity(B)) > 0.9;
+      lanes.push(lane('A', 'mid', [[0, 1]], bDense ? shape(swap, Math.min(D, swap + beat), (x) => 1 - 0.7 * smoothstep(x)) : shape(swap, Math.min(D, barOut(halfBars + 2)), (x) => 1 - 0.45 * smoothstep(x))));
+    } else if (turns) {
       // B's mids wait for the swap, A's leave from there as gently as before: A dropping its mids
       // within a beat made it vanish halfway through the blend (a -9 LU render dip)
       const t0 = Math.max(0, swap - beat);
@@ -1424,7 +1543,8 @@ function planBeatmatch(
       lanes.push(lane('A', 'mid', [[0, 1]], shape(swap, Math.min(D, barOut(halfBars + 2)), (x) => 1 - (midDuck ? 0.8 : 0.55) * smoothstep(x))));
     }
     reasons.push('бас плавно передаётся на сильной доле в середине перехода, чтобы уменьшить конфликт басовых линий');
-    if (turns) reasons.push('тональности конфликтуют: середина треков меняется по очереди на смене баса, длина сведения не сокращается');
+    if (filterHandoff) reasons.push('текущий трек ещё на полной энергии: середины меняются по очереди на смене баса, затем текущий уходит через фильтр — две ведущие партии почти не звучат вместе');
+    else if (turns) reasons.push('тональности конфликтуют: середина треков меняется по очереди на смене баса, длина сведения не сокращается');
     else if (midDuck) reasons.push('средние частоты обоих треков плотные: середина следующего трека входит приглушённой');
     // A leaves before its own ending: its last bar goes into an echo on the shared grid
     // (B's beat at its native tempo), so A does not just fade under B. Only on a lock:
@@ -1487,6 +1607,7 @@ function planBeatmatch(
     ...(best.drum ? { drumPattern: best.drum } : {}),
     ...(fullMix ? { fullMixRules: { looseGrid, barCap: Number.isFinite(barCap) ? barCap : null, localClash: r3(best.localClash), echoSafe } } : {}),
     ...(p.echo ? { variant: 'echo-tail' } : {}),
+    ...(filterHandoff ? { style: 'filter-handoff' } : {}),
     consumedA: r3(bars * barA), consumedB: r3(bars * barA * r),
     analysisLimits: ['mid-density-is-not-vocal-detection', '4/4-meter-assumed'],
   };
@@ -1575,6 +1696,150 @@ function planPhraseCut(
   ];
   p.debug = { cut: r3(cut), variant: 'downbeat-cut' };
   describeEntry(p, B, entry);
+  return p;
+}
+
+/**
+ * Drop swap (v19), the DJ exit for steady grooves whose tempos cannot be locked; A's and B's grooves
+ * never play together. Two variants, both ending on a phrase-end downbeat of A where B lands on its own
+ * downbeat:
+ * - echo out: over A's last two bars (four when two bars are under 3 s) a high-pass sweeps up and takes its bass
+ *   (no separate bass cut: it dipped renders by 5 LU), its last beat goes into a 3/4-beat echo (2-4 audible repeats, about -30 dB
+ *   1.5 bars later) that rings over B's first bar while B comes up from 0.75;
+ * - loop roll: when that boundary is no clean exit (not a phrase start, or A's middle is dense there),
+ *   A's last bar before it is caught as a loop and rolled 1 -> 1/2 -> 1/4 -> 1/8 bar under a rising
+ *   high-pass and echo wash, and B drops at full on the one. Needs a tight grid (the loop is exact).
+ * Listener v19.1: the first echo (one beat at 0.6 send, feedback 0.45) was gone 0.1 s after the cut
+ * under a full B: heard as a plain cut.
+ * v19.2: B no longer slams in dry after the echo (its low-pass opens over a bar, its bass waits a
+ * beat), and a calm, slower B gets a wash instead of a hype roll: A's bar loops twice without
+ * rolling, a low-pass closes and the echo rises, with a longer decay over B's soft intro.
+ * A Next press (requestedAt) uses the same moves on the next downbeat.
+ */
+function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: NonNullable<TransitionPlan['keyInfo']>, fallbackReason?: string): TransitionPlan | null {
+  const ga = A.beat!, gb = B.beat!, beat = ga.period, bar = 4 * beat, barB = 4 * gb.period;
+  const S = 2 * bar >= 3 ? 2 * bar : 4 * bar;
+  // a Next press (requestedAt) keeps the move short: its whole overlap budget is 8 s
+  const tail = ctx.requestedAt === undefined ? Math.max(3, Math.min(6, 2 * barB)) : 3;
+  // the loop's length and start sit on a 1/300 s grid (whole frames at 44.1 and 48 kHz), L/4 too
+  const L = Math.round(bar * 75) / 75;
+  const rollable = ga.confidence >= 0.8 && ga.jitterMs <= 12 && ctx.s.loopBridges !== false && ctx.s.djPhrasing !== false
+    && L >= 1.2 && L <= 8 && 3 * L + tail <= ctx.s.maxBlendSeconds;
+  if (S + tail > ctx.s.maxBlendSeconds && !rollable) return null;
+  const phraseSet = new Set((A.phraseConfidence >= 0.2 ? A.phrases : []).map(t => Math.round(t * 1000)));
+  const bodyDens = curveMean(A.curves.midDensity, A.curves.rate, A.audibleStart, A.audibleEnd);
+  const lead = Math.max(S, bar);
+  let best: { d: number; score: number; phrase: boolean; dens: number } | null = null;
+  const now = ctx.requestedAt;
+  for (let i = 0; i < ga.downbeats.length; i++) {
+    const d = ga.downbeats[i], phrase = phraseSet.has(Math.round(d * 1000));
+    if (now === undefined
+      ? !phrase && i % 4 !== 0 || d - lead < A.audibleStart + (A.audibleEnd - A.audibleStart) * 0.5 || d > A.audibleEnd - 0.5 || A.audibleEnd - d > 24
+      // Next: the move starts at the next downbeat (its exit is any bar line one lead later)
+      : d - lead < now + 0.15 || d - lead > now + 0.15 + bar + 0.02 || d > A.audibleEnd - 0.5) continue;
+    // A still carries the mix through the sweep (not already inside its quiet ending)
+    if (!measuredCurves(A, d - lead, d) || powerLevel(A, d - lead, d) < A.bodyRmsDb - 6) continue;
+    if (A.vocalActivity && vocalMean(A, d - 0.2, d + 0.25) >= 0.2) continue;
+    // vocal-density proxy: cut where A's middle is sparse (between lines), not inside a dense line
+    const dens = curveMean(A.curves.midDensity, A.curves.rate, d - beat, d + beat) / Math.max(1e-6, bodyDens);
+    const score = (phrase ? 0.3 : 0) - 0.5 * clamp((A.audibleEnd - d) / 24) - 0.3 * clamp(dens - 0.7);
+    if (!best || score > best.score) best = { d, score, phrase, dens };
+  }
+  if (!best) return null;
+  const { d, phrase, dens } = best;
+  const loop = rollable && (!phrase || dens > 0.9);
+  if (!loop && S + tail > ctx.s.maxBlendSeconds) return null;
+  // B lands on its own downbeat at the cut; an unsure bar phase starts B from its opening
+  const picked = gb.downbeatConfidence >= 0.5 ? pickHandoffEntry(ctx, A, B, d, 0, tail, true) : null;
+  const entry = picked?.aligned ? picked.cue : { time: B.audibleStart, score: 0.6, kind: 'start' as const, tags: ['drop-swap-start'] };
+  if (powerLevel(B, entry.time, entry.time + 1) < B.bodyRmsDb - 6 || entry.time + tail > B.audibleEnd) return null;
+  // energy context: a slower B whose first 8 bars sit 3 dB under A's last two is calm, not a drop
+  const energyDelta = powerLevel(B, entry.time, entry.time + 8 * barB) + ctx.gainB - (powerLevel(A, d - 2 * bar, d) + ctx.gainA);
+  const calm = gb.bpm < 0.85 * ga.bpm && energyDelta <= -3;
+  const wash = loop && calm, roll = loop && !calm;
+  // v19.4 soft echo out: B enters from its own opening, never a trimmed intro (landing on B's drop made it
+  // "slam in" in every listened variant); after more than 1 s of leading silence, on its first downbeat.
+  // A Next press keeps its v19.2 rule: B arrives at its energetic section, not inside a quiet intro.
+  const opening = B.audibleStart <= 1 ? B.audibleStart : gb.downbeats.find(t => t >= B.audibleStart - 0.025) ?? B.audibleStart;
+  const bIn = loop || now !== undefined ? entry : { time: opening, score: 0.6, kind: opening === B.audibleStart ? 'start' as const : 'downbeat' as const, tags: ['drop-swap-start'] };
+  // v19.3 echo out breathes (listener: "too fast, the echo cut short"): B opens from its muffled intro
+  // over 2-4 of its bars (about 4 s), and the transition lasts until it is open; a Next keeps one bar
+  // v19.4 (listener: "the effect is too loud, it takes you out of the music"): two bars, not 2-4
+  const echoSpan = loop ? 0 : now !== undefined ? Math.min(barB, tail)
+    : Math.min(2 * barB, ctx.s.maxBlendSeconds - S);
+  const softTail = wash ? Math.min(Math.max(tail, Math.min(8, 3 * barB)), ctx.s.maxBlendSeconds - 2 * L) : Math.max(tail, echoSpan);
+  if (wash && (softTail < tail || entry.time + softTail > B.audibleEnd)) return null;
+  const T = roll ? 3 * L : wash ? 2 * L : S;
+  // echo on A's grid: 3/4 beat (1/2 beat for the roll's stutter), 2-4 audible repeats, -30 dB after
+  // 1.5 bars (2.5 for the wash's softer decay)
+  let delay = roll ? beat / 2 : beat * 0.75;
+  while (delay < 0.25) delay *= 2;
+  while (delay > 0.6) delay /= 2;
+  // echo out: the send fades over two beats after the cut and the repeats aim at -30 dB 3 bars later (the ring's own filters shorten it)
+  const feedback = Math.min(roll || wash ? 0.72 : 0.78, Math.pow(10, -1.5 / ((wash ? 2.5 : roll ? 1.5 : 3) * bar / delay)));
+  const D = r3(T + softTail);
+  const p = basePlan(ctx, 'echo_out');
+  p.bEntry = r3(bIn.time); p.duration = D; p.swapAt = r3(T); p.bDelay = r3(T);
+  p.echo = { delay: r3(delay), feedback: r3(feedback) };
+  if (wash) {
+    const start = Math.round((d - L) * 300) / 300;
+    p.aExit = r3(start);
+    p.loopA = { start, end: start + L, until: start + 2 * L, crossfade: 0.006 };
+    p.automation = [
+      lane('A', 'gain', [[0, 1], [r3(T - 0.03), 1], [r3(T), 0], [D, 0]]),
+      // wash-out: a low-pass closes (no hype high-pass) while the echo send rises
+      lane('A', 'filter', [[0, 0]], shape(L / 2, T, x => -0.5 * smoothstep(x), 8), [[D, -0.5]]),
+      lane('A', 'echo', [[0, 0], [r3(L), 0]], shape(L, T - 0.05, x => 0.7 * smoothstep(x), 6), [[r3(T), 0.7], [r3(T + 0.02), 0], [D, 0]]),
+      // B's soft intro rises under the tail over two of its bars and opens from a low-pass
+      lane('B', 'gain', [[0, 0], [0.02, 0.6]], shape(0.02, Math.min(2 * barB, D - T), x => 0.6 + 0.4 * sinUp(x), 8), [[r3(D - T), 1]]),
+      lane('B', 'filter', shape(0, Math.min(barB, D - T), x => -0.35 * (1 - smoothstep(x)), 6), [[r3(D - T), 0]]),
+    ];
+  } else if (roll) {
+    const start = Math.round((d - L) * 300) / 300;
+    p.aExit = r3(start);
+    p.loopA = { start, end: start + L, until: start + 3 * L, crossfade: 0.006,
+      roll: [{ at: start + L, length: L / 2 }, { at: start + 2 * L, length: L / 4 }, { at: start + 2.5 * L, length: L / 8 }] };
+    p.automation = [
+      lane('A', 'gain', [[0, 1], [r3(T - 0.03), 1], [r3(T), 0], [D, 0]]),
+      lane('A', 'filter', [[0, 0]], shape(L, T, x => 0.6 * smoothstep(x), 8), [[D, 0.6]]),
+      // wash-out: the send rises through the last bar of the roll and closes on the one
+      lane('A', 'echo', [[0, 0], [r3(2 * L), 0]], shape(2 * L, T - 0.05, x => 0.8 * smoothstep(x), 6), [[r3(T), 0.8], [r3(T + 0.02), 0], [D, 0]]),
+      lane('B', 'gain', [[0, 0], [0.02, 1], [r3(D - T), 1]]),
+    ];
+  } else {
+    p.aExit = r3(d - S);
+    p.automation = [
+      lane('A', 'gain', [[0, 1], [r3(S - 0.03), 1], [r3(S), 0], [D, 0]]),
+      // v19.4 soft echo out (A/B-approved renders): a gentle low-pass eases in over the sweep and muffles
+      // the echo tail after the cut (-0.25 -> -0.3); no high-pass sweep
+      lane('A', 'filter', [[0, 0], [r3(S), -0.25], [r3(S + 0.4), -0.3], [D, -0.3]]),
+      // pre-fader send: open over the last beat (0.6), then 0.4, 0.2 and closed three beats after the cut
+      lane('A', 'echo', [[0, 0], [r3(S - beat), 0], [r3(S - 0.05), 0.6], [r3(S), 0.6], [r3(S + beat), 0.4], [r3(S + 2 * beat), 0.2], [r3(S + 3 * beat), 0]]),
+      // B runs on its own clock after bDelay: 0.8 at once, full after a bar of A; no bass gate, no filter
+      lane('B', 'gain', [[0, 0], [0.01, 0.8], [r3(bar), 1]]),
+    ];
+  }
+  p.confidence = r3(Math.min(0.7, ga.confidence, gb.confidence));
+  p.keyInfo = keyInfo;
+  p.fallbackReason = fallbackReason;
+  const cut = Math.max(0, A.audibleEnd - d);
+  p.reasons = [
+    wash
+      ? `петля с размывом: темпы ${ga.bpm.toFixed(0)} и ${gb.bpm.toFixed(0)} BPM не сводятся, следующий трек спокойнее — последний такт текущего повторяется без ускорения, уходит в фильтр и эхо, следующий мягко поднимается под хвост`
+      : roll
+      ? `петля с ускорением: темпы ${ga.bpm.toFixed(0)} и ${gb.bpm.toFixed(0)} BPM не сводятся — последний такт текущего трека перед границей ${phrase ? 'фразы' : 'четырёх тактов'} повторяется и дробится до 1/8 такта под нарастающий фильтр, следующий вступает в полную силу на своей сильной доле`
+      : `смена на сильной доле: темпы ${ga.bpm.toFixed(0)} и ${gb.bpm.toFixed(0)} BPM не сводятся — текущий трек уходит в эхо на границе ${phrase ? 'фразы' : 'четырёх тактов'}, следующий входит со своего начала`,
+    ...(fallbackReason ? [fallbackReason] : []),
+    roll || wash ? 'два ритма не звучат одновременно: под первым тактом следующего звучит только отфильтрованный хвост эха'
+      : 'два ритма не звучат одновременно: эхо текущего на 3/4 доли, приглушённое фильтром, звучит под первым тактом следующего',
+    cut > 2 ? `пропускается ${Math.round(cut)} с финала` : 'текущий трек звучит почти до конца',
+  ];
+  describeEntry(p, B, bIn);
+  p.debug = wash
+    ? { variant: 'loop-wash', style: 'loop-wash', cut: r3(cut), loopWash: { exitSource: r3(d), phrase, dens: r3(dens), bar: r3(L), energyDelta: r3(energyDelta), entryAligned: !!picked?.aligned } }
+    : roll
+    ? { variant: 'loop-roll', style: 'loop-roll', cut: r3(cut), loopRoll: { exitSource: r3(d), phrase, dens: r3(dens), bar: r3(L), entryAligned: !!picked?.aligned } }
+    : { variant: 'drop-swap', style: 'drop-swap', cut: r3(cut), dropSwap: { cutSource: r3(d), phrase, sweep: r3(S), entryAligned: bIn.kind === 'downbeat' } };
   return p;
 }
 

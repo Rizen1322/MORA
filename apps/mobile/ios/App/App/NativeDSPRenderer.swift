@@ -1003,7 +1003,7 @@ final class Echo {
     func configure(_ delayFrames: Double, _ feedback: Double) {
         reset()
         delay = max(1, min(L.count - 1, jsRoundInt(delayFrames)))
-        self.feedback = max(0, min(0.75, feedback))
+        self.feedback = max(0, min(0.85, feedback))
     }
     func process(_ inL: FBuf, _ inR: FBuf, _ outL: FBuf, _ outR: FBuf, _ n: Int) {
         let N = L.count
