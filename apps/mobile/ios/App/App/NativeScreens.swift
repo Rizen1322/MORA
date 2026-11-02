@@ -1,8 +1,8 @@
 import SwiftUI
 import UIKit
 
-/// Native screens of the shell (NativeShell.swift). Anything they link to that is not ported
-/// (albums, playlists, settings pages…) opens the web page through the page's router.
+/// Native screens of the shell (NativeShell.swift). They link to other sections through the page's router;
+/// the page-described ones (albums, playlists, settings…) are drawn by NativePages.swift, the rest stay web.
 
 // MARK: Home
 
@@ -229,6 +229,8 @@ struct NativeTrackListView: View {
 struct NativeTrackRow: View {
     let track: NativeTrack
     let play: () -> Void
+    /// A page's own action for the row (remove from a playlist, delete a download).
+    var remove: (title: String, symbol: String, run: () -> Void)? = nil
     @EnvironmentObject private var store: NativeShellStore
 
     var body: some View {
@@ -268,7 +270,13 @@ struct NativeTrackRow: View {
             }
             .tint(.moraGold)
         }
-        .contextMenu { NativeTrackActions(track: track, play: play) }
+        .contextMenu {
+            NativeTrackActions(track: track, play: play)
+            if let remove {
+                Divider()
+                Button(role: .destructive, action: remove.run) { Label(remove.title, systemImage: remove.symbol) }
+            }
+        }
         .accessibilityAction(named: "Играть следующим") { store.queue(track, next: true) }
         .accessibilityAction(named: "Добавить в очередь") { store.queue(track, next: false) }
         .accessibilityAction(named: track.liked ? "Убрать из любимого" : "Нравится") { store.react(track, track.liked ? 0 : 1) }
@@ -428,7 +436,7 @@ struct NativeSearchView: View {
 
 // MARK: «Ещё»
 
-/// Grouped list of the app's other sections; they stay web pages.
+/// Grouped list of the app's other sections (native pages, NativePages.swift).
 struct NativeMoreView: View {
     @EnvironmentObject private var store: NativeShellStore
 

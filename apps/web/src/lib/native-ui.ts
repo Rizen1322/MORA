@@ -6,6 +6,8 @@ import { controller, phone, trackOf, useApp } from '../store/app.ts';
 import { publicPlayer, usePublicPlayback } from '../store/catalog.ts';
 import { react } from '../components/TrackList.tsx';
 import { asCatalog, SOURCE_LABEL } from '../pages/Search.tsx';
+import { useVersionPanel } from '../components/VersionPanel.tsx';
+import { actions, describe, type ActResult } from './native-pages.ts';
 
 /**
  * iPhone native shell (ios/App/App/NativeShell.swift). Data path: this page stays the only owner of
@@ -31,8 +33,8 @@ export function uiState(s = useApp.getState(), radio = useRadio.getState(), prep
   return {
     path: (location.hash.replace(/^#/, '') || '/').split('?')[0],
     loaded: s.loaded,
-    // The web full player and side panels cover everything: native steps aside while they are open.
-    overlay: s.fullPlayer || s.queueOpen || s.panel !== null,
+    // The web full player, side panels and the version picker cover everything: native steps aside while they are open.
+    overlay: s.fullPlayer || s.queueOpen || s.panel !== null || useVersionPanel.getState().target !== null,
     wave: {
       own: s.order.length > 0,
       yandex: s.providers.some((v) => v.id === 'yandex' && v.status === 'connected'),
@@ -75,14 +77,24 @@ const source = (v: unknown): PublicSource => {
 /** Native → page. Arguments come from our own Swift code, but are still checked: a wrong call must fail, not misplay. */
 export const commands: Record<string, (a: Args) => unknown> = {
   go: (a) => { location.hash = str(a.path) || '/'; },
+  back: () => history.back(),
   open: (a) => {
     const t = trackOf(str(a.id));
     if (t) location.hash = (a.to === 'artist' ? trackArtistHref(t) : trackAlbumHref(t)).replace(/^#/, '');
   },
   play: (a) => {
     const ids = Array.isArray(a.ids) ? a.ids.filter((x): x is string => typeof x === 'string') : [];
-    const type = a.type === 'liked' || a.type === 'search' ? a.type : 'library';
-    return controller.playTracks(ids, Math.max(0, Math.min(ids.length - 1, Number(a.index) || 0)), { type, label: str(a.label) || 'Медиатека' });
+    const type = (['liked', 'search', 'album', 'artist', 'playlist', 'history'] as const).find((x) => x === a.type) ?? 'library';
+    return controller.playTracks(ids, Math.max(0, Math.min(ids.length - 1, Number(a.index) || 0)), { type, id: str(a.id) || undefined, label: str(a.label) || 'Медиатека' });
+  },
+  /** The native page for the current route (native-pages.ts); null when it stays web. */
+  page: () => describe(),
+  /** A row action of a native page. Its errors become toasts, as on the web page. */
+  act: async (a): Promise<ActResult | null> => {
+    const fn = actions[str(a.name)];
+    if (!fn) throw new Error(`Unknown action ${str(a.name)}`);
+    try { return ((await fn(a.args && typeof a.args === 'object' ? a.args as Args : {})) ?? null) as ActResult | null; }
+    catch (e) { useApp.getState().toast((e as Error).message, 'error'); return null; }
   },
   queue: (a) => {
     const ids = Array.isArray(a.ids) ? a.ids.filter((x): x is string => typeof x === 'string' && trackOf(x)?.status === 'ok') : [];
@@ -167,6 +179,7 @@ export function startNativeUi(): void {
   useApp.subscribe(schedule);
   useRadio.subscribe(schedule);
   usePublicPlayback.subscribe(schedule);
+  useVersionPanel.subscribe(schedule);
   window.addEventListener('hashchange', schedule);
   schedule();
 }

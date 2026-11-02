@@ -16,7 +16,7 @@ export interface VersionTarget {
   onPick?: (pick: { trackId: string } | PublicTrack) => void;
 }
 
-const useVersionPanel = create<{ target: VersionTarget | null }>(() => ({ target: null }));
+export const useVersionPanel = create<{ target: VersionTarget | null }>(() => ({ target: null }));
 export const openVersionPanel = (target: VersionTarget) => useVersionPanel.setState({ target });
 
 const SOURCES: PublicSource[] = ['ytmusic', 'youtube', 'soundcloud'];

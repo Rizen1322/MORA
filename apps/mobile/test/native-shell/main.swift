@@ -13,12 +13,38 @@ precondition(NativeSearchText.filter(tracks, "kavinsky звери").isEmpty)
 print("Native shell: tracks and search-as-you-type")
 
 precondition(NativeRoute.screen("/") == .home && NativeRoute.screen("/more") == .more && NativeRoute.screen("/liked") == .liked)
-precondition(NativeRoute.screen("/library") == .library && NativeRoute.screen("/library/albums") == .web && NativeRoute.screen("/search") == .search)
-precondition(NativeRoute.screen("/album/x/y") == .web && NativeRoute.screen("/settings") == .web)
+precondition(NativeRoute.screen("/library") == .library && NativeRoute.screen("/library/albums") == .page && NativeRoute.screen("/search") == .search)
+precondition(NativeRoute.screen("/album/x/y") == .page && NativeRoute.screen("/settings") == .page && NativeRoute.screen("/playlist/7") == .page)
+precondition(NativeRoute.screen("/playlist/7/mix") == .web && NativeRoute.screen("/diagnostics/charts") == .web && NativeRoute.screen("/album/x") == .web)
+precondition(NativeRoute.screen("/yandex") == .web && NativeRoute.screen("/library/tracks") == .library)
 precondition(NativeRoute.tab("/wave") == .home && NativeRoute.tab("/playlist/1") == .library && NativeRoute.tab("/libraryx") == .home)
 precondition(NativeRoute.tab("/catalog/artist/1") == .search && NativeRoute.tab("/library/albums") == .library && NativeRoute.tab("/liked") == .liked)
 precondition(NativeTab.allCases.allSatisfy { NativeRoute.tab(NativeRoute.root($0)) == $0 && NativeRoute.screen(NativeRoute.root($0)) != .web })
 print("Native shell: routes")
+
+let described: [String: Any] = ["title": "Плейлист", "refresh": 0.4, "sections": [
+    ["play": ["type": "playlist", "id": "p1", "label": "Плейлист"], "reorder": ["name": "reorderPlaylist", "args": ["id": "p1"]], "rows": [
+        ["kind": "track", "id": "a", "remove": ["title": "Убрать", "symbol": "minus", "act": ["name": "removeFromPlaylist", "args": ["entry": 3]]]],
+        ["kind": "item", "title": "Ёлка", "subtitle": "Звери", "cover": NSNull(), "path": "/album/x/y"],
+        ["kind": "item", "title": "Job"],
+        ["kind": "slider", "title": "Длина", "value": 12, "min": 8, "max": 48, "step": 1, "unit": "с", "act": ["name": "set"]],
+        ["kind": "slider", "title": "Broken", "min": 4, "max": 4, "act": ["name": "set"]],
+        ["kind": "choice", "title": "Стиль", "value": "auto", "options": [["auto", "Авто"], ["bad"]], "act": ["name": "set"]],
+        ["kind": "url", "title": "http", "url": "http://example.com"],
+        ["kind": "unknown"],
+    ]],
+]]
+let page = NativePage(described)!
+let rows = page.sections[0].rows
+precondition(page.title == "Плейлист" && page.refresh == 1 && page.search == nil && page.sections[0].reorder?.name == "reorderPlaylist")
+precondition(rows.count == 5, "invalid sliders, plain http links and unknown kinds are dropped")
+if case .track(let id, let remove) = rows[0] { precondition(id == "a" && remove?.act.args["entry"] as? Int == 3) } else { preconditionFailure() }
+if case .item(_, _, let cover, _, _, let path, _, _) = rows[1] { precondition(cover != nil && cover! == nil && path == "/album/x/y") } else { preconditionFailure() }
+if case .item(_, _, let cover, _, _, _, _, _) = rows[2] { precondition(cover == nil, "no cover key: no picture") } else { preconditionFailure() }
+if case .choice(_, _, let value, let options, _, _) = rows[4] { precondition(value == "auto" && options.count == 1) } else { preconditionFailure() }
+precondition(rows[1].searchText == "елка звери" && rows[0].searchText == nil)
+precondition(NativePage(["sections": []]) == nil)
+print("Native shell: described pages")
 
 var wave = NativeWave(["own": true, "yandex": false, "playing": true, "loading": false, "active": NSNull()])
 precondition(wave.sources == [.own, .online] && wave.preferred == .own)

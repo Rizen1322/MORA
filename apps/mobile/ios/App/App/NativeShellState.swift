@@ -105,7 +105,7 @@ struct NativeUiState: Equatable {
     }
 }
 
-enum NativeScreen: Equatable { case home, more, liked, library, search, web }
+enum NativeScreen: Equatable { case home, more, liked, library, search, page, web }
 enum NativeTab: String, CaseIterable { case home, liked, library, search }
 
 /// The page's hash route decides what is on screen: ported routes are native, the rest stay web.
@@ -117,7 +117,13 @@ enum NativeRoute {
         case "/liked": return .liked
         case "/library", "/library/tracks", "/library/search": return .library
         case "/search": return .search
-        default: return .web
+        // Described by the page (apps/web/src/lib/native-pages.ts `describe`, same routes).
+        case "/library/albums", "/library/artists", "/library/playlists", "/history", "/wave", "/downloads", "/import", "/sources", "/settings", "/diagnostics":
+            return .page
+        default:
+            let parts = path.split(separator: "/")
+            if (parts.first == "album" && parts.count == 3) || (["artist", "playlist"].contains(parts.first) && parts.count == 2) { return .page }
+            return .web
         }
     }
     /// The highlighted tab, as in the web TabBar (apps/web/src/components/Layout.tsx).
@@ -135,6 +141,129 @@ enum NativeRoute {
         case .library: return "/library"
         case .search: return "/search"
         }
+    }
+}
+
+/// A native page as the page describes it (apps/web/src/lib/native-pages.ts, `Screen`).
+struct NativePageAct {
+    let name: String
+    let args: [String: Any]
+    init?(_ value: Any?) {
+        guard let value = value as? [String: Any], let name = value["name"] as? String else { return nil }
+        self.name = name
+        args = value["args"] as? [String: Any] ?? [:]
+    }
+}
+
+struct NativeItemAction {
+    let title: String, symbol: String, act: NativePageAct, destructive: Bool
+    init?(_ value: Any?) {
+        guard let value = value as? [String: Any], let title = value["title"] as? String, let act = NativePageAct(value["act"]) else { return nil }
+        self.title = title
+        symbol = value["symbol"] as? String ?? "circle"
+        self.act = act
+        destructive = value["destructive"] as? Bool == true
+    }
+}
+
+enum NativeTone: String { case ok, warn, error, accent }
+
+enum NativePageRow {
+    struct Confirm { let title: String, text: String, button: String }
+    struct Prompt { let title: String, initial: String, placeholder: String }
+
+    case text(title: String, detail: String?, value: String?, tone: NativeTone?)
+    case toggle(title: String, detail: String?, on: Bool, act: NativePageAct, disabled: Bool)
+    case choice(title: String, detail: String?, value: String, options: [(value: String, label: String)], act: NativePageAct, disabled: Bool)
+    case slider(title: String, detail: String?, value: Double, range: ClosedRange<Double>, step: Double, unit: String, act: NativePageAct, disabled: Bool)
+    case button(title: String, symbol: String?, act: NativePageAct, style: String?, disabled: Bool, confirm: Confirm?, prompt: Prompt?)
+    case link(title: String, detail: String?, symbol: String?, path: String)
+    case url(title: String, url: URL)
+    case field(key: String, title: String, value: String, placeholder: String, secure: Bool, help: String?)
+    case file(title: String, symbol: String?, types: [String], multiple: Bool, act: NativePageAct)
+    case progress(title: String, value: Double?, detail: String?)
+    /// `cover` is nil for rows without a picture, `.some(nil)` for a placeholder.
+    case item(title: String, subtitle: String?, cover: String??, tag: String?, tone: NativeTone?, path: String?, act: NativePageAct?, actions: [NativeItemAction])
+    case track(id: String, remove: NativeItemAction?)
+
+    init?(_ v: [String: Any]) {
+        let title = v["title"] as? String ?? "", detail = v["detail"] as? String, disabled = v["disabled"] as? Bool == true
+        switch v["kind"] as? String {
+        case "text": self = .text(title: title, detail: detail, value: v["value"] as? String, tone: (v["tone"] as? String).flatMap(NativeTone.init))
+        case "toggle":
+            guard let act = NativePageAct(v["act"]) else { return nil }
+            self = .toggle(title: title, detail: detail, on: v["on"] as? Bool == true, act: act, disabled: disabled)
+        case "choice":
+            guard let act = NativePageAct(v["act"]) else { return nil }
+            let options = (v["options"] as? [[String]] ?? []).compactMap { $0.count == 2 ? (value: $0[0], label: $0[1]) : nil }
+            self = .choice(title: title, detail: detail, value: v["value"] as? String ?? "", options: options, act: act, disabled: disabled)
+        case "slider":
+            guard let act = NativePageAct(v["act"]), let min = v["min"] as? Double, let max = v["max"] as? Double, min < max else { return nil }
+            self = .slider(title: title, detail: detail, value: v["value"] as? Double ?? min, range: min...max, step: v["step"] as? Double ?? 1,
+                           unit: v["unit"] as? String ?? "", act: act, disabled: disabled)
+        case "button":
+            guard let act = NativePageAct(v["act"]) else { return nil }
+            let c = v["confirm"] as? [String: Any], p = v["prompt"] as? [String: Any]
+            self = .button(title: title, symbol: v["symbol"] as? String, act: act, style: v["style"] as? String, disabled: disabled,
+                           confirm: c.map { Confirm(title: $0["title"] as? String ?? title, text: $0["text"] as? String ?? "", button: $0["button"] as? String ?? title) },
+                           prompt: p.map { Prompt(title: $0["title"] as? String ?? title, initial: $0["initial"] as? String ?? "", placeholder: $0["placeholder"] as? String ?? "") })
+        case "link":
+            guard let path = v["path"] as? String else { return nil }
+            self = .link(title: title, detail: detail, symbol: v["symbol"] as? String, path: path)
+        case "url":
+            guard let url = (v["url"] as? String).flatMap(URL.init(string:)), url.scheme == "https" else { return nil }
+            self = .url(title: title, url: url)
+        case "field":
+            guard let key = v["key"] as? String else { return nil }
+            self = .field(key: key, title: title, value: v["value"] as? String ?? "", placeholder: v["placeholder"] as? String ?? "", secure: v["secure"] as? Bool == true, help: v["help"] as? String)
+        case "file":
+            guard let act = NativePageAct(v["act"]) else { return nil }
+            self = .file(title: title, symbol: v["symbol"] as? String, types: v["types"] as? [String] ?? [], multiple: v["multiple"] as? Bool == true, act: act)
+        case "progress": self = .progress(title: title, value: v["value"] as? Double, detail: detail)
+        case "item":
+            let cover: String?? = v.keys.contains("cover") ? .some(v["cover"] as? String) : nil
+            self = .item(title: title, subtitle: v["subtitle"] as? String, cover: cover, tag: v["tag"] as? String, tone: (v["tone"] as? String).flatMap(NativeTone.init),
+                         path: v["path"] as? String, act: NativePageAct(v["act"]), actions: (v["actions"] as? [Any] ?? []).compactMap(NativeItemAction.init))
+        case "track":
+            guard let id = v["id"] as? String else { return nil }
+            self = .track(id: id, remove: NativeItemAction(v["remove"]))
+        default: return nil
+        }
+    }
+
+    /// What the page's search field matches (items and tracks only; other rows always show).
+    var searchText: String? {
+        switch self {
+        case .item(let title, let subtitle, _, _, _, _, _, _): return NativeSearchText.normalize("\(title) \(subtitle ?? "")")
+        default: return nil
+        }
+    }
+}
+
+struct NativePageSection {
+    let title: String?, footer: String?
+    let rows: [NativePageRow]
+    /// Play context of the section's track rows: type, id and label for `play`.
+    let play: [String: Any]?
+    let reorder: NativePageAct?
+}
+
+struct NativePage {
+    let title: String
+    let sections: [NativePageSection]
+    let search: String?
+    let refresh: Double?
+
+    init?(_ value: Any?) {
+        guard let value = value as? [String: Any], let title = value["title"] as? String else { return nil }
+        self.title = title
+        sections = (value["sections"] as? [[String: Any]] ?? []).map { s in
+            NativePageSection(title: s["title"] as? String, footer: s["footer"] as? String,
+                              rows: (s["rows"] as? [[String: Any]] ?? []).compactMap(NativePageRow.init),
+                              play: s["play"] as? [String: Any], reorder: NativePageAct(s["reorder"]))
+        }
+        search = value["search"] as? String
+        refresh = (value["refresh"] as? Double).flatMap { $0 > 0 ? max(1, $0) : nil }
     }
 }
 

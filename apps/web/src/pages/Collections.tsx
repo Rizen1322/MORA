@@ -13,6 +13,8 @@ import { LikeAllTracks } from '../components/LikeAll.tsx';
 export function PlaylistPage() {
   const { parts } = useRoute();
   const id = parts[1];
+  // #/playlist/<id>/mix: the iPhone's native playlist page opens the mix builder here.
+  const mixRoute = parts[2] === 'mix';
   const map = useApp((s) => s.tracks);
   const playlists = useApp((s) => s.playlists);
   const toast = useApp((s) => s.toast);
@@ -85,7 +87,7 @@ export function PlaylistPage() {
           <Trash size={16} /> Удалить
         </button>
       </CollectionHeader>
-      {mix && <PlaylistMix name={pl.name} rows={mixRows} onClose={() => setMix(false)} />}
+      {(mix || mixRoute) && <PlaylistMix name={pl.name} rows={mixRows} onClose={() => (mixRoute ? history.back() : setMix(false))} />}
       {!tracks.length && <div className="studio-empty"><h2>У каждой истории есть первый трек</h2><p>Добавьте музыку через меню «⋯» у трека.</p><a className="btn btn-secondary" href="#/library">Выбрать из медиатеки <ArrowUpRight size={16} /></a></div>}
       {tracks.length > 0 && !reorder && <div className="collection-search"><label className="search"><MagnifyingGlass size={18} /><span className="sr-only">Поиск в плейлисте</span><input type="search" placeholder="Найти в плейлисте" value={query} onChange={e => setQuery(e.target.value)} /></label><span className="caption dim">{tracksWord(visibleRows.length)}</span></div>}
       {reorder ? (
