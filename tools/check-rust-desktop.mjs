@@ -144,7 +144,7 @@ try {
     await evaluate(`document.querySelector('button[aria-label="Закрыть очередь"]')?.click();location.hash='#/settings'`);
     for (let i = 0; i < 100; i++) { await delay(100); if (await evaluate(`!!document.querySelector('section[aria-label="Место на диске"]')`)) break; }
     assert.ok(await evaluate(`document.querySelector('section[aria-label="Место на диске"]')?.textContent.includes('Скачанные оригиналы')`), 'Disk management is missing');
-    const screenshotDir = path.join(root, 'data-bench-results/desktop-0.3.25');fs.mkdirSync(screenshotDir, { recursive: true });
+    const screenshotDir = path.join(root, 'data-bench-results/desktop-0.3.26');fs.mkdirSync(screenshotDir, { recursive: true });
     await evaluate(`(()=>{document.querySelector('section[aria-label="Место на диске"]').scrollIntoView({block:'center',behavior:'instant'});return true})()`);
     await delay(200);
     fs.writeFileSync(path.join(screenshotDir, 'settings.png'), Buffer.from((await request('Page.captureScreenshot', { format: 'png' })).data, 'base64'));

@@ -186,7 +186,7 @@ export class AutoMixService {
     const feedback = this.ratingStats();
     const key = fnv1a(
       // Invalidate automatic choices while preserving the exact IDs of listener-approved plans.
-      [a.id, b.id, a.content_hash, b.content_hash, ANALYZER_VERSION, PLANNER_VERSION, 'transition-styles-2-filter-handoff', JSON.stringify(settings), pa.mixingAllowed, pb.mixingAllowed,
+      [a.id, b.id, a.content_hash, b.content_hash, ANALYZER_VERSION, PLANNER_VERSION, 'transition-styles-3-wash-next', JSON.stringify(settings), pa.mixingAllowed, pb.mixingAllowed,
         ...(process.env.AUTOMIX_DESKTOP === '1' ? ['desktop-full-mix-1'] : []),
         a.album, b.album, pa.albumArtist, pb.albumArtist, a.track_no, b.track_no, a.disc_no, b.disc_no, !!pa.analysis, !!pb.analysis,
         // new ratings make new plans; without any the key stays as before
@@ -266,19 +266,22 @@ export class AutoMixService {
     return rustCorePath() ? rustCompute<TransitionPlan>('plan', { from, to, position, settings, mode: 'skip' }) : planSkip(from, to, position, settings);
   }
 
-  requested(fromId:string,toId:string,position:number):TransitionPlan {
+  /** catchUp: the prepared AutoMix point is already behind the playhead (a seek): plan the same musical
+   * moves from here even when Next itself is set to skip (mixOnNext off). */
+  requested(fromId:string,toId:string,position:number,catchUp=false):TransitionPlan {
     const a=this.lib.get(fromId),b=this.lib.get(toId);
     if(!a||!b)throw new Error('трек не найден');
-    const from = this.plannerTrack(a), to = this.plannerTrack(b), settings = getSettings(this.db).automix;
+    const from = this.plannerTrack(a), to = this.plannerTrack(b), saved = getSettings(this.db).automix, settings = catchUp ? { ...saved, mixOnNext: true } : saved;
     return rustCorePath() ? rustCompute<TransitionPlan>('plan', { from, to, position, settings, mode: 'requested' }) : planRequestedTransition(from,to,position,settings);
   }
 
-  async manualAsync(fromId: string, toId: string, position: number, mode: 'skip' | 'requested'): Promise<TransitionPlan> {
-    if (!rustCorePath()) return mode === 'skip' ? this.skip(fromId, toId, position) : this.requested(fromId, toId, position);
+  async manualAsync(fromId: string, toId: string, position: number, mode: 'skip' | 'requested', catchUp = false): Promise<TransitionPlan> {
+    if (!rustCorePath()) return mode === 'skip' ? this.skip(fromId, toId, position) : this.requested(fromId, toId, position, catchUp);
     const a = this.lib.get(fromId), b = this.lib.get(toId);
     if (!a || !b) throw new Error('трек не найден');
+    const saved = getSettings(this.db).automix;
     return rustComputeAsync<TransitionPlan>('plan', { from: this.plannerTrack(a), to: this.plannerTrack(b),
-      position, settings: getSettings(this.db).automix, mode });
+      position, settings: catchUp && mode === 'requested' ? { ...saved, mixOnNext: true } : saved, mode });
   }
 
   log(entry: { plan: TransitionPlan; outcome: Record<string, unknown> }): number {

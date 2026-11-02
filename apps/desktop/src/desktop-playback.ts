@@ -252,7 +252,19 @@ export class DesktopPlayback {
       if (this.current !== cur || this.incoming !== item || generation !== this.generation || revision !== this.manifestRevision || this.tick?.transition?.active || item.manualRequested) return;
       item.source = await this.source(item, 'next', 0, 1);
       if (this.current !== cur || this.incoming !== item || generation !== this.generation || revision !== this.manifestRevision || this.tick?.transition?.active || item.manualRequested) return;
-      if (item.plan!.aExit - this.position(cur) > 4) await this.arm(cur, item, result.plan);
+      // The armed plan (often the no-analysis fallback) is replaced unless it is about to start. Judging the
+      // fallback's own exit kept it for any playhead within 4 s of it (v19.2: a seek near the end played a
+      // file crossfade instead of the planned style).
+      const armedIn = item.plan!.aExit - this.position(cur);
+      if (armedIn > 1 && result.plan.aExit - this.position(cur) > 1) await this.arm(cur, item, result.plan);
+      else if (armedIn > 1 && !result.pending.length && result.plan.duration > 0) {
+        // The AutoMix point is already behind the playhead (a seek): the same moves from here, on the
+        // next downbeat, rather than a dry skip_fade from arm().
+        // Requested crossfades start just 80 ms after the supplied position; leave time to arm them.
+        const now = await this.request<{ plan: TransitionPlan }>('/api/automix/mix-now', { from: cur.trackId, to: item.trackId, position: this.position(cur) + 1, catchUp: true });
+        if (this.current !== cur || this.incoming !== item || generation !== this.generation || revision !== this.manifestRevision || this.tick?.transition?.active || item.manualRequested) return;
+        if (now.plan.aExit - this.position(cur) > 0.3) await this.arm(cur, item, now.plan);
+      }
       if (result.pending.length) this.refreshTimer = setTimeout(() => void this.refresh(cur, item, entry, generation), 3000);
     } catch { /* The prepared full-mix fallback remains armed. */ }
   }

@@ -219,14 +219,14 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
     }
   });
 
-  app.post<{ Body: { from: string; to: string; position: number } }>('/api/automix/mix-now', async (req, reply) => {
+  app.post<{ Body: { from: string; to: string; position: number; catchUp?: boolean } }>('/api/automix/mix-now', async (req, reply) => {
     const body = req.body;
     if (!body || typeof body.from !== 'string' || !body.from.trim() || typeof body.to !== 'string' || !body.to.trim()
       || typeof body.position !== 'number' || !Number.isFinite(body.position) || body.position < 0) {
       return reply.code(400).send({ error: 'нужны ID двух треков и корректная позиция воспроизведения' });
     }
     try {
-      return { plan: relabel(await automix.manualAsync(lib.mediaId(body.from), lib.mediaId(body.to), body.position, 'requested'), body.from, body.to) };
+      return { plan: relabel(await automix.manualAsync(lib.mediaId(body.from), lib.mediaId(body.to), body.position, 'requested', body.catchUp === true), body.from, body.to) };
     } catch (e) {
       return reply.code(404).send({ error: (e as Error).message });
     }

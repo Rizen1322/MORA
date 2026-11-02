@@ -1,6 +1,47 @@
-import { DEFAULT_AUTOMIX_SETTINGS, planRequestedTransition } from '@automix/core';
+import { DEFAULT_AUTOMIX_SETTINGS, planRequestedTransition, planTransition } from '@automix/core';
 import { expect, it, vi } from 'vitest';
 import { DesktopPlayback } from '../src/desktop-playback.ts';
+
+it('replans a missed musical point after seeking instead of keeping the nearby fallback', async () => {
+  const settings = { ...DEFAULT_AUTOMIX_SETTINGS, mixOnNext: false };
+  const track = (id: string) => ({ id, duration: 20, mixingAllowed: true, analysis: null });
+  const fallback = planTransition(track('a'), track('b'), settings);
+  const position = fallback.aExit - 2.5;
+  let caughtUp: ReturnType<typeof planRequestedTransition>;
+  const requests: any[] = [], commands: any[] = [];
+  let host: DesktopPlayback;
+  const audio = { process: {}, start: vi.fn(async () => ({ sampleRate: 48000, queueFrames: 2048 })),
+    feedFile: vi.fn(async () => {}), stop: vi.fn(async () => {}), command: vi.fn(async (v: any) => {
+      commands.push(v);
+      if (v.cmd === 'start') queueMicrotask(() => host.onEvent({ type: 'tick', clock: 0, paused: false, main: v.deck,
+        decks: [0, 1].map(deck => ({ token: deck === v.deck ? v.token : null, playing: deck === v.deck,
+          position: v.frame, totalFrames: 960000, starved: false, ratio: 1, bufferedAhead: 960000 })), transition: null, limiterDb: 0, peak: 0 }));
+    }) };
+  const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
+    const pathname = new URL(String(url)).pathname, body = init?.body ? JSON.parse(String(init.body)) : null;
+    if (pathname === '/internal/desktop/pcm-source') return Response.json({ path: 'private', finalPath: 'private', partPath: '',
+      format: 'f32le', gainDb: -6, totalFrames: 960000, availableFrames: 960000, complete: true,
+      track: { trackId: body.trackId, title: body.trackId, artist: '', duration: 20, coverUrl: '', mixingAllowed: true } });
+    if (pathname === '/api/settings') return Response.json({ automix: settings });
+    if (pathname === '/api/automix/plan') return Response.json({ plan: { ...fallback, aExit: position - 2 }, pending: [] });
+    if (pathname === '/api/automix/mix-now') {
+      requests.push(body);
+      caughtUp = planRequestedTransition(track('a'), track('b'), body.position, { ...settings, mixOnNext: true });
+      return Response.json({ plan: caughtUp });
+    }
+    return Response.json({});
+  };
+  host = new DesktopPlayback(audio, { backend: () => ({ origin: 'http://127.0.0.1', accessToken: '', pcmToken: 'secret' }),
+    ready: vi.fn(), track: vi.fn(), fetch: fetcher as typeof fetch });
+  try {
+    await host.startSource({ trackId: 'a', entryId: 'entry-a' }, { sampleRate: 48000, position });
+    await host.prepareQueue(1, [{ trackId: 'b', entryId: 'entry-b' }], 'a');
+    await vi.waitFor(() => expect(host.state().nextTrack?.plan?.debug.requested).toBe(true));
+    expect(requests).toEqual([{ from: 'a', to: 'b', position: position + 1, catchUp: true }]);
+    expect(host.state().nextTrack?.plan?.method).toBe('fallback_crossfade');
+    expect(commands.findLast(c => c.cmd === 'arm').transition.planId).toBe(caughtUp!.id);
+  } finally { await host.stop(); }
+});
 
 it('follows confirmed tokens and serializes rapid skips without exposing file commands to the page', async () => {
   const commands: any[] = [], files: any[] = [];
