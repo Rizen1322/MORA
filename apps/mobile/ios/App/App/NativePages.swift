@@ -28,7 +28,7 @@ struct NativePageView: View {
     private var pageList: some View {
         withSearch(List {
             if let page {
-                ForEach(Array(page.sections.enumerated()), id: .offset) { _, section in sectionView(section) }
+                ForEach(Array(page.sections.enumerated()), id: \.offset) { _, section in sectionView(section) }
             } else if let failure {
                 ContentUnavailableView("Не удалось открыть", systemImage: "exclamationmark.triangle", description: Text(failure))
                     .listRowBackground(Color.clear)
@@ -56,7 +56,7 @@ struct NativePageView: View {
     private func dialogs(_ list: some View) -> some View {
         list
             .refreshable { await load() }
-            .task(id: "(store.path)|(store.revision)|(reload)") { await load() }
+            .task(id: "\(store.path)|\(store.revision)|\(reload)") { await load() }
             .task(id: page?.refresh) {
                 guard let seconds = page?.refresh else { return }
                 while !Task.isCancelled {
