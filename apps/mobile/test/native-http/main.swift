@@ -249,7 +249,8 @@ Task.detached {
         precondition(produced.owned && produced.frames == 14 * 48000, "Progressive song: \(produced)")
         precondition(grown.last?.frames == produced.frames && grown.last?.final == true && grown.dropLast().allSatisfy { !$0.final })
         precondition(zip(grown, grown.dropFirst()).allSatisfy { $0.frames <= $1.frames })
-        precondition((try FileManager.default.attributesOfItem(atPath: growingPCM.path)[.size] as? Int) == produced.frames * 8)
+        let growingSize = try FileManager.default.attributesOfItem(atPath: growingPCM.path)[.size] as? Int
+        precondition(growingSize == produced.frames * 8)
         print("Native progressive start: offered at \(offered) frames during the download, grown to the final length")
         print("Native preparation: delayed optional artwork does not hold ready PCM")
         print("Native queue: failed MIR/planner preserve seven playable future songs")
