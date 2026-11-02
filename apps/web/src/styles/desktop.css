@@ -173,6 +173,8 @@
 /* A fixed dark surface keeps text readable even when cover colours are almost white. */
 .desktop .full-player { color:#f8faf9; --text-2:#c0c9c4; --text-3:#acb7b0; }
 .desktop .full-player .fp-info { border-radius:24px; background:linear-gradient(180deg,#0b1212a8,#0b1212e8); padding:20px; }
+.desktop .fp-title[data-length="medium"] { font-size:clamp(28px,3vw,44px); }
+.desktop .fp-title[data-length="long"] { font-size:clamp(26px,2.5vw,36px); }
 .desktop .full-player .fp-top { background:linear-gradient(#0b1212d9,transparent); }
 .desktop .full-player .fp-up-next,.desktop .full-player .transition-summary { background:#101a18e8; }
 .desktop .player-bar { background:linear-gradient(110deg,#111c1bf5,#101817f5); }

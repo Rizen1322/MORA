@@ -33,7 +33,9 @@ export async function startRadio(seed?: { title: string; artist: string }): Prom
     // Unlock during the launch gesture, before recommendation network requests.
     await controller.unlockAudio();
     if (request !== startRequest || intent !== controller.intentVersion) return;
-    const seeds = tasteSeeds(library(), seedCursor++);
+    const history = await api.history(200).catch(() => ({ items: [] }));
+    if (request !== startRequest || intent !== controller.intentVersion) return;
+    const seeds = tasteSeeds(library(), seedCursor++ + (history.items[0]?.id ?? 0));
     const primary = seed ?? seeds.shift();
     if (!primary) throw new Error('Поставьте лайк или запустите радио по найденному треку — так появится основа для подбора.');
     const resolved = await Promise.allSettled([primary, ...seeds.slice(0, 2)].map(seed => resolveSeed(seed, abort.signal)));
@@ -46,6 +48,10 @@ export async function startRadio(seed?: { title: string; artist: string }): Prom
     const pool = await candidates(found.map(t => t.externalId), abort.signal);
     if (request !== startRequest || intent !== controller.intentVersion) return;
     const seen = new Set<string>();
+    for (const play of history.items) {
+      const track = useApp.getState().tracks.get(play.trackId);
+      if (track && Date.now() - play.startedAt < 2 * 3600000) seen.add(radioIdentity(track));
+    }
     // The explicit seed may be played again deliberately; subsequent picks respect recency.
     let playlist: PublicTrack[];
     if (seed) {
@@ -53,7 +59,10 @@ export async function startRadio(seed?: { title: string; artist: string }): Prom
       seen.add(radioIdentity(first)); seen.add(`${first.audioProvider}:${first.externalId}`);
       playlist = [first, ...rankRadio([...found.slice(1), ...pool], library(), seen, [first.artist], tuning(), primary)];
     } else {
-      playlist = rankRadio([...found, ...pool], library(), seen, [], tuning(), primary);
+      // Liked seeds describe taste; they must not become the same compulsory opening songs.
+      for (const track of found) { seen.add(radioIdentity(track)); seen.add(`${track.audioProvider}:${track.externalId}`); }
+      const offset = Math.floor(Math.random() * pool.length);
+      playlist = rankRadio([...pool.slice(offset), ...pool.slice(0, offset)], library(), seen, [], tuning(), primary);
     }
     if (!playlist.length) throw new Error('Пока нет свежих рекомендаций. Попробуйте радио по другому треку.');
     // play() changes transport intent itself; only pending recommendation requests need cancelling.
@@ -73,7 +82,7 @@ controller.subscribe(() => {
   const s = session;
   if (!s && useRadio.getState().loading && controller.intentVersion !== startIntent) startAbort?.abort();
   if (!s) return;
-  if (publicPlayer.sessionVersion !== s.owner || publicPlayer.remaining < 0) {
+  if (controller.state.context?.type !== 'online-radio' || publicPlayer.sessionVersion !== s.owner || publicPlayer.remaining < 0) {
     s.abort.abort(); session = null; useRadio.setState({ active: false }); return;
   }
   if (s.loading || Date.now() < s.retryAt || publicPlayer.remaining >= 10) return;

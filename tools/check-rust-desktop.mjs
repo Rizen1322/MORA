@@ -144,7 +144,7 @@ try {
     await evaluate(`document.querySelector('button[aria-label="Закрыть очередь"]')?.click();location.hash='#/settings'`);
     for (let i = 0; i < 100; i++) { await delay(100); if (await evaluate(`!!document.querySelector('section[aria-label="Место на диске"]')`)) break; }
     assert.ok(await evaluate(`document.querySelector('section[aria-label="Место на диске"]')?.textContent.includes('Скачанные оригиналы')`), 'Disk management is missing');
-    const screenshotDir = path.join(root, 'data-bench-results/desktop-0.3.26');fs.mkdirSync(screenshotDir, { recursive: true });
+    const screenshotDir = path.join(root, 'data-bench-results/desktop-0.3.27');fs.mkdirSync(screenshotDir, { recursive: true });
     await evaluate(`(()=>{document.querySelector('section[aria-label="Место на диске"]').scrollIntoView({block:'center',behavior:'instant'});return true})()`);
     await delay(200);
     fs.writeFileSync(path.join(screenshotDir, 'settings.png'), Buffer.from((await request('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
@@ -186,6 +186,23 @@ try {
     await delay(200);
     fs.writeFileSync(path.join(screenshotDir, 'player-960.png'), Buffer.from((await request('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
     await request('Emulation.clearDeviceMetricsOverride');
+    await evaluate(`(async()=>{const s=await window.automixDesktop.nativeMix.state();const r=await fetch('/api/tracks/'+s.currentTrack.trackId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'Очень длинное название песни (Prod. by Producer One, Producer Two, Producer Three)'})});if(!r.ok)throw Error(await r.text())})()`);
+    for (let i=0;i<30;i++) { await delay(100); if (await evaluate(`!!document.querySelector('.fp-title[data-length]')`)) break; }
+    const titleSize = await evaluate(`(()=>{const e=document.querySelector('.fp-title');return {size:parseFloat(getComputedStyle(e).fontSize),text:e.textContent}})()`);
+    assert.ok(titleSize.size < 44 && titleSize.text.includes('Producer One'), `Long title did not shrink: ${JSON.stringify(titleSize)}`);
+    await delay(1500);
+    fs.writeFileSync(path.join(screenshotDir, 'player-long-title.png'), Buffer.from((await request('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+    product.longTitle = titleSize;
+    await evaluate(`document.querySelector('.full-player button[aria-label="Свернуть"]').click();location.hash='#/playlist/${playlist.id}'`);
+    for (let i=0;i<30;i++) { await delay(100); if (await evaluate(`!!document.querySelector('.collection-masthead .play-circle')`)) break; }
+    await evaluate(`document.querySelector('.collection-masthead .play-circle').click()`);
+    await delay(400);
+    await evaluate(`location.hash='#/wave'`);
+    for (let i=0;i<30;i++) { await delay(100); if (await evaluate(`!!document.querySelector('.ws-source')`)) break; }
+    await evaluate(`Array.from(document.querySelectorAll('.ws-source button')).find(b=>b.textContent.includes('Онлайн-радио')).click()`);
+    await delay(100);
+    assert.ok(await evaluate(`document.querySelector('.ws-launch')?.textContent.includes('Включить радио')`), 'Playlist is incorrectly shown as an active radio station');
+    product.playlistToRadio = true;
     product.compactMenus = true;
     await evaluate(`document.querySelector('button[aria-label=Слушать]')?.click()`);
     await delay(500);

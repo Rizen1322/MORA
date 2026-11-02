@@ -43,6 +43,7 @@ export function rankRadio(items: PublicTrack[], library: Track[], seen: Set<stri
   });
   const out: PublicTrack[] = [], recent = recentArtists.map(a => artistsOf(a)[0] ?? '');
   while (pool.length && out.length < 18) {
+    const familiarOpening = out.filter(t => { const k = known(t); return k && (k.reaction > 0 || k.playCount > 0); }).length;
     let best = -1, bestScore = -Infinity;
     for (let i = 0; i < pool.length; i++) {
       const t = pool[i], k = known(t), artists = artistsOf(t.artist), artist = artists[0] || '';
@@ -54,6 +55,8 @@ export function rankRadio(items: PublicTrack[], library: Track[], seen: Set<stri
       score += familiarity * (tuning.diversity === 'discover' ? .35 : 1.5);
       if ((k?.reaction ?? 0) > 0) score += tuning.diversity === 'familiar' ? 2 : tuning.diversity === 'discover' ? -.5 : .8;
       if (!k || !k.playCount) score += tuning.diversity === 'discover' ? 1 : .15;
+      // Balanced starts with a discovery and avoids a wall of favourites when alternatives exist.
+      if (tuning.diversity === 'balanced' && out.length < 5 && (out.length === 0 || familiarOpening >= 2) && k && (k.reaction > 0 || k.playCount > 0)) score -= 4;
       score -= recent.slice(-5).filter(a => a === artist).length * .7;
       const energy = k?.analysis?.energy;
       if (typeof energy === 'number' && tuning.mood !== 'normal') score += tuning.mood === 'calm' ? (1 - energy) * 1.2 : energy * 1.2;

@@ -1711,15 +1711,16 @@ function planPhraseCut(
  *   high-pass and echo wash, and B drops at full on the one. Needs a tight grid (the loop is exact).
  * Listener v19.1: the first echo (one beat at 0.6 send, feedback 0.45) was gone 0.1 s after the cut
  * under a full B: heard as a plain cut.
- * v19.2: B no longer slams in dry after the echo (its low-pass opens over a bar, its bass waits two
- * beats), and a calm, slower B gets a wash instead of a hype roll: A's bar loops twice without
+ * v19.2: B no longer slams in dry after the echo (its low-pass opens over a bar, its bass waits a
+ * beat), and a calm, slower B gets a wash instead of a hype roll: A's bar loops twice without
  * rolling, a low-pass closes and the echo rises, with a longer decay over B's soft intro.
  * A Next press (requestedAt) uses the same moves on the next downbeat.
  */
 function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: NonNullable<TransitionPlan['keyInfo']>, fallbackReason?: string): TransitionPlan | null {
   const ga = A.beat!, gb = B.beat!, beat = ga.period, bar = 4 * beat, barB = 4 * gb.period;
   const S = 2 * bar >= 3 ? 2 * bar : 4 * bar;
-  const tail = Math.max(3, Math.min(6, 2 * barB));
+  // a Next press (requestedAt) keeps the move short: its whole overlap budget is 8 s
+  const tail = ctx.requestedAt === undefined ? Math.max(3, Math.min(6, 2 * barB)) : 3;
   // the loop's length and start sit on a 1/300 s grid (whole frames at 44.1 and 48 kHz), L/4 too
   const L = Math.round(bar * 75) / 75;
   const rollable = ga.confidence >= 0.8 && ga.jitterMs <= 12 && ctx.s.loopBridges !== false && ctx.s.djPhrasing !== false
@@ -1756,7 +1757,11 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
   const energyDelta = powerLevel(B, entry.time, entry.time + 8 * barB) + ctx.gainB - (powerLevel(A, d - 2 * bar, d) + ctx.gainA);
   const calm = gb.bpm < 0.85 * ga.bpm && energyDelta <= -3;
   const wash = loop && calm, roll = loop && !calm;
-  const softTail = wash ? Math.min(Math.max(tail, Math.min(8, 3 * barB)), ctx.s.maxBlendSeconds - 2 * L) : tail;
+  // v19.3 echo out breathes (listener: "too fast, the echo cut short"): B opens from its muffled intro
+  // over 2-4 of its bars (about 4 s), and the transition lasts until it is open; a Next keeps one bar
+  const echoSpan = loop ? 0 : now !== undefined ? Math.min(barB, tail)
+    : Math.min(Math.max(2, Math.min(4, Math.ceil(4 / barB))) * barB, ctx.s.maxBlendSeconds - S);
+  const softTail = wash ? Math.min(Math.max(tail, Math.min(8, 3 * barB)), ctx.s.maxBlendSeconds - 2 * L) : Math.max(tail, echoSpan);
   if (wash && (softTail < tail || entry.time + softTail > B.audibleEnd)) return null;
   const T = roll ? 3 * L : wash ? 2 * L : S;
   // echo on A's grid: 3/4 beat (1/2 beat for the roll's stutter), 2-4 audible repeats, -30 dB after
@@ -1764,7 +1769,8 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
   let delay = roll ? beat / 2 : beat * 0.75;
   while (delay < 0.25) delay *= 2;
   while (delay > 0.6) delay /= 2;
-  const feedback = Math.min(0.72, Math.pow(10, -1.5 / ((wash ? 2.5 : 1.5) * bar / delay)));
+  // echo out: the send fades over a bar after the cut and the repeats aim at -30 dB 3.5 bars later (the ring's own filters shorten it)
+  const feedback = Math.min(roll || wash ? 0.72 : 0.82, Math.pow(10, -1.5 / ((wash ? 2.5 : roll ? 1.5 : 3.5) * bar / delay)));
   const D = r3(T + softTail);
   const p = basePlan(ctx, 'echo_out');
   p.bEntry = r3(entry.time); p.duration = D; p.swapAt = r3(T); p.bDelay = r3(T);
@@ -1798,14 +1804,14 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
     p.aExit = r3(d - S);
     p.automation = [
       lane('A', 'gain', [[0, 1], [r3(S - 0.03), 1], [r3(S), 0], [D, 0]]),
-      lane('A', 'filter', shape(0, S, x => 0.5 * smoothstep(x), 8), [[D, 0.5]]),
-      // pre-fader send: open over the last beat, closed at the cut so A's next bar never feeds it
-      lane('A', 'echo', [[0, 0], [r3(S - beat), 0], [r3(S - 0.05), 0.9], [r3(S), 0.9], [r3(S + 0.02), 0], [D, 0]]),
-      // B runs on its own clock after bDelay; it comes up over its first bar so the echo is heard
-      lane('B', 'gain', [[0, 0], [0.02, 0.75]], shape(0.02, Math.min(barB, D - S), x => 0.75 + 0.25 * sinUp(x), 6), [[r3(D - S), 1]]),
-      // and it does not land dry: its low-pass opens over that bar, its bass waits two beats
-      lane('B', 'low', [[0, 0], [r3(1.5 * gb.period), 0], [r3(2 * gb.period), 1], [r3(D - S), 1]]),
-      lane('B', 'filter', shape(0, Math.min(barB, D - S), x => -0.4 * (1 - smoothstep(x)), 6), [[r3(D - S), 0]]),
+      lane('A', 'filter', shape(0, S, x => 0.3 * smoothstep(x), 8), [[D, 0.3]]),
+      // pre-fader send: open over the last beat, then it fades out over a bar instead of stopping (two bars made A's next phrase audible)
+      lane('A', 'echo', [[0, 0], [r3(S - beat), 0], [r3(S - 0.05), 0.9], [r3(S), 0.9]], shape(S, Math.min(D, S + bar), x => 0.9 * cosDown(x), 8), [[D, 0]]),
+      // B runs on its own clock after bDelay; its muffled intro eases up under the echo over echoSpan
+      lane('B', 'gain', [[0, 0], [0.02, 0.8]], shape(0.02, echoSpan, x => 0.8 + 0.2 * sinUp(x), 8), [[r3(D - S), 1]]),
+      // its bass waits a beat (two dipped renders), its low-pass opens on an S-curve in log frequency
+      lane('B', 'low', [[0, 0], [r3(0.75 * gb.period), 0], [r3(gb.period), 1], [r3(D - S), 1]]),
+      lane('B', 'filter', shape(0, echoSpan, x => -0.5 * (1 - smoothstep(x)), 12), [[r3(D - S), 0]]),
     ];
   }
   p.confidence = r3(Math.min(0.7, ga.confidence, gb.confidence));
@@ -1820,7 +1826,7 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
       : `смена на сильной доле: темпы ${ga.bpm.toFixed(0)} и ${gb.bpm.toFixed(0)} BPM не сводятся — текущий трек уходит через фильтр и эхо на границе ${phrase ? 'фразы' : 'четырёх тактов'}, следующий входит на своей сильной доле`,
     ...(fallbackReason ? [fallbackReason] : []),
     roll || wash ? 'два ритма не звучат одновременно: под первым тактом следующего звучит только отфильтрованный хвост эха'
-      : 'два ритма не звучат одновременно: фильтр убирает бас текущего к смене, его эхо на 3/4 доли звучит под первым тактом следующего, бас следующего вступает через две доли',
+      : 'два ритма не звучат одновременно: фильтр убирает бас текущего к смене, его эхо на 3/4 доли звучит под первым тактом следующего, бас следующего вступает через долю',
     cut > 2 ? `пропускается ${Math.round(cut)} с финала` : 'текущий трек звучит почти до конца',
   ];
   describeEntry(p, B, entry);

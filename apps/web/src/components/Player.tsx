@@ -526,7 +526,7 @@ export function FullPlayer() {
         <div className="fp-info">
           <div className="fp-track-heading">
             <p className="fp-eyebrow"><span className="session-dot" data-playing={p.status === 'playing' || p.status === 'buffering'} aria-hidden="true" />{p.status === 'playing' || p.status === 'buffering' ? 'Сейчас играет' : 'На паузе'}</p>
-            <h1 className="fp-title">
+            <h1 className="fp-title" data-length={t.title.length > 60 ? 'long' : t.title.length > 45 ? 'medium' : undefined}>
               <Swap k={t.id}>
                 {t.album ? <a className="fp-link" href={trackAlbumHref(t)} onClick={() => setFull(false)}><SplitWords text={t.title} /></a> : <SplitWords text={t.title} />}
               </Swap>

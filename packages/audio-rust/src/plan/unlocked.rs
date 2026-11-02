@@ -354,7 +354,7 @@ pub fn plan_drop_swap(
     let bar = 4. * beat;
     let bar_b = 4. * n(gb, "period");
     let sweep = if 2. * bar >= 3. { 2. * bar } else { 4. * bar };
-    let tail = 3f64.max(6f64.min(2. * bar_b));
+    let tail = if ctx.requested_at.is_none() { 3f64.max(6f64.min(2. * bar_b)) } else { 3. };
     let l = round(bar * 75.) / 75.;
     let max_blend = n(ctx.s, "maxBlendSeconds");
     let rollable = n(ga, "confidence") >= 0.8
@@ -433,10 +433,18 @@ pub fn plan_drop_swap(
     let calm = n(gb, "bpm") < 0.85 * n(ga, "bpm") && energy_delta <= -3.;
     let wash = looped && calm;
     let roll = looped && !calm;
+    // v19.3: an echo out opens B over 2-4 of its bars (about 4 s); a Next keeps one bar
+    let echo_span = if looped {
+        0.
+    } else if ctx.requested_at.is_some() {
+        bar_b.min(tail)
+    } else {
+        (2f64.max(4f64.min((4. / bar_b).ceil())) * bar_b).min(max_blend - sweep)
+    };
     let soft_tail = if wash {
         tail.max(8f64.min(3. * bar_b)).min(max_blend - 2. * l)
     } else {
-        tail
+        tail.max(echo_span)
     };
     if wash && (soft_tail < tail || time + soft_tail > n(b, "audibleEnd")) {
         return None;
@@ -455,7 +463,16 @@ pub fn plan_drop_swap(
     while delay > 0.6 {
         delay /= 2.;
     }
-    let feedback = 0.72f64.min(10f64.powf(-1.5 / (if wash { 2.5 } else { 1.5 } * bar / delay)));
+    let feedback = (if roll || wash { 0.72f64 } else { 0.82 }).min(10f64.powf(
+        -1.5 / (if wash {
+            2.5
+        } else if roll {
+            1.5
+        } else {
+            3.5
+        } * bar
+            / delay),
+    ));
     let total = r3(t_end + soft_tail);
     let mut p = ctx.base("echo_out");
     p["bEntry"] = json!(r3(time));
@@ -504,21 +521,25 @@ pub fn plan_drop_swap(
         p["aExit"] = json!(r3(d - sweep));
         p["automation"] = json!([
             lane("A", "gain", vec![vec![[0., 1.], [r3(sweep - 0.03), 1.], [r3(sweep), 0.], [total, 0.]]]),
-            lane("A", "filter", vec![shape(0., sweep, |x| 0.5 * smoothstep(x), 8), vec![[total, 0.5]]]),
-            lane("A", "echo", vec![vec![[0., 0.], [r3(sweep - beat), 0.], [r3(sweep - 0.05), 0.9], [r3(sweep), 0.9], [r3(sweep + 0.02), 0.], [total, 0.]]]),
+            lane("A", "filter", vec![shape(0., sweep, |x| 0.3 * smoothstep(x), 8), vec![[total, 0.3]]]),
+            lane("A", "echo", vec![
+                vec![[0., 0.], [r3(sweep - beat), 0.], [r3(sweep - 0.05), 0.9], [r3(sweep), 0.9]],
+                shape(sweep, total.min(sweep + bar), |x| 0.9 * cos_down(x), 8),
+                vec![[total, 0.]],
+            ]),
             lane("B", "gain", vec![
-                vec![[0., 0.], [0.02, 0.75]],
-                shape(0.02, bar_b.min(total - sweep), |x| 0.75 + 0.25 * sin_up(x), 6),
+                vec![[0., 0.], [0.02, 0.8]],
+                shape(0.02, echo_span, |x| 0.8 + 0.2 * sin_up(x), 8),
                 vec![[r3(total - sweep), 1.]],
             ]),
             lane("B", "low", vec![vec![
                 [0., 0.],
-                [r3(1.5 * n(gb, "period")), 0.],
-                [r3(2. * n(gb, "period")), 1.],
+                [r3(0.75 * n(gb, "period")), 0.],
+                [r3(n(gb, "period")), 1.],
                 [r3(total - sweep), 1.],
             ]]),
             lane("B", "filter", vec![
-                shape(0., bar_b.min(total - sweep), |x| -0.4 * (1. - smoothstep(x)), 6),
+                shape(0., echo_span, |x| -0.5 * (1. - smoothstep(x)), 12),
                 vec![[r3(total - sweep), 0.]],
             ]),
         ]);
@@ -554,7 +575,7 @@ pub fn plan_drop_swap(
             if roll || wash {
                 "два ритма не звучат одновременно: под первым тактом следующего звучит только отфильтрованный хвост эха".into()
             } else {
-                "два ритма не звучат одновременно: фильтр убирает бас текущего к смене, его эхо на 3/4 доли звучит под первым тактом следующего, бас следующего вступает через две доли".into()
+                "два ритма не звучат одновременно: фильтр убирает бас текущего к смене, его эхо на 3/4 доли звучит под первым тактом следующего, бас следующего вступает через долю".into()
             },
             if cut > 2. {
                 format!("пропускается {} с финала", round(cut))

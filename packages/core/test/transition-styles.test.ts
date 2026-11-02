@@ -65,12 +65,16 @@ describe('v19 transition styles', () => {
     expect(a.analysis!.phrases.some(t => Math.abs(t - cut) < 0.002)).toBe(true);
     // The high-pass carries A's bass out without a second cut that dips the level.
     expect(lane(p, 'A', 'low')).toBeUndefined();
-    expect(pointValue(lane(p, 'A', 'filter')!, p.swapAt)).toBeCloseTo(0.5, 3);
+    expect(pointValue(lane(p, 'A', 'filter')!, p.swapAt)).toBeCloseTo(0.3, 3);
     expect(p.bDelay).toBe(p.swapAt);
-    // 3/4 beat, 2-4 audible repeats: feedback for about -30 dB after 1.5 bars
+    // 3/4 beat; v19.3 lets it breathe: feedback up to 0.82 and the send fades over a bar after the cut
     expect(p.echo!.delay).toBeCloseTo(0.75 * 60 / 124, 3);
-    expect(p.echo!.feedback).toBeGreaterThan(0.6);
-    expect(pointValue(lane(p, 'B', 'gain')!, 0.05)).toBeLessThan(0.8);
+    expect(p.echo!.feedback).toBeGreaterThan(0.75);
+    expect(p.echo!.feedback).toBeLessThanOrEqual(0.82);
+    const send = lane(p, 'A', 'echo')!, bar = 4 * 60 / 124;
+    expect(pointValue(send, p.swapAt + bar / 2)).toBeGreaterThan(0.3);
+    expect(pointValue(send, p.swapAt + bar + 0.01)).toBe(0);
+    expect(pointValue(lane(p, 'B', 'gain')!, 0.05)).toBeLessThan(0.85);
   });
 
   it('loop roll: without a clean exit A’s last bar is caught and rolled 1 → 1/2 → 1/4 → 1/8 bar, B drops on the one', () => {
@@ -93,13 +97,18 @@ describe('v19 transition styles', () => {
     expect(pointValue(lane(p, 'A', 'filter')!, p.swapAt)).toBeCloseTo(0.6, 3);
   });
 
-  it('echo out: B does not land dry (low-pass opens over a bar, bass waits two beats)', () => {
+  it('echo out: B opens gradually from its muffled intro (2-4 bars, about 4 s), bass waits a beat', () => {
     const p = planTransition(song('a', 124, { sparsePhrases: true }), song('b', 160), S);
     expect(p.debug.variant).toBe('drop-swap');
-    expect(pointValue(lane(p, 'B', 'filter')!, 0)).toBeCloseTo(-0.4, 3);
-    expect(pointValue(lane(p, 'B', 'filter')!, 4 * 60 / 160)).toBe(0);
-    expect(pointValue(lane(p, 'B', 'low')!, 60 / 160)).toBe(0);
-    expect(pointValue(lane(p, 'B', 'low')!, 2 * 60 / 160 + 0.01)).toBe(1);
+    const barB = 4 * 60 / 160, span = 3 * barB; // ceil(4 s / 1.5 s) = 3 bars
+    expect(pointValue(lane(p, 'B', 'filter')!, 0)).toBeCloseTo(-0.5, 3);
+    expect(pointValue(lane(p, 'B', 'filter')!, barB)).toBeLessThan(-0.3);
+    expect(pointValue(lane(p, 'B', 'filter')!, span)).toBe(0);
+    expect(pointValue(lane(p, 'B', 'gain')!, span)).toBe(1);
+    // the transition lasts until B is open (lanes reset to neutral at its end)
+    expect(p.duration - p.bDelay!).toBeGreaterThanOrEqual(span - 0.001);
+    expect(pointValue(lane(p, 'B', 'low')!, 0.7 * 60 / 160)).toBe(0);
+    expect(pointValue(lane(p, 'B', 'low')!, 60 / 160 + 0.01)).toBe(1);
   });
 
   it('a calm, slower B gets a wash, not a hype roll: the bar loops twice, a low-pass closes, B rises softly', () => {
