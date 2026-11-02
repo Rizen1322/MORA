@@ -35,14 +35,14 @@ let described: [String: Any] = ["title": "Плейлист", "refresh": 0.4, "se
     ]],
 ]]
 let page = NativePage(described)!
-let rows = page.sections[0].rows
+let pageRows = page.sections[0].rows
 precondition(page.title == "Плейлист" && page.refresh == 1 && page.search == nil && page.sections[0].reorder?.name == "reorderPlaylist")
-precondition(rows.count == 5, "invalid sliders, plain http links and unknown kinds are dropped")
-if case .track(let id, let remove) = rows[0] { precondition(id == "a" && remove?.act.args["entry"] as? Int == 3) } else { preconditionFailure() }
-if case .item(_, _, let cover, _, _, let path, _, _) = rows[1] { precondition(cover != nil && cover! == nil && path == "/album/x/y") } else { preconditionFailure() }
-if case .item(_, _, let cover, _, _, _, _, _) = rows[2] { precondition(cover == nil, "no cover key: no picture") } else { preconditionFailure() }
-if case .choice(_, _, let value, let options, _, _) = rows[4] { precondition(value == "auto" && options.count == 1) } else { preconditionFailure() }
-precondition(rows[1].searchText == "елка звери" && rows[0].searchText == nil)
+precondition(pageRows.count == 5, "invalid sliders, plain http links and unknown kinds are dropped")
+if case .track(let id, let remove) = pageRows[0] { precondition(id == "a" && remove?.act.args["entry"] as? Int == 3) } else { preconditionFailure() }
+if case .item(_, _, let cover, _, _, let path, _, _) = pageRows[1] { precondition(cover != nil && cover! == nil && path == "/album/x/y") } else { preconditionFailure() }
+if case .item(_, _, let cover, _, _, _, _, _) = pageRows[2] { precondition(cover == nil, "no cover key: no picture") } else { preconditionFailure() }
+if case .choice(_, _, let value, let options, _, _) = pageRows[4] { precondition(value == "auto" && options.count == 1) } else { preconditionFailure() }
+precondition(pageRows[1].searchText == "елка звери" && pageRows[0].searchText == nil)
 precondition(NativePage(["sections": []]) == nil)
 print("Native shell: described pages")
 
