@@ -90,7 +90,10 @@ enum NativeShellError: LocalizedError {
 /// Native side of lib/native-ui.ts. The page owns the data; this keeps its last snapshot.
 final class NativeShellStore: ObservableObject {
     static weak var shared: NativeShellStore?
-    @Published private(set) var library: [NativeTrack] = []
+    @Published private(set) var library: [NativeTrack] = [] { didSet { byId = Dictionary(library.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }) } }
+    private(set) var byId: [String: NativeTrack] = [:]
+    /// Bumped on every snapshot: native pages reload their description from the page.
+    @Published private(set) var revision = 0
     @Published private(set) var playlists: [NativePlaylist] = []
     @Published private(set) var ui = NativeUiState()
     /// The route on screen: the page's, or the one native just asked for (until the page confirms it).
@@ -131,6 +134,7 @@ final class NativeShellStore: ObservableObject {
             pending = nil
             if path != next.path { path = next.path }
         }
+        revision &+= 1
         startPolling()
         return shown
     }
@@ -181,9 +185,16 @@ final class NativeShellStore: ObservableObject {
         go(NativeRoute.root(tab))
     }
 
-    func play(_ list: [NativeTrack], at index: Int, type: String, label: String) {
+    func play(_ list: [NativeTrack], at index: Int, type: String, label: String, id: String? = nil) {
         guard list.indices.contains(index), list[index].ok else { return }
-        run("play", ["ids": list.map(\.id), "index": index, "type": type, "label": label])
+        var args: [String: Any] = ["ids": list.map(\.id), "index": index, "type": type, "label": label]
+        if let id { args["id"] = id }
+        run("play", args)
+    }
+    /// The page's history: native pages sit on top of the route they were opened from.
+    func back() {
+        pending = nil
+        run("back")
     }
     func queue(_ track: NativeTrack, next: Bool) { run("queue", ["ids": [track.id], "next": next]) }
     func react(_ track: NativeTrack, _ value: Int) {
@@ -343,6 +354,7 @@ struct NativeShellContent: View {
             case .liked: NativeTrackListView(title: "Любимое", type: "liked", tracks: store.liked)
             case .library: NativeTrackListView(title: "Медиатека", type: "library", tracks: store.library)
             case .search: NativeSearchView()
+            case .page: NativePageView()
             case .web: Color.clear
             }
             if let text = store.banner {
