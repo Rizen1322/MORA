@@ -21,32 +21,42 @@ struct NativePageView: View {
     @State private var pick: (types: [UTType], multiple: Bool, act: NativePageAct)?
 
     var body: some View {
-        NavigationStack {
-            withSearch(List {
-                if let page {
-                    ForEach(Array(page.sections.enumerated()), id: \.offset) { _, section in sectionView(section) }
-                } else if let failure {
-                    ContentUnavailableView("Не удалось открыть", systemImage: "exclamationmark.triangle", description: Text(failure))
-                        .listRowBackground(Color.clear)
-                } else {
-                    ProgressView().frame(maxWidth: .infinity).listRowBackground(Color.clear)
-                }
-            })
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .background(Color.moraBackground)
-            .navigationTitle(page?.title ?? "")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") }
-                }
-                if running { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
-                if page?.sections.contains(where: { $0.reorder != nil }) == true && query.isEmpty {
-                    ToolbarItem(placement: .topBarTrailing) { EditButton() }
-                }
+        NavigationStack { dialogs(pageList) }
+    }
+
+    // Split out of body: as one expression it exceeds the Swift type checker's time limit.
+    private var pageList: some View {
+        withSearch(List {
+            if let page {
+                ForEach(Array(page.sections.enumerated()), id: .offset) { _, section in sectionView(section) }
+            } else if let failure {
+                ContentUnavailableView("Не удалось открыть", systemImage: "exclamationmark.triangle", description: Text(failure))
+                    .listRowBackground(Color.clear)
+            } else {
+                ProgressView().frame(maxWidth: .infinity).listRowBackground(Color.clear)
             }
+        })
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color.moraBackground)
+        .navigationTitle(page?.title ?? "")
+        .toolbar { toolbar }
+    }
+
+    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") }
+        }
+        if running { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
+        if page?.sections.contains(where: { $0.reorder != nil }) == true && query.isEmpty {
+            ToolbarItem(placement: .topBarTrailing) { EditButton() }
+        }
+    }
+
+    private func dialogs(_ list: some View) -> some View {
+        list
             .refreshable { await load() }
-            .task(id: "\(store.path)|\(store.revision)|\(reload)") { await load() }
+            .task(id: "(store.path)|(store.revision)|(reload)") { await load() }
             .task(id: page?.refresh) {
                 guard let seconds = page?.refresh else { return }
                 while !Task.isCancelled {
@@ -68,7 +78,6 @@ struct NativePageView: View {
                 send(urls, act)
             }
             .onChange(of: store.path) { page = nil; failure = nil; form = [:]; query = "" }
-        }
     }
 
     @ViewBuilder private func withSearch(_ list: some View) -> some View {
