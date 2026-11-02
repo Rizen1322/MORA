@@ -198,8 +198,8 @@ enum NativePageRow {
             let options = (v["options"] as? [[String]] ?? []).compactMap { $0.count == 2 ? (value: $0[0], label: $0[1]) : nil }
             self = .choice(title: title, detail: detail, value: v["value"] as? String ?? "", options: options, act: act, disabled: disabled)
         case "slider":
-            guard let act = NativePageAct(v["act"]), let min = v["min"] as? Double, let max = v["max"] as? Double, min < max else { return nil }
-            self = .slider(title: title, detail: detail, value: v["value"] as? Double ?? min, range: min...max, step: v["step"] as? Double ?? 1,
+            guard let act = NativePageAct(v["act"]), let min = (v["min"] as? NSNumber)?.doubleValue, let max = (v["max"] as? NSNumber)?.doubleValue, min < max else { return nil }
+            self = .slider(title: title, detail: detail, value: (v["value"] as? NSNumber)?.doubleValue ?? min, range: min...max, step: (v["step"] as? NSNumber)?.doubleValue ?? 1,
                            unit: v["unit"] as? String ?? "", act: act, disabled: disabled)
         case "button":
             guard let act = NativePageAct(v["act"]) else { return nil }
@@ -219,7 +219,7 @@ enum NativePageRow {
         case "file":
             guard let act = NativePageAct(v["act"]) else { return nil }
             self = .file(title: title, symbol: v["symbol"] as? String, types: v["types"] as? [String] ?? [], multiple: v["multiple"] as? Bool == true, act: act)
-        case "progress": self = .progress(title: title, value: v["value"] as? Double, detail: detail)
+        case "progress": self = .progress(title: title, value: (v["value"] as? NSNumber)?.doubleValue, detail: detail)
         case "item":
             let cover: String?? = v.keys.contains("cover") ? .some(v["cover"] as? String) : nil
             self = .item(title: title, subtitle: v["subtitle"] as? String, cover: cover, tag: v["tag"] as? String, tone: (v["tone"] as? String).flatMap(NativeTone.init),
