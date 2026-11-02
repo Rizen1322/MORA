@@ -67,14 +67,15 @@ describe('v19 transition styles', () => {
     expect(lane(p, 'A', 'low')).toBeUndefined();
     expect(pointValue(lane(p, 'A', 'filter')!, p.swapAt)).toBeCloseTo(0.3, 3);
     expect(p.bDelay).toBe(p.swapAt);
-    // 3/4 beat; v19.3 lets it breathe: feedback up to 0.82 and the send fades over a bar after the cut
+    // 3/4 beat; v19.4 keeps the tail under B: send 0.4 fading over two beats, feedback up to 0.78
     expect(p.echo!.delay).toBeCloseTo(0.75 * 60 / 124, 3);
-    expect(p.echo!.feedback).toBeGreaterThan(0.75);
-    expect(p.echo!.feedback).toBeLessThanOrEqual(0.82);
-    const send = lane(p, 'A', 'echo')!, bar = 4 * 60 / 124;
-    expect(pointValue(send, p.swapAt + bar / 2)).toBeGreaterThan(0.3);
-    expect(pointValue(send, p.swapAt + bar + 0.01)).toBe(0);
-    expect(pointValue(lane(p, 'B', 'gain')!, 0.05)).toBeLessThan(0.85);
+    expect(p.echo!.feedback).toBeGreaterThan(0.7);
+    expect(p.echo!.feedback).toBeLessThanOrEqual(0.78);
+    const send = lane(p, 'A', 'echo')!, beat = 60 / 124;
+    expect(pointValue(send, p.swapAt)).toBeCloseTo(0.4, 3);
+    expect(pointValue(send, p.swapAt + beat)).toBeGreaterThan(0.2);
+    expect(pointValue(send, p.swapAt + 2 * beat + 0.01)).toBe(0);
+    expect(pointValue(lane(p, 'B', 'gain')!, 0.05)).toBeCloseTo(0.9, 2);
   });
 
   it('loop roll: without a clean exit A’s last bar is caught and rolled 1 → 1/2 → 1/4 → 1/8 bar, B drops on the one', () => {
@@ -97,13 +98,13 @@ describe('v19 transition styles', () => {
     expect(pointValue(lane(p, 'A', 'filter')!, p.swapAt)).toBeCloseTo(0.6, 3);
   });
 
-  it('echo out: B opens gradually from its muffled intro (2-4 bars, about 4 s), bass waits a beat', () => {
+  it('echo out: B loses only its top end for a bar and is full after two, bass waits a beat', () => {
     const p = planTransition(song('a', 124, { sparsePhrases: true }), song('b', 160), S);
     expect(p.debug.variant).toBe('drop-swap');
-    const barB = 4 * 60 / 160, span = 3 * barB; // ceil(4 s / 1.5 s) = 3 bars
-    expect(pointValue(lane(p, 'B', 'filter')!, 0)).toBeCloseTo(-0.5, 3);
-    expect(pointValue(lane(p, 'B', 'filter')!, barB)).toBeLessThan(-0.3);
-    expect(pointValue(lane(p, 'B', 'filter')!, span)).toBe(0);
+    const barB = 4 * 60 / 160, span = 2 * barB;
+    expect(pointValue(lane(p, 'B', 'filter')!, 0)).toBeCloseTo(-0.22, 3);
+    expect(pointValue(lane(p, 'B', 'filter')!, barB / 2)).toBeLessThan(-0.05);
+    expect(pointValue(lane(p, 'B', 'filter')!, barB)).toBe(0);
     expect(pointValue(lane(p, 'B', 'gain')!, span)).toBe(1);
     // the transition lasts until B is open (lanes reset to neutral at its end)
     expect(p.duration - p.bDelay!).toBeGreaterThanOrEqual(span - 0.001);

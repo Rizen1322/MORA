@@ -174,7 +174,7 @@ export class Downloads {
       }
       if (!trackId) throw new ResolverError('Трек не найден', 'failed');
       // Fetches remote audio if the cache dropped it; local files are already offline.
-      await this.lib.resolveMediaPath(this.lib.mediaId(trackId), ctl.signal);
+      await this.lib.resolveMediaPath(this.lib.mediaId(trackId), ctl.signal, 3);
       if (ctl.signal.aborted) return;
       this.lib.setPinned(trackId, true);
       this.lib.setSaved(trackId, true);

@@ -2,7 +2,7 @@
 export class SharedPreparation<T> {
   private jobs = new Map<string, { controller: AbortController; promise: Promise<T>; listeners: Set<{ progress?: (value: number) => void }> }>();
 
-  run(key: string, options: { signal?: AbortSignal; onProgress?: (value: number) => void }, work: (signal: AbortSignal, progress: (value: number) => void) => Promise<T>): Promise<T> {
+  run(key: string, options: { signal?: AbortSignal; onProgress?: (value: number) => void; onJoin?: (signal: AbortSignal) => void }, work: (signal: AbortSignal, progress: (value: number) => void) => Promise<T>): Promise<T> {
     if (options.signal?.aborted) return Promise.reject(options.signal.reason ?? new Error('Отменено'));
     let job = this.jobs.get(key);
     if (!job) {
@@ -16,6 +16,7 @@ export class SharedPreparation<T> {
       this.jobs.set(key, job);
     }
     const current = job;
+    options.onJoin?.(current.controller.signal);
     return new Promise<T>((resolve, reject) => {
       const listener = { progress: options.onProgress };
       current.listeners.add(listener);

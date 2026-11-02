@@ -13,9 +13,10 @@ it('only returns native cache paths to the desktop capability holder', async () 
   const app = Fastify();
   const source = { sourceId: 'key_48000', path: 'private.part', finalPath: 'private.f32', partPath: 'private.part',
     format: 'f32le', totalFrames: 100, availableFrames: 32, complete: false };
+  let mediaId = 'a';
   const pcm = { open: vi.fn(() => ({})), pin: vi.fn(), nativeSource: vi.fn(async () => source) };
   const cfg = { desktopPlaybackToken: 'host-secret', accessToken: 'browser-secret' };
-  const services = { cfg, pcm, lib: { media: () => ({ id: 'a', title: 'A', artist: 'Artist', provider: 'local', content_hash: 'hash', duration: 1 }), mixingPolicy: new Map([['local', true]]) },
+  const services = { cfg, pcm, lib: { media: () => ({ id: mediaId, title: 'A', artist: 'Artist', provider: 'local', content_hash: 'hash', duration: 1 }), mixingPolicy: new Map([['local', true]]) },
     providers: { caps: () => ({ playback: true, caching: 'persistent' }) }, publicMusic: { pcmKey: () => 'key' },
     analysis: { prioritize: vi.fn(), get: () => null }, automix: {}, wave: {}, db: { prepare: () => ({ get: () => undefined }) } } as unknown as Services;
   registerPlaybackRoutes(app, services);
@@ -29,8 +30,11 @@ it('only returns native cache paths to the desktop capability holder', async () 
     const headers = { 'x-mora-desktop-token': 'host-secret' };
     const ok = await app.inject({ method: 'POST', url: '/internal/desktop/pcm-source', headers, payload });
     expect(ok.statusCode).toBe(200);
-    expect(ok.json()).toMatchObject(source);
-    expect(pcm.nativeSource).toHaveBeenCalledOnce();
+    expect(ok.json()).toMatchObject({ ...source, track: { binding: false } });
+    mediaId = 'other';
+    const bound = await app.inject({ method: 'POST', url: '/internal/desktop/pcm-source', headers, payload });
+    expect(bound.json().track.binding).toBe(true);
+    expect(pcm.nativeSource).toHaveBeenCalledTimes(2);
     const invalid = await app.inject({ method: 'POST', url: '/internal/desktop/pcm-source', headers, payload: { ...payload, frames: 32769 } });
     expect(invalid.statusCode).toBe(400);
     cfg.desktopPlaybackToken = '';

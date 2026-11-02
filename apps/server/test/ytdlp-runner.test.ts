@@ -18,3 +18,23 @@ it('preserves Unicode JSON/file paths and removes progress split across pipe chu
     expect(progress).toHaveBeenCalledWith(.5);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+it('reserves a slot for playback and promotes queued or not-yet-queued shared work', async () => {
+  const runner = new YtDlp({ bin: null, jsRuntime: null, runtimeIsElectron: false, ffmpegDir: null, cacheDir: '', concurrency: 2 });
+  const schedule = (runner as unknown as { schedule(priority: 0 | 3, signal: AbortSignal, work: () => Promise<void>): Promise<void> }).schedule.bind(runner);
+  const starts: string[] = [], finish = new Map<string, () => void>();
+  const task = (name: string, signal: AbortSignal, priority: 0 | 3 = 3) => schedule(priority, signal, () => {
+    starts.push(name); return new Promise<void>(resolve => finish.set(name, resolve));
+  });
+  const a = new AbortController(), b = new AbortController(), c = new AbortController();
+  const first = task('background', a.signal), second = task('shared', b.signal);
+  expect(starts).toEqual(['background']);
+  runner.prioritize(b.signal, 0);
+  expect(starts).toEqual(['background', 'shared']);
+  runner.prioritize(c.signal, 0);
+  const third = task('early promotion', c.signal);
+  finish.get('shared')!(); await second;
+  await vi.waitFor(() => expect(starts).toEqual(['background', 'shared', 'early promotion']));
+  finish.get('background')!(); finish.get('early promotion')!();
+  await Promise.all([first, third]);
+});

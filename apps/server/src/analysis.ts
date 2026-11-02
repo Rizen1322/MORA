@@ -199,7 +199,7 @@ export class AnalysisService {
       this.events.emit({ type: 'analysis', trackId: next.trackId, hash: next.hash, status: 'running', progress: 0 });
       const t = this.lib.get(next.trackId);
       r.prep = this.lib
-        .resolveMediaPath(next.trackId, r.abort.signal)
+        .resolveMediaPath(next.trackId, r.abort.signal, next.priority >= PRIORITY.current ? 0 : next.priority >= PRIORITY.next ? 1 : 3)
         .then((input) => {
           if (this.stopped) return; // stop() owns the shutdown; the database may be closing
           if (r.abort.signal.aborted) {

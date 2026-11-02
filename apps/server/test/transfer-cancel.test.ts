@@ -15,13 +15,24 @@ const src = { id: 1, track_id: 't1', provider: 'youtube', external_id: 'aaaaaaaa
 
 function music() {
   const signals: AbortSignal[] = [];
-  const ytdlp = { download: (_url: string, _dir: string, opts: { signal: AbortSignal }) => new Promise((_r, fail) => {
+  const prioritize = vi.fn();
+  const ytdlp = { prioritize, download: (_url: string, _dir: string, opts: { signal: AbortSignal }) => new Promise((_r, fail) => {
     signals.push(opts.signal);
     opts.signal.addEventListener('abort', () => fail(new Error('aborted')));
   }) } as unknown as YtDlp;
   const lib = { get: () => ({ id: 't1', content_hash: 'remote:x' }) } as unknown as Library;
-  return { signals, pm: new PublicMusic({} as Db, lib, {} as FfmpegTools, { dataDir: os.tmpdir() } as AppConfig, ytdlp) };
+  return { signals, prioritize, pm: new PublicMusic({} as Db, lib, {} as FfmpegTools, { dataDir: os.tmpdir() } as AppConfig, ytdlp) };
 }
+
+it('promotes an existing background transfer when playback joins', async () => {
+  const { pm, signals, prioritize } = music();
+  const background = pm.fetchAudio(src, undefined, 3);
+  const playback = pm.fetchAudio(src, undefined, 0);
+  background.catch(() => {}); playback.catch(() => {});
+  await vi.waitFor(() => expect(signals).toHaveLength(1));
+  expect(prioritize).toHaveBeenCalledWith(signals[0], 0);
+  await pm.stop();
+});
 
 it('stops a transfer when its only subscriber cancels', async () => {
   const { pm, signals } = music();

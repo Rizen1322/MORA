@@ -24,13 +24,20 @@ export interface NativeMixConfig {
   preDb?: number;
   playback?: PlaybackSettings;
   volume?: number;
+  userVolume?: number;
+  muted?: boolean;
   position: number;
   index?: number;
   paused?: boolean;
 }
 export type NativeSourceConfig = Omit<NativeMixConfig, 'tracks' | 'index'> & { gainDb?: number };
-export type NativeMixSettings = Pick<NativeMixConfig, 'tone' | 'preDb' | 'playback' | 'volume'> & { gainDb?: number };
+export type NativeMixSettings = Pick<NativeMixConfig, 'tone' | 'preDb' | 'playback' | 'volume'> & { gainDb?: number; userVolume?: number; muted?: boolean };
 export interface NativeMixState {
+  queue?: NativeQueueEntry[];
+  context?: import('./queue-types.ts').PlayContext | null;
+  station?: NativeRadioConfig | null;
+  listeningOwned?: boolean;
+  repeat?: 'off' | 'all' | 'one';
   lastTransition?: { plan: import('@automix/core').TransitionPlan; outcome: Record<string, unknown>; at: number; logId?: number };
   active: boolean;
   playing: boolean;
@@ -61,10 +68,12 @@ export interface NativeMixState {
   ended?: boolean;
 }
 export interface NativeMix {
+  startStation?(station: NativeRadioConfig, config: NativeSourceConfig): Promise<NativeMixState>;
+  setStation?(station: NativeRadioConfig | null, context?: import('./queue-types.ts').PlayContext | null): Promise<NativeMixState>;
   /** Native download/decode and playback of the first recording, without page-side PCM. */
   startSource?(entry: NativeQueueEntry, config: NativeSourceConfig, signal?: AbortSignal): Promise<NativeMixState>;
   prepareQueue?(from: number, entries: NativeQueueEntry[], previousId: string,
-    loopEntries?: NativeQueueEntry[], signal?: AbortSignal, replaceFuture?: boolean): Promise<NativeMixState>;
+    loopEntries?: NativeQueueEntry[], signal?: AbortSignal, replaceFuture?: boolean, manifest?: NativeQueueEntry[]): Promise<NativeMixState>;
   /** Isolates WebKit audio on first use, then appends PCM to a native file. */
   upload(file: number, offset: number, bytes: ArrayBuffer, signal?: AbortSignal): Promise<void>;
   /** (Re)starts native playback of uploaded files. */
@@ -83,4 +92,26 @@ export interface NativeQueueEntry {
   entryId: string;
   transitionContext?: { playlistId: string; fromItemId: number; toItemId: number };
   fromEntryId?: string;
+  origin?: import('./queue-types.ts').Origin;
+  sourcePlaylistId?: string;
+  playlistEntryId?: number;
+  yandexId?: string;
+  yandexSessionId?: string;
+  yandexBatchId?: string | null;
+}
+
+export interface NativeRadioConfig {
+  kind: 'own' | 'yandex' | 'online';
+  seed?: { title: string; artist: string };
+  yandexSessionId?: string;
+}
+export interface NativeRecoverySnapshot {
+  queue: NativeQueueEntry[];
+  index: number;
+  position: number;
+  settings: NativeMixSettings;
+  device: string;
+  loop?: NativeQueueEntry[];
+  station?: NativeRadioConfig;
+  context?: import('./queue-types.ts').PlayContext;
 }

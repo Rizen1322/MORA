@@ -31,7 +31,7 @@ export class ProviderRegistry {
     this.list = [local, new PublicProvider('youtube', publicMusic), new PublicProvider('soundcloud', publicMusic), this.yandex, this.subsonic, this.jamendo, this.audius, spotify()];
     // analysis and mixing are allowed per provider, not per stream URL
     for (const p of this.list) lib.mixingPolicy.set(p.id, p.capabilities().mixing && p.capabilities().analysis);
-    lib.remoteFetcher = (src: SourceRow, signal?: AbortSignal) => this.fetchAudio(src, signal);
+    lib.remoteFetcher = (src: SourceRow, signal?: AbortSignal, priority?: 0 | 1 | 2 | 3) => this.fetchAudio(src, signal, priority);
   }
 
   get(id: string): Provider | undefined {
@@ -46,10 +46,10 @@ export class ProviderRegistry {
     return Promise.all(this.list.map((p) => p.info(force)));
   }
 
-  private fetchAudio(src: SourceRow, signal?: AbortSignal): Promise<string> {
+  private fetchAudio(src: SourceRow, signal?: AbortSignal, priority?: 0 | 1 | 2 | 3): Promise<string> {
     const p = this.get(src.provider);
     if (!p?.fetchAudio) throw new Error('источник не поддерживает воспроизведение');
-    return p.fetchAudio(src, signal);
+    return p.fetchAudio(src, signal, priority);
   }
 }
 

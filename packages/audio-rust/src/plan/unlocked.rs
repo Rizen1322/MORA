@@ -433,13 +433,13 @@ pub fn plan_drop_swap(
     let calm = n(gb, "bpm") < 0.85 * n(ga, "bpm") && energy_delta <= -3.;
     let wash = looped && calm;
     let roll = looped && !calm;
-    // v19.3: an echo out opens B over 2-4 of its bars (about 4 s); a Next keeps one bar
+    // v19.4: an echo out opens B over two of its bars; a Next keeps one bar
     let echo_span = if looped {
         0.
     } else if ctx.requested_at.is_some() {
         bar_b.min(tail)
     } else {
-        (2f64.max(4f64.min((4. / bar_b).ceil())) * bar_b).min(max_blend - sweep)
+        (2. * bar_b).min(max_blend - sweep)
     };
     let soft_tail = if wash {
         tail.max(8f64.min(3. * bar_b)).min(max_blend - 2. * l)
@@ -463,13 +463,13 @@ pub fn plan_drop_swap(
     while delay > 0.6 {
         delay /= 2.;
     }
-    let feedback = (if roll || wash { 0.72f64 } else { 0.82 }).min(10f64.powf(
+    let feedback = (if roll || wash { 0.72f64 } else { 0.78 }).min(10f64.powf(
         -1.5 / (if wash {
             2.5
         } else if roll {
             1.5
         } else {
-            3.5
+            3.
         } * bar
             / delay),
     ));
@@ -521,15 +521,20 @@ pub fn plan_drop_swap(
         p["aExit"] = json!(r3(d - sweep));
         p["automation"] = json!([
             lane("A", "gain", vec![vec![[0., 1.], [r3(sweep - 0.03), 1.], [r3(sweep), 0.], [total, 0.]]]),
-            lane("A", "filter", vec![shape(0., sweep, |x| 0.3 * smoothstep(x), 8), vec![[total, 0.3]]]),
+            // v19.4: quieter send (0.4) over two beats, B nearly full at once, a top-end-only low-pass
+            lane("A", "filter", vec![
+                shape(0., sweep, |x| 0.3 * smoothstep(x), 8),
+                shape(sweep, total.min(sweep + 2. * beat), |x| 0.3 + 0.2 * smoothstep(x), 4),
+                vec![[total, 0.5]],
+            ]),
             lane("A", "echo", vec![
-                vec![[0., 0.], [r3(sweep - beat), 0.], [r3(sweep - 0.05), 0.9], [r3(sweep), 0.9]],
-                shape(sweep, total.min(sweep + bar), |x| 0.9 * cos_down(x), 8),
+                vec![[0., 0.], [r3(sweep - beat), 0.], [r3(sweep - 0.05), 0.4], [r3(sweep), 0.4]],
+                shape(sweep, total.min(sweep + 2. * beat), |x| 0.4 * cos_down(x), 8),
                 vec![[total, 0.]],
             ]),
             lane("B", "gain", vec![
-                vec![[0., 0.], [0.02, 0.8]],
-                shape(0.02, echo_span, |x| 0.8 + 0.2 * sin_up(x), 8),
+                vec![[0., 0.], [0.02, 0.9]],
+                shape(0.02, echo_span, |x| 0.9 + 0.1 * sin_up(x), 8),
                 vec![[r3(total - sweep), 1.]],
             ]),
             lane("B", "low", vec![vec![
@@ -539,7 +544,7 @@ pub fn plan_drop_swap(
                 [r3(total - sweep), 1.],
             ]]),
             lane("B", "filter", vec![
-                shape(0., echo_span, |x| -0.5 * (1. - smoothstep(x)), 12),
+                shape(0., bar_b.min(echo_span), |x| -0.22 * (1. - smoothstep(x)), 12),
                 vec![[r3(total - sweep), 0.]],
             ]),
         ]);

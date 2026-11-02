@@ -41,7 +41,7 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
       const loudness = analysis.get(t.content_hash), target = getSettings(db).automix.loudnessTarget;
       const gainDb = !s.lib.mixingPolicy.get(t.provider) || target === null ? 0 : loudness ? normalizationGain(loudness, target) : -6;
       return { ...source, gainDb, track: { trackId: body.trackId, title: t.title, artist: t.artist,
-        duration: t.duration, coverUrl: t.provider !== 'yandex' && t.cover_id ? `/api/covers/${t.cover_id}` : `/api/tracks/${encodeURIComponent(t.id)}/cover`,
+        duration: t.duration, binding: t.id !== body.trackId, coverUrl: t.provider !== 'yandex' && t.cover_id ? `/api/covers/${t.cover_id}` : `/api/tracks/${encodeURIComponent(t.id)}/cover`,
         mixingAllowed: s.providers.caps(t.provider)?.mixing ?? false } };
     } catch (error) {
       const e = error as Error & { statusCode?: number };

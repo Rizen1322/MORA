@@ -4,6 +4,7 @@ import { api, type AppSettings, type PlaylistSummary, type ProviderInfo, type Tr
 import { sanitizePlayback, type PlaybackSettings, type ToneSettings } from '@automix/core';
 import { useDownloads } from './downloads.ts';
 import { throttleClock } from '../lib/clockThrottle.ts';
+import { desktop } from '../lib/desktop.ts';
 
 export interface Toast {
   id: number;
@@ -107,6 +108,10 @@ export const useApp = create<AppState>((set, get) => ({
   loadSettings: async () => {
     try {
       const s = await api.settings();
+      const audio = (await desktop?.getSettings().catch(() => null))?.audio;
+      if (audio?.tone) s.sound.tone = audio.tone;
+      if (audio?.playback) s.sound.playback = audio.playback;
+      if (audio) controller.outputDevice = audio.outputDevice;
       set({ settings: s });
       controller.setLoudnessTarget(s.automix.loudnessTarget);
       controller.instantNext = s.automix.mixOnNext === false;

@@ -15,6 +15,7 @@ import { AppUpdates } from './app-update.mjs';
 import { watchPower } from './idle-power.mjs';
 import { RustAudio } from './rust-audio.mjs';
 import { WindowsMedia } from './windows-media.mjs';
+import { PlaybackRecovery, audioPreferences, audioOutputSettings } from './recovery.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const resources = app.isPackaged ? process.resourcesPath : path.join(here, '..', 'build');
@@ -64,6 +65,10 @@ let smtcAvailable = false;
 const userData = app.getPath('userData');
 const settingsFile = path.join(userData, 'desktop.json');
 const settings = Object.assign({ closeToTray: true, trayHintShown: false, window: null, dataDir: null }, readJson(settingsFile));
+settings.audio = { ...audioPreferences(settings.audio), outputDevice: typeof settings.audio?.outputDevice === 'string' && settings.audio.outputDevice.length <= 4096 ? settings.audio.outputDevice : '' };
+const recovery = new PlaybackRecovery(path.join(userData, 'playback-recovery.json'));
+let pendingRecovery = null;
+let recoveryTimer = null;
 const dataDir = settings.dataDir || path.join(userData, 'data');
 const launchToken = crypto.randomBytes(32).toString('hex');
 const desktopPlaybackToken = crypto.randomBytes(32).toString('hex');
@@ -84,13 +89,15 @@ const windowsMedia = new WindowsMedia(path.join(resources, 'audio', 'mora-smtc.e
 const resolverUpdater = new ResolverUpdater({ directory: path.join(userData, 'resolver-updates'), bundled: path.join(resources, 'yt-dlp', 'yt-dlp.exe') });
 
 function playbackHost() {
-  return desktopPlaybackLoading ??= import(pathToFileURL(path.join(resources, 'playback/desktop-playback.mjs')).href).then(({ DesktopPlayback }) => {
+  return desktopPlaybackLoading ??= import(pathToFileURL(path.join(resources, 'playback/desktop-playback.mjs')).href).then(async ({ DesktopPlayback }) => {
     desktopPlayback = new DesktopPlayback(rustAudio, {
       backend: () => {
         if (!origin || !backend?.ready) throw new Error('Сервис медиатеки ещё не готов');
         return { origin, accessToken: launchToken, pcmToken: desktopPlaybackToken };
       }, ready: rate => { windowsMedia.reset(); windowsMedia.start(rate); }, track: track => windowsMedia.track(track),
     });
+    await desktopPlayback.setDevice(settings.audio.outputDevice);
+    await desktopPlayback.settings(audioOutputSettings(settings.audio));
     return desktopPlayback;
   }).catch(error => { desktopPlaybackLoading = null; throw error; });
 }
@@ -138,6 +145,40 @@ function writeJsonAtomic(file, value) {
 }
 
 const saveSettings = () => writeJsonAtomic(settingsFile, settings);
+
+function saveAudio(values, device) {
+  settings.audio = { ...settings.audio, ...audioPreferences(values), ...(typeof device === 'string' ? { outputDevice: device } : {}) };
+  saveSettings();
+}
+
+function checkpointPlayback() {
+  if (pendingRecovery || !desktopPlayback) return;
+  try { recovery.checkpoint(desktopPlayback.recoverySnapshot()); }
+  catch (error) { log(`playback checkpoint: ${error.message}`); }
+}
+
+async function offerRecovery() {
+  if (!pendingRecovery) return;
+  const snapshot = pendingRecovery;
+  const answer = await dialog.showMessageBox({ type: 'question', title: 'Восстановление MORA',
+    message: 'Восстановить воспроизведение после неожиданного завершения?',
+    detail: 'Сохранились очередь и позиция последнего трека. Продолжить с этого места?',
+    buttons: ['Продолжить', 'Не восстанавливать'], defaultId: 1, cancelId: 1 });
+  if (quitting) return;
+  if (answer.response === 0) {
+    try {
+      await (await playbackHost()).restoreRecovery({ ...snapshot, device: settings.audio.outputDevice,
+        settings: { ...snapshot.settings, ...audioOutputSettings(settings.audio) } });
+    } catch (error) {
+      log(`playback recovery failed: ${error.message}`);
+      await dialog.showMessageBox({ type: 'error', title: 'Восстановление MORA',
+        message: 'Не удалось восстановить воспроизведение', detail: error.message });
+    }
+  }
+  pendingRecovery = null;
+  try { recovery.checkpoint(desktopPlayback?.recoverySnapshot() ?? null); }
+  catch (error) { log(`playback checkpoint: ${error.message}`); }
+}
 
 /** 32-byte key for provider secrets, stored encrypted with DPAPI via safeStorage. */
 function secretKey() {
@@ -368,6 +409,7 @@ async function openApp(port) {
     cb({ responseHeaders: d.responseHeaders });
   });
   setBackendState('ready');
+  await offerRecovery();
   if (win) await win.loadURL(`${origin}/`);
 }
 
@@ -450,18 +492,27 @@ function handle(channel, fn) {
 function registerIpc() {
   handle('audio:start', async device => {
     if (desktopPlayback?.state().active) throw new Error('Аудиопоток уже управляется нативным плеером');
-    windowsMedia.reset(); const ready = await rustAudio.start(device); windowsMedia.start(ready.sampleRate); return ready;
+    windowsMedia.reset(); const ready = await rustAudio.start(device); windowsMedia.start(ready.sampleRate);
+    if (typeof device === 'string' && device.length <= 4096) saveAudio({}, device);
+    return ready;
   });
   handle('audio:command', async command => {
-    if (command?.cmd === 'output') return (await playbackHost()).setDevice(command.device);
+    if (command?.cmd === 'output') {
+      await (await playbackHost()).setDevice(command.device);
+      saveAudio({}, command.device);
+      return;
+    }
     if (desktopPlayback?.state().active) throw new Error('Используйте управление нативным плеером');
     return rustAudio.command(command);
   });
   handle('audio:stop', () => { windowsMedia.reset(); return desktopPlayback ? desktopPlayback.stop() : rustAudio.stop(); });
   handle('audio:devices', () => rustAudio.devices());
-  for (const method of ['startSource', 'prepareQueue', 'settings', 'stop', 'state', 'command']) {
+  for (const method of ['startSource', 'startStation', 'setStation', 'prepareQueue', 'settings', 'stop', 'state', 'command']) {
     handle(`native-mix:${method}`, async (...args) => {
       const result = await (await playbackHost())[method](...args);
+      if (method === 'startSource' || method === 'startStation') saveAudio(args[1]);
+      if (method === 'settings') saveAudio(args[0]);
+      if (method !== 'state' && method !== 'settings') checkpointPlayback();
       if (method === 'stop') windowsMedia.reset();
       return result;
     });
@@ -491,7 +542,7 @@ function registerIpc() {
   handle('resolver:check', () => resolverUpdater.check());
   handle('resolver:install', () => resolverUpdater.install());
   handle('resolver:rollback', () => resolverUpdater.rollback());
-  handle('settings:get', () => ({ closeToTray: settings.closeToTray, dataDir, version: app.getVersion(), backend: backendState, compact: !!compact, compactOnTop: settings.compactOnTop !== false }));
+  handle('settings:get', () => ({ closeToTray: settings.closeToTray, dataDir, version: app.getVersion(), backend: backendState, compact: !!compact, compactOnTop: settings.compactOnTop !== false, audio: settings.audio }));
   handle('settings:set', (patch) => {
     if (patch && typeof patch.closeToTray === 'boolean') settings.closeToTray = patch.closeToTray;
     saveSettings();
@@ -629,6 +680,9 @@ async function main() {
   hardenSessions();
   registerIpc();
   recoverDataDir();
+  try { pendingRecovery = recovery.begin(); }
+  catch (error) { log(`playback recovery unavailable: ${error.message}`); }
+  recoveryTimer = setInterval(checkpointPlayback, 2000);
 
   tray = new Tray(nativeImage.createFromPath(path.join(assets, 'tray.png')));
   tray.on('click', showWindow);
@@ -637,33 +691,34 @@ async function main() {
   createWindow();
   // idle + mains power lets the backend analyze the whole library (setting analysis.onlyWhenIdle)
   powerWatch = watchPower(powerMonitor, (s) => { try { backend?.proc.postMessage({ type: 'power', ...s }); } catch { /* backend restarting: resent when ready */ } });
-  try {
-    await openApp(await startBackend(0));
-  } catch (e) {
-    log(`backend failed: ${e.message}`);
-    await showError();
-  }
-
   // Stop music before Windows sleeps; never resume on wake by itself.
   powerMonitor.on('suspend', () => { command('pause'); if (rustAudio.process) void rustAudio.command({ cmd: 'pause', paused: true }).catch(() => {}); });
 
-  appUpdates.start();
   app.on('before-quit', () => { quitting = true; appUpdates.dispose(); });
   let stopped = false;
   app.on('will-quit', (e) => {
     if (stopped) return;
     e.preventDefault();
     stopped = true;
+    clearInterval(recoveryTimer);
     globalShortcut.unregisterAll();
     powerWatch?.stop();
     tray?.destroy();
     mediaArtworkAbort?.abort();
     void Promise.allSettled([windowsMedia.stop(), desktopPlayback ? desktopPlayback.stop() : rustAudio.stop(), stopBackend()]).finally(() => {
+      try { recovery.clean(); } catch (error) { log(`playback clean shutdown: ${error.message}`); }
       for (const file of mediaArtworkFiles) { try { fs.unlinkSync(file); } catch { /* optional thumbnail */ } }
       app.quit();
     });
   });
   app.on('window-all-closed', () => { if (!settings.closeToTray || quitting) app.quit(); });
+  try {
+    await openApp(await startBackend(0));
+  } catch (e) {
+    log(`backend failed: ${e.message}`);
+    await showError();
+  }
+  if (!quitting) appUpdates.start();
 }
 
 void main();

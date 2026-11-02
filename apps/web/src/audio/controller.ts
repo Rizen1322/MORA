@@ -6,32 +6,13 @@ import { nativePlaybackControls, playbackDiagnostics, tracePlayback } from '../l
 import { api, ApiError, type AnalysisSummary, type Track } from '../lib/api.ts';
 import { uploadNativePcm } from '../lib/native-pcm-preparation.ts';
 import type { ArmedTransition } from '@automix/core/engine/mixer.ts';
-import type { NativeMixConfig, NativeMixState, NativeMixTrack } from '../lib/native-mix.ts';
+import type { NativeMixConfig, NativeMixState, NativeMixTrack, NativeRadioConfig, NativeMixSettings } from '../lib/native-mix.ts';
 import { desktop } from '../lib/desktop.ts';
 import { createDesktopEngine, DesktopAudioContext, DesktopAnalyser } from './desktop-engine.ts';
 
 export type RepeatMode = 'off' | 'all' | 'one';
-export type Origin = 'user' | 'wave' | 'context' | 'yandex';
-
-export interface QueueEntry {
-  entryId: string;
-  trackId: string;
-  origin: Origin;
-  /** Original playlist occurrence: repeated tracks may have different saved transitions. */
-  sourcePlaylistId?: string;
-  playlistEntryId?: number;
-  reasons?: string[];
-  yandexId?: string;
-  /** Attribution belongs to this recommendation, never to the latest fetched batch. */
-  yandexSessionId?: string;
-  yandexBatchId?: string | null;
-}
-
-export interface PlayContext {
-  type: 'library' | 'album' | 'artist' | 'playlist' | 'liked' | 'wave' | 'yandex-wave' | 'online-radio' | 'search' | 'queue' | 'history';
-  id?: string;
-  label: string;
-}
+import type { Origin, QueueEntry, PlayContext } from '../lib/queue-types.ts';
+export type { Origin, QueueEntry, PlayContext } from '../lib/queue-types.ts';
 
 export interface TransitionState {
   planId: string;
@@ -323,6 +304,49 @@ export class PlayerController {
 
   /** The native host plays the queue: whole tracks are uploaded to it with their planned blends. */
   get native(): boolean { return (!!desktop?.nativeMix || nativeWanted) && !!nativePlaybackControls()?.mix; }
+  get autonomousRadio(): boolean { return !!desktop?.nativeMix?.startStation; }
+  private desktopAudioReady: Promise<void> | null = null;
+  private hydrateDesktopAudio(): Promise<void> {
+    return this.desktopAudioReady ??= (async () => {
+      const audio = (await desktop?.getSettings?.().catch(() => null))?.audio;
+      if (!audio) return;
+      this.outputDevice = audio.outputDevice;
+      if (typeof audio.volume === 'number') this.set({ volume: audio.volume, muted: !!audio.muted });
+      if (audio.tone) this.setTone(audio.tone);
+      if (audio.playback) this.setPlayback(audio.playback);
+    })();
+  }
+
+  async startDesktopStation(station: NativeRadioConfig, context?: PlayContext): Promise<void> {
+    if (!desktop?.nativeMix?.startStation) return;
+    const intent = ++this.previewRevision;
+    const nativeRevision = ++this.nativeRevision;
+    this.nativeAbort.abort(); this.nativeAbort = new AbortController(); this.nativePendingEntry = null;
+    this.queueRevision++; this.resetWaveBuffer();
+    await this.hydrateDesktopAudio();
+    await this.ensureEngine();
+    if (intent !== this.previewRevision || nativeRevision !== this.nativeRevision) return;
+    this.nativeStarting = true;
+    this.set({ waveLoading: true, waveRefillError: null, error: null });
+    try {
+      const state = await desktop.nativeMix.startStation(station, { sampleRate: NATIVE_SR, position: 0, ...this.nativeSettings() });
+      if (intent !== this.previewRevision) return;
+      await this.refreshLibrary();
+      if (intent !== this.previewRevision) return;
+      if (context) await desktop.nativeMix.setStation?.(station, context);
+      this.finishPlay('skip'); this.nativeAt = state.index; this.nativeTracks = []; this.nativeManifestKey = '';
+      this.set({ queue: (state.queue ?? []).map(e => ({ ...e, origin: e.origin ?? 'wave' })), index: state.index,
+        context: context ?? state.context ?? null, repeat: 'off', shuffle: false });
+      this.nativeStarting = false;
+      this.onNativeState(state); this.nativePoll(state.sampleRate); this.scheduleSave();
+    } catch (e) {
+      if (intent === this.previewRevision) { this.set({ error: (e as Error).message }); throw e; }
+    } finally { if (intent === this.previewRevision) { this.nativeStarting = false; this.set({ waveLoading: false }); } }
+  }
+
+  async configureDesktopStation(station: NativeRadioConfig, context?: PlayContext): Promise<void> {
+    await desktop?.nativeMix?.setStation?.(station, context ?? this.state.context);
+  }
   private nativeFiles = new Map<string, { file: number; frames: number }>();
   private nativeFileSeq = 0;
   private nativeTracks: NativeItem[] = [];
@@ -344,6 +368,8 @@ export class PlayerController {
   private nativeQueueRevision = 0;
   private nativeQueueEditRevision = 0;
   private nativeSkip = false;
+  private nativeStation: NativeRadioConfig | null = null;
+  private nativeLibraryRefresh: Promise<void> | null = null;
   /** Plans behind each native track's blend (page-side only, for the player UI). */
   private nativePlans = new WeakMap<NativeItem, TransitionPlan>();
   /** Tracks whose analysis finished after their blend was planned: plan them again. */
@@ -405,11 +431,13 @@ export class PlayerController {
       transition: null, nextPlan: null, nextPending: [], error: null });
     this.focusAnalysis();
     try {
+      if (desktop?.getSettings) await this.hydrateDesktopAudio();
+      if (revision !== this.nativeRevision) return;
       if (this.nativeMix.startSource) {
         const track = this.track(entry.trackId);
         if (!track) throw Error('трек не найден в медиатеке');
         if (track.status === 'missing') throw new ApiError(track.error ?? 'файл не найден', 410);
-        const s = await this.nativeMix.startSource({ trackId: entry.trackId, entryId: entry.entryId },
+        const s = await this.nativeMix.startSource({ ...entry },
           { sampleRate: NATIVE_SR, position: seconds, paused: startPaused || this.state.status === 'paused',
             gainDb: track.mixingAllowed === false ? 0 : gainFromSummary(track.analysis, this.loudnessTarget),
             ...this.nativeSettings() }, abort.signal);
@@ -502,11 +530,17 @@ export class PlayerController {
       try {
         const manifestEntry = (e: QueueEntry, previous?: QueueEntry) => {
           const transitionContext = this.recipeEdge(previous, e);
-          return { trackId: e.trackId, entryId: e.entryId, transitionContext,
+          return { ...e, transitionContext,
             ...(transitionContext && previous ? { fromEntryId: previous.entryId } : {}) };
         };
         await this.nativeMix.prepareQueue(at + 1, entries.map((e, i) => manifestEntry(e, i ? entries[i - 1] : current)), current.trackId,
-          loop.map((e, i) => manifestEntry(e, i ? loop[i - 1] : undefined)), this.nativeAbort.signal, queueRevision !== this.nativeQueueRevision);
+          loop.map((e, i) => manifestEntry(e, i ? loop[i - 1] : undefined)), this.nativeAbort.signal, queueRevision !== this.nativeQueueRevision,
+          this.state.queue.map((e, i, queue) => manifestEntry(e, i ? queue[i - 1] : undefined)));
+        if (desktop?.nativeMix?.setStation) {
+          const type = this.state.context?.type;
+          const station: NativeRadioConfig | null = type === 'wave' ? { kind: 'own' } : type === 'yandex-wave' ? { kind: 'yandex', yandexSessionId: current.yandexSessionId } : type === 'online-radio' ? { kind: 'online' } : null;
+          await desktop.nativeMix.setStation(station && station.kind === this.nativeStation?.kind ? this.nativeStation : station, this.state.context);
+        }
         if (revision !== this.nativeRevision) return;
         this.nativeQueueRevision = queueRevision; this.nativeManifestKey = key; this.set({ nextPending: [], error: null });
         tracePlayback('native.queue.handoff', { outcome: 'accepted' });
@@ -596,7 +630,13 @@ export class PlayerController {
       if (s.failed) this.notify('Нативное воспроизведение остановилось с ошибкой. Нажмите Play, чтобы продолжить.', 'error');
       return;
     }
-    let queue = this.state.queue;
+    if (s.queue && s.queue.some(e => !this.track(e.trackId))) {
+      this.nativeLibraryRefresh ??= this.refreshLibrary().catch(() => {}).finally(() => { this.nativeLibraryRefresh = null; });
+    }
+    if (s.station !== undefined) this.nativeStation = s.station;
+    const previousEntryId = this.state.queue[this.state.index]?.entryId;
+    let queue = s.queue && s.station ? s.queue.map(e => ({ ...e, origin: e.origin ?? 'wave' as const })) : this.state.queue;
+    if (s.context && s.station) this.set({ context: s.context });
     for (const [i, raw] of [[s.index, s.currentTrack], [s.index + 1, s.nextTrack]] as const) {
       if (raw?.entryId) {
         let entry = queue.find(e => e.entryId === raw.entryId);
@@ -609,13 +649,13 @@ export class PlayerController {
     }
     if (queue !== this.state.queue) this.set({ queue });
     const entryId = s.entryId || this.nativeTracks[s.index]?.entryId, index = queue.findIndex(e => e.entryId === entryId);
-    if (entryId && (s.index !== this.nativeAt || (index >= 0 && index !== this.state.index))) {
-      this.finishPlay(!this.nativeSkip && s.index === this.nativeAt + 1 ? 'transition' : 'skip');
+    if (entryId && (entryId !== previousEntryId || s.index !== this.nativeAt || (index >= 0 && index !== this.state.index))) {
+      if (entryId !== previousEntryId) this.finishPlay(!this.nativeSkip && s.index === this.nativeAt + 1 ? 'transition' : 'skip');
       this.nativeSkip = false;
       this.nativeAt = s.index;
       if (index >= 0) this.set({ index });
       this.maxPos = 0;
-      if (index >= 0) this.beginPlay(this.state.queue[index]);
+      if (index >= 0 && entryId !== previousEntryId) this.beginPlay(this.state.queue[index]);
       this.pruneNativeFiles();
       this.focusAnalysis();
       this.scheduleSave();
@@ -659,8 +699,8 @@ export class PlayerController {
     return { transition: pending, nextPlan: pending?.plan ?? null };
   }
 
-  private nativeSettings(): Pick<NativeMixConfig, 'tone' | 'preDb' | 'playback' | 'volume'> {
-    return { playback: this.playback, volume: this.state.muted ? 0 : this.state.volume * this.fadeGain,
+  private nativeSettings(): NativeMixSettings {
+    return { playback: this.playback, volume: this.state.muted ? 0 : this.state.volume * this.fadeGain, userVolume: this.state.volume, muted: this.state.muted,
       ...(this.tone ? { tone: this.tone, preDb: preampFor(this.tone, NATIVE_SR) } : {}) };
   }
 
@@ -1172,6 +1212,7 @@ export class PlayerController {
   }
 
   async startWave(kind: 'own' | 'yandex' = 'own'): Promise<void> {
+    if (this.autonomousRadio) return this.startDesktopStation({ kind });
     const revision = ++this.previewRevision;
     this.resetWaveBuffer();
     const epoch = this.waveEpoch;
@@ -1381,7 +1422,7 @@ export class PlayerController {
     this.postVolume();
   }
   private postVolume(): void {
-    if (this.native) void nativePlaybackControls()?.mix?.settings({ volume: this.state.muted ? 0 : this.state.volume * this.fadeGain }).catch(() => {});
+    if (this.native) void nativePlaybackControls()?.mix?.settings({ volume: this.state.muted ? 0 : this.state.volume * this.fadeGain, userVolume: this.state.volume, muted: this.state.muted }).catch(() => {});
     this.post({ cmd: 'volume', value: this.state.muted ? 0 : this.state.volume * this.fadeGain });
   }
 
@@ -1688,6 +1729,7 @@ export class PlayerController {
   }
 
   private topUpWave(): Promise<void> {
+    if (this.autonomousRadio) return Promise.resolve();
     if (this.waveRequest) return this.waveRequest;
     if (!this.isWave() || this.state.waveLoading || !this.waveNeedsMore()) return Promise.resolve();
     if (Date.now() < this.waveRetryAt) {
@@ -2433,6 +2475,7 @@ export class PlayerController {
   private playStartPos = 0;
 
   private beginPlay(entry: QueueEntry): void {
+    if (this.autonomousRadio) { this.playId = null; this.radioPlay = null; this.updateMediaSession(); return; }
     const ctx = this.state.context?.type ?? 'queue';
     this.playStartPos = this.maxPos;
     this.playId = null;
@@ -2466,6 +2509,7 @@ export class PlayerController {
       this.heardEntries.add(entry.entryId);
       if (this.heardEntries.size > 200) this.heardEntries.delete(this.heardEntries.values().next().value!);
     }
+    if (this.autonomousRadio) { this.playId = null; this.radioPlay = null; return; }
     if (this.playId !== null) {
       const ms = Math.round(Math.max(0, this.maxPos - this.playStartPos) * 1000);
       void api.endPlay(this.playId, ms, reason, transitionId).catch(() => {});
@@ -2515,6 +2559,8 @@ export class PlayerController {
 
   async restore(): Promise<void> {
     const intent = this.previewRevision, revision = this.nativeRevision, queueRevision = this.queueRevision;
+    const stale = () => intent !== this.previewRevision || revision !== this.nativeRevision || queueRevision !== this.queueRevision ||
+      !!this.current || !!this.state.queue.length || this.state.waveLoading || this.state.status === 'loading';
     try {
       const q = (await api.queue().catch(() => null)) as {
         items: QueueEntry[];
@@ -2531,13 +2577,15 @@ export class PlayerController {
       const native = controls?.mix ? await controls.mix.state().catch(() => null) : null;
       // Initial provider/library loading can outlive the listener's first
       // Play/queue command. Restoration must never replace that newer intent.
-      if (intent !== this.previewRevision || revision !== this.nativeRevision || queueRevision !== this.queueRevision
-        || this.current || this.state.queue.length || this.state.waveLoading || this.state.status === 'loading') return;
+      if (stale()) return;
       const saved = q && Array.isArray(q.items) ? q : null;
       const items = saved?.items.filter((e) => this.track(e.trackId)) ?? [];
-      const active = native?.active && !native.failed && !native.preparing ? native : null;
+      const active = native?.active && !native.failed && (!native.preparing || desktop?.nativeMix && native.currentTrack) ? native : null;
+      const hostQueue = active?.queue;
+      if (hostQueue?.some(e => !this.track(e.trackId))) await this.refreshLibrary();
       // A native queue can outlive WebContent and its last persisted position.
       // Include audible/upcoming entries even if persistence preceded their arrival.
+      if (hostQueue?.length) items.splice(0, items.length, ...[...new Map(hostQueue.map(e => [e.entryId, e])).values()].map(e => ({ ...e, origin: e.origin ?? 'user' as const })));
       for (const raw of active ? [active.currentTrack, active.nextTrack] : []) {
         if (raw?.entryId && raw.trackId && this.track(raw.trackId) && !items.some(e => e.entryId === raw.entryId)) {
           items.push({ trackId: raw.trackId, entryId: raw.entryId, origin: 'user' });
@@ -2545,15 +2593,18 @@ export class PlayerController {
       }
       const curId = active?.entryId || (saved && saved.items[saved.index]?.entryId);
       const index = Math.max(0, items.findIndex((e) => e.entryId === curId));
+      const audio = (await desktop?.getSettings?.().catch(() => null))?.audio;
+      if (stale()) return;
       this.originalOrder = saved?.originalOrder ?? null;
       this.restoredPosition = saved?.position ?? 0;
       this.set({
         queue: items,
         index: items.length ? index : -1,
-        context: saved?.context ?? null,
+        context: active?.context ?? saved?.context ?? null,
         shuffle: !!saved?.shuffle,
-        repeat: saved?.repeat ?? 'off',
-        volume: systemVolume ? 1 : saved?.volume ?? 0.9,
+        repeat: active?.repeat ?? saved?.repeat ?? 'off',
+        volume: systemVolume ? 1 : audio?.volume ?? saved?.volume ?? 0.9,
+        muted: !!audio?.muted,
         position: this.restoredPosition,
         duration: items[index] ? this.track(items[index].trackId)?.duration ?? 0 : 0,
         status: 'idle',

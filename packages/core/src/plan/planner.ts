@@ -1759,8 +1759,9 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
   const wash = loop && calm, roll = loop && !calm;
   // v19.3 echo out breathes (listener: "too fast, the echo cut short"): B opens from its muffled intro
   // over 2-4 of its bars (about 4 s), and the transition lasts until it is open; a Next keeps one bar
+  // v19.4 (listener: "the effect is too loud, it takes you out of the music"): two bars, not 2-4
   const echoSpan = loop ? 0 : now !== undefined ? Math.min(barB, tail)
-    : Math.min(Math.max(2, Math.min(4, Math.ceil(4 / barB))) * barB, ctx.s.maxBlendSeconds - S);
+    : Math.min(2 * barB, ctx.s.maxBlendSeconds - S);
   const softTail = wash ? Math.min(Math.max(tail, Math.min(8, 3 * barB)), ctx.s.maxBlendSeconds - 2 * L) : Math.max(tail, echoSpan);
   if (wash && (softTail < tail || entry.time + softTail > B.audibleEnd)) return null;
   const T = roll ? 3 * L : wash ? 2 * L : S;
@@ -1769,8 +1770,8 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
   let delay = roll ? beat / 2 : beat * 0.75;
   while (delay < 0.25) delay *= 2;
   while (delay > 0.6) delay /= 2;
-  // echo out: the send fades over a bar after the cut and the repeats aim at -30 dB 3.5 bars later (the ring's own filters shorten it)
-  const feedback = Math.min(roll || wash ? 0.72 : 0.82, Math.pow(10, -1.5 / ((wash ? 2.5 : roll ? 1.5 : 3.5) * bar / delay)));
+  // echo out: the send fades over two beats after the cut and the repeats aim at -30 dB 3 bars later (the ring's own filters shorten it)
+  const feedback = Math.min(roll || wash ? 0.72 : 0.78, Math.pow(10, -1.5 / ((wash ? 2.5 : roll ? 1.5 : 3) * bar / delay)));
   const D = r3(T + softTail);
   const p = basePlan(ctx, 'echo_out');
   p.bEntry = r3(entry.time); p.duration = D; p.swapAt = r3(T); p.bDelay = r3(T);
@@ -1804,14 +1805,17 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
     p.aExit = r3(d - S);
     p.automation = [
       lane('A', 'gain', [[0, 1], [r3(S - 0.03), 1], [r3(S), 0], [D, 0]]),
-      lane('A', 'filter', shape(0, S, x => 0.3 * smoothstep(x), 8), [[D, 0.3]]),
-      // pre-fader send: open over the last beat, then it fades out over a bar instead of stopping (two bars made A's next phrase audible)
-      lane('A', 'echo', [[0, 0], [r3(S - beat), 0], [r3(S - 0.05), 0.9], [r3(S), 0.9]], shape(S, Math.min(D, S + bar), x => 0.9 * cosDown(x), 8), [[D, 0]]),
-      // B runs on its own clock after bDelay; its muffled intro eases up under the echo over echoSpan
-      lane('B', 'gain', [[0, 0], [0.02, 0.8]], shape(0.02, echoSpan, x => 0.8 + 0.2 * sinUp(x), 8), [[r3(D - S), 1]]),
-      // its bass waits a beat (two dipped renders), its low-pass opens on an S-curve in log frequency
+      // after the cut A is silent and its filter only thins what still reaches the send (A's next bar)
+      lane('A', 'filter', shape(0, S, x => 0.3 * smoothstep(x), 8), shape(S, Math.min(D, S + 2 * beat), x => 0.3 + 0.2 * smoothstep(x), 4), [[D, 0.5]]),
+      // pre-fader send: open over the last beat, then it fades over two beats. v19.4: 0.4, not 0.9 (the
+      // first repeat came at -1 dB of A and the tail sat 2-7 dB under a full B; now about -10..-18 dB)
+      lane('A', 'echo', [[0, 0], [r3(S - beat), 0], [r3(S - 0.05), 0.4], [r3(S), 0.4]], shape(S, Math.min(D, S + 2 * beat), x => 0.4 * cosDown(x), 8), [[D, 0]]),
+      // B runs on its own clock after bDelay and is nearly full at once (0.9) under the quieter echo
+      lane('B', 'gain', [[0, 0], [0.02, 0.9]], shape(0.02, echoSpan, x => 0.9 + 0.1 * sinUp(x), 8), [[r3(D - S), 1]]),
+      // its bass waits a beat (two dipped renders); the low-pass only takes the top end (-0.22, about 7 kHz)
+      // and opens on an S-curve over one of B's bars (-0.5 from 1.9 kHz over 4 s sounded like a filter gimmick)
       lane('B', 'low', [[0, 0], [r3(0.75 * gb.period), 0], [r3(gb.period), 1], [r3(D - S), 1]]),
-      lane('B', 'filter', shape(0, echoSpan, x => -0.5 * (1 - smoothstep(x)), 12), [[r3(D - S), 0]]),
+      lane('B', 'filter', shape(0, Math.min(barB, echoSpan), x => -0.22 * (1 - smoothstep(x)), 12), [[r3(D - S), 0]]),
     ];
   }
   p.confidence = r3(Math.min(0.7, ga.confidence, gb.confidence));

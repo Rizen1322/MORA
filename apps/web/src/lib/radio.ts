@@ -25,6 +25,13 @@ async function resolveSeed(seed: { title: string; artist: string }, signal: Abor
 
 /** Multi-seed service candidates, filtered/ranked locally with current reactions on every refill. */
 export async function startRadio(seed?: { title: string; artist: string }): Promise<void> {
+  if (controller.autonomousRadio) {
+    useRadio.setState({ loading: true, error: null });
+    try { await controller.startDesktopStation({ kind: 'online', ...(seed ? { seed } : {}) }); }
+    catch (e) { const error = (e as Error).message; useRadio.setState({ error }); useApp.getState().toast(error, 'error'); }
+    finally { useRadio.setState({ loading: false }); }
+    return;
+  }
   const request = ++startRequest, intent = controller.intentVersion;
   startAbort?.abort(); session?.abort.abort();
   const abort = new AbortController(); startAbort = abort; startIntent = intent;
@@ -124,6 +131,7 @@ async function station(seeds: Seed[], queue: QueueEntry[], anchor: Seed, signal:
 }
 
 function followStation(found: Station, items: PublicTrack[], abort: AbortController): void {
+  if (controller.autonomousRadio) { void controller.configureDesktopStation({ kind: 'online' }); return; }
   session?.abort.abort();
   session = { seen: found.seen, loading: false, retryAt: 0, owner: publicPlayer.follow(items.map(asCatalog)), cursor: 0, abort };
   useRadio.setState({ active: true, error: null });
@@ -247,6 +255,7 @@ export function startSimilar(t: Track): Promise<void> {
 
 /** Radio by an artist: seeds from their songs in the library (liked first), or the catalog's popular ones. */
 export function startArtistRadio(artist: string, songs: Seed[] = []): Promise<void> {
+  if (controller.autonomousRadio) return controller.startDesktopStation({ kind: 'online', seed: artistSeeds(artist, library(), songs)[0] }, { type: 'online-radio', label: `Радио: ${artist}` });
   return buttonStation(async (request, abort) => {
     await controller.unlockAudio();
     const intent = controller.intentVersion;

@@ -43,6 +43,40 @@ it('replans a missed musical point after seeking instead of keeping the nearby f
   } finally { await host.stop(); }
 });
 
+it('arms the ready plan instead of the no-analysis fallback after a seek near the end', async () => {
+  const settings = { ...DEFAULT_AUTOMIX_SETTINGS, mixOnNext: false };
+  const track = (id: string) => ({ id, duration: 20, mixingAllowed: true, analysis: null });
+  const fallback = planTransition(track('a'), track('b'), settings);
+  const position = fallback.aExit - 1.5, real = { ...fallback, id: 'tp_real', method: 'echo_out' as const, aExit: fallback.aExit + 0.6 };
+  const commands: any[] = [];
+  let host: DesktopPlayback;
+  const audio = { process: {}, start: vi.fn(async () => ({ sampleRate: 48000, queueFrames: 2048 })),
+    feedFile: vi.fn(async () => {}), stop: vi.fn(async () => {}), command: vi.fn(async (v: any) => {
+      commands.push(v);
+      if (v.cmd === 'start') queueMicrotask(() => host.onEvent({ type: 'tick', clock: 0, paused: false, main: v.deck,
+        decks: [0, 1].map(deck => ({ token: deck === v.deck ? v.token : null, playing: deck === v.deck,
+          position: v.frame, totalFrames: 960000, starved: false, ratio: 1, bufferedAhead: 960000 })), transition: null, limiterDb: 0, peak: 0 }));
+    }) };
+  const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
+    const pathname = new URL(String(url)).pathname, body = init?.body ? JSON.parse(String(init.body)) : null;
+    if (pathname === '/internal/desktop/pcm-source') return Response.json({ path: 'private', finalPath: 'private', partPath: '',
+      format: 'f32le', gainDb: -6, totalFrames: 960000, availableFrames: 960000, complete: true,
+      track: { trackId: body.trackId, title: body.trackId, artist: '', duration: 20, coverUrl: '', mixingAllowed: true } });
+    if (pathname === '/api/settings') return Response.json({ automix: settings });
+    if (pathname === '/api/automix/plan') return Response.json({ plan: real, pending: [] });
+    return Response.json({});
+  };
+  host = new DesktopPlayback(audio, { backend: () => ({ origin: 'http://127.0.0.1', accessToken: '', pcmToken: 'secret' }),
+    ready: vi.fn(), track: vi.fn(), fetch: fetcher as typeof fetch });
+  try {
+    await host.startSource({ trackId: 'a', entryId: 'entry-a' }, { sampleRate: 48000, position });
+    await host.prepareQueue(1, [{ trackId: 'b', entryId: 'entry-b' }], 'a');
+    await vi.waitFor(() => expect(commands.some(c => c.cmd === 'arm')).toBe(true));
+    expect(commands.filter(c => c.cmd === 'arm').map(c => c.transition.planId)).toEqual(['tp_real']);
+    expect(host.state().nextTrack?.plan?.method).toBe('echo_out');
+  } finally { await host.stop(); }
+});
+
 it('follows confirmed tokens and serializes rapid skips without exposing file commands to the page', async () => {
   const commands: any[] = [], files: any[] = [];
   const logs: any[] = [];

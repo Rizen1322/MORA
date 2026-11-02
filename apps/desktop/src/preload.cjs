@@ -11,8 +11,10 @@ const subscribe = (channel, check) => (cb) => {
 
 contextBridge.exposeInMainWorld('automixDesktop', {
   nativeMix: {
+    startStation: (station, config) => ipcRenderer.invoke('native-mix:startStation', station, config),
+    setStation: (station, context) => ipcRenderer.invoke('native-mix:setStation', station, context),
     startSource: (entry, config) => ipcRenderer.invoke('native-mix:startSource', entry, config),
-    prepareQueue: (from, entries, previousId, loopEntries, _signal, replaceFuture) => ipcRenderer.invoke('native-mix:prepareQueue', from, entries, previousId, loopEntries, replaceFuture),
+    prepareQueue: (from, entries, previousId, loopEntries, _signal, replaceFuture, manifest) => ipcRenderer.invoke('native-mix:prepareQueue', from, entries, previousId, loopEntries, replaceFuture, manifest),
     settings: (values) => ipcRenderer.invoke('native-mix:settings', values),
     stop: () => ipcRenderer.invoke('native-mix:stop'),
     state: () => ipcRenderer.invoke('native-mix:state'),

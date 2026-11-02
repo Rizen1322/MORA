@@ -50,3 +50,15 @@ it('waits for an aborted download to release its slot before a rapid resume', as
   await downloads.stop();
   expect(job.state).toBe('cancelled');
 });
+
+it('resolves an existing track at background priority', async () => {
+  const resolveMediaPath = vi.fn((_id: string, signal: AbortSignal) => new Promise<string>((_resolve, reject) => {
+    signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+  }));
+  const lib = { get: () => ({ id: 'a', title: 'A' }), mediaId: (id: string) => id, sources: () => [], resolveMediaPath };
+  const downloads = new Downloads({} as Db, lib as unknown as Library, {} as PublicMusic, { emit: vi.fn() } as unknown as EventHub, {} as AppConfig);
+  const job = downloads.add({ trackId: 'a' });
+  expect(resolveMediaPath).toHaveBeenCalledWith('a', expect.any(AbortSignal), 3);
+  downloads.cancel(job.id);
+  await downloads.stop();
+});

@@ -9,7 +9,7 @@ export interface AppUpdateStatus {
   error: string | null;
 }
 export interface DesktopBridge {
-  nativeMix?: Pick<import('./native-mix.ts').NativeMix, 'startSource' | 'prepareQueue' | 'settings' | 'stop' | 'state' | 'command'>;
+  nativeMix?: Pick<import('./native-mix.ts').NativeMix, 'startSource' | 'startStation' | 'setStation' | 'prepareQueue' | 'settings' | 'stop' | 'state' | 'command'>;
   audioStart?(device?: string): Promise<{ sampleRate: number; engine: 'rust'; queueFrames: number }>;
   audioCommand?(command: import('../audio/engine.worklet.ts').EngineCommand | { cmd: 'output'; device: string } | { cmd: 'suspend' | 'resume' }): Promise<void>;
   audioStop?(): Promise<void>;
@@ -25,7 +25,8 @@ export interface DesktopBridge {
   resolverCheck(): Promise<ResolverStatus>;
   resolverInstall(): Promise<ResolverStatus>;
   resolverRollback(): Promise<ResolverStatus>;
-  getSettings(): Promise<{ closeToTray: boolean; dataDir: string; version: string; backend: string; compact: boolean; compactOnTop: boolean }>;
+  getSettings(): Promise<{ closeToTray: boolean; dataDir: string; version: string; backend: string; compact: boolean; compactOnTop: boolean;
+    audio?: Pick<import('./native-mix.ts').NativeMixSettings, 'tone' | 'preDb' | 'playback' | 'volume' | 'muted'> & { outputDevice: string } }>;
   setCompact(on: boolean, onTop?: boolean): Promise<{ on: boolean; onTop: boolean }>;
   setTitlebarOverlay(transparent: boolean): Promise<{ transparent: boolean }>;
   onCompact(cb: (on: boolean) => void): () => void;
