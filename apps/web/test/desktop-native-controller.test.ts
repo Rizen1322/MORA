@@ -33,3 +33,31 @@ it('keeps the confirmed track visible while rapid desktop starts select a later 
   clearInterval(h.nativeTimer); clearTimeout(h.saveTimer);
   vi.unstubAllGlobals();
 });
+
+it('adopts a desktop station after a pause or settings save during its start', async () => {
+  let started!: (value: NativeMixState) => void;
+  const state = (position: number): NativeMixState => ({ active: true, playing: true, index: 0, position, duration: 20, station: { kind: 'own' } as any,
+    queue: [{ trackId: 'a', entryId: 'entry-a', origin: 'wave' }],
+    currentTrack: { trackId: 'a', entryId: 'entry-a', title: 'a', artist: '', totalFrames: 960000, gainDb: 0 } });
+  Object.assign(bridge.nativeMix, { startStation: vi.fn(() => new Promise<NativeMixState>(resolve => { started = resolve; })),
+    startSource: vi.fn(), prepareQueue: vi.fn(async () => state(0)), settings: vi.fn(async () => {}), stop: vi.fn(async () => {}),
+    state: vi.fn(async () => state(0)), command: vi.fn(async () => state(0)) });
+  vi.stubGlobal('window', { automixDesktop: bridge });
+  vi.stubGlobal('navigator', {});
+  vi.stubGlobal('document', { hidden: false, documentElement: { classList: { contains: () => false } } });
+  const { PlayerController } = await import('../src/audio/controller.ts');
+  const controller = new PlayerController(id => ({ id, title: id, duration: 20, status: 'ok', analysis: {} } as any), vi.fn());
+  const h = controller as any;
+  vi.spyOn(h, 'refreshLibrary').mockResolvedValue(undefined);
+  const start = controller.startDesktopStation({ kind: 'own' } as any);
+  await vi.waitFor(() => expect(bridge.nativeMix.startStation).toHaveBeenCalled());
+  controller.onSettingsChanged(null);
+  started(state(0)); await start;
+  h.onNativeState(state(12));
+  expect(controller.state).toMatchObject({ status: 'playing', position: 12 });
+  controller.seek(5);
+  expect(bridge.nativeMix.command).toHaveBeenCalledWith('seekto', 5);
+  expect(bridge.nativeMix.startSource).not.toHaveBeenCalled();
+  clearInterval(h.nativeTimer); clearTimeout(h.saveTimer);
+  vi.unstubAllGlobals();
+});
