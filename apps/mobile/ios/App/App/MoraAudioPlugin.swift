@@ -64,6 +64,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativeSourceAppend", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativePrepareQueue", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativePlayerPresent", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeLevels", returnType: CAPPluginReturnPromise),
     ]
 
     private var playing = false
@@ -77,6 +78,9 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private let nativeMix = NativeMixHost()
 
     override public func load() {
+        nativeMix.onLevels = { [weak self] rms, bands in
+            DispatchQueue.main.async { self?.notifyListeners("levels", data: ["rms": rms, "bands": bands]) }
+        }
         MoraPlaybackJournal.record("native.load")
         let nc = NotificationCenter.default
         let session = AVAudioSession.sharedInstance()
@@ -394,6 +398,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
     @objc func nativeMixSettings(_ call: CAPPluginCall) { nativeMix.settings(call.options as? [String: Any] ?? [:], completion: mixReply(call)) }
     @objc func nativeMixStop(_ call: CAPPluginCall) { nativeMix.stop(mixReply(call)) }
+    @objc func nativeLevels(_ call: CAPPluginCall) { nativeMix.setLevels(call.getBool("on") ?? false); call.resolve() }
     @objc func nativeMixState(_ call: CAPPluginCall) { nativeMix.state(mixReply(call)) }
     @objc func nativeSourceReserve(_ call: CAPPluginCall) {
         guard let id = call.getString("id"), let count = call.getInt("count") else { call.reject("Invalid preparation request"); return }

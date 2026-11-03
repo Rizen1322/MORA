@@ -194,6 +194,12 @@ final class NativeMixAnalysis: @unchecked Sendable {
     private static var scriptKey = ""
     private static var cache: [String: [String: Any]] = [:]
     private static var cacheOrder: [String] = []
+    // Results of the bundled analyzer survive relaunches: playlists are not re-analyzed
+    // every session. Test/override scripts stay memory-only.
+    private static let disk = try? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        .appendingPathComponent("MORA/mir", isDirectory: true)
+    private static let bundledScriptKey: String? = Bundle.main.url(forResource: "native-preparation", withExtension: "js", subdirectory: "public")
+        .flatMap { try? Data(contentsOf: $0) }.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
     /// Set once at launch by the app (NativeRustAnalysis); test hosts without the static library keep the script analyzer.
     static var compiled: (version: String, analyze: (URL, Int, @escaping () -> Bool) -> [String: Any]?)?
     private let lock = NSLock()
@@ -318,9 +324,16 @@ final class NativeMixAnalysis: @unchecked Sendable {
             }
         }
     }
+    /// Executor thread only. Lookahead MIR (not the very next transition) drops to
+    /// background QoS, which iOS runs on efficiency cores; re-checked at each checkpoint.
+    private func pace(_ request: Request) {
+        lock.lock(); let urgent = audible < 0 || request.index <= audible + 1; lock.unlock()
+        pthread_set_qos_class_self_np(urgent ? QOS_CLASS_UTILITY : QOS_CLASS_BACKGROUND, 0)
+    }
     private func analyze(_ source: Source, core: NativePreparationCore, scriptKey: String, request: Request, role: String) throws -> Any {
         guard source.value["mixingAllowed"] as? Bool == true else { return NSNull() }
         if let ready = source.value["analysis"] as? [String: Any], ready["version"] as? String == core.analyzerVersion { return ready }
+        pace(request)
         stage("fingerprint", request, role: role)
         let file = try FileHandle(forReadingFrom: source.url)
         defer { try? file.close() }
@@ -331,6 +344,15 @@ final class NativeMixAnalysis: @unchecked Sendable {
         }
         let key = scriptKey + digest.finalize().map { String(format: "%02x", $0) }.joined()
         if let ready = Self.cache[key] { stage("cacheHit", request, role: role); return ready }
+        let stored = scriptKey == Self.bundledScriptKey ? Self.disk?.appendingPathComponent("\(key).json") : nil
+        if let stored, let data = try? Data(contentsOf: stored),
+           let ready = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            Self.remember(key, ready); stage("cacheHit", request, role: role); return ready
+        }
+        // Apple thermal guidance: at serious+ defer optional work. The pair falls back to a crossfade.
+        if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue {
+            stage("thermalSkip", request, role: role); throw NativePreparationCore.Failure.analysis
+        }
         stage("resampling", request, role: role)
         let temporary = source.url.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).mir-44100")
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -344,12 +366,27 @@ final class NativeMixAnalysis: @unchecked Sendable {
             }
             result = value
         } else {
-            result = try core.analyze(temporary, frames: frames, ticket: request.ticket) { [self] name in stage(name, request, role: role) }
+            result = try core.analyze(temporary, frames: frames, ticket: request.ticket) { [self] name in pace(request); stage(name, request, role: role) }
         }
         if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
-        Self.cache[key] = result; Self.cacheOrder.append(key)
-        if Self.cacheOrder.count > 32 { Self.cache.removeValue(forKey: Self.cacheOrder.removeFirst()) }
+        Self.remember(key, result)
+        if let stored { Self.store(result, at: stored) }
         return result
+    }
+    private static func remember(_ key: String, _ result: [String: Any]) {
+        cache[key] = result; cacheOrder.append(key)
+        if cacheOrder.count > 32 { cache.removeValue(forKey: cacheOrder.removeFirst()) }
+    }
+    /// Best effort; a failed write only costs a later re-analysis. Keeps the newest 256 results.
+    private static func store(_ result: [String: Any], at url: URL) {
+        let fm = FileManager.default, folder = url.deletingLastPathComponent()
+        guard (try? fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: NativePreparationFiles.attributes)) != nil,
+              let data = try? JSONSerialization.data(withJSONObject: result) else { return }
+        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        let files = (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        guard files.count > 256 else { return }
+        let date = { (u: URL) in (try? u.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast }
+        for old in files.sorted(by: { date($0) < date($1) }).prefix(files.count - 256) { try? fm.removeItem(at: old) }
     }
 }
 

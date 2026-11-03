@@ -13,6 +13,8 @@ export interface NativeMixPort {
   nativeSourceReserve?(o: { id: string; count: number }): Promise<{ keys: number[] }>;
   nativeSourceAppend?(o: { id: string; key: number; offset: number; base64: string }): Promise<void>;
   nativePrepareQueue?(o: { id: string; manifest: NativePreparationManifest }): Promise<NativeMixState>;
+  /** Swift computes band levels only while this is on. */
+  nativeLevels?(o: { on: boolean }): Promise<void>;
 }
 type Artwork = NonNullable<NativeMixTrack['artwork']>;
 export async function prepareNativeMixArtwork(tracks: NativeMixTrack[], load?: (url: string) => Promise<Artwork | undefined>): Promise<NativeMixTrack[]> {
@@ -96,7 +98,27 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
     signal?.throwIfAborted();
     return manifest;
   };
+  // MoraAudio's overloaded addListener cannot join NativeMixPort's type; the Capacitor proxy has it at runtime.
+  const addListener = (port as { addListener?: (ev: 'levels', fn: (e: { rms: number; bands: number[] }) => void) => Promise<{ remove(): Promise<void> }> }).addListener?.bind(port);
+  const levelListeners = new Set<(e: { rms: number; bands: number[] }) => void>();
+  let levelHandle: Promise<{ remove(): Promise<void> }> | undefined;
   return {
+    ...(addListener && port.nativeLevels ? {
+      // One plugin listener serves all subscribers; Swift computes nothing while none is subscribed.
+      onLevels: (cb: (e: { rms: number; bands: number[] }) => void) => {
+        levelListeners.add(cb);
+        if (!levelHandle) {
+          levelHandle = addListener!('levels', e => levelListeners.forEach(fn => fn(e)));
+          void port.nativeLevels!({ on: true }).catch(() => {});
+        }
+        return () => {
+          if (!levelListeners.delete(cb) || levelListeners.size) return;
+          const handle = levelHandle; levelHandle = undefined;
+          void port.nativeLevels!({ on: false }).catch(() => {});
+          void handle?.then(h => h.remove()).catch(() => {});
+        };
+      },
+    } : {}),
     ...(port.nativePrepareStart && hooks.sources && port.nativeSourceReserve && port.nativeSourceAppend ? {
       startSource: (entry: NativeQueueEntry, config: NativeSourceConfig, signal?: AbortSignal) => {
         const intent = { ...config }; pendingStart = intent;

@@ -19,6 +19,7 @@
 		A1F0C0DE2FF0000100000001 /* MoraAudioPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F0C0DE2FF0000100000002 /* MoraAudioPlugin.swift */; };
 		A1F0C0DE2FF0000100000003 /* NativePlaybackProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F0C0DE2FF0000100000004 /* NativePlaybackProbe.swift */; };
 		D4F0C0DE2FF0000100000001 /* NativePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F0C0DE2FF0000100000002 /* NativePlayer.swift */; };
+		B2F0C0DE2FF00001000000F1 /* NativeLevelMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF00001000000F2 /* NativeLevelMeter.swift */; };
 		D4F0C0DE2FF0000100000003 /* NativePlayerState.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F0C0DE2FF0000100000004 /* NativePlayerState.swift */; };
 		C3F0C0DE2FF0000100000001 /* NativeRustAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F0C0DE2FF0000100000002 /* NativeRustAnalysis.swift */; };
 		A1F0C0DE2FF0000100000005 /* NativeProbeWave.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F0C0DE2FF0000100000006 /* NativeProbeWave.swift */; };
@@ -46,6 +47,7 @@
 		A1F0C0DE2FF0000100000002 /* MoraAudioPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoraAudioPlugin.swift; sourceTree = "<group>"; };
 		A1F0C0DE2FF0000100000004 /* NativePlaybackProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlaybackProbe.swift; sourceTree = "<group>"; };
 		D4F0C0DE2FF0000100000002 /* NativePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlayer.swift; sourceTree = "<group>"; };
+		B2F0C0DE2FF00001000000F2 /* NativeLevelMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLevelMeter.swift; sourceTree = "<group>"; };
 		D4F0C0DE2FF0000100000004 /* NativePlayerState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlayerState.swift; sourceTree = "<group>"; };
 		C3F0C0DE2FF0000100000002 /* NativeRustAnalysis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeRustAnalysis.swift; sourceTree = "<group>"; };
 		A1F0C0DE2FF0000100000006 /* NativeProbeWave.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeProbeWave.swift; sourceTree = "<group>"; };
@@ -102,6 +104,7 @@
 				A1F0C0DE2FF0000100000006 /* NativeProbeWave.swift */,
 				C3F0C0DE2FF0000100000002 /* NativeRustAnalysis.swift */,
 				D4F0C0DE2FF0000100000002 /* NativePlayer.swift */,
+				B2F0C0DE2FF00001000000F2 /* NativeLevelMeter.swift */,
 				D4F0C0DE2FF0000100000004 /* NativePlayerState.swift */,
 				B2F0C0DE2FF0000100000002 /* NativeDSPRenderer.swift */,
 				B2F0C0DE2FF0000100000004 /* NativeMixHost.swift */,
@@ -209,6 +212,7 @@
 				A1F0C0DE2FF0000100000005 /* NativeProbeWave.swift in Sources */,
 				C3F0C0DE2FF0000100000001 /* NativeRustAnalysis.swift in Sources */,
 				D4F0C0DE2FF0000100000001 /* NativePlayer.swift in Sources */,
+				B2F0C0DE2FF00001000000F1 /* NativeLevelMeter.swift in Sources */,
 				D4F0C0DE2FF0000100000003 /* NativePlayerState.swift in Sources */,
 				B2F0C0DE2FF0000100000001 /* NativeDSPRenderer.swift in Sources */,
 				B2F0C0DE2FF0000100000003 /* NativeMixHost.swift in Sources */,

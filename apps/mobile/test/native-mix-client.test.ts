@@ -205,3 +205,14 @@ it('rejects a manifest with reordered or foreign items', async () => {
   const entries = [0, 1].map(i => ({ trackId: `track${i}`, entryId: `entry${i}` }));
   await expect(mix.prepareQueue!(1, entries, 'seed')).rejects.toThrow('Изменилась запись');
 });
+it('shares one levels listener and tells Swift to compute only while subscribed', async () => {
+  const remove = vi.fn(async () => {}), levels = vi.fn(async () => {});
+  let emit!: (e: { rms: number; bands: number[] }) => void;
+  const addListener = vi.fn(async (_ev: 'levels', fn: typeof emit) => { emit = fn; return { remove }; });
+  const mix = createNativeMix({ ...port(), nativeLevels: levels, addListener }, sourceHooks());
+  const a = vi.fn(), b = vi.fn(), stopA = mix.onLevels!(a), stopB = mix.onLevels!(b);
+  expect(addListener).toHaveBeenCalledTimes(1); expect(levels).toHaveBeenCalledWith({ on: true });
+  emit({ rms: .5, bands: [1] }); expect(a).toHaveBeenCalledWith({ rms: .5, bands: [1] }); expect(b).toHaveBeenCalledTimes(1);
+  stopA(); expect(levels).toHaveBeenCalledTimes(1);
+  stopB(); await vi.waitFor(() => expect(remove).toHaveBeenCalled()); expect(levels).toHaveBeenLastCalledWith({ on: false });
+});

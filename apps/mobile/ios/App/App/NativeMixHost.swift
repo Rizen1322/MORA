@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 import Foundation
 import MediaPlayer
@@ -71,6 +72,13 @@ final class NativeMixHost {
     private var targets: [(MPRemoteCommand, Any)] = []
     private var refillTask: UIBackgroundTaskIdentifier = .invalid // main queue only
     private var refillWaiting = false // one finite assertion per waiting interval
+    // Levels for the page visualizer: computed only while the page listens, in the foreground and while playing.
+    var onLevels: ((Double, [Double]) -> Void)? // called on work; the plugin hops to main
+    private var levelsOn = false, foreground = true
+    private var levelBlocks: [(start: Int64, left: Data, right: Data)] = [] // rendered blocks still near the audible frame
+    private var levelTimer: DispatchSourceTimer?
+    private lazy var levelMeter = NativeLevelMeter()
+    private var levelObservers: [NSObjectProtocol] = []
     private enum Failure: Error { case invalid, playback }
     typealias Reply = (Result<[String: Any], Error>) -> Void
 
@@ -89,6 +97,8 @@ final class NativeMixHost {
     deinit {
         for observer in sessionObservers { NotificationCenter.default.removeObserver(observer) }
         if let engineObserver { NotificationCenter.default.removeObserver(engineObserver) }
+        for observer in levelObservers { NotificationCenter.default.removeObserver(observer) }
+        levelTimer?.cancel()
         initialTicket?.cancel(); preparation?.cancel(); analysisWorker.cancel(); artworkLoader.cancel()
     }
 
@@ -180,6 +190,7 @@ final class NativeMixHost {
         return MPMediaItemArtwork(boundsSize: thumbnail.size) { requested in
             let size = CGSize(width: max(1, min(thumbnail.size.width, requested.width.isFinite ? requested.width : 512)),
                               height: max(1, min(thumbnail.size.height, requested.height.isFinite ? requested.height : 512)))
+            if size == thumbnail.size { return thumbnail } // no redraw per lock-screen request
             let format = UIGraphicsImageRendererFormat(); format.scale = 1
             return UIGraphicsImageRenderer(size: size, format: format).image { _ in
                 thumbnail.draw(in: CGRect(origin: .zero, size: size))
@@ -596,7 +607,7 @@ final class NativeMixHost {
         if engine == nil && playing && !interrupted && !mediaResetPending { try buildGraph() }
         epoch += 1; wantsPlaying = false
         player?.stop(); engine?.pause()
-        pending = 0; rendered = 0; queued = 0; completed = 0; presented = 0; marks.removeAll(); done = false; ended = false
+        pending = 0; rendered = 0; queued = 0; completed = 0; presented = 0; marks.removeAll(); done = false; ended = false; levelBlocks.removeAll()
         lastLogFrame = -1
         self.index = index; self.position = position; self.blend = nil; self.skipTarget = -1; self.continueWhenPrepared = false
         var next = config; next["index"] = index; next["position"] = position
@@ -627,6 +638,7 @@ final class NativeMixHost {
             buffer.frameLength = AVAudioFrameCount(block.frames)
             block.left.withUnsafeBytes { if let base = $0.baseAddress { memcpy(channels[0], base, $0.count) } }
             block.right.withUnsafeBytes { if let base = $0.baseAddress { memcpy(channels[1], base, $0.count) } }
+            if levelsOn { levelBlocks.append((rendered, block.left, block.right)) } // Data is copy-on-write: no copy
             marks.append(contentsOf: block.marks.map { NativeMixMark(frame: rendered + $0.frame, index: $0.index, position: $0.position, blend: $0.blend) })
             rendered += Int64(block.frames)
             let end = rendered
@@ -663,6 +675,7 @@ final class NativeMixHost {
         if presented - lastLogFrame >= Int64(sr / 2) { publish("tick"); lastLogFrame = presented }
         // Keep the predecessor for interpolation; storage stays bounded by scheduled audio.
         if let keep = marks.lastIndex(where: { $0.frame < completed - 4096 }), keep > 0 { marks.removeFirst(keep) }
+        if levelsOn { levelBlocks.removeAll { $0.start + Int64($0.left.count / 4) <= presented - Int64(NativeLevelMeter.n) } }
     }
     private func updatePosition() {
         var audible = completed
@@ -728,6 +741,55 @@ final class NativeMixHost {
             "artworkReady": artworks.indices.contains(index) && artworks[index] != nil,
             "preparation": prep["state"] ?? "none", "ready": prep["ready"] ?? 0, "remaining": prep["remaining"] ?? 0,
             "gateUpper": prep["gateUpper"] ?? -1, "gateWaiting": prep["gateWaiting"] ?? -1, "stageSeconds": prep["stageSeconds"] ?? 0])
+    }
+    /// The page asks for levels only while its visualizer listens; off frees the blocks and the timer.
+    func setLevels(_ on: Bool) {
+        work.async {
+            guard on != self.levelsOn else { return }
+            self.levelsOn = on
+            if on {
+                let nc = NotificationCenter.default
+                self.levelObservers = [
+                    nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: nil) { [weak self] _ in self?.work.async { self?.foreground = true; self?.updateLevelTimer() } },
+                    nc.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: nil) { [weak self] _ in self?.work.async { self?.foreground = false; self?.updateLevelTimer() } }]
+                DispatchQueue.main.async { [weak self] in
+                    let active = UIApplication.shared.applicationState == .active
+                    self?.work.async { self?.foreground = active; self?.updateLevelTimer() }
+                }
+            } else {
+                for o in self.levelObservers { NotificationCenter.default.removeObserver(o) }
+                self.levelObservers = []; self.levelBlocks.removeAll()
+            }
+            self.updateLevelTimer()
+        }
+    }
+    private func updateLevelTimer() {
+        if levelsOn && foreground {
+            guard levelTimer == nil else { return }
+            let timer = DispatchSource.makeTimerSource(queue: work) // ~20 Hz with leeway so wakeups coalesce
+            timer.schedule(deadline: .now(), repeating: .milliseconds(50), leeway: .milliseconds(10))
+            timer.setEventHandler { [weak self] in self?.levelTick() }
+            timer.resume(); levelTimer = timer
+        } else { levelTimer?.cancel(); levelTimer = nil }
+    }
+    /// Levels of the 2048 frames ending at the audible frame, from the blocks already rendered.
+    private func levelTick() {
+        guard levelsOn, foreground, wantsPlaying, engine?.isRunning == true, !levelBlocks.isEmpty, let onLevels else { return }
+        updatePosition()
+        let end = presented, start = end - Int64(NativeLevelMeter.n)
+        var half: Float = 0.5
+        let level = levelMeter.analyze(sampleRate: sr) { out in
+            memset(out, 0, NativeLevelMeter.n * MemoryLayout<Float>.size)
+            for b in levelBlocks {
+                let lo = max(start, b.start), hi = min(end, b.start + Int64(b.left.count / 4))
+                guard hi > lo else { continue }
+                let from = Int(lo - b.start), at = Int(lo - start), count = vDSP_Length(hi - lo)
+                b.left.withUnsafeBytes { l in b.right.withUnsafeBytes { r in
+                    vDSP_vasm(l.assumingMemoryBound(to: Float.self).baseAddress! + from, 1, r.assumingMemoryBound(to: Float.self).baseAddress! + from, 1, &half, out + at, 1, count)
+                } }
+            }
+        }
+        onLevels(level.rms, level.bands)
     }
     private func fail() {
         initialTicket?.cancel(); initialTicket = nil; initialConfig = [:]
@@ -940,7 +1002,7 @@ final class NativeMixHost {
         epoch += 1
         if let engineObserver { NotificationCenter.default.removeObserver(engineObserver); self.engineObserver = nil }
         player?.stop(); engine?.stop(); renderer = nil; player = nil; engine = nil; format = nil
-        pending = 0; rendered = 0; queued = 0; completed = 0; presented = 0; marks.removeAll(); blend = nil
+        pending = 0; rendered = 0; queued = 0; completed = 0; presented = 0; marks.removeAll(); blend = nil; levelBlocks.removeAll()
         // Completion belongs to the queue, not the discarded graph. Preserve it
         // while an ended track waits for the producer to deliver its successor.
         lastLogFrame = -1

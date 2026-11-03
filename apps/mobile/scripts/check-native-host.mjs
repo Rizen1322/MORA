@@ -46,7 +46,7 @@ try {
 <key>CFBundleIdentifier</key><string>${bundle}</string><key>CFBundleExecutable</key><string>HostCheck</string><key>CFBundleName</key><string>HostCheck</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleVersion</key><string>1</string><key>CFBundleShortVersionString</key><string>1.0</string><key>UIBackgroundModes</key><array><string>audio</string></array><key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict><key>UILaunchScreen</key><dict/></dict></plist>`);
   await copyFile(resolve(root, 'apps/mobile/www/native-preparation.js'), join(app, 'public/native-preparation.js'));
   const files = ['NativeMixTimeline', 'NativeDSPRenderer', 'NativeMixHost', 'NativeArtworkImage', 'NativePCMDecoder',
-    'NativeMediaHTTP', 'NativeMediaLoader', 'NativePreparationCore', 'NativeQueuePreparation', 'NativeProbeWave']
+    'NativeMediaHTTP', 'NativeMediaLoader', 'NativePreparationCore', 'NativeQueuePreparation', 'NativeProbeWave', 'NativeLevelMeter']
     .map(name => resolve(root, `apps/mobile/ios/App/App/${name}.swift`));
   run('xcrun', ['swiftc', '-sdk', run('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-path']),
     '-target', `${process.arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-ios17.4-simulator`,
