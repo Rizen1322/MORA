@@ -69,6 +69,7 @@ try {
     resolve(root, 'apps/mobile/ios/App/App/NativeMediaLoader.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativePCMDecoder.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativePreparationCore.swift'),
+    resolve(root, 'apps/mobile/ios/App/App/NativeSpectral.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativeQueuePreparation.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativeMixTimeline.swift'),
     resolve(root, 'apps/mobile/test/native-http/main.swift'), '-o', binary], { stdio: 'inherit' });
