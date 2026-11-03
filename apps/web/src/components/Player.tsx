@@ -1,7 +1,7 @@
 import { TrackArtists } from './TrackArtists.tsx';
 import { Radio } from '@phosphor-icons/react';
 import { startSimilar } from '../lib/radio.ts';
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   CaretDown,
   CaretRight,
@@ -362,10 +362,49 @@ export function PlayerBar() {
   );
 }
 
+/**
+ * Mini-player handoff. During an AutoMix blend the outgoing layer slides/fades out and the
+ * incoming one slides/fades in, both driven by blend progress k (same curve as the audio
+ * handoff). A plain skip plays a short CSS version of the same motion. transform/opacity
+ * only; reduced motion keeps the k-driven crossfade, drops the slide and makes skips instant.
+ */
+function Handoff({ cur, to, k, dx, render }: { cur: Track; to?: Track; k: number; dx: number; render: (t: Track) => ReactNode }) {
+  const reduced = useReducedMotion();
+  const blended = useRef<string | null>(null);
+  if (to) blended.current = to.id;
+  const [shown, setShown] = useState<{ cur: Track; leaving: Track | null }>({ cur, leaving: null });
+  if (shown.cur.id !== cur.id) setShown({ cur, leaving: blended.current === cur.id ? null : shown.cur });
+  const leaving = shown.leaving;
+  useEffect(() => {
+    if (!leaving) return;
+    const t = setTimeout(() => setShown((s) => ({ ...s, leaving: null })), 260);
+    return () => clearTimeout(t);
+  }, [leaving]);
+  const s = smooth(Math.max(0, Math.min(1, k)));
+  const slide = (n: number) => (reduced ? undefined : `translate3d(${n}px,0,0)`);
+  const plain = !reduced && blended.current !== cur.id;
+  return (
+    <span className="mh">
+      {to ? (
+        <>
+          <span key={cur.id} style={{ opacity: 1 - s, transform: slide(-dx * s) }}>{render(cur)}</span>
+          <span key={to.id} style={{ opacity: s, transform: slide(dx * (1 - s)) }}>{render(to)}</span>
+        </>
+      ) : (
+        <>
+          {leaving && !reduced && <span key={leaving.id} className="mh-out" aria-hidden="true" style={{ '--dx': `${-dx}px` } as CSSProperties}>{render(leaving)}</span>}
+          <span key={cur.id} className={plain ? 'mh-in' : undefined} style={{ '--dx': `${dx}px` } as CSSProperties}>{render(cur)}</span>
+        </>
+      )}
+    </span>
+  );
+}
+
 export function MiniPlayer() {
   const p = useApp((s) => s.player);
   const setFull = useApp((s) => s.setFullPlayer);
   const t = trackOf(p.queue[p.index]?.trackId);
+  const blend = useBlend(p);
   // In the desktop mini-player the cover brings the full window back.
   const open = () => (document.documentElement.classList.contains('compact') ? void desktop?.setCompact(false) : setFull(true));
   const swipe = useSwipe(() => ({ left: () => void controller.nextTrack(), right: () => void controller.prevTrack(), up: open }));
@@ -374,11 +413,11 @@ export function MiniPlayer() {
   return (
     <div className="mini-player" {...swipe}>
       <button onClick={open} aria-label="Открыть плеер">
-        <Swap k={t.id}><Cover url={t.coverUrl} seed={t.album || t.id} size={44} /></Swap>
+        <Handoff cur={t} to={blend.to} k={blend.k} dx={10} render={(x) => <Cover url={x.coverUrl} seed={x.album || x.id} size={44} />} />
       </button>
       <button onClick={open} style={{ minWidth: 0, textAlign: 'left' }}>
         <div className="t-title ellipsis" style={{ fontSize: 14 }}>
-          <Swap k={t.id}>{t.title}</Swap>
+          <Handoff cur={t} to={blend.to} k={blend.k} dx={18} render={(x) => x.title} />
         </div>
         <div className="caption muted ellipsis"><Swap k={p.transition?.active ? 'mix' : t.id}>{p.transition?.active ? `AutoMix · ${methodShort(p.transition.plan)}` : t.artist}</Swap></div>
       </button>
@@ -393,7 +432,7 @@ export function MiniPlayer() {
         <button className="icon-btn compact-only" aria-label="Следующий" onClick={() => void controller.nextTrack()}><SkipForward size={20} weight="fill" /></button>
       </div>
       <div className="mini-progress" aria-hidden="true">
-        <i style={{ width: `${p.duration ? (p.position / p.duration) * 100 : 0}%` }} />
+        <i key={t.id} style={{ transform: `scaleX(${p.duration ? Math.min(1, p.position / p.duration) : 0})` }} />
       </div>
     </div>
   );
