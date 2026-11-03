@@ -77,6 +77,8 @@ export class YandexProvider implements Provider {
   private reactionAccounts = new Map<string, Promise<string>>();
   private reactionSnapshot: { key: string; expiresAt: number; values: Map<string, ReactionValue> } | null = null;
   private reactionRead: { key: string; promise: Promise<Map<string, ReactionValue>> } | null = null;
+  /** iPhone: native downloads and decodes each track itself, so import records metadata without fetching the MP3. */
+  metadataOnlyImport = false;
   localReactionFor?: (externalId: string) => ReactionValue | undefined;
   onReactionConnectionChanged?: () => void;
   constructor(
@@ -486,17 +488,17 @@ export class YandexProvider implements Provider {
     const canonicalId = this.checkedId(ext.externalId);
     const canonical = this.lib.tracksBySource(this.id, canonicalId).find((t) => t.provider === this.id);
     if (canonical) return canonical.id;
-    const media = await this.audio.prepare(canonicalId, ext.duration);
+    const media = this.metadataOnlyImport ? null : await this.audio.prepare(canonicalId, ext.duration);
     const cover = ext.coverUrl ? await this.audio.cover(ext.coverUrl) : null;
     const coverId = cover ? await this.lib.saveCover(cover.data, cover.type) : null;
     return this.lib.addRemote({ provider: this.id, externalId: canonicalId, title: ext.title, artist: ext.artist, album: ext.album,
-      duration: media.probe.duration, year: album?.year ?? null, genre: album?.genre ?? '',
+      duration: media?.probe.duration ?? ext.duration, year: album?.year ?? null, genre: album?.genre ?? '',
       trackNo: album?.trackPosition?.index ?? null, discNo: album?.trackPosition?.volume ?? null,
       coverId,
-      meta: { pageUrl: ext.pageUrl, suffix: 'mp3', audioHash: media.hash, bitrate: media.bitrate,
+      meta: { pageUrl: ext.pageUrl, suffix: 'mp3', ...(media ? { audioHash: media.hash, bitrate: media.bitrate } : {}),
         catalogArtists: (track.artists ?? []).filter((artist) => artist.id !== undefined && /^\d+$/.test(String(artist.id))).map((artist) => ({ id: String(artist.id), name: artist.name })),
         catalogAlbumId: album?.id ? String(album.id) : null },
-      content: { hash: media.hash, size: media.size, probe: media.probe } }).id;
+      ...(media ? { content: { hash: media.hash, size: media.size, probe: media.probe } } : {}) }).id;
   }
 
   async fetchAudio(src: SourceRow): Promise<string> {

@@ -89,7 +89,7 @@ declare module 'orig-soundcloud' {
 
 /** apps/server, resolved by the bundler; typechecked in its own project. */
 declare module 'mora-server/app' {
-  export function createApp(overrides: Record<string, unknown>, opts?: { logger?: boolean; startWorkers?: boolean }): Promise<{ app: unknown; services: { db: unknown }; close: () => Promise<void> }>;
+  export function createApp(overrides: Record<string, unknown>, opts?: { logger?: boolean; startWorkers?: boolean }): Promise<{ app: unknown; services: { db: unknown; providers: { yandex: { metadataOnlyImport: boolean } } }; close: () => Promise<void> }>;
 }
 declare module 'mora-server/db' {
   export function kvGet<T>(db: unknown, key: string, fallback: T): T;

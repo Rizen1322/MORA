@@ -102,6 +102,7 @@ async function boot(): Promise<void> {
   app = a as unknown as MiniFastify;
   services = svc;
   registerNativeSources(app, svc);
+  svc.providers.yandex.metadataOnlyImport = true;
   post({ t: 'ready' });
   for (const m of early.splice(0)) void app.dispatch(m, post);
 }
