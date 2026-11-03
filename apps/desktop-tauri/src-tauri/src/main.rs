@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod secrets;
+mod profile;
 mod power;
 use serde_json::{json, Value};
 use std::{env, fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc, Mutex}, time::{Duration, Instant}};
@@ -222,7 +223,7 @@ fn show_window(window: &tauri::WebviewWindow) {
     let _ = window.show(); let _ = window.unminimize(); let _ = window.set_focus();
 }
 fn main() {
-    let profile = env::var_os("AUTOMIX_PROFILE_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(env::var_os("LOCALAPPDATA").unwrap_or_default()).join("MORA-Native-Preview"));
+    let profile = env::var_os("AUTOMIX_PROFILE_DIR").map(PathBuf::from).unwrap_or_else(|| profile::choose(&PathBuf::from(env::var_os("LOCALAPPDATA").unwrap_or_default())).expect("existing profile unavailable"));
     fs::create_dir_all(&profile).expect("profile unavailable");
     let resources = env::var_os("AUTOMIX_RESOURCES_DIR").map(PathBuf::from).unwrap_or_else(|| env::current_exe().unwrap().parent().unwrap().join("resources"));
     let app = tauri::Builder::default()

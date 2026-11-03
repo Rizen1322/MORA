@@ -1,3 +1,4 @@
+import { backupBeforeUpgrade } from './profile-backup.mjs';
 // Standalone Node backend; the shell controls it through newline-delimited stdin.
 import { createInterface } from 'node:readline';
 import type { AddressInfo } from 'node:net';
@@ -52,6 +53,7 @@ try {
   const profile = process.env.AUTOMIX_PROFILE_DIR;
   const resources = process.env.AUTOMIX_ROOT;
   if (!profile || !resources) throw new Error('desktop profile or resources missing');
+  await backupBeforeUpgrade(profile, process.env.AUTOMIX_DATA_DIR || path.join(profile, 'data'), process.env.AUTOMIX_VERSION || 'unknown');
   const resolver = new ResolverUpdater({ directory: path.join(profile, 'resolver-updates'), bundled: path.join(resources, 'yt-dlp/yt-dlp.exe'), fetcher: network.fetch });
   process.env.YTDLP_PATH = resolver.executable();
   const created = await createApp({ host: '127.0.0.1', port: wanted, accessToken: token, desktopPlaybackToken });
