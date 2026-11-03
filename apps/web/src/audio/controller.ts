@@ -606,13 +606,20 @@ export class PlayerController {
       this.analyser = analyser;
       this.desktopUnsubscribe = desktop.onAudio(event => {
         if (event.type === 'waveform') analyser.feed(event.samples);
+        else if (event.type === 'levels') analyser.levels(event.rms, event.bands);
         else if (event.type === 'audioHealth') this.onEngine(event);
       });
+    } else if (!desktop && this.nativeMix.onLevels && !this.desktopUnsubscribe) {
+      // iOS mixes natively: band levels of the audible output come from Swift.
+      const analyser = new DesktopAnalyser({ sampleRate, currentTime: 0, baseLatency: 0 });
+      this.analyser = analyser;
+      this.desktopUnsubscribe = this.nativeMix.onLevels(event => analyser.levels(event.rms, event.bands));
     }
     let polling = false;
     this.nativeTimer = setInterval(() => {
-      // A hidden page (if iOS keeps it running) checks less often.
-      if (polling || (document.hidden && performance.now() - this.nativePolledAt < 2000)) return;
+      // A hidden page (if iOS keeps it running) or a paused player checks less often.
+      const idle = document.hidden || !['playing', 'buffering', 'loading'].includes(this.state.status);
+      if (polling || (idle && performance.now() - this.nativePolledAt < 2000)) return;
       polling = true; this.nativePolledAt = performance.now();
       void this.nativeMix.state().then(s => this.onNativeState(s), () => {}).finally(() => { polling = false; });
     }, 500);
@@ -623,6 +630,8 @@ export class PlayerController {
     if (this.nativeAt < 0) return;
     if (!s.active || s.failed) {
       this.nativeRevision++; this.nativeAbort.abort(); this.nativeManifestKey = '';
+      // Every native start calls nativePoll() again.
+      if (this.nativeTimer) { clearInterval(this.nativeTimer); this.nativeTimer = null; }
       this.nativeAt = -1;
       this.nativeFiles.clear();
       this.nativeTracks = [];
@@ -682,21 +691,15 @@ export class PlayerController {
       const plan = item?.plan ?? (item && this.nativePlans.get(item));
       return plan ? { planId: plan.id, plan, active: startsIn === null, late: false, startsIn, progress: Math.max(0, Math.min(1, progress)), fallback: null } : null;
     };
-    const incoming = this.nativeTracks[s.index], next = this.nativeTracks[s.index + 1];
+    const next = this.nativeTracks[s.index + 1];
+    // Both hosts (desktop and iOS) report the audible blend; null means none is playing.
     if (s.blend) {
       const active = view(this.nativeTracks[s.blend.index], s.blend.progress, null);
       if (active) return { transition: active, nextPlan: active.plan };
     }
-    const into = incoming?.transition;
-    // After the swap the incoming track is audible while the blend finishes.
-    if (s.blend === undefined && into && frame < into.entryFrame + into.durationFrames - into.swapFrame) {
-      const active = view(incoming, (frame - into.entryFrame + into.swapFrame) / into.durationFrames, null);
-      if (active) return { transition: active, nextPlan: active.plan };
-    }
     const out = next?.transition;
     if (!out) return { transition: null, nextPlan: null };
-    const pending = view(next, (frame - out.triggerFrame) / out.durationFrames,
-      s.blend === undefined && frame >= out.triggerFrame ? null : Math.max(0, (out.triggerFrame - frame) / NATIVE_SR));
+    const pending = view(next, (frame - out.triggerFrame) / out.durationFrames, Math.max(0, (out.triggerFrame - frame) / NATIVE_SR));
     return { transition: pending, nextPlan: pending?.plan ?? null };
   }
 

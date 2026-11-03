@@ -40,3 +40,22 @@ it('rejects readiness when the native child failed before the start promise resu
   expect(unsubscribe).toHaveBeenCalledOnce();
   expect(errors).toHaveBeenCalledOnce();
 });
+
+it('drives the same visuals from native band levels as from raw PCM', async () => {
+  const { bandLevels } = await import('../src/audio/desktop-engine.ts');
+  const ctx = new DesktopAudioContext(48000, 2048, {} as DesktopBridge);
+  const pcm = Array.from({ length: 2048 }, (_, i) => .5 * Math.sin(2 * Math.PI * 64 * i / 2048));
+  const raw = new DesktopAnalyser(ctx), banded = new DesktopAnalyser(ctx);
+  raw.feed(pcm);
+  const { rms, bands } = bandLevels(pcm, 48000);
+  banded.levels(rms, bands);
+  const a = new Float32Array(2048), b = new Float32Array(2048);
+  raw.getFloatTimeDomainData(a); banded.getFloatTimeDomainData(b);
+  const r = (x: Float32Array) => Math.sqrt(x.reduce((s, v) => s + v * v, 0) / x.length);
+  expect(r(b)).toBeCloseTo(r(a), 5);
+  const fa = new Float32Array(1024), fb = new Float32Array(1024);
+  raw.getFloatFrequencyData(fa); banded.getFloatFrequencyData(fb);
+  const peak = (x: Float32Array) => x.indexOf(Math.max(...x.subarray(1)));
+  expect(Math.abs(peak(fb) * 48000 / 2048 - 1500)).toBeLessThan(500);
+  banded.levels(NaN, bands); banded.getFloatTimeDomainData(b); expect(r(b)).toBeCloseTo(rms, 5);
+});
