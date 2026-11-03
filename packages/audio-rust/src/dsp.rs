@@ -305,6 +305,9 @@ pub struct Echo {
     lp: [f64; 2],
     ha: f64,
     la: f64,
+    /// L<->R cross-feed of the repeats, 0..1 (1 = ping-pong)
+    width: f64,
+    sr: f64,
     zeros: usize,
     out: f64,
     out_step: f64,
@@ -325,6 +328,8 @@ impl Echo {
             lp: [0.; 2],
             ha: (-2. * PI * 250. / sr).exp(),
             la: 1. - (-2. * PI * 6000. / sr).exp(),
+            width: 0.,
+            sr,
             zeros: n,
             out: 1.,
             out_step: 0.,
@@ -345,7 +350,13 @@ impl Echo {
         self.deadline = None;
     }
     pub fn configure(&mut self, delay: f64, feedback: f64) {
+        self.configure_with(delay, feedback, 6000., 0.);
+    }
+    /// `lowpass` (Hz) damps the repeats inside the feedback loop; `width` cross-feeds them L<->R.
+    pub fn configure_with(&mut self, delay: f64, feedback: f64, lowpass: f64, width: f64) {
         self.reset();
+        self.la = 1. - (-2. * PI * lowpass.clamp(200., 16000.) / self.sr).exp();
+        self.width = width.clamp(0., 1.);
         self.delay = (round(delay) as usize).clamp(1, self.l.len() - 1);
         // 0.85 keeps runaway away: the ring is high-passed (250 Hz) and low-passed (6 kHz) on every pass
         self.feedback = feedback.clamp(0., 0.85);
@@ -394,8 +405,17 @@ impl Echo {
                 self.hp[c] = h;
                 self.lp[c] += self.la * (h - self.lp[c]);
             }
-            self.l[self.pos] = (il[i] as f64 + self.lp[0] * self.feedback) as f32;
-            self.r[self.pos] = (ir[i] as f64 + self.lp[1] * self.feedback) as f32;
+            let w = self.width;
+            if w == 0. {
+                self.l[self.pos] = (il[i] as f64 + self.lp[0] * self.feedback) as f32;
+                self.r[self.pos] = (ir[i] as f64 + self.lp[1] * self.feedback) as f32;
+            } else {
+                // ping-pong: the send leans into the left ring and each pass swaps sides by width
+                let (xl, xr) = (il[i] as f64, ir[i] as f64);
+                let m = (xl + xr) * 0.5;
+                self.l[self.pos] = (xl * (1. - w) + m * w + (self.lp[0] * (1. - w) + self.lp[1] * w) * self.feedback) as f32;
+                self.r[self.pos] = (xr * (1. - w) + (self.lp[1] * (1. - w) + self.lp[0] * w) * self.feedback) as f32;
+            }
             self.zeros = if self.l[self.pos] == 0. && self.r[self.pos] == 0. {
                 self.zeros + 1
             } else {

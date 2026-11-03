@@ -62,6 +62,19 @@ for (const mode of ['normal', 'finalists', 'requested']) {
   cases.push({ name: `calm-wash-${mode}`, from: track('a', { duration: aa.duration, analysis: aa }), to: track('b', { duration: bb.duration, analysis: bb }),
     settings: settings({ mixOnNext: true }), mode, position: mode === 'requested' ? 120.4 : undefined });
 }
+// v20 echo-out flavors: drum drop (dub/brake by pair id), calm intro (washout), harsh opening (eased),
+// a late first downbeat (pre-rolled pickup), a loose A grid (no brake), weak onsets (no drop)
+for (const variant of ['drop', 'calm', 'harsh', 'pickup', 'loose', 'onsets']) for (const id of ['b', 'c', 'd', 'e']) {
+  const aa: any = measured(124), bb: any = measured(160);
+  // A thins out at its phrase starts: a clean echo exit, not a loop roll
+  aa.curves.midDensity = aa.curves.midDensity.map((_: number, k: number) => aa.phrases.some((t: number) => Math.abs(k / 20 - t) < 1) ? .05 : .3);
+  if (variant === 'calm') for (const key of ['rmsDb', 'lowDb', 'midDb', 'highDb']) for (let i = 0; i < 30 * 20; i++) bb.curves[key][i] -= 5;
+  if (variant === 'harsh') for (let i = 0; i < 30 * 20; i++) bb.curves.lowDb[i] -= 6;
+  if (variant === 'pickup') { bb.beat.downbeats = bb.beat.downbeats.map((t: number) => t + .3); bb.phrases = bb.phrases.map((t: number) => t + .3); }
+  if (variant === 'loose') aa.beat.jitterMs = 15;
+  if (variant === 'onsets') bb.local = { rate: 1, camelot: [], keyConfidence: [], transients: Array.from({ length: 160 }, () => .1) };
+  cases.push({ name: `echo-flavor-${variant}-${id}`, from: track('a', { duration: aa.duration, analysis: aa }), to: track(id, { duration: bb.duration, analysis: bb }), settings: settings() });
+}
 
 function addMeasured(name: string, aa: TrackAnalysis, bb: TrackAnalysis, extra: Partial<AutoMixSettings> = {}, mode = 'normal', position?: number, feedback?: any): void {
   cases.push({ name, from: track('a', { duration: aa.duration, analysis: aa }), to: track('b', { duration: bb.duration, analysis: bb }), settings: settings(extra), mode, position, feedback });
