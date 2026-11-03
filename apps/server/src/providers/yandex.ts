@@ -488,16 +488,17 @@ export class YandexProvider implements Provider {
     const canonical = this.lib.tracksBySource(this.id, canonicalId).find((t) => t.provider === this.id);
     if (canonical) return canonical.id;
     const media = await this.audio.prepare(canonicalId, ext.duration);
-    const cover = ext.coverUrl ? await this.audio.cover(ext.coverUrl) : null;
-    const coverId = cover ? await this.lib.saveCover(cover.data, cover.type) : null;
-    return this.lib.addRemote({ provider: this.id, externalId: canonicalId, title: ext.title, artist: ext.artist, album: ext.album,
+    // The cover (up to 4 s) must not delay Listen or a wave start; ensureCover fetches it from meta.coverUrl.
+    const { id: trackId } = this.lib.addRemote({ provider: this.id, externalId: canonicalId, title: ext.title, artist: ext.artist, album: ext.album,
       duration: media.probe.duration, year: album?.year ?? null, genre: album?.genre ?? '',
       trackNo: album?.trackPosition?.index ?? null, discNo: album?.trackPosition?.volume ?? null,
-      coverId,
+      coverId: null,
       meta: { pageUrl: ext.pageUrl, coverUrl: ext.coverUrl, suffix: 'mp3', audioHash: media.hash, bitrate: media.bitrate,
         catalogArtists: (track.artists ?? []).filter((artist) => artist.id !== undefined && /^\d+$/.test(String(artist.id))).map((artist) => ({ id: String(artist.id), name: artist.name })),
         catalogAlbumId: album?.id ? String(album.id) : null },
-      content: { hash: media.hash, size: media.size, probe: media.probe } }).id;
+      content: { hash: media.hash, size: media.size, probe: media.probe } });
+    void this.ensureCover(trackId);
+    return trackId;
   }
 
   /** A transient cover timeout at import must not leave the player without artwork forever. */

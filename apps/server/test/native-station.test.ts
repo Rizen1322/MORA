@@ -19,6 +19,9 @@ it('protects and validates station requests and carries Yandex attribution', asy
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ context: { type: 'yandex-wave' }, yandexSessionId: 'session', entries: [{ trackId: 'new', yandexId: '42:1', yandexSessionId: 'session', yandexBatchId: 'batch' }] });
     expect(wave).toHaveBeenCalledWith('previous', ['10:2'], expect.objectContaining({ exclude: ['10:2'] }));
+    await app.inject({ method: 'POST', url: '/internal/desktop/station-next', headers, payload: { ...payload, count: 3 } });
+    // One parallel round of full imports per refill.
+    expect(wave).toHaveBeenLastCalledWith('previous', ['10:2'], expect.objectContaining({ count: 2 }));
   } finally { await app.close(); }
 });
 
