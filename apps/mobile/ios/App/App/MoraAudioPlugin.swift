@@ -63,6 +63,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativeSourceReserve", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeSourceAppend", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativePrepareQueue", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeLevels", returnType: CAPPluginReturnPromise),
     ]
 
     private var playing = false
@@ -77,6 +78,9 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     override public func load() {
         MoraPlaybackJournal.record("native.load")
+        nativeMix.onLevels = { [weak self] rms, bands in
+            DispatchQueue.main.async { self?.notifyListeners("levels", data: ["rms": rms, "bands": bands]) }
+        }
         let nc = NotificationCenter.default
         let session = AVAudioSession.sharedInstance()
         nc.addObserver(self, selector: #selector(interruption(_:)), name: AVAudioSession.interruptionNotification, object: session)
@@ -393,6 +397,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
     @objc func nativeMixSettings(_ call: CAPPluginCall) { nativeMix.settings(call.options as? [String: Any] ?? [:], completion: mixReply(call)) }
     @objc func nativeMixStop(_ call: CAPPluginCall) { nativeMix.stop(mixReply(call)) }
+    @objc func nativeLevels(_ call: CAPPluginCall) { nativeMix.setLevels(call.getBool("on") ?? false); call.resolve() }
     @objc func nativeMixState(_ call: CAPPluginCall) { nativeMix.state(mixReply(call)) }
     @objc func nativeSourceReserve(_ call: CAPPluginCall) {
         guard let id = call.getString("id"), let count = call.getInt("count") else { call.reject("Invalid preparation request"); return }
@@ -444,11 +449,13 @@ enum MoraPlaybackJournal {
         queue.async {
             events.append(safe)
             if events.count > 1200 { events.removeFirst(events.count - 1200) }
-            // Flush at most twice a second even during a command burst.
+            // Playback ticks arrive twice a second: rewriting the whole journal (~300 KB JSON,
+            // encrypted, atomic) that often was continuous CPU + flash work. Reports read memory;
+            // entering background flushes at once.
             if write == nil {
                 let job = DispatchWorkItem { persist(); write = nil }
                 write = job
-                queue.asyncAfter(deadline: .now() + 0.5, execute: job)
+                queue.asyncAfter(deadline: .now() + 10, execute: job)
             }
         }
     }

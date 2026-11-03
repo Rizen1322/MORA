@@ -207,3 +207,14 @@ it('keeps the playing queue when a replacement start fails', async () => {
   await expect(mix.start({ sampleRate: 48000, position: 0, tracks: [track(1)] })).rejects.toThrow('invalid');
   expect(stop).not.toHaveBeenCalled();
 });
+it('shares one levels listener and tells Swift to compute only while subscribed', async () => {
+  const remove = vi.fn(async () => {}), levels = vi.fn(async () => {});
+  let emit!: (e: { rms: number; bands: number[] }) => void;
+  const addListener = vi.fn(async (_ev: 'levels', fn: typeof emit) => { emit = fn; return { remove }; });
+  const mix = createNativeMix({ ...port(), nativeLevels: levels, addListener }, sourceHooks());
+  const a = vi.fn(), b = vi.fn(), stopA = mix.onLevels!(a), stopB = mix.onLevels!(b);
+  expect(addListener).toHaveBeenCalledTimes(1); expect(levels).toHaveBeenCalledWith({ on: true });
+  emit({ rms: .5, bands: [1] }); expect(a).toHaveBeenCalledWith({ rms: .5, bands: [1] }); expect(b).toHaveBeenCalledTimes(1);
+  stopA(); expect(levels).toHaveBeenCalledTimes(1);
+  stopB(); await vi.waitFor(() => expect(remove).toHaveBeenCalled()); expect(levels).toHaveBeenLastCalledWith({ on: false });
+});

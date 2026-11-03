@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		B2F0C0DE2FF0000100000011 /* NativeMixTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF0000100000012 /* NativeMixTimeline.swift */; };
 		B2F0C0DE2FF0000100000013 /* NativeSpectral.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF0000100000014 /* NativeSpectral.swift */; };
+		B2F0C0DE2FF00001000000F1 /* NativeLevelMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF00001000000F2 /* NativeLevelMeter.swift */; };
 		B2F0C0DE2FF000010000000B /* NativeMediaLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF000010000000C /* NativeMediaLoader.swift */; };
 		B2F0C0DE2FF000010000000D /* NativePreparationCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF000010000000E /* NativePreparationCore.swift */; };
 		B2F0C0DE2FF000010000000F /* NativeQueuePreparation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF0000100000010 /* NativeQueuePreparation.swift */; };
@@ -34,6 +35,7 @@
 /* Begin PBXFileReference section */
 		B2F0C0DE2FF0000100000012 /* NativeMixTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMixTimeline.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF0000100000014 /* NativeSpectral.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpectral.swift; sourceTree = "<group>"; };
+		B2F0C0DE2FF00001000000F2 /* NativeLevelMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLevelMeter.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF000010000000C /* NativeMediaLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMediaLoader.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF000010000000E /* NativePreparationCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePreparationCore.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF0000100000010 /* NativeQueuePreparation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeQueuePreparation.swift; sourceTree = "<group>"; };
@@ -106,6 +108,7 @@
 				B2F0C0DE2FF0000100000010 /* NativeQueuePreparation.swift */,
 				B2F0C0DE2FF0000100000012 /* NativeMixTimeline.swift */,
 				B2F0C0DE2FF0000100000014 /* NativeSpectral.swift */,
+				B2F0C0DE2FF00001000000F2 /* NativeLevelMeter.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -211,6 +214,7 @@
 				B2F0C0DE2FF000010000000F /* NativeQueuePreparation.swift in Sources */,
 				B2F0C0DE2FF0000100000011 /* NativeMixTimeline.swift in Sources */,
 				B2F0C0DE2FF0000100000013 /* NativeSpectral.swift in Sources */,
+				B2F0C0DE2FF00001000000F1 /* NativeLevelMeter.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
