@@ -264,6 +264,8 @@ fn main() {
             let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(format!("{origin}/").parse()?))
                 .title("MORA").decorations(false).inner_size(1280.0, 820.0).min_inner_size(960.0, 680.0).visible(!hidden)
                 .data_directory(profile.join("webview2")).initialization_script(script)
+                // Tauri's native file-drop handler swallows HTML5 drag-and-drop in WebView2 (queue, playlists).
+                .disable_drag_drop_handler()
                 .on_navigation(move |url| url.origin().ascii_serialization() == trusted);
             if hidden {
                 if let Ok(args) = env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") { builder = builder.additional_browser_args(&args); }

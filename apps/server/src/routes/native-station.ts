@@ -60,7 +60,8 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
       const found = resolved.flatMap(r => r.status === 'fulfilled' && r.value ? [r.value] : []);
       const first = resolved[0].status === 'fulfilled' ? resolved[0].value : undefined;
       if (initial && b.seed && !first) throw new Error('Не нашли начальную песню для радио');
-      if (!found.length) throw new Error('Не нашли основу радио');
+      if (!found.length) throw new Error(resolved.every(r => r.status === 'rejected')
+        ? 'YouTube Music не отвечает. Проверьте интернет или VPN и попробуйте снова.' : 'Не нашли основу радио');
       const results = await Promise.allSettled([...new Set(found.map(t => t.externalId))].slice(0, 3).map(id => s.publicMusic.radio(id, abort.signal)));
       abort.signal.throwIfAborted();
       const pool = results.flatMap(r => r.status === 'fulfilled' ? r.value.map(t => ({ ...t, libraryTrackId: t.libraryTrackId ?? null })) : []);

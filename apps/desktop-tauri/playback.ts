@@ -139,7 +139,10 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
     const operation = request.params.operation;
     if (!Object.hasOwn(operations, operation) || !Array.isArray(request.body) || request.body.length > 6) return reply.code(400).send({ error: 'Некорректная команда' });
     const args = request.body;
-    const result = await operations[operation](...args);
+    let result;
+    // The bridge shows `error`; Fastify's default 500 would hide the reason behind "Internal Server Error".
+    try { result = await operations[operation](...args); }
+    catch (e) { return reply.code(502).send({ error: (e as Error).message || 'Ошибка воспроизведения' }); }
     if (operation === 'startSource' || operation === 'startStation') saveAudio(args[1]);
     if (operation === 'settings') saveAudio(args[0]);
     if (operation !== 'state' && operation !== 'settings') checkpoint();

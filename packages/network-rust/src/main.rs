@@ -76,17 +76,44 @@ fn error(message: &str) -> Response {
         .into_response()
 }
 
+// DPI-bypass routers (zapret, podkop) pass YouTube far more often when the ClientHello spans two
+// packets; the post-quantum key share makes it ~1.6 KB like browsers send. Dropped handshakes
+// stall rather than fail, so early attempts use a short connect timeout and are retried.
+const FAST_CONNECT: Duration = Duration::from_millis(2500);
+const CONNECT_ATTEMPTS: usize = 4;
+
+fn tls_config() -> Result<rustls::ClientConfig, &'static str> {
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in rustls_native_certs::load_native_certs().certs {
+        let _ = roots.add(cert);
+    }
+    if roots.is_empty() {
+        return Err("no trusted certificates");
+    }
+    let mut config = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
+        .with_safe_default_protocol_versions()
+        .map_err(|_| "TLS unavailable")?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    Ok(config)
+}
+
 // No URL, headers, proxy credentials or upstream error text crosses the error/log boundary.
-fn client(app: &App, proxy: &Option<String>) -> Result<reqwest::Client, &'static str> {
-    let key = serde_json::to_string(proxy).unwrap();
+fn client(app: &App, proxy: &Option<String>, fast: bool) -> Result<reqwest::Client, &'static str> {
+    let key = format!("{}{}", serde_json::to_string(proxy).unwrap(), if fast { "+fast" } else { "" });
     let mut clients = app.clients.lock().unwrap();
     if let Some(client) = clients.get(&key) {
         return Ok(client.clone());
     }
     let mut builder = reqwest::Client::builder()
+        .use_preconfigured_tls(tls_config()?)
         .redirect(reqwest::redirect::Policy::none())
         .pool_max_idle_per_host(5)
         .pool_idle_timeout(Duration::from_secs(90));
+    if fast {
+        builder = builder.connect_timeout(FAST_CONNECT);
+    }
     if let Some(proxy) = proxy {
         builder = if proxy.is_empty() {
             builder.no_proxy()
@@ -448,18 +475,22 @@ async fn send_with_proxies(
     proxies: &[Option<String>],
 ) -> Result<reqwest::Response, &'static str> {
     for (index, proxy) in proxies.iter().enumerate() {
-        let mut request = client(app, proxy)?
-            .request(method.clone(), url.clone())
-            .headers(headers.clone())
-            .timeout(Duration::from_millis(timeout_ms));
-        if let Some(body) = body {
-            request = request.body(body.clone());
-        }
-        match request.send().await {
-            Ok(response) => return Ok(response),
-            // Connect failures happen before an origin request body is sent; never replay a sent POST.
-            Err(error) if error.is_connect() && index + 1 < proxies.len() => continue,
-            Err(_) => return Err("HTTP connection failed"),
+        for attempt in 0..CONNECT_ATTEMPTS {
+            let last_attempt = attempt + 1 == CONNECT_ATTEMPTS;
+            let mut request = client(app, proxy, !last_attempt)?
+                .request(method.clone(), url.clone())
+                .headers(headers.clone())
+                .timeout(Duration::from_millis(timeout_ms));
+            if let Some(body) = body {
+                request = request.body(body.clone());
+            }
+            match request.send().await {
+                Ok(response) => return Ok(response),
+                // Connect failures happen before an origin request body is sent; never replay a sent POST.
+                Err(error) if error.is_connect() && !last_attempt => continue,
+                Err(error) if error.is_connect() && index + 1 < proxies.len() => break,
+                Err(_) => return Err("HTTP connection failed"),
+            }
         }
     }
     Err("system proxy policy is empty")

@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -69,20 +69,33 @@ export class YtDlp {
   private seq = 0;
   private warm = new Map<string, { at: number; info: Record<string, unknown> }>();
   private warmingCount = 0;
+  private chrome?: Promise<boolean>;
   constructor(readonly cfg: YtDlpConfig) {}
 
   get available(): boolean {
     return !!this.cfg.bin && (!path.isAbsolute(this.cfg.bin) || fs.existsSync(this.cfg.bin));
   }
 
-  private baseArgs(target = ''): string[] {
-    const a = ['--ignore-config', '--encoding', 'utf-8', '--no-warnings', '--no-playlist', '--no-progress', '--cache-dir', this.cfg.cacheDir, '--socket-timeout', '15', '--retries', '2'];
+  private baseArgs(target = '', chrome = false): string[] {
+    const soundcloud = target.startsWith('scsearch') || target.includes('soundcloud.com/');
+    // DPI-bypass routers pass YouTube's TLS far more often with a browser-sized ClientHello; their dropped
+    // handshakes stall, so a shorter socket timeout lets yt-dlp retry sooner.
+    const youtubeChrome = chrome && !soundcloud;
+    const a = ['--ignore-config', '--encoding', 'utf-8', '--no-warnings', '--no-playlist', '--no-progress', '--cache-dir', this.cfg.cacheDir, '--socket-timeout', youtubeChrome ? '8' : '15', '--retries', '2'];
+    if (youtubeChrome) a.push('--impersonate', 'chrome');
     if (this.cfg.jsRuntime) a.push('--js-runtimes', this.cfg.jsRuntime);
     if (this.cfg.ffmpegDir) a.push('--ffmpeg-location', this.cfg.ffmpegDir);
-    const proxy = target.startsWith('scsearch') || target.includes('soundcloud.com/')
-      ? this.cfg.proxies?.soundcloud : this.cfg.proxies?.youtube;
+    const proxy = soundcloud ? this.cfg.proxies?.soundcloud : this.cfg.proxies?.youtube;
     if (proxy !== undefined) a.push('--proxy', proxy);
     return a;
+  }
+
+  /** Whether this yt-dlp build can impersonate Chrome (bundled curl_cffi); checked once per binary. */
+  private impersonation(): Promise<boolean> {
+    return this.chrome ??= new Promise(resolve => {
+      execFile(this.cfg.bin!, ['--ignore-config', '--list-impersonate-targets'], { timeout: 15000, windowsHide: true, env: { ...process.env, ACCESS_TOKEN: '', AUTOMIX_SECRET_KEY: '' } },
+        (_error, stdout) => resolve(/^Chrome-\S+\s+\S+\s+curl_cffi\s*$/m.test(String(stdout))));
+    });
   }
 
   private schedule<T>(priority: Priority, signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
@@ -125,12 +138,12 @@ export class YtDlp {
   /** Runs yt-dlp with fixed arguments; resolves with stdout. */
   run(args: string[], opts: { priority: Priority; timeoutMs: number; signal?: AbortSignal; maxBytes?: number; onProgress?: (fraction: number) => void; networkTarget?: string }): Promise<string> {
     if (!this.available) return Promise.reject(new ResolverError('Компонент для онлайн-источников не установлен', 'not-installed'));
-    return this.schedule(opts.priority, opts.signal, () => new Promise<string>((resolve, reject) => {
+    return this.schedule(opts.priority, opts.signal, async () => { const chrome = await this.impersonation(); return new Promise<string>((resolve, reject) => {
       const env: NodeJS.ProcessEnv = { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' };
       delete env.ACCESS_TOKEN;
       delete env.AUTOMIX_SECRET_KEY;
       if (this.cfg.runtimeIsElectron) env.ELECTRON_RUN_AS_NODE = '1';
-      const proc = spawn(this.cfg.bin!, [...this.baseArgs(opts.networkTarget ?? args.at(-1)), ...args], { shell: false, windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      const proc = spawn(this.cfg.bin!, [...this.baseArgs(opts.networkTarget ?? args.at(-1), chrome), ...args], { shell: false, windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
       const max = opts.maxBytes ?? 16 << 20;
       const out: Buffer[] = [];
       const decoder = new StringDecoder('utf8');
@@ -172,7 +185,7 @@ export class YtDlp {
         const stdout = Buffer.concat(out).toString('utf8').replace(/^MORAPROG[^\r\n]*(?:\r?\n|$)/gm, '');
         code === 0 ? done(null, stdout) : done(classifyError(err));
       });
-    }));
+    }); });
   }
 
   async version(): Promise<string | null> {

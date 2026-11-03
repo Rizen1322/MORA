@@ -8,7 +8,9 @@ publish = false
 axum = "0.8"
 base64 = "0.22"
 futures-util = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["native-tls-alpn", "http2", "system-proxy", "stream", "socks", "gzip", "brotli", "deflate"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots-no-provider", "http2", "system-proxy", "stream", "socks", "gzip", "brotli", "deflate"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "prefer-post-quantum", "std", "tls12", "logging"] }
+rustls-native-certs = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "fs", "sync", "time"] }
