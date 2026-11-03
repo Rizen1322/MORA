@@ -18,7 +18,7 @@ node apps/desktop/scripts/build.mjs
 node apps/desktop-tauri/package.mjs
 ```
 
-`package.mjs` prepares its own backend and resources from `apps/desktop/build`, builds the release shell, and produces `apps/desktop-tauri/src-tauri/target/release/bundle/nsis/MORA Native Preview_0.3.31-preview.1_x64-setup.exe`. Rebuild the shared desktop resources after changing the web app, audio engine, decoder, network helper or analysis worker. The release executable also runs from its `target/release` directory with the adjacent `resources` directory and WebView2Loader DLL. The app carries its own Node runtime; no development environment overrides are needed.
+`package.mjs` prepares its own backend and resources from `apps/desktop/build`, builds the release shell, and produces `apps/desktop-tauri/src-tauri/target/release/bundle/nsis/MORA Native Preview_0.3.32-preview.1_x64-setup.exe`. Rebuild the shared desktop resources after changing the web app, audio engine, decoder, network helper or analysis worker. The release executable also runs from its `target/release` directory with the adjacent `resources` directory and WebView2Loader DLL. The app carries its own Node runtime; no development environment overrides are needed.
 
 For a hidden, muted end-to-end smoke test of the packaged release, run:
 

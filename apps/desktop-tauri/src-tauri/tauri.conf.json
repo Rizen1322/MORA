@@ -1,6 +1,6 @@
 {
   "productName": "MORA Native Preview",
-  "version": "0.3.31-preview.1",
+  "version": "0.3.32-preview.1",
   "identifier": "ru.mora.desktop.native.preview",
   "build": {
     "frontendDist": "../embedded"

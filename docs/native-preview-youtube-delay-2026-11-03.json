@@ -1,0 +1,40 @@
+{
+  "date": "2026-11-03",
+  "provider": "youtube",
+  "method": "Single sequential downloads of the same public recording, using bundled Node 22 and yt-dlp in isolated temporary directories; no playback.",
+  "cases": [
+    {
+      "path": "previous_native",
+      "elapsed_ms": 51698,
+      "resolver_ms": 2275,
+      "first_bytes_ms": 2819,
+      "bytes": 1679348
+    },
+    {
+      "path": "yt_dlp_baseline",
+      "elapsed_ms": 1760,
+      "first_bytes_ms": 1616,
+      "bytes": 1679348
+    },
+    {
+      "path": "fixed_with_native_enabled",
+      "elapsed_ms": 2048,
+      "first_bytes_ms": 1835,
+      "bytes": 1679348,
+      "native_download_calls": 0,
+      "matches_cached_sha256": true
+    }
+  ],
+  "note": "One sample per case; timings include resolver and transfer, and can vary with network conditions. The fixed download matched the original profile cache by SHA-256.",
+  "fixed_version": "0.3.32-preview.1",
+  "installer": {
+    "bytes": 96132271,
+    "sha256": "07ad140635d9d2be0396b816b61ba857253b7d3e5520464d081f86aa557f5064",
+    "published": false
+  },
+  "payload_validation": {
+    "executable_sha256": "e4b8f4d94ebd3756bcf5cc49dc90231907b4eebd2d018263062c8b4cd93f3b3d",
+    "position_seconds": 10.789333333333333,
+    "backend_sha256": "b6c1bca116930fb6aeb62e054cc271a9052babf12c437a92f3fe3dcfea286415"
+  }
+}

@@ -18,7 +18,7 @@ The Node adapter is `apps/server/src/rust-network.ts`. Metadata remains parsed b
 | PAC errors | Fail closed. Electron metadata can use its existing transport when native system proxy resolution/policy is unsupported. Windows integrated authentication is not silently sent to PAC servers. |
 | Cookies/tokens | Explicit request headers preserved. Cross-origin redirects do not carry account headers. No browser cookie jar is imported. |
 
-The actual callers include Yandex audio, shared Audius/Jamendo/Subsonic downloads, provider metadata/covers, lyrics, public collection/radio metadata and the injected YouTube Music/SoundCloud search transports. Direct public playback uses yt-dlp to resolve the selected audio URL/site headers, then Rust downloads the original container into the existing growing file. Site challenges, HLS/DASH segments and the extraction/import path remain in yt-dlp. The existing yt-dlp scheduling and foreground reserve remain active.
+The actual callers include Yandex audio, shared Audius/Jamendo/Subsonic downloads, provider metadata/covers, lyrics, public collection/radio metadata and the injected YouTube Music/SoundCloud search transports. Direct SoundCloud playback uses yt-dlp to resolve the selected audio URL/site headers, then Rust downloads the original container into the existing growing file. YouTube playback keeps yt-dlp's transport: a live comparison on the same 1.68 MB file measured 51.7 seconds with the native transfer versus 1.76 seconds with yt-dlp. Re-enable native YouTube only after live compatibility/performance parity. Site challenges, HLS/DASH segments and the extraction/import path also remain in yt-dlp. The existing scheduling and foreground reserve remain active.
 
 ## Validation and benchmark
 

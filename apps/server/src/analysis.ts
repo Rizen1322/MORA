@@ -223,6 +223,7 @@ export class AnalysisService {
             }
             this.queue.delete(fresh.content_hash);
             this.running.delete(next.hash);
+            q(this.db, "DELETE FROM analysis WHERE content_hash = ? AND version = ? AND status = 'running'").run(next.hash, ANALYZER_VERSION);
             this.running.set(fresh.content_hash, r);
             r.item = { ...next, hash: fresh.content_hash };
             q(this.db, "INSERT OR REPLACE INTO analysis(content_hash, version, status, updated_at) VALUES (?, ?, 'running', ?)").run(fresh.content_hash, ANALYZER_VERSION, Date.now());

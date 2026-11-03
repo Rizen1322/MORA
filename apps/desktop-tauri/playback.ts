@@ -113,7 +113,7 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
   app.post('/api/desktop/audio-stop', async () => { media.reset(); await playback.stop(); return null; });
   app.post<{ Body: unknown }>('/api/desktop/media-track', async request => { media.track(request.body); return null; });
   app.get('/api/desktop/settings', async () => ({ closeToTray: settings.closeToTray !== false,
-    dataDir: process.env.AUTOMIX_DATA_DIR, version: process.env.AUTOMIX_VERSION ?? '0.3.31-preview.1', backend: 'ready',
+    dataDir: process.env.AUTOMIX_DATA_DIR, version: process.env.AUTOMIX_VERSION ?? '0.3.32-preview.1', backend: 'ready',
     compact: false, compactOnTop: settings.compactOnTop !== false, audio: settings.audio }));
   const operations: Record<string, (...args: any[]) => Promise<unknown> | unknown> = {
     startStation: (station, config) => playback.startStation(station, config),

@@ -10,6 +10,29 @@ import { loadConfig } from '../src/config.ts';
 import { EventHub } from '../src/events.ts';
 import type { Library, TrackRow } from '../src/library.ts';
 
+it('removes the old running row when a remote download changes its hash', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automix-analysis-rebind-'));
+  const db = openDb(dir);
+  let fetched!: (file: string) => void;
+  const track = { id: 't1', content_hash: 'remote:youtube:t1', provider: 'youtube', status: 'ok', duration: 10 } as TrackRow;
+  const lib = {
+    get: () => track, mixingPolicy: new Map([['youtube', true]]),
+    resolveMediaPath: () => new Promise<string>((resolve) => { fetched = resolve; }),
+  } as unknown as Library;
+  const service = new AnalysisService(db, loadConfig({ dataDir: dir }), lib, new EventHub());
+  const postMessage = vi.fn();
+  (service as unknown as { pool: unknown[] }).pool.push({ w: { postMessage, terminate: async () => 0 }, busy: false, cancel: new Int32Array(1) });
+  try {
+    service.ensure(track, 100);
+    expect(service.statusOf(track.content_hash).status).toBe('running');
+    track.content_hash = 'downloaded';
+    fetched(path.join(dir, 'a.webm'));
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalled());
+    expect(service.statusOf('remote:youtube:t1').status).toBe('none');
+    expect(service.statusOf('downloaded').status).toBe('running');
+  } finally { await service.stop(); db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 it('does not start a job cancelled while its audio was still being fetched', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automix-analysis-cancel-'));
   const db = openDb(dir);

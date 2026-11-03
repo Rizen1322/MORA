@@ -245,7 +245,9 @@ export class YtDlp {
     const infoFile = path.join(stagingDir, '.source-info.json');
     if (warmed) await fsp.writeFile(infoFile, JSON.stringify(warmed));
     // yt-dlp keeps site challenges/format selection; direct playback bytes use the pooled native client.
-    if (opts.preserveContainer && rustNetworkEnabled()) {
+    const host = new URL(target).hostname;
+    // shortcut: YouTube keeps yt-dlp's transport after a measured CDN slowdown; require live parity before enabling native transfers.
+    if (opts.preserveContainer && (host === 'soundcloud.com' || host.endsWith('.soundcloud.com')) && rustNetworkEnabled()) {
       try {
         const raw = await this.run(['-f', 'bestaudio/best', '--skip-download', '-J', ...(warmed ? ['--load-info-json', infoFile] : ['--', target])],
           { priority: opts.priority, timeoutMs: 25000, signal: opts.signal, maxBytes: 4 << 20, networkTarget: target });
