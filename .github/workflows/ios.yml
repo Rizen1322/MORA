@@ -11,12 +11,18 @@ on:
       - 'package*.json'
       - '.github/workflows/ios.yml'
   workflow_dispatch:
+    inputs:
+      ui_only:
+        description: Run only the complete app UI startup check
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   build:
+    if: inputs.ui_only != true
     runs-on: macos-15
     timeout-minutes: 45
     env:
@@ -85,3 +91,59 @@ jobs:
           path: apps/mobile/MORA-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
+
+  ui:
+    if: inputs.ui_only == true
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Prepare app
+        run: |
+          ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
+          npm run build -w @automix/mobile
+          sh apps/mobile/scripts/build-rust-ios.sh iphonesimulator
+          (cd apps/mobile && npx cap sync ios)
+      - name: Build simulator app
+        run: |
+          DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for r,a in json.load(sys.stdin)["devices"].items() if "iOS" in r for d in a if "iPhone" in d["name"]))')
+          echo "DEVICE=$DEVICE" >> "$GITHUB_ENV"
+          xcrun simctl boot "$DEVICE"
+          xcrun simctl bootstatus "$DEVICE" -b
+          xcodebuild -project apps/mobile/ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -destination "id=$DEVICE" -derivedDataPath "$RUNNER_TEMP/mora-ui" \
+            CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=YES build > "$RUNNER_TEMP/mora-ui-build.log" 2>&1 || { tail -100 "$RUNNER_TEMP/mora-ui-build.log"; exit 1; }
+      - name: Launch app and verify it stays alive
+        run: |
+          APP="$RUNNER_TEMP/mora-ui/Build/Products/Debug-iphonesimulator/App.app"
+          codesign --force --deep --sign - "$APP"
+          xcrun simctl install "$DEVICE" "$APP"
+          xcrun simctl launch --console --terminate-running-process "$DEVICE" ru.mora.player > "$RUNNER_TEMP/mora-ui-console.log" 2>&1 &
+          LAUNCH_PID=$!
+          sleep 30
+          xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mora-native-home.png"
+          kill -0 "$LAUNCH_PID" || { cat "$RUNNER_TEMP/mora-ui-console.log"; exit 1; }
+          xcrun simctl spawn "$DEVICE" launchctl list | grep ru.mora.player > "$RUNNER_TEMP/mora-ui-process.txt"
+          cat "$RUNNER_TEMP/mora-ui-console.log"
+      - name: Collect simulator diagnostics
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/mora-ui-diagnostics"
+          cp "$RUNNER_TEMP"/mora-ui-*.log "$RUNNER_TEMP/mora-ui-diagnostics/" 2>/dev/null || true
+          cp "$RUNNER_TEMP"/mora-ui-process.txt "$RUNNER_TEMP"/mora-native-home.png "$RUNNER_TEMP/mora-ui-diagnostics/" 2>/dev/null || true
+          if [ -n "$DEVICE" ]; then
+            xcrun simctl spawn "$DEVICE" log show --last 3m --style compact --predicate 'process == "App" OR eventMessage CONTAINS "ru.mora.player"' > "$RUNNER_TEMP/mora-ui-diagnostics/runtime.log" 2>&1 || true
+          fi
+          find "$HOME/Library/Logs/DiagnosticReports" -name 'App*' -exec cp {} "$RUNNER_TEMP/mora-ui-diagnostics/" \; 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MORA-ui-diagnostics
+          path: ${{ runner.temp }}/mora-ui-diagnostics
+          if-no-files-found: error
