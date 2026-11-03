@@ -203,7 +203,7 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
     }
   });
 
-  app.post<{ Body: { session?: string | null; queue?: string[]; count?: number } }>('/api/providers/yandex/wave', async (req, reply) => {
+  app.post<{ Body: { session?: string | null; queue?: string[]; count?: number; analyze?: boolean } }>('/api/providers/yandex/wave', async (req, reply) => {
     const body = req.body;
     if (!body || (body.session != null && (typeof body.session !== 'string' || !body.session.length || body.session.length > 256)) ||
       (body.queue !== undefined && (!Array.isArray(body.queue) || body.queue.length > 200 || body.queue.some((id) => typeof id !== 'string' || !isYandexTrackId(id)))) ||
@@ -214,7 +214,7 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
       const queue = [...new Set(body.queue ?? [])];
       const wave = await providers.yandex.wave(body.session ?? null, queue, { count: body.count ?? 2, exclude: queue, seeds: getSettings(db).wave.yandexSeeds });
       const ids = wave.items.flatMap((item) => item.trackId ? [item.trackId] : []);
-      analysis.prioritize(ids.slice(0, body.count ?? 2), PRIORITY.wave);
+      if (body.analyze !== false) analysis.prioritize(ids.slice(0, body.count ?? 2), PRIORITY.wave);
       return wave;
     } catch (e) {
       return reply.code(502).send({ error: (e as Error).message });

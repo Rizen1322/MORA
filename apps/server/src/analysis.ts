@@ -187,7 +187,7 @@ export class AnalysisService {
       // two long recordings at once would hold two full mono PCMs: they wait for each other
       const longRunning = [...this.running.values()].some((r) => this.isLong(r.item.trackId));
       const background = this.backgroundAllowed();
-      const next = [...this.queue.values()].filter((q) => (!longRunning || !this.isLong(q.trackId)) && (background || q.priority >= PRIORITY.wave))
+      const next = [...this.queue.values()].filter((q) => (!longRunning || !this.isLong(q.trackId)) && ((background && this.cfg.backgroundAnalysis !== false) || q.priority >= PRIORITY.wave))
         .sort((a, b) => b.priority - a.priority || a.seq - b.seq)[0];
       if (!next) return;
       this.queue.delete(next.hash);

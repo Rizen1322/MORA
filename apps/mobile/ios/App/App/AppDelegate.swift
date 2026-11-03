@@ -9,7 +9,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // The audio session is activated on first playback (MoraAudioPlugin.setPlaybackState):
         // activating it here silenced other apps' music at launch.
-        NativeMixAnalysis.compiled = (NativeRustAnalysis.version, NativeRustAnalysis.analyze)
+        NativeMixAnalysis.compiled = (version: NativeRustAnalysis.version, begin: { frames in
+            guard let stream = NativeRustAnalysis.Stream(expectedFrames: frames) else { return nil }
+            return (push: { stream.push($0, frames: $1) }, finish: { stream.finish(cancel: $0) })
+        })
         return true
     }
 

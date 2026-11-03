@@ -1071,7 +1071,7 @@ export class PlayerController {
     try {
       let entries: QueueEntry[] = [];
       if (kind === 'yandex') {
-        const w = await withDeadline(api.yandexWave(null), WAVE_START_MS, 'Яндекс слишком долго отвечает. Попробуйте ещё раз.');
+        const w = await withDeadline(api.yandexWave(null, { analyze: this.pageAnalysis }), WAVE_START_MS, 'Яндекс слишком долго отвечает. Попробуйте ещё раз.');
         await withDeadline(this.refreshLibrary(), WAVE_START_MS, 'Медиатека не отвечает. Попробуйте ещё раз.');
         if (revision !== this.previewRevision) return;
         this.yandexSession = { sessionId: w.sessionId, batchId: w.batchId };
@@ -1085,7 +1085,7 @@ export class PlayerController {
       }
       if (kind === 'own') {
         this.yandexSession = null;
-        const r = await api.waveNext({ currentId: null, session: [], count: 3 });
+        const r = await api.waveNext({ currentId: null, session: [], count: 3, analyze: this.pageAnalysis });
         if (revision !== this.previewRevision) return;
         entries.push(...r.picks.map((p) => ({ entryId: uid(), trackId: p.id, origin: 'wave' as const, reasons: p.reasons })));
       }
@@ -1590,7 +1590,7 @@ export class PlayerController {
           const attribution = this.yandexSession ?? this.state.queue.slice().reverse().find((e) => e.yandexSessionId);
           const session = this.yandexSessionReset ? null : attribution && ('sessionId' in attribution ? attribution.sessionId : attribution.yandexSessionId);
           const excluded = [...new Set(this.state.queue.flatMap((e) => e.yandexId ? [e.yandexId] : []))].slice(-200);
-          const w = await api.yandexWave(session ?? null, { queue: excluded, count });
+          const w = await api.yandexWave(session ?? null, { queue: excluded, count, analyze: this.pageAnalysis });
           if (!relevant()) return;
           await this.refreshLibrary();
           if (!relevant()) return;
@@ -1601,7 +1601,7 @@ export class PlayerController {
             reasons: ['из «Моей волны» Яндекса'] }] : []);
         } else {
           const r = await api.waveNext({ currentId: this.currentEntry?.trackId ?? null,
-            session: this.state.queue.map((e) => e.trackId), count });
+            session: this.state.queue.map((e) => e.trackId), count, analyze: this.pageAnalysis });
           added = r.picks.map((pick) => ({ entryId: uid(), trackId: pick.id, origin: 'wave', reasons: pick.reasons }));
         }
         if (!relevant()) return;
@@ -2322,8 +2322,11 @@ export class PlayerController {
     this.playId = null;
   }
 
+  /** False while the native producer owns MIR: Wave picks must not start the WebContent analyzer (iPhone heat). */
+  get pageAnalysis(): boolean { return !(this.native && this.nativeMix.prepareQueue); }
+
   private focusAnalysis(): void {
-    if (this.native && this.nativeMix.prepareQueue) {
+    if (!this.pageAnalysis) {
       // The native producer owns MIR and downloading; do not duplicate that work in WebContent.
       void api.focus({ current: null, next: [], candidates: [] }).catch(() => {});
       return;

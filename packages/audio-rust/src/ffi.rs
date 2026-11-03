@@ -92,6 +92,52 @@ pub unsafe extern "C" fn mora_free_string(value: *mut c_char) {
     }
 }
 
+/// Streaming analysis: Swift resamples to 44100 Hz in memory and pushes interleaved stereo blocks,
+/// so no 44.1 kHz copy of the track is written to disk. `expected_frames` only sizes buffers.
+#[unsafe(no_mangle)]
+pub extern "C" fn mora_analysis_begin(expected_frames: u64) -> *mut AnalysisAccumulator {
+    Box::into_raw(Box::new(AnalysisAccumulator::new(expected_frames as f64 / 44100. + 5.)))
+}
+
+/// False on invalid PCM (the caller then finishes with `cancel`).
+///
+/// # Safety
+/// `acc` comes from `mora_analysis_begin` and is not finished; `interleaved` holds `frames * 2` floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mora_analysis_push(acc: *mut AnalysisAccumulator, interleaved: *const f32, frames: usize) -> bool {
+    if acc.is_null() || interleaved.is_null() {
+        return false;
+    }
+    let (acc, samples) = unsafe { (&mut *acc, std::slice::from_raw_parts(interleaved, frames * 2)) };
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let (l, r): (Vec<f32>, Vec<f32>) = samples.chunks_exact(2).map(|s| (s[0], s[1])).unzip();
+        acc.push(&l, &r).is_ok()
+    }))
+    .unwrap_or(false)
+}
+
+/// Frees the accumulator. Unless `cancel`, returns its JSON (free with `mora_free_string`), or null on failure.
+///
+/// # Safety
+/// `acc` comes from `mora_analysis_begin` and is finished once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mora_analysis_finish(acc: *mut AnalysisAccumulator, cancel: bool) -> *mut c_char {
+    if acc.is_null() {
+        return std::ptr::null_mut();
+    }
+    let acc = unsafe { Box::from_raw(acc) };
+    if cancel {
+        return std::ptr::null_mut();
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        serde_json::to_string(&acc.finish()?).map_err(|e| e.to_string())
+    }));
+    match result {
+        Ok(Ok(json)) => CString::new(json).map_or(std::ptr::null_mut(), CString::into_raw),
+        _ => std::ptr::null_mut(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +188,21 @@ mod tests {
         assert!(unsafe { mora_analyze_f32le(c_path.as_ptr(), frames as u64, Some(stop), std::ptr::null_mut()) }.is_null());
         assert!(unsafe { mora_analyze_f32le(c_path.as_ptr(), frames as u64 + 1, None, std::ptr::null_mut()) }.is_null());
         std::fs::remove_file(path).unwrap();
+
+        // In-memory streaming in uneven blocks (as AVAudioConverter hands them over) gives the same result.
+        let floats: Vec<f32> = l.iter().zip(&r).flat_map(|(a, b)| [*a, *b]).collect();
+        let acc = mora_analysis_begin(frames as u64 - 1000);
+        for block in floats.chunks(8191 * 2) {
+            assert!(unsafe { mora_analysis_push(acc, block.as_ptr(), block.len() / 2) });
+        }
+        let raw = unsafe { mora_analysis_finish(acc, false) };
+        assert!(!raw.is_null());
+        let streamed: serde_json::Value = serde_json::from_str(unsafe { CStr::from_ptr(raw) }.to_str().unwrap()).unwrap();
+        unsafe { mora_free_string(raw) };
+        assert_eq!(without_time(streamed), expected);
+        let bad = [f32::NAN, 0.];
+        let acc = mora_analysis_begin(0);
+        assert!(!unsafe { mora_analysis_push(acc, bad.as_ptr(), 1) });
+        assert!(unsafe { mora_analysis_finish(acc, true) }.is_null());
     }
 }

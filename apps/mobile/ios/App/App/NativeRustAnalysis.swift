@@ -8,6 +8,18 @@ private func moraAnalyze(_ path: UnsafePointer<CChar>, _ frames: UInt64,
                          _ cancelled: (@convention(c) (UnsafeMutableRawPointer?) -> Bool)?, _ context: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>?
 @_silgen_name("mora_free_string")
 private func moraFreeString(_ value: UnsafeMutablePointer<CChar>?)
+@_silgen_name("mora_analysis_begin")
+private func moraAnalysisBegin(_ expectedFrames: UInt64) -> OpaquePointer?
+@_silgen_name("mora_analysis_push")
+private func moraAnalysisPush(_ accumulator: OpaquePointer, _ interleaved: UnsafePointer<Float>, _ frames: Int) -> Bool
+@_silgen_name("mora_analysis_finish")
+private func moraAnalysisFinish(_ accumulator: OpaquePointer, _ cancel: Bool) -> UnsafeMutablePointer<CChar>?
+
+private func moraJSON(_ raw: UnsafeMutablePointer<CChar>?) -> [String: Any]? {
+    guard let raw else { return nil }
+    defer { moraFreeString(raw) }
+    return (try? JSONSerialization.jsonObject(with: Data(bytes: raw, count: strlen(raw)))) as? [String: Any]
+}
 
 /// Compiled MIR with the bundled script's output: JavaScriptCore has no JIT in apps,
 /// so the script analyzer needs minutes per track on an iPhone.
@@ -27,8 +39,28 @@ enum NativeRustAnalysis {
                 }, Unmanaged.passUnretained(cancel).toOpaque())
             }
         }
-        guard let raw else { return nil }
-        defer { moraFreeString(raw) }
-        return (try? JSONSerialization.jsonObject(with: Data(bytes: raw, count: strlen(raw)))) as? [String: Any]
+        return moraJSON(raw)
+    }
+
+    /// The same analysis fed in memory: interleaved stereo 44100 Hz blocks in, no PCM file on disk.
+    final class Stream {
+        private var accumulator: OpaquePointer?
+        /// `expectedFrames` only sizes buffers.
+        init?(expectedFrames: Int) {
+            guard let accumulator = moraAnalysisBegin(UInt64(max(0, expectedFrames))) else { return nil }
+            self.accumulator = accumulator
+        }
+        /// False on invalid PCM or after finish.
+        func push(_ interleaved: UnsafePointer<Float>, frames: Int) -> Bool {
+            guard let accumulator else { return false }
+            return moraAnalysisPush(accumulator, interleaved, frames)
+        }
+        /// Ends the stream once; nil when cancelled or on invalid PCM.
+        func finish(cancel: Bool) -> [String: Any]? {
+            guard let accumulator else { return nil }
+            self.accumulator = nil
+            return moraJSON(moraAnalysisFinish(accumulator, cancel))
+        }
+        deinit { if let accumulator { _ = moraAnalysisFinish(accumulator, true) } }
     }
 }
