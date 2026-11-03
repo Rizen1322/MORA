@@ -148,6 +148,14 @@ export function gainFromSummary(a: AnalysisSummary | undefined, target: number |
  * Owns the AudioContext and the AudioWorklet engine, the play queue, deck
  * bookkeeping, PCM streaming, transition preparation and play history.
  */
+const WAVE_START_MS = 60000;
+/** Rejects with `message` when `work` has not settled in `ms`; the late result is ignored. */
+export function withDeadline<T>(work: Promise<T>, ms: number, message: string, onTimeout?: () => void): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const late = new Promise<never>((_, reject) => { timer = setTimeout(() => { onTimeout?.(); reject(new Error(message)); }, ms); });
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
+
 export class PlayerController {
   private ctx: AudioContext | DesktopAudioContext | null = null;
   private node: { port: { postMessage(command: EngineCommand, transfer?: Transferable[]): void } } | null = null;
@@ -1226,8 +1234,8 @@ export class PlayerController {
     try {
       let entries: QueueEntry[] = [];
       if (kind === 'yandex') {
-        const w = await api.yandexWave(null);
-        await this.refreshLibrary();
+        const w = await withDeadline(api.yandexWave(null), WAVE_START_MS, 'Яндекс слишком долго отвечает. Попробуйте ещё раз.');
+        await withDeadline(this.refreshLibrary(), WAVE_START_MS, 'Медиатека не отвечает. Попробуйте ещё раз.');
         if (revision !== this.previewRevision) return;
         this.yandexSession = { sessionId: w.sessionId, batchId: w.batchId };
         const known = new Set<string>();
@@ -1248,7 +1256,8 @@ export class PlayerController {
       this.originalOrder = null;
       this.queueRevision++;
       this.set({ queue: entries, index: 0, context: { type: kind === 'yandex' ? 'yandex-wave' : 'wave', label: kind === 'yandex' ? 'Моя волна Яндекса' : 'Моя волна' }, shuffle: false });
-      await this.startAt(0, 0);
+      // A native start that never answers must end in an error, not an endless spinner.
+      await withDeadline(this.startAt(0, 0), WAVE_START_MS, 'Не удалось начать воспроизведение волны. Попробуйте ещё раз.', () => this.nativeAbort.abort());
     } catch (e) {
       this.notify((e as Error).message, 'error');
     } finally {

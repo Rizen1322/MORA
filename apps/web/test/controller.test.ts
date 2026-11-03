@@ -1388,6 +1388,32 @@ describe('continuous wave reservoir', () => {
     expect(api.yandexWave).toHaveBeenCalledTimes(1);
   });
 
+  it('ends the Yandex wave spinner with an error when the start never answers', async () => {
+    vi.useFakeTimers();
+    try {
+      const { controller, h } = waveSetup();
+      h.ensureEngine = vi.fn().mockResolvedValue(undefined);
+      const never = new Promise<never>(() => {});
+      for (const hang of ['api', 'startAt'] as const) {
+        const errors: string[] = [];
+        (controller as unknown as { notify: (m: string, k: string) => void }).notify = (m, k) => { if (k === 'error') errors.push(m); };
+        if (hang === 'api') vi.mocked(api.yandexWave).mockReturnValueOnce(never);
+        else {
+          vi.mocked(api.yandexWave).mockResolvedValueOnce({ sessionId: 's', batchId: null, items: [{ trackId: 'd', yandexId: '1:1', title: 'd', artist: 'a' }] });
+          (controller as unknown as { refreshLibrary: () => Promise<void> }).refreshLibrary = vi.fn().mockResolvedValue(undefined);
+          (controller as unknown as { startAt: () => Promise<void> }).startAt = () => never;
+        }
+        const started = controller.startWave('yandex');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(controller.state.waveLoading).toBe(true);
+        await vi.advanceTimersByTimeAsync(60001);
+        await started;
+        expect(controller.state.waveLoading).toBe(false);
+        expect(errors).toHaveLength(1);
+      }
+    } finally { vi.useRealTimers(); }
+  });
+
   it('rejects responses after leaving the wave and releases the loading state', async () => {
     const { controller, w } = waveSetup();
     const slow = deferred<ReturnType<typeof batch>>();
