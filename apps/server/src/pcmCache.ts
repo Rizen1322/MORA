@@ -190,6 +190,8 @@ export class PcmCache {
     if (e.cancelled || this.stopped) { if (typeof src !== 'string') src.destroy(); return; }
     await this.evict();
     if (e.cancelled || this.stopped) { if (typeof src !== 'string') src.destroy(); return; }
+    if (typeof src === 'string' && this.ff.decoder) await this.ff.probe(src, e.abort.signal).catch(() => {});
+    if (e.cancelled || this.stopped) { if (typeof src !== 'string') src.destroy(); return; }
     const out = fs.createWriteStream(part);
     const proc = this.ff.decode(src, { sampleRate: e.sampleRate, channels: 2, format: 'f32le' });
     e.proc = proc;

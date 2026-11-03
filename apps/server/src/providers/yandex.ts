@@ -84,7 +84,7 @@ export class YandexProvider implements Provider {
     private readonly store: ProviderStore,
     private readonly lib: Library,
     cfg: AppConfig,
-    ff = new FfmpegTools(cfg.ffmpeg, cfg.ffprobe),
+    ff = new FfmpegTools(cfg.ffmpeg, cfg.ffprobe, cfg.decoderRust),
   ) {
     this.audio = new YandexAudio(cfg, ff, this.base, (id) => this.call<YandexDownloadVariant[]>('GET', `/tracks/${encodeURIComponent(id)}/download-info`));
     this.catalog = new YandexCatalog((method, path, body, form) => this.call(method, path, body, undefined, form), () => !!this.token(), lib, this.base);
@@ -531,11 +531,11 @@ export class YandexProvider implements Provider {
     return work;
   }
 
-  async fetchAudio(src: SourceRow): Promise<string> {
+  async fetchAudio(src: SourceRow, signal?: AbortSignal, priority: 0 | 1 | 2 | 3 = 0): Promise<string> {
     const track = this.lib.get(src.track_id);
     const meta = JSON.parse(src.meta || '{}') as { audioHash?: string };
     if (!track || !/^[a-f\d]{64}$/.test(track.content_hash)) throw new Error('Аудио Яндекса ещё не проверено. Добавьте трек заново.');
     if (meta.audioHash && meta.audioHash !== track.content_hash) throw new Error('Версия аудио Яндекса не совпадает с сохранённым анализом');
-    return (await this.audio.prepare(this.checkedId(String(src.external_id)), track.duration, track.content_hash)).file;
+    return (await this.audio.prepare(this.checkedId(String(src.external_id)), track.duration, track.content_hash, { signal, priority })).file;
   }
 }

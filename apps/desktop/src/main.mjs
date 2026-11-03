@@ -247,6 +247,8 @@ async function startBackend(port = 0) {
     AUTOMIX_WEB_DIST: path.join(resources, 'web'),
     AUTOMIX_ANALYSIS_WORKER: path.join(resources, 'backend', 'analysisWorker.mjs'),
     AUTOMIX_RUST_CORE: path.join(resources, 'audio', 'mora-audio.exe'),
+    AUTOMIX_DECODER_RUST: path.join(resources, 'decoder', 'mora-decode.exe'),
+    AUTOMIX_NETWORK_RUST: path.join(resources, 'network', 'mora-network.exe'),
     AUTOMIX_DATA_DIR: dataDir,
     AUTOMIX_LAUNCH_TOKEN: launchToken,
     AUTOMIX_DESKTOP_PCM_TOKEN: desktopPlaybackToken,

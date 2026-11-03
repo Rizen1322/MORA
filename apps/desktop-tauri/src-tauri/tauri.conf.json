@@ -1,0 +1,48 @@
+{
+  "productName": "MORA Native Preview",
+  "version": "0.3.31-preview.1",
+  "identifier": "ru.mora.desktop.native.preview",
+  "build": {
+    "frontendDist": "../embedded"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "mora-loopback",
+          "description": "MORA local application",
+          "windows": [
+            "main"
+          ],
+          "remote": {
+            "urls": [
+              "http://127.0.0.1:*"
+            ]
+          },
+          "permissions": [
+            "allow-desktop-action"
+          ]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../build/": "resources/"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
+    "useLocalToolsDir": true
+  }
+}

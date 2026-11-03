@@ -12,6 +12,17 @@ import type { PublicTrack } from '../src/public/provider.ts';
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { vi.unstubAllGlobals(); for (const fn of cleanup.splice(0).reverse()) await fn(); });
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>((r) => { resolve = r; }); return { promise, resolve }; };
+const expectPcmMatches = (actual: Buffer, expected: Buffer, extension: string) => {
+  expect(actual.length).toBe(expected.length);
+  if (extension === 'wav') { expect(actual.equals(expected)).toBe(true); return; }
+  let maxError = 0;
+  for (let i = 0; i < actual.length; i += 4) {
+    const difference = Math.abs(actual.readFloatLE(i) - expected.readFloatLE(i));
+    if (!Number.isFinite(difference)) throw new Error('Non-finite PCM sample');
+    maxError = Math.max(maxError, difference);
+  }
+  expect(maxError).toBeLessThanOrEqual(1e-7);
+};
 
 describe('progressive audio through the single PCM engine', () => {
   it.each(['wav', 'webm'])('delivers %s PCM before download completion and keeps the same timeline after hashing', async (extension) => {
@@ -41,7 +52,7 @@ describe('progressive audio through the single PCM engine', () => {
     expect(first.rawPayload.length).toBe(4096 * 8);
     expect(first.headers['x-complete']).toBe('0');
     const reference = execFileSync(cfg.ffmpeg, ['-v', 'error', '-i', original, '-ac', '2', '-ar', '48000', '-f', 'f32le', 'pipe:1'], { windowsHide: true, maxBuffer: 8 << 20 });
-    expect(first.rawPayload.equals(reference.subarray(0, 4096 * 8))).toBe(true);
+    expectPcmMatches(first.rawPayload, reference.subarray(0, 4096 * 8), extension);
     const keyBefore = a.services.publicMusic.pcmKey(id, a.services.lib.get(id)!.content_hash);
     const readers = [a.services.lib.resolveMediaPath(id), a.services.lib.resolveMediaPath(id)];
     finish.resolve(); await Promise.all(readers);
@@ -55,7 +66,7 @@ describe('progressive audio through the single PCM engine', () => {
     expect(tail.statusCode, tail.body).toBe(200);
     expect(tail.rawPayload.length).toBeGreaterThan(0);
     const full = await a.app.inject(`/api/tracks/${id}/pcm?sr=48000&start=0&frames=400000&format=f32le`);
-    expect(full.rawPayload.equals(reference)).toBe(true);
+    expectPcmMatches(full.rawPayload, reference, extension);
   });
 
   it('keeps reading after the finished download is moved out of staging (ADTS .aac streams too)', async () => {

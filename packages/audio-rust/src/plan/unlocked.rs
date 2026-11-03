@@ -433,6 +433,19 @@ pub fn plan_drop_swap(
     let calm = n(gb, "bpm") < 0.85 * n(ga, "bpm") && energy_delta <= -3.;
     let wash = looped && calm;
     let roll = looped && !calm;
+    // v19.4 soft echo out: B enters from its own opening, never a trimmed intro; after more than 1 s of
+    // leading silence, on its first downbeat. A Next press keeps B's energetic arrival (v19.2).
+    let start_b = n(b, "audibleStart");
+    let opening = if start_b <= 1. {
+        start_b
+    } else {
+        nums(&gb["downbeats"]).into_iter().find(|t| *t >= start_b - 0.025).unwrap_or(start_b)
+    };
+    let b_in = if looped || ctx.requested_at.is_some() {
+        entry.clone()
+    } else {
+        json!({"time":opening,"score":0.6,"kind":if opening == start_b { "start" } else { "downbeat" },"tags":["drop-swap-start"]})
+    };
     // v19.4: an echo out opens B over two of its bars; a Next keeps one bar
     let echo_span = if looped {
         0.
@@ -475,7 +488,7 @@ pub fn plan_drop_swap(
     ));
     let total = r3(t_end + soft_tail);
     let mut p = ctx.base("echo_out");
-    p["bEntry"] = json!(r3(time));
+    p["bEntry"] = json!(r3(n(&b_in, "time")));
     p["duration"] = json!(total);
     p["swapAt"] = json!(r3(t_end));
     p["bDelay"] = json!(r3(t_end));
@@ -521,32 +534,19 @@ pub fn plan_drop_swap(
         p["aExit"] = json!(r3(d - sweep));
         p["automation"] = json!([
             lane("A", "gain", vec![vec![[0., 1.], [r3(sweep - 0.03), 1.], [r3(sweep), 0.], [total, 0.]]]),
-            // v19.4: quieter send (0.4) over two beats, B nearly full at once, a top-end-only low-pass
-            lane("A", "filter", vec![
-                shape(0., sweep, |x| 0.3 * smoothstep(x), 8),
-                shape(sweep, total.min(sweep + 2. * beat), |x| 0.3 + 0.2 * smoothstep(x), 4),
-                vec![[total, 0.5]],
-            ]),
-            lane("A", "echo", vec![
-                vec![[0., 0.], [r3(sweep - beat), 0.], [r3(sweep - 0.05), 0.4], [r3(sweep), 0.4]],
-                shape(sweep, total.min(sweep + 2. * beat), |x| 0.4 * cos_down(x), 8),
-                vec![[total, 0.]],
-            ]),
-            lane("B", "gain", vec![
-                vec![[0., 0.], [0.02, 0.9]],
-                shape(0.02, echo_span, |x| 0.9 + 0.1 * sin_up(x), 8),
-                vec![[r3(total - sweep), 1.]],
-            ]),
-            lane("B", "low", vec![vec![
+            // v19.4 soft echo out: a gentle low-pass muffles A's echo tail, the send steps down over three
+            // beats after the cut, B is at 0.8 at once and full after a bar, with no bass gate or filter
+            lane("A", "filter", vec![vec![[0., 0.], [r3(sweep), -0.25], [r3(sweep + 0.4), -0.3], [total, -0.3]]]),
+            lane("A", "echo", vec![vec![
                 [0., 0.],
-                [r3(0.75 * n(gb, "period")), 0.],
-                [r3(n(gb, "period")), 1.],
-                [r3(total - sweep), 1.],
+                [r3(sweep - beat), 0.],
+                [r3(sweep - 0.05), 0.6],
+                [r3(sweep), 0.6],
+                [r3(sweep + beat), 0.4],
+                [r3(sweep + 2. * beat), 0.2],
+                [r3(sweep + 3. * beat), 0.],
             ]]),
-            lane("B", "filter", vec![
-                shape(0., bar_b.min(echo_span), |x| -0.22 * (1. - smoothstep(x)), 12),
-                vec![[r3(total - sweep), 0.]],
-            ]),
+            lane("B", "gain", vec![vec![[0., 0.], [0.01, 0.8], [r3(bar), 1.]]]),
         ]);
     }
     p["confidence"] = json!(r3(0.7f64.min(n(ga, "confidence")).min(n(gb, "confidence"))));
@@ -569,7 +569,7 @@ pub fn plan_drop_swap(
             )
         } else {
             format!(
-                "смена на сильной доле: темпы {} и {} BPM не сводятся — текущий трек уходит через фильтр и эхо на границе {}, следующий входит на своей сильной доле",
+                "смена на сильной доле: темпы {} и {} BPM не сводятся — текущий трек уходит в эхо на границе {}, следующий входит со своего начала",
                 fixed(n(ga, "bpm"), 0),
                 fixed(n(gb, "bpm"), 0),
                 boundary
@@ -580,7 +580,7 @@ pub fn plan_drop_swap(
             if roll || wash {
                 "два ритма не звучат одновременно: под первым тактом следующего звучит только отфильтрованный хвост эха".into()
             } else {
-                "два ритма не звучат одновременно: фильтр убирает бас текущего к смене, его эхо на 3/4 доли звучит под первым тактом следующего, бас следующего вступает через долю".into()
+                "два ритма не звучат одновременно: эхо текущего на 3/4 доли, приглушённое фильтром, звучит под первым тактом следующего".into()
             },
             if cut > 2. {
                 format!("пропускается {} с финала", round(cut))
@@ -589,13 +589,13 @@ pub fn plan_drop_swap(
             },
         ],
     );
-    describe_entry(&mut p, b, &entry, None);
+    describe_entry(&mut p, b, &b_in, None);
     p["debug"] = if wash {
         json!({"variant":"loop-wash","style":"loop-wash","cut":r3(cut),"loopWash":{"exitSource":r3(d),"phrase":phrase,"dens":r3(dens),"bar":r3(l),"energyDelta":r3(energy_delta),"entryAligned":aligned}})
     } else if roll {
         json!({"variant":"loop-roll","style":"loop-roll","cut":r3(cut),"loopRoll":{"exitSource":r3(d),"phrase":phrase,"dens":r3(dens),"bar":r3(l),"entryAligned":aligned}})
     } else {
-        json!({"variant":"drop-swap","style":"drop-swap","cut":r3(cut),"dropSwap":{"cutSource":r3(d),"phrase":phrase,"sweep":r3(sweep),"entryAligned":aligned}})
+        json!({"variant":"drop-swap","style":"drop-swap","cut":r3(cut),"dropSwap":{"cutSource":r3(d),"phrase":phrase,"sweep":r3(sweep),"entryAligned":s(&b_in, "kind") == "downbeat"}})
     };
     Some(p)
 }

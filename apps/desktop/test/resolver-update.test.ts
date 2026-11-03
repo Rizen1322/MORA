@@ -8,11 +8,11 @@ import { ResolverUpdater } from '../src/resolver-update.mjs';
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
-function fixture() {
+function fixture(executableBytes = Buffer.from('MZtest executable')) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mora-update-')); dirs.push(directory);
-  let version = '2026.10.20'; let bytes = Buffer.from('MZtest executable'); let corrupt = false; let foreign = false; let healthy = true;
+  let version = '2026.10.20'; let bytes = executableBytes; let corrupt = false; let foreign = false; let healthy = true;
   const calls: string[] = [];
-  const updater = new ResolverUpdater({ directory, bundled: 'bundled.exe', probe: async () => healthy ? version : 'wrong', fetcher: async (url: string, options: RequestInit) => {
+  const updater = new ResolverUpdater({ directory, bundled: 'bundled.exe', probe: async () => healthy ? version : 'wrong', fetcher: async (url: string, options: RequestInit, limit = 16 << 20) => {
     calls.push(url);
     const root = `https://github.com/yt-dlp/yt-dlp/releases/download/${version}/`;
     if (url.endsWith('/latest')) {
@@ -22,12 +22,22 @@ function fixture() {
       { name: 'SHA2-256SUMS', browser_download_url: root + 'SHA2-256SUMS' },
     ] })); }
     if (url.endsWith('SHA2-256SUMS')) return new Response(`${crypto.createHash('sha256').update(bytes).digest('hex')}  yt-dlp.exe\n`);
+    if (bytes.length > limit) throw new Error('Transport response size limit');
     return new Response(corrupt ? Buffer.from('MZchanged') : bytes);
   } });
   return { updater, calls, directory, change: (v: string) => { version = v; bytes = Buffer.from(`MZ${v}`); }, corrupt: () => { corrupt = true; }, foreign: () => { foreign = true; }, unhealthy: () => { healthy = false; } };
 }
 
 describe('desktop resolver updates', () => {
+  it('passes its executable limit to a transport capped at 16 MiB by default', async () => {
+    const bytes = Buffer.alloc((16 << 20) + 1); bytes.write('MZ');
+    const f = fixture(bytes);
+    await f.updater.install();
+    expect(fs.statSync(f.updater.executable()).size).toBe(bytes.length);
+    expect(crypto.createHash('sha256').update(fs.readFileSync(f.updater.executable())).digest('hex'))
+      .toBe(crypto.createHash('sha256').update(bytes).digest('hex'));
+    expect(f.updater.status().selected).toBe('2026.10.20');
+  });
   it('checks without downloading an executable, installs verified versions and rolls back', async () => {
     const f = fixture();
     expect((await f.updater.check()).latest).toBe('2026.10.20');

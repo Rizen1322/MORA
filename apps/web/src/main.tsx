@@ -31,10 +31,12 @@ if (desktop) {
   // Tray, taskbar and sleep commands go to the one existing controller.
   desktop.onCommand((cmd) => {
     if (cmd === 'toggle') controller.toggle();
+    else if (cmd === 'play') { if (controller.state.status === 'paused') controller.resume(); }
     else if (cmd === 'pause') { if (controller.state.status !== 'idle' && controller.state.status !== 'paused') controller.pause(); }
     else if (cmd === 'next') void controller.nextTrack();
     else void controller.prevTrack();
   });
+  desktop.onSeek?.((position) => controller.seek(position));
   let last = '';
   controller.subscribe((s) => {
     const t = trackOf(s.queue[s.index]?.trackId);

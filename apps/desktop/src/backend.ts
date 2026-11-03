@@ -4,6 +4,8 @@ import { setSoundCloudTransport } from '../../server/src/public/soundcloud.ts';
 import { setYtmTransport } from '../../server/src/public/ytmusic.ts';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../../server/src/app.ts';
+import { loadConfig } from '../../server/src/config.ts';
+import { configureRustNetwork, createRustNetwork, type RustNetwork } from '../../server/src/rust-network.ts';
 
 const parent = process.parentPort;
 const token = process.env.AUTOMIX_LAUNCH_TOKEN ?? '';
@@ -13,10 +15,14 @@ delete process.env.AUTOMIX_DESKTOP_PCM_TOKEN;
 const wanted = Number(process.env.AUTOMIX_PORT || 0);
 
 let close: (() => Promise<void>) | null = null;
+let network: RustNetwork | null = null;
 let closing: Promise<void> | null = null;
 let analysis: { setPower(p: { idle: boolean; onBattery: boolean }): void } | null = null;
 const shutdown = (code = 0) => {
-  closing ??= (close ? close() : Promise.resolve()).catch((e) => console.error('shutdown', e)).finally(() => process.exit(code));
+  closing ??= (async () => {
+    try { await close?.(); }
+    finally { configureRustNetwork(null); await network?.close(); }
+  })().catch((e) => console.error('shutdown', e)).finally(() => process.exit(code));
   return closing;
 };
 parent.on('message', (e) => {
@@ -27,8 +33,15 @@ parent.on('message', (e) => {
 
 try {
   if (token.length < 32) throw new Error('launch token missing');
-  setYtmTransport((input, init) => net.fetch(input instanceof URL ? input.href : input, init));
-  setSoundCloudTransport((input, init) => net.fetch(input instanceof URL ? input.href : input, init));
+  const cfg = loadConfig();
+  const electronFetch: typeof fetch = (input, init) => net.fetch(input instanceof URL ? input.href : input, init);
+  if (cfg.networkRust) {
+    network = await createRustNetwork(cfg.networkRust, cfg.publicProxies, electronFetch);
+    configureRustNetwork(network);
+  }
+  const transport = network?.fetch ?? electronFetch;
+  setYtmTransport(transport);
+  setSoundCloudTransport(transport);
   const created = await createApp({ host: '127.0.0.1', port: wanted, accessToken: token, desktopPlaybackToken });
   close = created.close;
   analysis = created.services.analysis;

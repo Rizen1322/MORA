@@ -1757,6 +1757,11 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
   const energyDelta = powerLevel(B, entry.time, entry.time + 8 * barB) + ctx.gainB - (powerLevel(A, d - 2 * bar, d) + ctx.gainA);
   const calm = gb.bpm < 0.85 * ga.bpm && energyDelta <= -3;
   const wash = loop && calm, roll = loop && !calm;
+  // v19.4 soft echo out: B enters from its own opening, never a trimmed intro (landing on B's drop made it
+  // "slam in" in every listened variant); after more than 1 s of leading silence, on its first downbeat.
+  // A Next press keeps its v19.2 rule: B arrives at its energetic section, not inside a quiet intro.
+  const opening = B.audibleStart <= 1 ? B.audibleStart : gb.downbeats.find(t => t >= B.audibleStart - 0.025) ?? B.audibleStart;
+  const bIn = loop || now !== undefined ? entry : { time: opening, score: 0.6, kind: opening === B.audibleStart ? 'start' as const : 'downbeat' as const, tags: ['drop-swap-start'] };
   // v19.3 echo out breathes (listener: "too fast, the echo cut short"): B opens from its muffled intro
   // over 2-4 of its bars (about 4 s), and the transition lasts until it is open; a Next keeps one bar
   // v19.4 (listener: "the effect is too loud, it takes you out of the music"): two bars, not 2-4
@@ -1774,7 +1779,7 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
   const feedback = Math.min(roll || wash ? 0.72 : 0.78, Math.pow(10, -1.5 / ((wash ? 2.5 : roll ? 1.5 : 3) * bar / delay)));
   const D = r3(T + softTail);
   const p = basePlan(ctx, 'echo_out');
-  p.bEntry = r3(entry.time); p.duration = D; p.swapAt = r3(T); p.bDelay = r3(T);
+  p.bEntry = r3(bIn.time); p.duration = D; p.swapAt = r3(T); p.bDelay = r3(T);
   p.echo = { delay: r3(delay), feedback: r3(feedback) };
   if (wash) {
     const start = Math.round((d - L) * 300) / 300;
@@ -1805,17 +1810,13 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
     p.aExit = r3(d - S);
     p.automation = [
       lane('A', 'gain', [[0, 1], [r3(S - 0.03), 1], [r3(S), 0], [D, 0]]),
-      // after the cut A is silent and its filter only thins what still reaches the send (A's next bar)
-      lane('A', 'filter', shape(0, S, x => 0.3 * smoothstep(x), 8), shape(S, Math.min(D, S + 2 * beat), x => 0.3 + 0.2 * smoothstep(x), 4), [[D, 0.5]]),
-      // pre-fader send: open over the last beat, then it fades over two beats. v19.4: 0.4, not 0.9 (the
-      // first repeat came at -1 dB of A and the tail sat 2-7 dB under a full B; now about -10..-18 dB)
-      lane('A', 'echo', [[0, 0], [r3(S - beat), 0], [r3(S - 0.05), 0.4], [r3(S), 0.4]], shape(S, Math.min(D, S + 2 * beat), x => 0.4 * cosDown(x), 8), [[D, 0]]),
-      // B runs on its own clock after bDelay and is nearly full at once (0.9) under the quieter echo
-      lane('B', 'gain', [[0, 0], [0.02, 0.9]], shape(0.02, echoSpan, x => 0.9 + 0.1 * sinUp(x), 8), [[r3(D - S), 1]]),
-      // its bass waits a beat (two dipped renders); the low-pass only takes the top end (-0.22, about 7 kHz)
-      // and opens on an S-curve over one of B's bars (-0.5 from 1.9 kHz over 4 s sounded like a filter gimmick)
-      lane('B', 'low', [[0, 0], [r3(0.75 * gb.period), 0], [r3(gb.period), 1], [r3(D - S), 1]]),
-      lane('B', 'filter', shape(0, Math.min(barB, echoSpan), x => -0.22 * (1 - smoothstep(x)), 12), [[r3(D - S), 0]]),
+      // v19.4 soft echo out (A/B-approved renders): a gentle low-pass eases in over the sweep and muffles
+      // the echo tail after the cut (-0.25 -> -0.3); no high-pass sweep
+      lane('A', 'filter', [[0, 0], [r3(S), -0.25], [r3(S + 0.4), -0.3], [D, -0.3]]),
+      // pre-fader send: open over the last beat (0.6), then 0.4, 0.2 and closed three beats after the cut
+      lane('A', 'echo', [[0, 0], [r3(S - beat), 0], [r3(S - 0.05), 0.6], [r3(S), 0.6], [r3(S + beat), 0.4], [r3(S + 2 * beat), 0.2], [r3(S + 3 * beat), 0]]),
+      // B runs on its own clock after bDelay: 0.8 at once, full after a bar of A; no bass gate, no filter
+      lane('B', 'gain', [[0, 0], [0.01, 0.8], [r3(bar), 1]]),
     ];
   }
   p.confidence = r3(Math.min(0.7, ga.confidence, gb.confidence));
@@ -1827,18 +1828,18 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
       ? `петля с размывом: темпы ${ga.bpm.toFixed(0)} и ${gb.bpm.toFixed(0)} BPM не сводятся, следующий трек спокойнее — последний такт текущего повторяется без ускорения, уходит в фильтр и эхо, следующий мягко поднимается под хвост`
       : roll
       ? `петля с ускорением: темпы ${ga.bpm.toFixed(0)} и ${gb.bpm.toFixed(0)} BPM не сводятся — последний такт текущего трека перед границей ${phrase ? 'фразы' : 'четырёх тактов'} повторяется и дробится до 1/8 такта под нарастающий фильтр, следующий вступает в полную силу на своей сильной доле`
-      : `смена на сильной доле: темпы ${ga.bpm.toFixed(0)} и ${gb.bpm.toFixed(0)} BPM не сводятся — текущий трек уходит через фильтр и эхо на границе ${phrase ? 'фразы' : 'четырёх тактов'}, следующий входит на своей сильной доле`,
+      : `смена на сильной доле: темпы ${ga.bpm.toFixed(0)} и ${gb.bpm.toFixed(0)} BPM не сводятся — текущий трек уходит в эхо на границе ${phrase ? 'фразы' : 'четырёх тактов'}, следующий входит со своего начала`,
     ...(fallbackReason ? [fallbackReason] : []),
     roll || wash ? 'два ритма не звучат одновременно: под первым тактом следующего звучит только отфильтрованный хвост эха'
-      : 'два ритма не звучат одновременно: фильтр убирает бас текущего к смене, его эхо на 3/4 доли звучит под первым тактом следующего, бас следующего вступает через долю',
+      : 'два ритма не звучат одновременно: эхо текущего на 3/4 доли, приглушённое фильтром, звучит под первым тактом следующего',
     cut > 2 ? `пропускается ${Math.round(cut)} с финала` : 'текущий трек звучит почти до конца',
   ];
-  describeEntry(p, B, entry);
+  describeEntry(p, B, bIn);
   p.debug = wash
     ? { variant: 'loop-wash', style: 'loop-wash', cut: r3(cut), loopWash: { exitSource: r3(d), phrase, dens: r3(dens), bar: r3(L), energyDelta: r3(energyDelta), entryAligned: !!picked?.aligned } }
     : roll
     ? { variant: 'loop-roll', style: 'loop-roll', cut: r3(cut), loopRoll: { exitSource: r3(d), phrase, dens: r3(dens), bar: r3(L), entryAligned: !!picked?.aligned } }
-    : { variant: 'drop-swap', style: 'drop-swap', cut: r3(cut), dropSwap: { cutSource: r3(d), phrase, sweep: r3(S), entryAligned: !!picked?.aligned } };
+    : { variant: 'drop-swap', style: 'drop-swap', cut: r3(cut), dropSwap: { cutSource: r3(d), phrase, sweep: r3(S), entryAligned: bIn.kind === 'downbeat' } };
   return p;
 }
 

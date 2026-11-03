@@ -111,11 +111,11 @@ export class AudiusProvider implements Provider {
     }).id;
   }
 
-  async fetchAudio(src: SourceRow): Promise<string> {
+  async fetchAudio(src: SourceRow, signal?: AbortSignal, priority: 0 | 1 | 2 | 3 = 0): Promise<string> {
     const file = path.join(this.cfg.dataDir, 'session-cache', 'audius', `${String(src.external_id).replace(/[^A-Za-z0-9]/g, '')}.mp3`);
     if (fs.existsSync(file)) return file;
     const sp = new URLSearchParams({ app_name: 'AutoMix' });
-    await downloadTo(`${this.base}/tracks/${encodeURIComponent(String(src.external_id))}/stream?${sp}`, file);
+    await downloadTo(`${this.base}/tracks/${encodeURIComponent(String(src.external_id))}/stream?${sp}`, file, undefined, { signal, priority });
     return file;
   }
   async nativeSource(src: SourceRow): Promise<import('@automix/core/native-preparation.ts').NativeMediaSource> {

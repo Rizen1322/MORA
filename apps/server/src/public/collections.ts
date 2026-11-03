@@ -1,3 +1,4 @@
+import { networkFetch as fetch } from '../rust-network.ts';
 /**
  * Reading public collections (playlists/albums) as metadata lists. Ideas from
  * Riff (MIT, (c) rootscripts, server.js at add6843): Spotify embed page data,

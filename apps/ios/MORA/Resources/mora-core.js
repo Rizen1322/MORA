@@ -31,7 +31,7 @@ var MoraCore = (() => {
 
   // packages/core/src/types.ts
   var ANALYZER_VERSION = "am-analyzer-14";
-  var PLANNER_VERSION = "am-planner-v13-length-1";
+  var PLANNER_VERSION = "am-planner-v18-drum-window-1";
   var VOICE_LIFT_MAX = 2.5;
   var DEFAULT_AUTOMIX_SETTINGS = {
     enabled: true,
@@ -1068,6 +1068,11 @@ var MoraCore = (() => {
       return sum + (1 - wet + wet * h) ** 2;
     }, 0) / hz.length;
   }
+  function leadBandRetention(p, deck, t) {
+    const filter = laneValue(p, deck, "filter", t);
+    const weighted = 0.1 * laneValue(p, deck, "low", t) ** 2 * sweepPower(filter, LOW_HZ) + 0.65 * laneValue(p, deck, "mid", t) ** 2 * sweepPower(filter, MID_HZ) + 0.25 * laneValue(p, deck, "high", t) ** 2 * sweepPower(filter, HIGH_HZ);
+    return Math.sqrt(Math.max(0, weighted));
+  }
   function deckPower(p, an, deck, t) {
     var _a;
     const delay = deck === "B" ? (_a = p.bDelay) != null ? _a : 0 : 0, tt = t - delay;
@@ -1154,17 +1159,33 @@ var MoraCore = (() => {
     const c = an.curves, i = Math.round(src * c.rate);
     return i >= 0 && i < c.midDensity.length ? c.midDensity[i] : 0;
   };
-  function leadRiskSeconds(p, A, B) {
+  function leadExposure(p, A, B) {
     var _a;
-    let s = 0;
+    let seconds = 0, run = 0, longest = 0;
     for (let t = 0.25; t < p.duration; t += 0.5) {
       const tb = t - ((_a = p.bDelay) != null ? _a : 0);
-      if (tb < 0) continue;
-      const ma = laneValue(p, "A", "gain", t) * laneValue(p, "A", "mid", t), mb = laneValue(p, "B", "gain", tb) * laneValue(p, "B", "mid", tb);
-      if (ma < 0.5 || mb < 0.5) continue;
-      if (density(A, p.aExit + integrateTempo(p.tempoA, t)) >= bodyDensity(A) && density(B, p.bEntry + integrateTempo(p.tempoB, tb)) >= bodyDensity(B)) s += 0.5;
+      const audible = (an, deck, tt) => {
+        if (tt < 0) return 0;
+        const src = (deck === "A" ? p.aExit : p.bEntry) + integrateTempo(deck === "A" ? p.tempoA : p.tempoB, tt);
+        if (src < an.audibleStart || src >= an.audibleEnd) return 0;
+        const audible2 = laneValue(p, deck, "gain", tt) * leadBandRetention(p, deck, tt);
+        return clamp2(audible2) * clamp2(density(an, src) / Math.max(0.05, bodyDensity(an)));
+      };
+      const overlap = Math.min(audible(A, "A", t), audible(B, "B", tb));
+      const dt = Math.min(0.5, p.duration - (t - 0.25));
+      seconds += overlap * dt;
+      run = overlap > 0.1 ? run + overlap * dt : 0;
+      longest = Math.max(longest, run);
     }
-    return s;
+    return { seconds: r3(seconds), run: r3(longest) };
+  }
+  function hasMaterialMixRegression(base, candidate) {
+    if (!base || !candidate) return false;
+    const increased = (field, margin, ratio = 0) => {
+      const x = base[field], y = candidate[field];
+      return typeof x === "number" && Number.isFinite(x) && typeof y === "number" && Number.isFinite(y) && y > x + Math.max(margin, x * ratio);
+    };
+    return increased("leadRisk", 1, 0.2) || increased("leadRun", 1, 0.2) || increased("doubleBass", 1) || increased("tonalClash", 1) || increased("spectralDamage", 1);
   }
   function fullMixCost(p, A, B, s) {
     var _a, _b;
@@ -1181,7 +1202,7 @@ var MoraCore = (() => {
     const endB = p.bEntry + integrateTempo(p.tempoB, D - ((_a = p.bDelay) != null ? _a : 0));
     const after = power(B, endB, Math.min(B.audibleEnd, endB + 4)) + p.gainB;
     const bodyLowA = power(A, A.audibleStart, A.audibleEnd, A.curves.lowDb), bodyLowB = power(B, B.audibleStart, B.audibleEnd, B.curves.lowDb);
-    let hole = 0, unsupported = 0, jump = 0, doubleBass = 0, prev = null;
+    let hole = 0, unsupported = 0, jump = 0, doubleBass = 0, openingSuppression = 0, spectralDamage = 0, prev = null;
     for (let t = 0.25; t < D; t += 0.5) {
       const a = deckPower(p, A, "A", t), b = deckPower(p, B, "B", t);
       if (!a || !b) return null;
@@ -1192,6 +1213,16 @@ var MoraCore = (() => {
       prev = level2;
       const srcA = p.aExit + integrateTempo(p.tempoA, t), tb = t - ((_b = p.bDelay) != null ? _b : 0);
       const srcB = tb < 0 ? -1 : p.bEntry + integrateTempo(p.tempoB, tb);
+      const dt = Math.min(0.5, D - (t - 0.25));
+      if (tb >= 0 && tb < 12 && srcB < B.audibleEnd && power(B, srcB - 0.25, srcB + 0.25) > B.bodyRmsDb - 12) {
+        const content = clamp2(density(B, srcB) / Math.max(0.05, bodyDensity(B)));
+        const delivery = laneValue(p, "B", "gain", tb) * leadBandRetention(p, "B", tb);
+        openingSuppression += dt * content * clamp2(1 - delivery / 0.5);
+      }
+      for (const [deck, tt, contribution, other] of [["A", t, a, b], ["B", tb, b, a]]) {
+        if (tt >= 0 && contribution.total > other.total && laneValue(p, deck, "gain", tt) >= 0.5)
+          spectralDamage += dt * clamp2((0.6 - laneValue(p, deck, "mid", tt)) / 0.6);
+      }
       if (power(A, srcA - 0.5, srcA + 0.5) < before - p.gainA - 12 && (srcB < 0 || power(B, srcB - 0.5, srcB + 0.5) < after - p.gainB - 8)) unsupported += 0.5;
       const lowA = 10 * Math.log10(Math.max(1e-12, a.low)) - p.gainA, lowB = 10 * Math.log10(Math.max(1e-12, b.low)) - p.gainB;
       if (lowA >= bodyLowA - 4 && lowB >= bodyLowB - 4) doubleBass += 0.5;
@@ -1199,13 +1230,15 @@ var MoraCore = (() => {
     const exit = effectiveExit(p, A);
     const closureMiss = A.structure ? 1 - closureAt(A.structure, exit.source) : 0.5;
     const rest = Math.max(0, A.audibleEnd - exit.source);
-    const restDensity = rest > 0 ? density(A, (exit.source + A.audibleEnd) / 2) : 0;
-    const cutA = rest <= 2 ? 0 : clamp2(rest / (restDensity < 0.18 ? 45 : 14));
+    const restDensity = rest > 0 ? meanDensity(A, exit.source, A.audibleEnd) : 0;
+    const cutScale = rest / (restDensity < 0.18 ? 45 : 14);
+    const cutA = rest <= 2 ? 0 : cutScale + 0.25 * Math.max(0, cutScale - 1) ** 1.3;
     const unknownB = voiceUnknown(B, s), skipped = Math.max(0, p.bEntry - B.audibleStart);
     const skippedDensity = skipped > 5 ? meanDensity(B, B.audibleStart, p.bEntry) / bodyDensity(B) : 0;
     const skippedUnknownB = unknownB && skipped > 5 ? (skipped - 5) * clamp2((skippedDensity - 0.7) / 0.3) : 0;
-    const pickup = pickupLost(B, p.bEntry), leadRisk = leadRiskSeconds(p, A, B), tonalClash = tonalClashSeconds(p, A, B);
-    const total = 0.25 * closureMiss + 0.2 * cutA + 0.15 * pickup + 0.05 * Math.max(0, hole) + 0.1 * unsupported + 0.03 * Math.max(0, jump) + 0.3 * doubleBass / D + 0.3 * leadRisk / D + 0.2 * tonalClash / D + 5e-3 * skippedUnknownB + 0.15 * clamp2((10 - D) / 10);
+    const exposure = leadExposure(p, A, B);
+    const pickup = pickupLost(B, p.bEntry), leadRisk = exposure.seconds, leadRun = exposure.run, tonalClash = tonalClashSeconds(p, A, B);
+    const total = 0.25 * closureMiss + 0.2 * cutA + 0.15 * pickup + 0.05 * Math.max(0, hole) + 0.1 * unsupported + 0.03 * Math.max(0, jump) + 0.3 * doubleBass / D + 0.2 * leadRisk / D + 0.025 * leadRisk + 0.02 * leadRun + 0.2 * tonalClash / D + 5e-3 * skippedUnknownB + 0.06 * Math.max(0, openingSuppression - 1) + 0.05 * spectralDamage + 0.15 * clamp2((10 - D) / 10);
     if (!Number.isFinite(total)) return null;
     return {
       total: r3(total),
@@ -1217,8 +1250,11 @@ var MoraCore = (() => {
       jumpDb: r3(Math.max(0, jump)),
       doubleBass,
       leadRisk,
+      leadRun,
       tonalClash,
-      skippedUnknownB: r3(skippedUnknownB)
+      skippedUnknownB: r3(skippedUnknownB),
+      openingSuppression: r3(openingSuppression),
+      spectralDamage: r3(spectralDamage)
     };
   }
 
@@ -1532,42 +1568,532 @@ var MoraCore = (() => {
     }
   }
 
+  // packages/core/src/plan/human-scenarios.ts
+  function sequentialRelayAudition(base, A, B, s) {
+    var _a, _b;
+    if (!s.enabled || base.debug.processingAllowed === false) return null;
+    const endA = Math.min(A.duration, A.audibleEnd), entry = Math.max(0, B.audibleStart), endB = Math.min(B.duration, B.audibleEnd);
+    const hold = 0.85, fade = 0.15, separation = 0.05, bSpan = 0.5, duration = hold + fade + separation + bSpan;
+    if (![endA, entry, endB, A.audibleStart, base.aExit, s.maxBlendSeconds].every(Number.isFinite) || s.maxBlendSeconds < duration || endB - entry < bSpan) return null;
+    const afterClosure = separation + bSpan, minClose = Math.max(A.audibleStart + hold + fade, base.aExit + hold + fade, endA - 12);
+    const maxClose = endA - afterClosure;
+    let close = ((_b = (_a = A.structure) == null ? void 0 : _a.segments) != null ? _b : []).filter((x) => Number.isFinite(x.end) && x.endClosure >= 0.75 && x.end >= minClose && x.end <= maxClose).map((x) => x.end).sort((a, b) => b - a)[0];
+    let evidence = "measured structural closure";
+    if (close === void 0) {
+      const c = A.curves, rate = c == null ? void 0 : c.rate, from = Math.floor((endA - 1.5) * rate), to = Math.ceil(endA * rate);
+      if (!(rate > 0) || from < 0 || to > c.rmsDb.length || !Number.isFinite(A.bodyRmsDb)) return null;
+      const values = c.rmsDb.slice(from, to);
+      if (!values.length || !values.every(Number.isFinite)) return null;
+      const mean = 10 * Math.log10(values.reduce((sum, db) => sum + 10 ** (db / 10), 0) / values.length);
+      if (!(mean < A.bodyRmsDb - 10) || maxClose < minClose) return null;
+      close = maxClose;
+      evidence = "measured quiet end tail";
+    }
+    const {
+      beatAlign: _beat,
+      tempoA: _ta,
+      loopA: _loop,
+      tapeStopA: _stop,
+      vocalA: _va,
+      vocalB: _vb,
+      echo: _echo,
+      voiceEcho: _ve,
+      entrySelection: _entry,
+      fallbackReason: _fallback,
+      ...clean
+    } = base;
+    const bDelay = hold + fade + separation;
+    return { name: "sequential-relay", auditionOnly: true, plan: {
+      ...clean,
+      id: `${base.id}:sequential-relay`,
+      version: PLANNER_VERSION,
+      method: "phrase_cut",
+      aExit: close - hold - fade,
+      bEntry: entry,
+      duration,
+      gap: 0,
+      bDelay,
+      swapAt: bDelay,
+      tempoB: [[0, 1]],
+      confidence: Math.min(base.confidence, 0.5),
+      automation: [
+        { deck: "A", lane: "gain", points: [[0, 1], [hold, 1], [hold + fade, 0], [duration, 0]] },
+        { deck: "B", lane: "gain", points: [[0, 0], [0.05, 1], [bSpan, 1]] }
+      ],
+      entrySelection: { kind: "start", skippedSeconds: 0, confidence: 1 },
+      reasons: ["\u041F\u0440\u043E\u0431\u043D\u0430\u044F \u043F\u043E\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u0442\u0435\u043B\u044C\u043D\u0430\u044F \u043F\u0435\u0440\u0435\u0434\u0430\u0447\u0430: A \u0443\u0445\u043E\u0434\u0438\u0442 \u0434\u043E \u0437\u0430\u043F\u0443\u0441\u043A\u0430 B; \u0442\u0440\u0435\u0431\u0443\u0435\u0442\u0441\u044F \u043F\u0440\u043E\u0441\u043B\u0443\u0448\u0438\u0432\u0430\u043D\u0438\u0435"],
+      debug: { humanScenario: {
+        policy: "human-1",
+        kind: "sequential-relay",
+        auditionOnly: true,
+        evidence,
+        sourceEndA: close,
+        remainingASeconds: Math.max(0, endA - close),
+        preservedOpeningB: true,
+        nativeTempo: true,
+        limits: ["may-cut-A-phrase", "structure-is-not-word-timing", "not-beatmatched", "requires-listening"]
+      } }
+    } };
+  }
+  function complementaryHandoffAudition(base) {
+    var _a, _b;
+    if (base.method !== "beatmatch_blend" || !base.beatAlign || base.debug.processingAllowed === false || base.loopA || base.echo || base.voiceEcho || base.tapeStopA || base.vocalA || base.vocalB || base.gap !== 0) return null;
+    const delay = (_a = base.bDelay) != null ? _a : 0, duration = base.duration, span = duration - delay;
+    const gainA = base.automation.filter((l) => l.deck === "A" && l.lane === "gain");
+    const gainB = base.automation.filter((l) => l.deck === "B" && l.lane === "gain");
+    const points = (_b = gainB[0]) == null ? void 0 : _b.points;
+    const bpm = base.beatAlign.bpmA;
+    if (![delay, duration, base.swapAt, bpm].every(Number.isFinite) || delay < 0 || span < 1 || base.swapAt < delay || base.swapAt > duration || bpm <= 0 || gainA.length !== 1 || gainB.length !== 1 || !points || points.length < 2 || points.some(([t, v], i) => !Number.isFinite(t) || !Number.isFinite(v) || t < 0 || t > span || v < 0 || v > 1 || i > 0 && t <= points[i - 1][0]) || points[0][0] !== 0 || points[0][1] !== 0 || points.at(-1)[0] !== span || points.at(-1)[1] !== 1) return null;
+    const width = Math.min(3, Math.max(1, 240 / bpm), span);
+    const start = Math.max(0, Math.min(span - width, base.swapAt - delay - width / 2)), end = start + width;
+    const ramp = (t) => Math.max(0, Math.min(1, (t - start) / width));
+    const knots = [.../* @__PURE__ */ new Set([0, span, start, end, ...points.map(([t]) => t)])].sort((a, b) => a - b);
+    const intersections = [];
+    for (let i = 1; i < knots.length; i++) {
+      const l = knots[i - 1], r5 = knots[i], dl = pointValue(points, l) - ramp(l), dr = pointValue(points, r5) - ramp(r5);
+      if (dl * dr < 0) intersections.push(l + (r5 - l) * dl / (dl - dr));
+    }
+    const times = [...knots, ...intersections].sort((a, b) => a - b);
+    const bPoints = times.map((t) => [t, Math.max(pointValue(points, t), ramp(t))]);
+    const aPoints = [
+      ...delay > 0 ? [[0, 1]] : [],
+      ...bPoints.map(([t, v]) => [t + delay, 1 - v])
+    ];
+    return { name: "complementary-handoff", auditionOnly: true, plan: {
+      ...base,
+      id: `${base.id}:complementary-handoff`,
+      version: PLANNER_VERSION,
+      automation: base.automation.map((l) => l === gainA[0] ? { ...l, points: aPoints } : l === gainB[0] ? { ...l, points: bPoints } : l),
+      reasons: [...base.reasons, "\u041F\u0440\u043E\u0431\u043D\u0430\u044F \u0432\u0441\u0442\u0440\u0435\u0447\u043D\u0430\u044F \u043F\u0435\u0440\u0435\u0434\u0430\u0447\u0430 \u0433\u0440\u043E\u043C\u043A\u043E\u0441\u0442\u0438; \u0442\u0440\u0435\u0431\u0443\u0435\u0442\u0441\u044F \u043F\u0440\u043E\u0441\u043B\u0443\u0448\u0438\u0432\u0430\u043D\u0438\u0435"],
+      debug: { ...base.debug, humanScenario: {
+        policy: "human-1",
+        kind: "complementary-handoff",
+        auditionOnly: true,
+        start: start + delay,
+        end: end + delay,
+        limits: ["original-intro-may-be-quiet", "voice-and-rhythm-unknown", "requires-listening"]
+      } }
+    } };
+  }
+  function cleanOutAudition(base, A) {
+    var _a, _b, _c, _d, _e;
+    if (base.method !== "beatmatch_blend" || !base.beatAlign || base.loopA || base.echo || base.tapeStopA || base.duration < 4) return null;
+    const gainA = base.automation.find((l) => l.deck === "A" && l.lane === "gain");
+    if (!gainA || !((_a = A.beat) == null ? void 0 : _a.stable) || !(A.beat.period > 0)) return null;
+    const b = (lane2, t) => {
+      var _a2, _b2;
+      return pointValue((_b2 = (_a2 = base.automation.find((l) => l.deck === "B" && l.lane === lane2)) == null ? void 0 : _a2.points) != null ? _b2 : [[0, 1]], t);
+    };
+    const delay = (_b = base.bDelay) != null ? _b : 0;
+    let start = -1;
+    for (let t = Math.max(0, delay); t <= base.duration - 1; t += 0.05) {
+      const tb = t - delay;
+      if (["gain", "low", "mid", "high"].every((l) => b(l, tb) >= 0.95) && pointValue((_d = (_c = base.automation.find((l) => l.deck === "B" && l.lane === "filter")) == null ? void 0 : _c.points) != null ? _d : [[0, 0]], tb) === 0 && pointValue(gainA.points, t) >= 0.3) {
+        start = t;
+        break;
+      }
+    }
+    if (start < 0) return null;
+    const tempo = pointValue((_e = base.tempoA) != null ? _e : [[0, 1]], start);
+    if (!(tempo > 0)) return null;
+    const end = Math.min(base.duration, start + 4 * A.beat.period / tempo);
+    if (end - start < 1) return null;
+    const r33 = (n) => Math.round(n * 1e3) / 1e3;
+    const knots = [.../* @__PURE__ */ new Set([...gainA.points.map(([t]) => t), ...Array.from({ length: 17 }, (_, i) => r33(start + (end - start) * i / 16))])].sort((a, b2) => a - b2);
+    const points = knots.map((t) => [t, r33(pointValue(gainA.points, t) * (t <= start ? 1 : t >= end ? 0 : Math.cos((t - start) / (end - start) * Math.PI / 2)))]);
+    return { name: "clean-out", auditionOnly: true, plan: {
+      ...base,
+      id: `${base.id}:clean-out`,
+      automation: base.automation.map((l) => l === gainA ? { ...l, points } : l),
+      reasons: [...base.reasons, "\u041F\u0440\u043E\u0431\u043D\u044B\u0439 \u043F\u043B\u0430\u0432\u043D\u044B\u0439 \u0432\u044B\u0445\u043E\u0434 \u0432\u0441\u0435\u0439 \u0434\u0435\u043A\u0438 A \u043F\u043E\u0441\u043B\u0435 \u043F\u0440\u0438\u0445\u043E\u0434\u0430 B; \u0442\u0440\u0435\u0431\u0443\u0435\u0442\u0441\u044F \u043F\u0440\u043E\u0441\u043B\u0443\u0448\u0438\u0432\u0430\u043D\u0438\u0435"],
+      debug: { ...base.debug, humanScenario: { policy: "human-1", kind: "clean-out", auditionOnly: true, start: r33(start), end: r33(end), limits: ["may-cut-A-phrase", "requires-listening"] } }
+    } };
+  }
+  function humanTransitionScenarios(base, A, B, s) {
+    var _a, _b, _c, _d;
+    const result = [];
+    if (!s.enabled || base.debug.processingAllowed === false) return result;
+    const endA = Math.min(A.duration, A.audibleEnd), entry = Math.max(0, B.audibleStart);
+    const roomB = Math.min(B.duration, B.audibleEnd) - entry;
+    if (![endA, entry, roomB, s.maxBlendSeconds].every(Number.isFinite) || roomB < 0.5 || endA - A.audibleStart < 0.5 || s.maxBlendSeconds < 0.5) return result;
+    const addManual = () => {
+      const complementary = complementaryHandoffAudition(base);
+      if (complementary) result.push(complementary);
+      const cleanOut = cleanOutAudition(base, A);
+      if (cleanOut) result.push(cleanOut);
+      const relay = sequentialRelayAudition(base, A, B, s);
+      if (relay) result.push(relay);
+    };
+    const bothUnknown = s.stemMixing === false || !A.vocalActivity && !B.vocalActivity;
+    const ordinaryAuto = bothUnknown && s.style === "auto";
+    const shakyGrid = [A.beat, B.beat].some((g) => g && (g.confidence < 0.55 || g.jitterMs > 20));
+    const strongClosure = (end) => {
+      var _a2;
+      return !!((_a2 = A.structure) == null ? void 0 : _a2.segments.some((segment) => segment.endClosure >= 0.75 && Math.abs(segment.end - end) < 1e-3));
+    };
+    const add = (name, end, span, delay, fade, evidence) => {
+      const start = end - span, bSpan = span - delay;
+      if (start < Math.max(A.audibleStart, base.aExit) - 1e-3 || end > endA || bSpan > roomB || bSpan < 0.1) return;
+      const {
+        beatAlign: _beat,
+        tempoA: _ta,
+        loopA: _loop,
+        tapeStopA: _stop,
+        vocalA: _va,
+        vocalB: _vb,
+        echo: _echo,
+        voiceEcho: _ve,
+        entrySelection: _entry,
+        fallbackReason: _fallback,
+        ...clean
+      } = base;
+      const pointsA = [[0, 1]];
+      if (span > fade) pointsA.push([span - fade, 1]);
+      pointsA.push([span, 0]);
+      const attack = Math.min(0.12, bSpan / 3);
+      const auditionOnly = !(ordinaryAuto && (!base.beatAlign || shakyGrid) && (name === "natural-tail-start" || name === "section-handoff" && strongClosure(end)));
+      result.push({ name, auditionOnly, plan: {
+        ...clean,
+        id: `${base.id}:${name}`,
+        version: PLANNER_VERSION,
+        method: name === "natural-tail-start" ? "crossfade" : "phrase_cut",
+        aExit: start,
+        bEntry: entry,
+        duration: span,
+        gap: 0,
+        bDelay: delay,
+        swapAt: delay + attack,
+        tempoB: [[0, 1]],
+        confidence: Math.min(base.confidence, 0.65),
+        automation: [
+          { deck: "A", lane: "gain", points: pointsA },
+          { deck: "B", lane: "gain", points: [[0, 0], [attack, 1], [bSpan, 1]] }
+        ],
+        reasons: [name === "natural-tail-start" ? "\u0415\u0441\u0442\u0435\u0441\u0442\u0432\u0435\u043D\u043D\u044B\u0439 \u0445\u0432\u043E\u0441\u0442 A \u043F\u0435\u0440\u0435\u0434 \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u044B\u043C \u043D\u0430\u0447\u0430\u043B\u043E\u043C B" : strongClosure(end) ? "\u041A\u043E\u0440\u043E\u0442\u043A\u0430\u044F \u043F\u0435\u0440\u0435\u0434\u0430\u0447\u0430 \u043F\u043E\u043B\u043D\u043E\u0439 \u0437\u0430\u043F\u0438\u0441\u0438 \u0443 \u0441\u0442\u0440\u0443\u043A\u0442\u0443\u0440\u043D\u043E\u0433\u043E \u0437\u0430\u043A\u0440\u044B\u0442\u0438\u044F A" : "\u041F\u0440\u043E\u0431\u043D\u0430\u044F \u043F\u0435\u0440\u0435\u0434\u0430\u0447\u0430 \u0443 \u043F\u0440\u0435\u0434\u043F\u043E\u043B\u0430\u0433\u0430\u0435\u043C\u043E\u0439 \u0433\u0440\u0430\u043D\u0438\u0446\u044B \u0444\u0440\u0430\u0437\u044B A"],
+        entrySelection: { kind: "start", skippedSeconds: 0, confidence: 1 },
+        debug: { humanScenario: {
+          policy: "human-1",
+          kind: name === "natural-tail-start" ? "natural-tail" : "phrase-handoff",
+          name,
+          evidence,
+          sourceEndA: end,
+          preservedOpeningB: true,
+          nativeTempo: true,
+          auditionOnly,
+          limits: ["structure-is-not-word-timing", "not-beatmatched"]
+        } }
+      } });
+    };
+    const closures = [
+      ...(_b = (_a = A.structure) == null ? void 0 : _a.segments.filter((x) => x.endClosure >= 0.65).map((x) => x.end)) != null ? _b : [],
+      ...A.phraseConfidence >= 0.65 ? A.phrases : []
+    ].filter((t) => Number.isFinite(t) && t >= Math.max(base.aExit + 0.5, endA - 12) && t <= endA).sort((a, b) => b - a);
+    if (closures.length) {
+      const end = closures[0], span = Math.min(1.2, s.maxBlendSeconds, end - Math.max(A.audibleStart, base.aExit), roomB + 0.35);
+      if (span >= 0.5) add("section-handoff", end, span, span * 0.65, span * 0.55, strongClosure(end) ? "late measured structural closure; short full-deck overlap" : "phrase-grid hypothesis; audition only");
+    }
+    const curve = A.curves, rate = curve == null ? void 0 : curve.rate;
+    const mean = (from, to) => {
+      if (!(rate > 0)) return NaN;
+      const lo = Math.max(0, Math.floor(from * rate)), hi = Math.ceil(to * rate);
+      if (hi > curve.rmsDb.length) return NaN;
+      const values = curve.rmsDb.slice(lo, hi);
+      return values.length && values.every(Number.isFinite) ? 10 * Math.log10(values.reduce((sum, x) => sum + 10 ** (x / 10), 0) / values.length) : NaN;
+    };
+    const tail = Math.min(4, s.maxBlendSeconds, endA - Math.max(A.audibleStart, base.aExit));
+    if (tail >= 1.5 && roomB >= 0.5) {
+      const early = mean(endA - tail, endA - tail / 2), late = mean(endA - 0.7, endA);
+      if (late < early - 6 && late < A.bodyRmsDb - 10) add("natural-tail-start", endA, tail, tail - 0.5, 0.25, "measured declining RMS tail; B starts at audible opening");
+    }
+    const ga = A.beat, gb = B.beat;
+    if (s.eqHandoff && s.djPhrasing !== false && closures.length && (ga == null ? void 0 : ga.stable) && (gb == null ? void 0 : gb.stable) && ga.confidence >= 0.75 && gb.confidence >= 0.75 && ga.bpm > 0 && gb.bpm > 0 && Math.abs(ga.bpm / gb.bpm - 1) <= 0.025) {
+      const average = (values, from, to) => {
+        if (!(B.curves.rate > 0) || Math.ceil(to * B.curves.rate) > values.length) return NaN;
+        const xs = values.slice(Math.max(0, Math.floor(from * B.curves.rate)), Math.ceil(to * B.curves.rate));
+        return xs.length && xs.every(Number.isFinite) ? 10 * Math.log10(xs.reduce((a, b) => a + 10 ** (b / 10), 0) / xs.length) : NaN;
+      };
+      const arrival = ((_d = (_c = B.structure) == null ? void 0 : _c.segments) != null ? _d : []).find((segment) => {
+        const t = segment.start, lead = t - entry;
+        if (lead < 2 || lead > 8 || lead + 0.4 > s.maxBlendSeconds || lead + 1.5 > roomB || segment.novelty < 0.5) return false;
+        const before = average(B.curves.rmsDb, entry, t), after = average(B.curves.rmsDb, t, Math.min(t + 1.5, B.audibleEnd));
+        const lowBefore = average(B.curves.lowDb, entry, t), lowAfter = average(B.curves.lowDb, t, Math.min(t + 1.5, B.audibleEnd));
+        return before < B.bodyRmsDb - 5 && after - before >= 4 && lowAfter - lowBefore >= 4;
+      });
+      if (arrival) {
+        const lead = arrival.start - entry, duration = lead + 0.4;
+        const close = closures.find((t) => t + 0.4 <= endA && t - lead >= Math.max(A.audibleStart, base.aExit) - 1e-3);
+        if (close === void 0) {
+          addManual();
+          return result;
+        }
+        const count = result.length;
+        add("arrival-build", close + 0.4, duration, 0, 0.65, "measured energy and bass arrival; quiet opening; voice unknown; preview only");
+        if (result.length > count) {
+          const candidate = result.at(-1);
+          candidate.auditionOnly = true;
+          const p = candidate.plan;
+          p.swapAt = lead;
+          p.automation = [
+            { deck: "A", lane: "gain", points: [[0, 1], [Math.max(0, lead - 0.25), 1], [duration, 0]] },
+            { deck: "B", lane: "gain", points: [[0, 0], [0.04, 0.7], [Math.max(0.04, lead - 0.3), 0.7], [lead, 1], [duration, 1]] },
+            { deck: "A", lane: "low", points: [[0, 1], [lead - 0.2, 1], [lead + 0.2, 0], [duration, 0]] },
+            { deck: "B", lane: "low", points: [[0, 0.35], [lead - 0.2, 0.35], [lead + 0.2, 1], [duration, 1]] }
+          ];
+          p.reasons = ["\u041F\u0440\u043E\u0431\u043D\u044B\u0439 \u0441\u043B\u044B\u0448\u0438\u043C\u044B\u0439 \u0432\u0445\u043E\u0434 B \u043A \u0438\u0437\u043C\u0435\u0440\u0435\u043D\u043D\u043E\u043C\u0443 \u043F\u0440\u0438\u0445\u043E\u0434\u0443 \u044D\u043D\u0435\u0440\u0433\u0438\u0438; \u0442\u0440\u0435\u0431\u0443\u0435\u0442\u0441\u044F \u043F\u0440\u043E\u0441\u043B\u0443\u0448\u0438\u0432\u0430\u043D\u0438\u0435"];
+          p.entrySelection.arrivalTime = arrival.start;
+          p.debug.humanScenario = { ...p.debug.humanScenario, kind: "arrival-build", arrivalSourceB: arrival.start, closureSourceA: close, auditionOnly: true, voiceStatus: "unknown" };
+        }
+      }
+    }
+    addManual();
+    return result;
+  }
+
   // packages/core/src/plan/feedback.ts
+  var GEOMETRY = "geometry-2";
   var PRIOR = 8;
   var WEIGHT = 0.8;
   var CAP = 0.15;
-  var FEATURE_COUNT = 5;
   var bucket = (x, edges, names) => {
     var _a;
     return (_a = names[edges.findIndex((e) => x < e)]) != null ? _a : names[names.length - 1];
   };
-  function ratingFeatures(plan, A, B) {
-    var _a, _b;
-    const m = plan.method;
+  var finite = (x) => typeof x === "number" && Number.isFinite(x);
+  var clamp3 = (x) => Math.max(0, Math.min(1, x));
+  function geometry(plan) {
+    var _a;
+    if (!finite(plan.duration) || plan.duration < 0 || !Array.isArray(plan.automation)) return null;
+    if (plan.automation.some((l) => !Array.isArray(l.points) || l.points.some((p) => !finite(p[0]) || !finite(p[1])))) return null;
+    const lane2 = (deck, name, t) => {
+      var _a2;
+      if (t < 0) return 0;
+      const points = (_a2 = plan.automation.find((l) => l.deck === deck && l.lane === name)) == null ? void 0 : _a2.points;
+      return (points == null ? void 0 : points.length) ? pointValue(points, t) : name === "filter" || name === "echo" || name === "voiceEcho" ? 0 : 1;
+    };
+    const mid = (deck, t) => {
+      var _a2;
+      const tt = t - (deck === "B" ? (_a2 = plan.bDelay) != null ? _a2 : 0 : 0);
+      return tt < 0 ? 0 : clamp3(lane2(deck, "gain", tt)) * clamp3(leadBandRetention(plan, deck, tt));
+    };
+    const steps = Math.max(1, Math.min(256, Math.ceil(plan.duration / 0.1))), dt = plan.duration / steps;
+    let midOverlap = 0, exitTime = 0, slope = 0, gainFloor = 2;
+    for (let i = 0; i < steps; i++) {
+      const t = (i + 0.5) * dt;
+      midOverlap += Math.min(mid("A", t), mid("B", t)) * dt;
+      gainFloor = Math.min(gainFloor, clamp3(lane2("A", "gain", t)) + clamp3(lane2("B", "gain", t - ((_a = plan.bDelay) != null ? _a : 0))));
+      if (mid("A", t) > 0.1) exitTime = (i + 1) * dt;
+    }
+    for (const l of plan.automation.filter((l2) => ["gain", "mid", "filter"].includes(l2.lane))) {
+      for (let i = 1; i < l.points.length; i++) {
+        const [a, x] = l.points[i - 1], [b, y] = l.points[i];
+        if (y !== x) slope = Math.max(slope, Math.abs(y - x) / Math.max(0.01, b - a));
+      }
+    }
+    return { midOverlap, slope, exitTime, gainFloor };
+  }
+  function ratingFeatures(plan, A, B, execution) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const m = plan.method, version = plan.version || "unknown";
     const stretch = (_b = (_a = plan.beatAlign) == null ? void 0 : _a.stretchPercent) != null ? _b : (A == null ? void 0 : A.beat) && (B == null ? void 0 : B.beat) ? tempoRelation(A.beat.bpm, B.beat.bpm).stretchPercent : null;
     const out = [`method:${m}`];
-    if (stretch !== null && Number.isFinite(stretch)) out.push(`bpm:${m}:${bucket(stretch, [2, 5, 8, 12], ["<2", "2-5", "5-8", "8-12", "12+"])}`);
-    if (plan.keyInfo) out.push(`key:${m}:${bucket(plan.keyInfo.compatibility, [0.5, 0.8], ["low", "mid", "high"])}`);
-    out.push(`length:${bucket(plan.duration, [4, 10, 20], ["<4", "4-10", "10-20", "20+"])}`);
-    out.push(`vocals:${plan.vocalA || plan.vocalB ? "masked" : "none"}`);
+    if (finite(stretch)) out.push(`bpm:${m}:${bucket(stretch, [2, 5, 8, 12], ["<2", "2-5", "5-8", "8-12", "12+"])}`);
+    if (plan.keyInfo && finite(plan.keyInfo.compatibility)) out.push(`key:${m}:${bucket(plan.keyInfo.compatibility, [0.5, 0.8], ["low", "mid", "high"])}`);
+    if (finite(plan.duration)) out.push(`length:${bucket(plan.duration, [4, 10, 20], ["<4", "4-10", "10-20", "20+"])}`);
+    const masks = (_d = (_c = execution == null ? void 0 : execution.outcome) == null ? void 0 : _c.stems) == null ? void 0 : _d.masks;
+    out.push(`vocals:${masks ? masks.A || masks.B ? "masked" : "none" : plan.vocalA || plan.vocalB ? "masked" : "none"}`);
+    const g = geometry(plan);
+    if (g) {
+      out.push(`mid-overlap:${GEOMETRY}:${bucket(g.midOverlap, [1, 3, 6, 10], ["<1", "1-3", "3-6", "6-10", "10+"])}`);
+      out.push(`slope:${GEOMETRY}:${bucket(g.slope, [0.15, 0.5, 2], ["slow", "medium", "fast", "cut"])}`);
+      out.push(`gain-floor:${GEOMETRY}:${bucket(g.gainFloor, [0.5, 0.85, 1.15], ["deep", "dip", "level", "boost"])}`);
+      if (finite(A == null ? void 0 : A.audibleEnd) && finite(plan.aExit)) {
+        const cut = Math.max(0, A.audibleEnd - plan.aExit - integrateTempo(plan.tempoA, g.exitTime));
+        out.push(`cut:${GEOMETRY}:${bucket(cut, [2, 8, 20, 40], ["<2", "2-8", "8-20", "20-40", "40+"])}`);
+      }
+      const round2 = (x) => Math.round(x * 1e3) / 1e3;
+      const recipe = {
+        method: m,
+        aExit: plan.aExit,
+        bEntry: plan.bEntry,
+        duration: plan.duration,
+        bDelay: (_e = plan.bDelay) != null ? _e : 0,
+        tempoA: plan.tempoA,
+        tempoB: plan.tempoB,
+        vocalA: plan.vocalA,
+        vocalB: plan.vocalB,
+        automation: [...plan.automation].sort((a, b) => `${a.deck}:${a.lane}`.localeCompare(`${b.deck}:${b.lane}`)),
+        echo: plan.echo,
+        voiceEcho: plan.voiceEcho,
+        loopA: plan.loopA,
+        tapeStopA: plan.tapeStopA,
+        gainA: plan.gainA,
+        gainB: plan.gainB
+      };
+      if (plan.fromTrackId && plan.toTrackId) out.push(`pair-recipe:${version}:${fnv1a(JSON.stringify([plan.fromTrackId, plan.toTrackId]))}:${fnv1a(JSON.stringify(recipe, (_, v) => typeof v === "number" ? round2(v) : v))}`);
+      const shape2 = typeof ((_f = plan.debug) == null ? void 0 : _f.variant) === "string" ? plan.debug.variant : "plain";
+      out.push(`shape:${version}:${shape2}`);
+      const phrase = (_g = plan.debug) == null ? void 0 : _g.phraseMix;
+      if (typeof (phrase == null ? void 0 : phrase.preset) === "string") out.push(`preset:${version}:${phrase.preset}`);
+      out.push(`rhythm:${GEOMETRY}:${plan.beatAlign ? "locked" : "free"}:${plan.loopA ? "loop" : "linear"}`);
+    }
+    if (finite(plan.bEntry) && finite(B == null ? void 0 : B.audibleStart)) out.push(`entry:${GEOMETRY}:${bucket(Math.max(0, plan.bEntry - B.audibleStart), [1, 8, 25], ["start", "1-8", "8-25", "25+"])}`);
+    if (finite(plan.bDelay)) out.push(`delay:${GEOMETRY}:${bucket(plan.bDelay, [0.1, 2, 6], ["none", "<2", "2-6", "6+"])}`);
     return out;
   }
   function ratingBias(stats, plan, A, B) {
+    var _a;
     const used = {};
     let sum = 0;
     for (const f of ratingFeatures(plan, A, B)) {
-      const c = stats.features[f];
-      if (!c) continue;
-      const dev = (c.good + PRIOR / 2) / (c.good + c.bad + PRIOR) - 0.5;
-      used[f] = Math.round(dev * 1e3) / 1e3;
-      sum += dev;
+      const add = (c, key, weight2 = 1) => {
+        if (!c) return;
+        const dev = (c.good + PRIOR / 2) / (c.good + c.bad + PRIOR) - 0.5;
+        used[key] = Math.round(dev * 1e3) / 1e3;
+        sum += dev * weight2;
+      };
+      const weight = f.startsWith("pair-recipe:") ? 2 : /^(method|bpm|key|length|vocals):/.test(f) ? 1 : 0.5;
+      add(stats.features[f], f, weight);
+      for (const [reason, evidence] of Object.entries((_a = stats.reasons) != null ? _a : {})) add(evidence == null ? void 0 : evidence[f], `${reason}/${f}`, weight);
     }
-    const bias = Math.max(-CAP, Math.min(CAP, WEIGHT * sum / FEATURE_COUNT));
-    return { bias: Math.round(bias * 1e3) / 1e3, features: used };
+    return { bias: Math.round(Math.max(-CAP, Math.min(CAP, WEIGHT * sum / 10)) * 1e3) / 1e3, features: used };
+  }
+
+  // packages/core/src/plan/rhythm-overlap.ts
+  var laneValue2 = (p, deck, t) => {
+    var _a;
+    const points = (_a = p.automation.find((l) => l.deck === deck && l.lane === "gain")) == null ? void 0 : _a.points;
+    return (points == null ? void 0 : points.length) ? pointValue(points, t) : 1;
+  };
+  function selectedGrid(an, p, deck, from, to) {
+    var _a, _b, _c, _d, _e;
+    const summary = (_b = (_a = p.beatAlign) == null ? void 0 : _a.regions) == null ? void 0 : _b[deck];
+    if (summary) {
+      const region = ((_c = an.beatRegions) != null ? _c : []).find((r5) => Math.abs(r5.start - summary.start) < 0.05 && Math.abs(r5.end - summary.end) < 0.05 && r5.start <= from && r5.end >= to);
+      if (!(region == null ? void 0 : region.accents)) return null;
+      return { grid: region, source: "region" };
+    }
+    const grid = an.beat;
+    if (!(grid == null ? void 0 : grid.accents) || ((_e = (_d = an.structure) == null ? void 0 : _d.gridCheck) == null ? void 0 : _e.periodHint)) return null;
+    return { grid, source: "global" };
+  }
+  function hasCoverage(grid, from, to) {
+    const { beats, period, confidence, jitterMs, accents } = grid;
+    if (!(period > 0 && Number.isFinite(period)) || !Number.isFinite(confidence) || confidence < 0.65 || grid.stable === false || !Number.isFinite(jitterMs) || jitterMs > 20 || !accents || accents.kick.length !== beats.length || accents.snare.length !== beats.length || !beats.length || beats.some((t, i) => !Number.isFinite(t) || i > 0 && t <= beats[i - 1]) || accents.kick.some((x) => !Number.isFinite(x) || x < 0) || accents.snare.some((x) => !Number.isFinite(x) || x < 0)) return false;
+    const inWindow = beats.filter((t) => t >= from && t < to);
+    if (inWindow.length < 8 || inWindow[0] - from > period * 1.5 || to - inWindow[inWindow.length - 1] > period * 1.5) return false;
+    return inWindow.every((t, i) => i === 0 || t - inWindow[i - 1] <= period * 1.5);
+  }
+  function outputEvents(plan, grid, deck, sourceFrom, sourceTo, A, B) {
+    var _a;
+    const acc = grid.accents;
+    const delay = deck === "B" ? (_a = plan.bDelay) != null ? _a : 0 : 0;
+    const cue = deck === "A" ? plan.aExit : plan.bEntry;
+    const tempo = deck === "A" ? plan.tempoA : plan.tempoB;
+    const events = [];
+    grid.beats.forEach((source, i) => {
+      var _a2;
+      if (source < sourceFrom || source >= sourceTo) return;
+      const out = delay + outputTimeAt(tempo, source - cue, Math.max(0, plan.duration - delay));
+      if (out < delay || out >= plan.duration || laneValue2(plan, deck, out - delay) <= 0) return;
+      const peer = deck === "A" ? "B" : "A", peerAnalysis = peer === "A" ? A : B;
+      const peerTime = out - (peer === "B" ? (_a2 = plan.bDelay) != null ? _a2 : 0 : 0);
+      if (peerTime < 0 || laneValue2(plan, peer, peerTime) <= 0) return;
+      const peerSource = (peer === "A" ? plan.aExit : plan.bEntry) + integrateTempo(peer === "A" ? plan.tempoA : plan.tempoB, peerTime);
+      if (peerSource < peerAnalysis.audibleStart || peerSource >= peerAnalysis.audibleEnd) return;
+      events.push({ time: out, kick: acc.kick[i], snare: acc.snare[i] });
+    });
+    return events;
+  }
+  function pairEvents(a, b, tolerance) {
+    const used = /* @__PURE__ */ new Set(), pairs = [];
+    for (const ea of a) {
+      let best = -1, distance = Infinity;
+      for (let i = 0; i < b.length; i++) {
+        if (used.has(i)) continue;
+        const d = Math.abs(ea.time - b[i].time);
+        if (d < distance) {
+          distance = d;
+          best = i;
+        }
+      }
+      if (best >= 0 && distance <= tolerance) {
+        used.add(best);
+        pairs.push({ a: ea, b: b[best] });
+      } else pairs.push({ a: ea, b: null });
+    }
+    b.forEach((event, i) => {
+      if (!used.has(i)) pairs.push({ a: null, b: event });
+    });
+    return pairs;
+  }
+  function bandAgreement(pairs, band) {
+    const a = pairs.map((p) => {
+      var _a, _b;
+      return (_b = (_a = p.a) == null ? void 0 : _a[band]) != null ? _b : 0;
+    }), b = pairs.map((p) => {
+      var _a, _b;
+      return (_b = (_a = p.b) == null ? void 0 : _a[band]) != null ? _b : 0;
+    });
+    if (a.length < 8) return null;
+    const mean = (x) => x.reduce((s, v) => s + v, 0) / x.length;
+    const ma = mean(a), mb = mean(b);
+    const va = a.reduce((s, v) => s + (v - ma) ** 2, 0), vb = b.reduce((s, v) => s + (v - mb) ** 2, 0);
+    if (!(va > 1e-9 && vb > 1e-9)) return null;
+    const cov = a.reduce((s, v, i) => s + (v - ma) * (b[i] - mb), 0);
+    return { correlation: Math.round(cov / Math.sqrt(va * vb) * 1e3) / 1e3, samples: a.length };
+  }
+  function medianInterval(events) {
+    const intervals = events.slice(1).map((e, i) => e.time - events[i].time).filter((x) => x > 0 && Number.isFinite(x)).sort((a, b) => a - b);
+    return intervals.length ? intervals[intervals.length >> 1] : null;
+  }
+  function hasSimultaneousStructure(plan, A, B, from, to) {
+    var _a;
+    const step = 0.05;
+    for (let t = from + step / 2; t < to; t += step) {
+      const tb = t - ((_a = plan.bDelay) != null ? _a : 0);
+      const sa = plan.aExit + integrateTempo(plan.tempoA, t), sb = plan.bEntry + integrateTempo(plan.tempoB, tb);
+      if (sa >= A.audibleStart && sa < A.audibleEnd && sb >= B.audibleStart && sb < B.audibleEnd && laneValue2(plan, "A", t) > 0 && laneValue2(plan, "B", tb) > 0) return true;
+    }
+    return false;
+  }
+  function rhythmOverlap(plan, A, B) {
+    var _a, _b;
+    if (plan.loopA || plan.tapeStopA) return null;
+    if (!(plan.duration > 0) || plan.gap > 0 || !Number.isFinite((_a = plan.bDelay) != null ? _a : 0)) return null;
+    const delay = (_b = plan.bDelay) != null ? _b : 0, outFrom = Math.max(0, delay), outTo = plan.duration;
+    if (!(outTo - outFrom >= 4) || !hasSimultaneousStructure(plan, A, B, outFrom, outTo)) return null;
+    const aFrom = plan.aExit + integrateTempo(plan.tempoA, outFrom);
+    const aTo = plan.aExit + integrateTempo(plan.tempoA, outTo);
+    const bFrom = plan.bEntry + integrateTempo(plan.tempoB, outFrom - delay);
+    const bTo = plan.bEntry + integrateTempo(plan.tempoB, outTo - delay);
+    if (aFrom < A.audibleStart || aTo > A.audibleEnd || bFrom < B.audibleStart || bTo > B.audibleEnd) return null;
+    const ga = selectedGrid(A, plan, "A", aFrom, aTo), gb = selectedGrid(B, plan, "B", bFrom, bTo);
+    if (!ga || !gb || !hasCoverage(ga.grid, aFrom, aTo) || !hasCoverage(gb.grid, bFrom, bTo)) return null;
+    const ea = outputEvents(plan, ga.grid, "A", aFrom, aTo, A, B), eb = outputEvents(plan, gb.grid, "B", bFrom, bTo, A, B);
+    if (ea.length < 8 || eb.length < 8) return null;
+    const periodA = medianInterval(ea), periodB = medianInterval(eb);
+    if (periodA === null || periodB === null) return null;
+    const tolerance = Math.min(periodA, periodB) * 0.2;
+    const pairs = pairEvents(ea, eb, tolerance);
+    const pairedBeats = pairs.filter((x) => x.a && x.b).length;
+    return {
+      policy: "rhythm-overlap-1",
+      interpretation: "structural-beat-accent-agreement-not-audibility",
+      windowSeconds: Math.round((outTo - outFrom) * 1e3) / 1e3,
+      timingToleranceMs: Math.round(tolerance * 1e3),
+      grids: {
+        A: { source: ga.source, confidence: ga.grid.confidence, jitterMs: ga.grid.jitterMs, beats: ea.length },
+        B: { source: gb.source, confidence: gb.grid.confidence, jitterMs: gb.grid.jitterMs, beats: eb.length }
+      },
+      pairedBeats,
+      unmatchedBeats: pairs.length - pairedBeats,
+      kick: bandAgreement(pairs, "kick"),
+      snare: bandAgreement(pairs, "snare")
+    };
   }
 
   // packages/core/src/plan/planner.ts
-  var clamp3 = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+  var clamp4 = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
   var r32 = (x) => Math.round(x * 1e3) / 1e3;
   function fnv1a(s) {
     let h = 2166136261;
@@ -1583,7 +2109,7 @@ var MoraCore = (() => {
     if (!Number.isFinite(l.integratedLufs) || l.integratedLufs <= -69) return 0;
     let g = target - l.integratedLufs;
     g = Math.min(g, -1 - l.truePeakDb + 3);
-    return r32(clamp3(g, -18, 12));
+    return r32(clamp4(g, -18, 12));
   }
   function tempoRelation(bpmA, bpmB) {
     const stretch = (ratio) => Math.max(Math.abs(ratio - 1), Math.abs(1 / ratio - 1)) * 100;
@@ -1692,15 +2218,15 @@ var MoraCore = (() => {
   function sanitizedSettings(settings) {
     return {
       ...settings,
-      maxStretchPercent: clamp3(Number.isFinite(settings.maxStretchPercent) ? settings.maxStretchPercent : 12, 0, 30),
-      maxBlendSeconds: clamp3(Number.isFinite(settings.maxBlendSeconds) ? settings.maxBlendSeconds : 32, 0, 60),
-      fallbackSeconds: clamp3(Number.isFinite(settings.fallbackSeconds) ? settings.fallbackSeconds : 6, 0, 20),
+      maxStretchPercent: clamp4(Number.isFinite(settings.maxStretchPercent) ? settings.maxStretchPercent : 12, 0, 30),
+      maxBlendSeconds: clamp4(Number.isFinite(settings.maxBlendSeconds) ? settings.maxBlendSeconds : 32, 0, 60),
+      fallbackSeconds: clamp4(Number.isFinite(settings.fallbackSeconds) ? settings.fallbackSeconds : 6, 0, 20),
       entryMode: settings.entryMode === "preserve" ? "preserve" : "smart",
-      maxEntrySkipSeconds: clamp3(Number.isFinite(settings.maxEntrySkipSeconds) ? settings.maxEntrySkipSeconds : 45, 0, 75)
+      maxEntrySkipSeconds: clamp4(Number.isFinite(settings.maxEntrySkipSeconds) ? settings.maxEntrySkipSeconds : 45, 0, 75)
     };
   }
   function safePosition(position, duration) {
-    return clamp3(Number.isFinite(position) ? position : 0, 0, Math.max(0, duration - 0.01));
+    return clamp4(Number.isFinite(position) ? position : 0, 0, Math.max(0, duration - 0.01));
   }
   var LOCK_MAX_PERCENT = 8;
   var lockLimit = (s) => Math.min(s.maxStretchPercent, LOCK_MAX_PERCENT);
@@ -1711,8 +2237,9 @@ var MoraCore = (() => {
     return drain(rankPlans(a, b, settings, requestedAt, feedback))[0];
   }
   function* rankPlans(a, b, settings, requestedAt, feedback) {
+    var _a;
     const p = finishPlan(buildTransition(a, b, settings, requestedAt), a.analysis, b.analysis, settings, requestedAt);
-    const fb = feedback && Object.keys(feedback.features).length ? feedback : void 0;
+    const fb = feedback && (Object.keys(feedback.features).length || Object.keys((_a = feedback.reasons) != null ? _a : {}).length) ? feedback : void 0;
     if (requestedAt === void 0 && settings.enabled && fullMixPair(a.analysis, b.analysis, settings)) {
       yield;
       return yield* chooseFullMixPlan(p, a, b, settings, fb);
@@ -1733,16 +2260,22 @@ var MoraCore = (() => {
     }, debug: { policy: "listener-ratings-1", version: fb.version, candidates: rows } };
   }
   function* chooseFullMixPlan(p, a, b, settings, fb) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const A = a.analysis, B = b.analysis, s = sanitizedSettings(settings);
     if (!A || !B || p.debug.processingAllowed === false || !["crossfade", "beatmatch_blend"].includes(p.method) || p.loopA) return [p];
     const build = (alt, fixed) => finishPlan(buildTransition(a, b, alt, void 0, void 0, fixed), A, B, alt);
     const entries = [["baseline", p]];
+    for (const candidate of humanTransitionScenarios(p, A, B, s)) {
+      if (!candidate.auditionOnly) {
+        entries.push([candidate.name, candidate.plan]);
+        yield;
+      }
+    }
     if (p.method === "beatmatch_blend" && p.beatAlign && !p.beatAlign.regions && A.beat) {
       const bars = p.beatAlign.overlapBeats / 4, barA = A.beat.period * 4;
       const baseCost = fullMixCost(p, A, B, s);
       const fault = !!baseCost && (baseCost.unsupported > 0 || baseCost.holeDb > 6 || baseCost.jumpDb > 2 || baseCost.doubleBass / p.duration > 0.2);
-      if (bars > 4 && (fault || ((_a = p.debug.fullMixRules) == null ? void 0 : _a.looseGrid))) {
+      if (bars > 4 && (voiceUnknown(A, s) || voiceUnknown(B, s) || fault || ((_a = p.debug.fullMixRules) == null ? void 0 : _a.looseGrid))) {
         const half = Math.max(4, bars / 2), q = build(s, { exit: p.aExit, entry: p.bEntry, bars: half });
         yield;
         if (q.method === "beatmatch_blend" && ((_b = q.beatAlign) == null ? void 0 : _b.overlapBeats) === half * 4) entries.push(["shorter", q]);
@@ -1765,20 +2298,46 @@ var MoraCore = (() => {
       yield;
       if (["crossfade", "beatmatch_blend"].includes(q.method) && q.bEntry < p.bEntry - 1 && (p.method !== "beatmatch_blend" || q.method === "beatmatch_blend")) entries.push(["preserve-start", q]);
     }
-    const rated = entries.slice(0, 4).map(([name, plan]) => ({ name, plan, cost: fullMixCost(plan, A, B, s) }));
+    const rated = entries.slice(0, 9).map(([name, plan]) => ({ name, plan, cost: fullMixCost(plan, A, B, s) }));
     const base = rated[0];
     const ratings = feedbackFor(fb, rated, A, B), adj = (c) => c.cost.total - ratings.bias(c.plan);
     const safe = (c) => !ratings.debug || !base.cost || c.cost.total < base.cost.total - 0.1 || c.cost.unsupported <= base.cost.unsupported && c.cost.holeDb <= base.cost.holeDb + 0.5 && c.cost.jumpDb <= base.cost.jumpDb + 0.5;
+    const automatic = (c) => {
+      var _a2, _b2, _c2;
+      if (c === base || !base.cost || !c.cost) return c === base;
+      const x = base.cost, y = c.cost, q = c.plan;
+      if (hasMaterialMixRegression(x, y)) return false;
+      const loose = ((_a2 = p.debug.fullMixRules) == null ? void 0 : _a2.looseGrid) === true;
+      if (loose && c.name === "unlocked") return true;
+      if (p.debug.drumPattern && !q.debug.drumPattern) return false;
+      if (p.beatAlign && !q.beatAlign) return false;
+      if (((_b2 = p.beatAlign) == null ? void 0 : _b2.phraseAligned) && !((_c2 = q.beatAlign) == null ? void 0 : _c2.phraseAligned)) return false;
+      if (q.bEntry > p.bEntry + 0.1) return false;
+      if (p.debug.washout && !q.debug.washout) return false;
+      if (p.debug.loudnessHold && !q.debug.loudnessHold && !(x.holeDb > 3 && y.holeDb < x.holeDb - 1.5)) return false;
+      const substantial = x.holeDb > 3 && y.holeDb < x.holeDb - 1.5 || x.unsupported >= 1 && y.unsupported <= x.unsupported - 0.75 || x.jumpDb > 2 && y.jumpDb < x.jumpDb - 1 || x.cutA > 0.5 && y.cutA < x.cutA - 0.3 || x.skippedUnknownB > 2 && y.skippedUnknownB < x.skippedUnknownB - 2;
+      const noNewFault = y.holeDb <= x.holeDb + 0.5 && y.jumpDb <= x.jumpDb + 0.5 && y.unsupported <= x.unsupported + 0.25 && y.cutA <= x.cutA + 0.1 && y.pickup <= x.pickup && y.openingSuppression <= x.openingSuppression + 0.5;
+      return substantial && noNewFault;
+    };
     const valid = rated.filter((c) => !!c.cost).sort((x, y) => adj(x) - adj(y));
-    const best = valid.find((c) => c === base || safe(c));
+    const best = valid.find((c) => automatic(c) && safe(c));
     const winner = base.cost && best && best.name !== "baseline" && adj(best) < adj(base) - 0.1 ? best : base;
-    const reason = !base.cost ? "\u043F\u043E\u043B\u043E\u0441\u044B \u043D\u0435 \u0438\u0437\u043C\u0435\u0440\u0435\u043D\u044B: \u0438\u0441\u0445\u043E\u0434\u043D\u044B\u0439 \u043F\u043B\u0430\u043D" : winner === base ? "\u0430\u043B\u044C\u0442\u0435\u0440\u043D\u0430\u0442\u0438\u0432\u044B \u043F\u043E\u043B\u043D\u043E\u0433\u043E \u043C\u0438\u043A\u0441\u0430 \u043D\u0435 \u0434\u0430\u043B\u0438 \u0437\u0430\u043C\u0435\u0442\u043D\u043E\u0433\u043E \u0443\u043B\u0443\u0447\u0448\u0435\u043D\u0438\u044F" : winner.name === "shorter" ? "\u043F\u043E\u043B\u043D\u044B\u0439 \u043C\u0438\u043A\u0441: \u043A\u043E\u0440\u043E\u0447\u0435 \u043E\u0431\u0449\u0438\u0439 \u0443\u0447\u0430\u0441\u0442\u043E\u043A, A \u0443\u0445\u043E\u0434\u0438\u0442 \u043F\u043E \u043E\u043A\u043E\u043D\u0447\u0430\u043D\u0438\u0438 \u0441\u0432\u043E\u0435\u0433\u043E \u0440\u0430\u0437\u0434\u0435\u043B\u0430" : winner.name === "neighbor-exit" ? "\u043F\u043E\u043B\u043D\u044B\u0439 \u043C\u0438\u043A\u0441: \u0432\u044B\u0445\u043E\u0434 \u043D\u0430 \u0441\u043E\u0441\u0435\u0434\u043D\u0435\u0439 \u0444\u0440\u0430\u0437\u0435, \u0433\u0434\u0435 \u0442\u0435\u043A\u0443\u0449\u0438\u0439 \u0442\u0440\u0435\u043A \u0441\u043B\u044B\u0448\u043D\u043E \u0437\u0430\u043A\u0430\u043D\u0447\u0438\u0432\u0430\u0435\u0442 \u0440\u0430\u0437\u0434\u0435\u043B" : winner.name === "unlocked" ? "\u043F\u043E\u043B\u043D\u044B\u0439 \u043C\u0438\u043A\u0441: \u0431\u0435\u0437 \u0441\u0442\u044B\u043A\u043E\u0432\u043A\u0438 \u0440\u0438\u0442\u043C\u043E\u0432, \u0440\u043E\u0432\u043D\u0435\u0435 \u043F\u0443\u0442\u044C \u0433\u0440\u043E\u043C\u043A\u043E\u0441\u0442\u0438 \u0438 \u0431\u0430\u0441\u0430" : "\u043F\u043E\u043B\u043D\u044B\u0439 \u043C\u0438\u043A\u0441: \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u0442\u0440\u0435\u043A \u0432\u0445\u043E\u0434\u0438\u0442 \u0441\u043E \u0441\u0432\u043E\u0435\u0433\u043E \u043D\u0430\u0447\u0430\u043B\u0430, \u0431\u0435\u0437 \u0441\u0440\u0435\u0437\u0430\u043D\u043D\u043E\u0433\u043E \u0437\u0430\u0442\u0430\u043A\u0442\u0430 \u0438 \u0432\u0441\u0442\u0443\u043F\u043B\u0435\u043D\u0438\u044F";
+    const reason = !base.cost ? "\u043F\u043E\u043B\u043E\u0441\u044B \u043D\u0435 \u0438\u0437\u043C\u0435\u0440\u0435\u043D\u044B: \u0438\u0441\u0445\u043E\u0434\u043D\u044B\u0439 \u043F\u043B\u0430\u043D" : winner === base ? "\u0430\u043B\u044C\u0442\u0435\u0440\u043D\u0430\u0442\u0438\u0432\u044B \u043F\u043E\u043B\u043D\u043E\u0433\u043E \u043C\u0438\u043A\u0441\u0430 \u043D\u0435 \u0434\u0430\u043B\u0438 \u0437\u0430\u043C\u0435\u0442\u043D\u043E\u0433\u043E \u0443\u043B\u0443\u0447\u0448\u0435\u043D\u0438\u044F" : winner.plan.debug.humanScenario ? (_d = winner.plan.reasons.at(-1)) != null ? _d : "\u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043F\u0440\u0438\u0432\u044F\u0437\u0430\u043D \u043A \u0438\u0437\u043C\u0435\u0440\u0435\u043D\u043D\u043E\u0439 \u0441\u0442\u0440\u0443\u043A\u0442\u0443\u0440\u0435" : winner.name === "shorter" ? "\u043F\u043E\u043B\u043D\u044B\u0439 \u043C\u0438\u043A\u0441: \u043A\u043E\u0440\u043E\u0447\u0435 \u043E\u0431\u0449\u0438\u0439 \u0443\u0447\u0430\u0441\u0442\u043E\u043A, A \u0443\u0445\u043E\u0434\u0438\u0442 \u043F\u043E \u043E\u043A\u043E\u043D\u0447\u0430\u043D\u0438\u0438 \u0441\u0432\u043E\u0435\u0433\u043E \u0440\u0430\u0437\u0434\u0435\u043B\u0430" : winner.name === "neighbor-exit" ? "\u043F\u043E\u043B\u043D\u044B\u0439 \u043C\u0438\u043A\u0441: \u0432\u044B\u0445\u043E\u0434 \u043D\u0430 \u0441\u043E\u0441\u0435\u0434\u043D\u0435\u0439 \u0444\u0440\u0430\u0437\u0435, \u0433\u0434\u0435 \u0442\u0435\u043A\u0443\u0449\u0438\u0439 \u0442\u0440\u0435\u043A \u0441\u043B\u044B\u0448\u043D\u043E \u0437\u0430\u043A\u0430\u043D\u0447\u0438\u0432\u0430\u0435\u0442 \u0440\u0430\u0437\u0434\u0435\u043B" : winner.name === "unlocked" ? "\u043F\u043E\u043B\u043D\u044B\u0439 \u043C\u0438\u043A\u0441: \u0431\u0435\u0437 \u0441\u0442\u044B\u043A\u043E\u0432\u043A\u0438 \u0440\u0438\u0442\u043C\u043E\u0432, \u0440\u043E\u0432\u043D\u0435\u0435 \u043F\u0443\u0442\u044C \u0433\u0440\u043E\u043C\u043A\u043E\u0441\u0442\u0438 \u0438 \u0431\u0430\u0441\u0430" : "\u043F\u043E\u043B\u043D\u044B\u0439 \u043C\u0438\u043A\u0441: \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u0442\u0440\u0435\u043A \u0432\u0445\u043E\u0434\u0438\u0442 \u0441\u043E \u0441\u0432\u043E\u0435\u0433\u043E \u043D\u0430\u0447\u0430\u043B\u0430, \u0431\u0435\u0437 \u0441\u0440\u0435\u0437\u0430\u043D\u043D\u043E\u0433\u043E \u0437\u0430\u0442\u0430\u043A\u0442\u0430 \u0438 \u0432\u0441\u0442\u0443\u043F\u043B\u0435\u043D\u0438\u044F";
     const debug = {
       policy: "full-mix-1",
       selected: winner.name,
       reason,
       margin: 0.1,
-      candidates: rated.map((c) => ({ name: c.name, method: c.plan.method, variant: c.plan.debug.variant, duration: c.plan.duration, bEntry: c.plan.bEntry, cost: c.cost }))
+      candidates: rated.map((c) => ({
+        name: c.name,
+        method: c.plan.method,
+        variant: c.plan.debug.variant,
+        duration: c.plan.duration,
+        bEntry: c.plan.bEntry,
+        automaticEligible: automatic(c),
+        cost: c.cost,
+        rhythmOverlap: rhythmOverlap(c.plan, A, B)
+      }))
     };
     const label = (c) => ({
       ...c.plan,
@@ -2028,6 +2587,10 @@ var MoraCore = (() => {
       const echo = planEchoOut({ ...basePlan(ctx, "echo_out"), keyInfo, fallbackReason }, A, B, settings, tempoRelation(A.beat.bpm, B.beat.bpm).stretchPercent);
       if (echo) return echo;
     }
+    if (settings.eqHandoff && (ctx.requestedAt !== void 0 || fadeA.length < 3) && A.rhythmStrength > 0.45 && B.rhythmStrength > 0.45 && !(settings.stemMixing !== false && A.vocalActivity && B.vocalActivity) && [A.beat, B.beat].every((g) => g && g.stable && g.confidence >= 0.6 && g.jitterMs <= 20) && A.beat.downbeatConfidence >= 0.3) {
+      const swap = planDropSwap(ctx, A, B, keyInfo, fallbackReason);
+      if (swap) return swap;
+    }
     return planCrossfade(ctx, A, B, keyInfo, fallbackReason);
   }
   function planInstrumentalBridge(ctx, A, B, keyInfo, fallbackReason) {
@@ -2227,12 +2790,12 @@ var MoraCore = (() => {
     const wide = p.method === "beatmatch_blend" && at !== null && led(B, srcB(at)) && ((_i = (_h = p.keyInfo) == null ? void 0 : _h.compatibility) != null ? _i : 0) >= 0.5;
     const pre = wide ? 0.35 : 0;
     const fader = p.method === "crossfade" && !p.debug.washout && at !== null && (led(A, srcA(at)) || led(B, srcB(at)));
-    const width = wide ? 4 * beat : to - from, fadeWidth = clamp3(D * 0.25, 3, 5);
+    const width = wide ? 4 * beat : to - from, fadeWidth = clamp4(D * 0.25, 3, 5);
     if (at !== null && Math.abs(at - cut) < 0.05 && !wide && !fader) return p;
     const b0 = Math.max(pointValue(lb, 0), 0);
     const start = at === null ? D : Math.max(0, Math.min(D - width, at - width / 2)), end = Math.min(D, start + width);
     const knots = [0, ...pre ? Array.from({ length: 8 }, (_, i) => start * (i + 1) / 9) : [], ...Array.from({ length: 13 }, (_, i) => start + (end - start) * i / 12), D].filter((t, i, a) => t <= D && (!i || t > a[i - 1]));
-    const x = (t) => end > start ? clamp3((t - start) / (end - start)) : t >= end ? 1 : 0;
+    const x = (t) => end > start ? clamp4((t - start) / (end - start)) : t >= end ? 1 : 0;
     const bLow = (t) => t < start ? Math.max(b0, pre * Math.sin(t / start * Math.PI / 2)) : Math.max(b0, pre) + (1 - Math.max(b0, pre)) * Math.sin(x(t) * Math.PI / 2);
     let automation = p.automation.map((l) => l.lane !== "low" || l.deck === "B" && at === null ? l : lane(
       l.deck,
@@ -2243,7 +2806,7 @@ var MoraCore = (() => {
       const gb = (_k = (_j = p.automation.find((l) => l.deck === "B" && l.lane === "gain")) == null ? void 0 : _j.points) != null ? _k : [[0, 1]];
       let bUp = 0;
       while (bUp < D && pointValue(gb, bUp) < 0.85) bUp += 0.05;
-      const f0 = Math.min(at, Math.max(0, at - fadeWidth, bUp)), f1 = Math.min(D, at + fadeWidth), y = (t) => clamp3((t - f0) / Math.max(1e-3, f1 - f0));
+      const f0 = Math.min(at, Math.max(0, at - fadeWidth, bUp)), f1 = Math.min(D, at + fadeWidth), y = (t) => clamp4((t - f0) / Math.max(1e-3, f1 - f0));
       automation = automation.map((l) => l.deck !== "A" || l.lane !== "gain" ? l : { ...l, points: [.../* @__PURE__ */ new Set([
         ...l.points.map(([t]) => t),
         ...Array.from({ length: 13 }, (_, i) => f0 + (f1 - f0) * i / 12)
@@ -2274,7 +2837,7 @@ var MoraCore = (() => {
       const bodyLowB = powerLevel(B, B.audibleStart, B.audibleEnd, B.curves.lowDb);
       if (lowB < bodyLowB - 5) continue;
       const newLow = (deck, t) => {
-        const x = clamp3((t - c.time + beat / 2) / beat);
+        const x = clamp4((t - c.time + beat / 2) / beat);
         return deck === "A" ? 1 - x : x;
       };
       let regression = 0, oldPeak = 0, newPeak = 0;
@@ -2326,15 +2889,15 @@ var MoraCore = (() => {
       if (ctx.s.eqHandoff) {
         const fadeStart = Math.max(0.5, (bars - 2) / bars);
         ag = x <= fadeStart ? 1 : cosDown((x - fadeStart) / (1 - fadeStart));
-        bg = sinUp(clamp3(x / 0.5));
-        const bass = smoothstep(clamp3((x - 0.5) * bars * 4 + 0.5));
+        bg = sinUp(clamp4(x / 0.5));
+        const bass = smoothstep(clamp4((x - 0.5) * bars * 4 + 0.5));
         al = 1 - bass;
         bl = bass;
-        bh = 0.25 + 0.75 * smoothstep(clamp3(x * 2));
-        ah = 1 - 0.75 * smoothstep(clamp3((x - 0.5) * 2));
+        bh = 0.25 + 0.75 * smoothstep(clamp4(x * 2));
+        ah = 1 - 0.75 * smoothstep(clamp4((x - 0.5) * 2));
         const b0 = midDuck ? 0.18 : 0.4;
-        bm = b0 + (1 - b0) * smoothstep(clamp3(x * 2));
-        am = 1 - (midDuck ? 0.8 : 0.55) * smoothstep(clamp3((x - 0.5) / Math.min(0.5, 2 / bars)));
+        bm = b0 + (1 - b0) * smoothstep(clamp4(x * 2));
+        am = 1 - (midDuck ? 0.8 : 0.55) * smoothstep(clamp4((x - 0.5) / Math.min(0.5, 2 / bars)));
       }
       const stems = ctx.s.stemMixing !== false && A.vocalActivity && B.vocalActivity;
       const sum = ag * ag * filteredPower(A, exit + x * nativeA, ctx.gainA, al, am, ah, stems && x >= 0.5 ? 0 : 1) + bg * bg * filteredPower(B, entry + x * nativeB, ctx.gainB, bl, bm, bh, stems && x < 0.5 ? 0 : 1);
@@ -2344,12 +2907,12 @@ var MoraCore = (() => {
         hole = Math.max(hole, levelBefore(A, exit) - powerLevel(A, aPos - 0.75, aPos + 0.75) - 6);
       }
     }
-    return clamp3(hole / 10);
+    return clamp4(hole / 10);
   }
   function decayHandoff(A, exit, duration) {
     const reference = powerLevel(A, Math.max(A.audibleStart, exit - 6), Math.max(A.audibleStart + 0.1, exit - 2));
     for (let t = 0; t < duration * 0.75; t += 0.25) {
-      if (powerLevel(A, exit + t, Math.min(A.audibleEnd, exit + t + 1.5)) < reference - 2.5) return clamp3(t, Math.min(0.65, duration * 0.2), duration * 0.75);
+      if (powerLevel(A, exit + t, Math.min(A.audibleEnd, exit + t + 1.5)) < reference - 2.5) return clamp4(t, Math.min(0.65, duration * 0.2), duration * 0.75);
     }
     return duration / 2;
   }
@@ -2376,29 +2939,30 @@ var MoraCore = (() => {
     const cut = A.audibleEnd - endOfBlend;
     if (cut <= 2) return 1;
     const dens = curveMean(A.curves.midDensity, A.curves.rate, endOfBlend, A.audibleEnd);
-    return dens < 0.18 ? clamp3(1 - cut / 45) : clamp3(1 - cut / 14);
+    const fraction = cut / (dens < 0.18 ? 45 : 14);
+    return 1 - fraction - 0.25 * Math.max(0, fraction - 1) ** 1.3;
   }
   function entrySkipCost(B, time, sung2 = false, unknownVoice = false) {
     const skipped = time - B.audibleStart;
     if (skipped < 1) return 0;
     const level2 = levelMean(B, B.audibleStart, time);
     const density2 = curveMean(B.curves.midDensity, B.curves.rate, B.audibleStart, time);
-    const fullness = clamp3((level2 - B.bodyRmsDb + 12) / 12);
-    const spectral = clamp3(skipped / 60) * (0.08 + 0.2 * fullness + 0.12 * clamp3(density2 / 0.4));
-    return spectral + (sung2 ? 0.03 * Math.max(0, sungSeconds(B, B.audibleStart, time) - 5) : 0) + (unknownVoice ? 5e-3 * Math.max(0, skipped - 5) * clamp3((density2 / bodyDensity(B) - 0.7) / 0.3) : 0);
+    const fullness = clamp4((level2 - B.bodyRmsDb + 12) / 12);
+    const spectral = clamp4(skipped / 60) * (0.08 + 0.2 * fullness + 0.12 * clamp4(density2 / 0.4));
+    return spectral + (sung2 ? 0.03 * Math.max(0, sungSeconds(B, B.audibleStart, time) - 5) : 0) + (unknownVoice ? 5e-3 * Math.max(0, skipped - 5) * clamp4((density2 / bodyDensity(B) - 0.7) / 0.3) : 0);
   }
   function sungSeconds(an, from, to) {
     const v = an.vocalActivity;
     if (!v || !(v.rate > 0)) return 0;
     const lo = Math.max(0, Math.floor(from * v.rate)), hi = Math.min(v.values.length, Math.ceil(to * v.rate));
     let sum = 0;
-    for (let i = lo; i < hi; i++) if (Number.isFinite(v.values[i])) sum += clamp3((v.values[i] - 0.15) / 0.7);
+    for (let i = lo; i < hi; i++) if (Number.isFinite(v.values[i])) sum += clamp4((v.values[i] - 0.15) / 0.7);
     return sum / v.rate;
   }
   function voiceTooSoon(B, time, outgoingUnknown = false) {
     var _a, _b;
     if (time < B.audibleStart + 1) return false;
-    const bar = ((_b = (_a = B.beat) == null ? void 0 : _a.period) != null ? _b : 0) * 4, lead = (outgoingUnknown ? clamp3(bar * 2, 4, 6) : clamp3(bar, 1.5, 3)) - 0.1;
+    const bar = ((_b = (_a = B.beat) == null ? void 0 : _a.period) != null ? _b : 0) * 4, lead = (outgoingUnknown ? clamp4(bar * 2, 4, 6) : clamp4(bar, 1.5, 3)) - 0.1;
     const first = firstVoice(B, time, Math.min(B.duration, time + lead));
     return first !== null && Number.isFinite(first);
   }
@@ -2450,7 +3014,7 @@ var MoraCore = (() => {
       const after = levelMean(B, time, Math.min(B.audibleEnd, time + 6));
       if (after < B.bodyRmsDb - 6 || after < before - 2) continue;
       const distance = Math.min(Math.abs(entry + nativeBeforeSwap - time), Math.abs(entry + nativeTotal - time));
-      const score = (0.5 + 0.5 * clamp3((after - before) / 8)) * (1 - clamp3(distance / Math.max(3, nativeTotal * 0.35)));
+      const score = (0.5 + 0.5 * clamp4((after - before) / 8)) * (1 - clamp4(distance / Math.max(3, nativeTotal * 0.35)));
       if (score > best.score) best = { score, time };
     }
     return best;
@@ -2461,7 +3025,7 @@ var MoraCore = (() => {
       kind: skippedSeconds < 1 ? "start" : cue.kind === "section" || arrivalTime !== void 0 && [...B.sectionBoundaries, B.intro.end].some((t) => Math.abs(t - arrivalTime) < 0.05) ? "section" : "intro-trim",
       skippedSeconds,
       ...arrivalTime === void 0 ? {} : { arrivalTime: r32(arrivalTime) },
-      confidence: r32(clamp3(cue.score))
+      confidence: r32(clamp4(cue.score))
     };
     if (skippedSeconds >= 2) p.reasons.push(`\u0432\u0445\u043E\u0434 \u0432 \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u0442\u0440\u0435\u043A \u0441 ${p.bEntry.toFixed(1)} \u0441: \u0432\u044B\u0431\u0440\u0430\u043D\u0430 \u043F\u043E\u0434\u0445\u043E\u0434\u044F\u0449\u0430\u044F \u0433\u0440\u0430\u043D\u0438\u0446\u0430 \u043F\u043E \u044D\u043D\u0435\u0440\u0433\u0438\u0438 \u0438 \u0441\u0442\u0440\u0443\u043A\u0442\u0443\u0440\u0435`);
   }
@@ -2471,8 +3035,8 @@ var MoraCore = (() => {
     for (let i = 0; i < 12; i++) {
       const x = (i + 0.5) / 12;
       const [ga, gb] = gains(x);
-      const a = clamp3((vocalMean(A, aStart + x * nativeA - 0.4, aStart + x * nativeA + 0.4) - 0.15) / 0.7) * ga;
-      const b = clamp3((vocalMean(B, bStart + x * nativeB - 0.4, bStart + x * nativeB + 0.4) - 0.15) / 0.7) * gb;
+      const a = clamp4((vocalMean(A, aStart + x * nativeA - 0.4, aStart + x * nativeA + 0.4) - 0.15) / 0.7) * ga;
+      const b = clamp4((vocalMean(B, bStart + x * nativeB - 0.4, bStart + x * nativeB + 0.4) - 0.15) / 0.7) * gb;
       lost += Math.min(a, b) * duration / 12;
     }
     return lost;
@@ -2509,12 +3073,12 @@ var MoraCore = (() => {
       if (cue.time + duration > B.audibleEnd - Math.min(3, (B.audibleEnd - B.audibleStart) * 0.15)) continue;
       const handoffLevel = powerLevel(B, cue.time + Math.max(0, swap - 0.5), cue.time + swap + 2);
       const bodyLevel = powerLevel(B, Math.max(B.audibleStart, B.intro.end), Math.min(B.audibleEnd, Math.max(B.intro.end + 8, B.audibleStart + 16)));
-      const energyFit = 1 - clamp3(Math.abs(handoffLevel - bodyLevel) / 15);
+      const energyFit = 1 - clamp4(Math.abs(handoffLevel - bodyLevel) / 15);
       const outgoing = levelBefore(A, aStart) + ctx.gainA;
       const needed = Math.min(outgoing, bodyLevel + ctx.gainB);
-      const holeCost = clamp3((needed - handoffLevel - ctx.gainB - 2.5) / 12);
+      const holeCost = clamp4((needed - handoffLevel - ctx.gainB - 2.5) / 12);
       const densB = curveMean(B.curves.midDensity, B.curves.rate, cue.time, cue.time + Math.max(1, swap));
-      const conflict = clamp3(densA * densB * 6);
+      const conflict = clamp4(densA * densB * 6);
       const arrival = arrivalFit(B, cue.time, swap, duration);
       const voiceScore = ctx.s.stemMixing !== false ? vocalEntryScore(A, B, aStart + swap, cue.time + swap) : 0;
       const clash = ctx.s.stemMixing !== false ? voiceClash(A, B, aStart, duration, cue.time, duration, duration) : 0;
@@ -2527,7 +3091,7 @@ var MoraCore = (() => {
   }
   function barPattern(g, from, to) {
     const acc = g.accents;
-    if (!acc || acc.kick.length !== g.beats.length) return null;
+    if (!acc || acc.kick.length !== g.beats.length || acc.snare.length !== g.beats.length) return null;
     const down = new Set(g.downbeats.map((t) => Math.round(t * 1e3)));
     const sum = [[0, 0, 0, 0], [0, 0, 0, 0]], n = [0, 0, 0, 0];
     let pos = -1;
@@ -2539,7 +3103,7 @@ var MoraCore = (() => {
       sum[1][pos] += acc.snare[i];
       n[pos]++;
     });
-    return Math.min(...n) < 3 ? null : sum.map((f) => f.map((v, i) => v / n[i]));
+    return Math.min(...n) < 3 || sum.some((f) => f.some((v) => !Number.isFinite(v))) ? null : sum.map((f) => f.map((v, i) => v / n[i]));
   }
   function drumAlignment(a, b) {
     const mean = (v) => v.reduce((x, y) => x + y, 0) / v.length;
@@ -2558,8 +3122,14 @@ var MoraCore = (() => {
   }
   var DRUM_SHIFT_MARGIN = 0.5;
   var DRUM_SHIFT_MIN = 0.3;
-  function planBeatmatch(ctx, A, B, rel, keyInfo, minBars = 1) {
-    var _a, _b, _c, _d, _e;
+  function verifiedDrumShift(a, b, entry, span, rotation, originalMatch) {
+    var _a;
+    const pattern = barPattern(b, entry, entry + span);
+    const match = pattern && ((_a = drumAlignment(a, pattern)) == null ? void 0 : _a[rotation]);
+    return match !== null && match !== void 0 && Number.isFinite(match) && Number.isFinite(originalMatch) && match >= DRUM_SHIFT_MIN && match - originalMatch >= DRUM_SHIFT_MARGIN ? match : null;
+  }
+  function planBeatmatch(ctx, A, B, rel, keyInfo, minBars = 1, maxBars = Infinity, vocalAware = false) {
+    var _a, _b, _c, _d;
     const s = ctx.s;
     const pA = A.beat.period;
     const barA = pA * 4;
@@ -2592,6 +3162,9 @@ var MoraCore = (() => {
     const bDown = ctx.vocalRepair || ctx.fixed ? B.beat.beats : B.beat.downbeats;
     const pB = B.beat.period;
     const voices = s.stemMixing !== false && !!A.vocalActivity && !!B.vocalActivity;
+    const fullEnergyCheck = !ctx.fixed && !ctx.vocalRepair && ctx.requestedAt === void 0 && naturalFade(A).length < 3;
+    const bodyLowA = fullEnergyCheck ? powerLevel(A, A.audibleStart, A.audibleEnd, A.curves.lowDb) : 0;
+    const fullEnergy = (exit, nativeA) => fullEnergyCheck && !voices && powerLevel(A, exit, exit + nativeA, A.curves.lowDb) >= bodyLowA;
     let best = null;
     const tried = [];
     const glide = Math.abs(r5 - 1) > 1e-5;
@@ -2601,7 +3174,7 @@ var MoraCore = (() => {
       const nativeB = nativeA * r5;
       const D2 = nativeA / avgA;
       if (D2 > s.maxBlendSeconds + 1e-4) continue;
-      if (bars2 < minBars || minBars > 1 && D2 < LONG_LOCK_MIN_SECONDS) continue;
+      if (bars2 < minBars || bars2 > maxBars || minBars > 1 && D2 < LONG_LOCK_MIN_SECONDS) continue;
       if (bars2 > barCap && !ctx.fixed) continue;
       if (keyClash && bars2 > 8) continue;
       const entries = ctx.fixed ? [{ time: ctx.fixed.entry, score: 0.76, kind: "start", tags: ["full-mix-alternative"] }] : ctx.vocalRepair ? [{ time: ctx.vocalRepair.entry, score: 0.76, kind: "start", tags: ["preserved-vocal-repair-entry"] }] : entryCandidates(B, s, nativeB / 2, nativeB, ctx.requestedAt === void 0, !A.vocalActivity && !!B.vocalActivity);
@@ -2616,10 +3189,10 @@ var MoraCore = (() => {
           if (ctx.regionB && (n.time < ctx.regionB.start - 1e-3 || n.time + nativeB > ctx.regionB.end + 1e-3)) continue;
           const densA = curveMean(A.curves.midDensity, A.curves.rate, e.time, e.time + nativeA);
           const densB = curveMean(B.curves.midDensity, B.curves.rate, n.time, n.time + nativeB);
-          const conflict = clamp3(densA * densB * 6);
+          const conflict = clamp4(densA * densB * 6);
           const dense = conflict > 0.6;
           const lockTarget = dense && !voices ? 8 : s.style === "smooth" ? 20 : 14;
-          const lenPref = s.style === "tight" ? 1 - clamp3(Math.abs(Math.log2(bars2 / 4)) / 4) : 1 - clamp3(Math.max(Math.log2(lockTarget / D2) / 2, Math.log2(D2 / lockTarget) / 4)) - (short ? 0 : 0.2 * clamp3((MIN_LOCK_SECONDS - D2) / MIN_LOCK_SECONDS));
+          const lenPref = s.style === "tight" ? 1 - clamp4(Math.abs(Math.log2(bars2 / 4)) / 4) : 1 - clamp4(Math.max(Math.log2(lockTarget / D2) / 2, Math.log2(D2 / lockTarget) / 4)) - (short ? 0 : 0.2 * clamp4((MIN_LOCK_SECONDS - D2) / MIN_LOCK_SECONDS));
           const heardEnd = unknownA ? e.time + nativeA - (s.eqHandoff && bars2 >= 4 ? 0.4 * barA : 0.2 * nativeA) : e.time + nativeA;
           const cs = ctx.requestedAt === void 0 ? cutScore(A, heardEnd) : 1;
           const closure = ctx.requestedAt === void 0 && A.structure ? closureAt(A.structure, heardEnd) : 0;
@@ -2628,18 +3201,22 @@ var MoraCore = (() => {
           const phraseBonus = (e.kind === "phrase" ? 0.5 : 0) + (B.phraseConfidence >= 0.2 && (n.kind === "phrase" || n.kind === "start") ? 0.5 : 0);
           const aLevel = levelMean(A, e.time, e.time + nativeA) + ctx.gainA;
           const bLevel = levelMean(B, n.time, n.time + nativeB) + ctx.gainB;
-          const energyFit = 1 - clamp3(Math.abs(aLevel - bLevel) / 14);
+          const energyFit = 1 - clamp4(Math.abs(aLevel - bLevel) / 14);
           const continuityCost = beatContinuityCost(ctx, A, B, e.time, n.time, nativeA, nativeB, bars2, conflict > 0.35 || keyClash);
           const voiceScore = s.stemMixing !== false ? vocalEntryScore(A, B, e.time + nativeA / 2, n.time + nativeB / 2) : 0;
           const fadeStart = Math.max(0.5, (bars2 - 2) / bars2);
-          const clash = s.stemMixing !== false ? voiceClash(A, B, e.time, nativeA, n.time, nativeB, D2, s.eqHandoff ? (x) => [x <= fadeStart ? 1 : cosDown((x - fadeStart) / (1 - fadeStart)), sinUp(clamp3(x / 0.5))] : void 0) : 0;
-          const score = 0.1 * closure + 0.1 * e.score + 0.1 * n.score + 0.28 * cs + 0.12 * lenPref + 0.12 * (1 - conflict) + 0.11 * arrival.score + 0.08 * energyFit + 0.09 * phraseBonus - entrySkipCost(B, n.time, true, unknownB) - 0.45 * continuityCost + 0.2 * voiceScore + (n.tags.includes("measured-vocal-lead") ? 0.18 : 0) - Math.min(0.4, 0.02 * clash) - (unknownB ? 0.12 * pickupLost(B, n.time) : 0) - 0.1 * localClash;
+          const clash = s.stemMixing !== false ? voiceClash(A, B, e.time, nativeA, n.time, nativeB, D2, s.eqHandoff ? (x) => [x <= fadeStart ? 1 : cosDown((x - fadeStart) / (1 - fadeStart)), sinUp(clamp4(x / 0.5))] : void 0) : 0;
+          const score = 0.1 * closure + 0.1 * e.score + 0.1 * n.score + 0.28 * cs + 0.12 * lenPref + 0.12 * (1 - conflict) + 0.11 * arrival.score + 0.08 * energyFit + 0.09 * phraseBonus - entrySkipCost(B, n.time, true, unknownB) - 0.45 * continuityCost + 0.2 * voiceScore + (n.tags.includes("measured-vocal-lead") ? 0.18 : 0) - Math.min(0.4, 0.02 * clash) - (unknownB ? 0.12 * pickupLost(B, n.time) : 0) - 0.1 * localClash - (vocalAware ? 0.2 * clamp4(curveMean(A.curves.midDensity, A.curves.rate, e.time + nativeA / 2 - pA, e.time + nativeA / 2 + pA) / Math.max(1e-6, bodyDensity(A)) - 0.8) : 0);
           tried.push({ exit: e.time, entry: n.time, bars: bars2, cut: r32(A.audibleEnd - e.time - nativeA), score: r32(score), continuityCost: r32(continuityCost) });
           if (!best || score > best.score) best = { score, e, n, bars: bars2, conflict, cut: A.audibleEnd - e.time - nativeA, arrival: arrival.time, localClash };
         }
       }
     }
     if (!best) return null;
+    if (!vocalAware && fullEnergy(best.e.time, best.bars * barA)) {
+      const again = planBeatmatch(ctx, A, B, rel, keyInfo, minBars, Math.min(maxBars, 8), true);
+      if (again) return again;
+    }
     if (!ctx.vocalRepair && !ctx.fixed && rel.m === 1) {
       const nativeA = best.bars * barA, nativeB = nativeA * r5;
       const pa = barPattern(A.beat, best.e.time, best.e.time + nativeA), pb = barPattern(B.beat, best.n.time, best.n.time + nativeB);
@@ -2652,11 +3229,20 @@ var MoraCore = (() => {
             (_b = s.maxEntrySkipSeconds) != null ? _b : 45,
             (B.audibleEnd - B.audibleStart) * 0.45
           ));
-          const time = (_c = [{ t: best.n.time + k * pB, move: k }, { t: best.n.time - (4 - k) * pB, move: 4 - k }].filter(({ t }) => t >= B.audibleStart && t <= entryLimit && !(ctx.requestedAt === void 0 && s.stemMixing !== false && voiceTooSoon(B, t, !A.vocalActivity)) && t + nativeB <= B.audibleEnd && (!ctx.regionB || t >= ctx.regionB.start - 1e-3 && t + nativeB <= ctx.regionB.end + 1e-3)).map((o) => ({ ...o, cost: (voices ? vocalMean(B, o.t, o.t + nativeB) : 0) + 0.01 * o.move })).sort((x, y) => x.cost - y.cost)[0]) == null ? void 0 : _c.t;
-          if (time === void 0) drum.blocked = preserve ? "preserve-opening" : "no-room";
+          const eligible = [{ t: best.n.time + k * pB, move: k }, { t: best.n.time - (4 - k) * pB, move: 4 - k }].filter(({ t }) => t >= B.audibleStart && t <= entryLimit && !(ctx.requestedAt === void 0 && s.stemMixing !== false && voiceTooSoon(B, t, !A.vocalActivity)) && t + nativeB <= B.audibleEnd - Math.min(12, (B.audibleEnd - B.audibleStart) * 0.2) && (!ctx.regionB || t >= ctx.regionB.start - 1e-3 && t + nativeB <= ctx.regionB.end + 1e-3));
+          const selected = eligible.map((o) => ({
+            ...o,
+            actualMatch: verifiedDrumShift(pa, B.beat, r32(o.t), nativeB, k, match[0]),
+            cost: (voices ? vocalMean(B, o.t, o.t + nativeB) : 0) + 0.01 * o.move
+          })).filter((o) => o.actualMatch !== null).sort((x, y) => x.cost - y.cost)[0];
+          if (!selected) drum.blocked = preserve ? "preserve-opening" : eligible.length ? "changed-window-pattern" : "no-room";
           else {
-            best.n = { ...best.n, time: r32(time), tags: [...best.n.tags, `drum-shift:${k}`] };
+            best.n = { ...best.n, time: r32(selected.t), tags: [...best.n.tags, `drum-shift:${k}`] };
+            best.conflict = clamp4(curveMean(A.curves.midDensity, A.curves.rate, best.e.time, best.e.time + nativeA) * curveMean(B.curves.midDensity, B.curves.rate, best.n.time, best.n.time + nativeB) * 6);
+            best.localClash = fullMix ? localClashFraction(A, best.e.time, nativeA, B, best.n.time, nativeB) : 0;
+            best.arrival = arrivalFit(B, best.n.time, nativeB / 2, nativeB).time;
             drum.k = k;
+            drum.actualWindowMatch = r32(selected.actualMatch);
           }
         }
         best.drum = drum;
@@ -2666,7 +3252,7 @@ var MoraCore = (() => {
     const bars = best.bars;
     const halfBars = bars / 2;
     const D = bars * barA / avgA;
-    const rA = (t) => glide ? 1 + (target - 1) * smoothstep(clamp3(t / D)) : 1;
+    const rA = (t) => glide ? 1 + (target - 1) * smoothstep(clamp4(t / D)) : 1;
     const tOfA = (x) => {
       let acc = 0;
       const dt = D / 400;
@@ -2693,19 +3279,25 @@ var MoraCore = (() => {
     const barOut = (k) => tOfA(k * barA);
     const lanes = [];
     const reasons = [];
-    let echoSafe = true;
+    let echoSafe = true, filterHandoff = false;
     if (ctx.s.eqHandoff) {
-      const fadeStart = Math.max(swap, barOut(bars - 2));
+      filterHandoff = vocalAware || fullEnergy(best.e.time, bars * barA);
+      const fadeStart = Math.max(swap, barOut(bars - (filterHandoff ? 1 : 2)));
       lanes.push(lane("B", "gain", shape(0, swap, sinUp, 8)));
       lanes.push(lane("A", "gain", [[0, 1]], shape(fadeStart, D, cosDown, 8)));
       lanes.push(lane("A", "low", [[0, 1]], [[r32(swap - beat / 2), 1], [r32(swap + beat / 2), 0]]));
       lanes.push(lane("B", "low", [[0, 0]], [[r32(swap - beat / 2), 0], [r32(swap + beat / 2), 1]]));
       lanes.push(lane("B", "high", shape(0, swap, (x) => 0.25 + 0.75 * smoothstep(x))));
-      lanes.push(lane("A", "high", [[0, 1]], shape(swap, D, (x) => 1 - 0.75 * smoothstep(x))));
+      lanes.push(lane("A", "high", [[0, 1]], shape(swap, D, (x) => 1 - (filterHandoff ? 0.4 : 0.75) * smoothstep(x))));
       const midDuck = best.conflict > 0.35 || keyInfo.compatibility < 0.5 || best.localClash >= 0.5;
-      const bMid0 = s.stemMixing !== false && A.vocalActivity && B.vocalActivity ? keyClash ? 0.4 : 0.7 : midDuck ? 0.18 : 0.4;
-      const turns = keyClash || best.localClash >= 0.5;
-      if (turns) {
+      const bMid0 = s.stemMixing !== false && A.vocalActivity && B.vocalActivity ? keyClash ? 0.4 : 0.7 : midDuck ? 0.18 : filterHandoff ? 0.25 : 0.4;
+      const turns = keyClash || best.localClash >= 0.5 || filterHandoff;
+      if (filterHandoff) lanes.push(lane("A", "filter", [[0, 0]], shape(swap, D, (x) => 0.8 * smoothstep(x), 12)));
+      if (filterHandoff) {
+        lanes.push(lane("B", "mid", [[0, bMid0]], shape(Math.max(0, swap - beat), Math.min(D, swap + 3 * beat), (x) => bMid0 + (1 - bMid0) * smoothstep(x))));
+        const nativeB = bars * barA * r5, bDense = curveMean(B.curves.midDensity, B.curves.rate, best.n.time + nativeB / 2, best.n.time + nativeB) / Math.max(1e-6, bodyDensity(B)) > 0.9;
+        lanes.push(lane("A", "mid", [[0, 1]], bDense ? shape(swap, Math.min(D, swap + beat), (x) => 1 - 0.7 * smoothstep(x)) : shape(swap, Math.min(D, barOut(halfBars + 2)), (x) => 1 - 0.45 * smoothstep(x))));
+      } else if (turns) {
         const t0 = Math.max(0, swap - beat);
         lanes.push(lane("B", "mid", [[0, bMid0]], shape(t0, Math.min(D, swap + beat), (x) => bMid0 + (1 - bMid0) * sinUp(x))));
         lanes.push(lane("A", "mid", [[0, 1]], shape(t0, Math.max(t0 + beat, Math.min(D, barOut(halfBars + 2))), (x) => 0.2 + 0.8 * cosDown(x))));
@@ -2714,7 +3306,8 @@ var MoraCore = (() => {
         lanes.push(lane("A", "mid", [[0, 1]], shape(swap, Math.min(D, barOut(halfBars + 2)), (x) => 1 - (midDuck ? 0.8 : 0.55) * smoothstep(x))));
       }
       reasons.push("\u0431\u0430\u0441 \u043F\u043B\u0430\u0432\u043D\u043E \u043F\u0435\u0440\u0435\u0434\u0430\u0451\u0442\u0441\u044F \u043D\u0430 \u0441\u0438\u043B\u044C\u043D\u043E\u0439 \u0434\u043E\u043B\u0435 \u0432 \u0441\u0435\u0440\u0435\u0434\u0438\u043D\u0435 \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430, \u0447\u0442\u043E\u0431\u044B \u0443\u043C\u0435\u043D\u044C\u0448\u0438\u0442\u044C \u043A\u043E\u043D\u0444\u043B\u0438\u043A\u0442 \u0431\u0430\u0441\u043E\u0432\u044B\u0445 \u043B\u0438\u043D\u0438\u0439");
-      if (turns) reasons.push("\u0442\u043E\u043D\u0430\u043B\u044C\u043D\u043E\u0441\u0442\u0438 \u043A\u043E\u043D\u0444\u043B\u0438\u043A\u0442\u0443\u044E\u0442: \u0441\u0435\u0440\u0435\u0434\u0438\u043D\u0430 \u0442\u0440\u0435\u043A\u043E\u0432 \u043C\u0435\u043D\u044F\u0435\u0442\u0441\u044F \u043F\u043E \u043E\u0447\u0435\u0440\u0435\u0434\u0438 \u043D\u0430 \u0441\u043C\u0435\u043D\u0435 \u0431\u0430\u0441\u0430, \u0434\u043B\u0438\u043D\u0430 \u0441\u0432\u0435\u0434\u0435\u043D\u0438\u044F \u043D\u0435 \u0441\u043E\u043A\u0440\u0430\u0449\u0430\u0435\u0442\u0441\u044F");
+      if (filterHandoff) reasons.push("\u0442\u0435\u043A\u0443\u0449\u0438\u0439 \u0442\u0440\u0435\u043A \u0435\u0449\u0451 \u043D\u0430 \u043F\u043E\u043B\u043D\u043E\u0439 \u044D\u043D\u0435\u0440\u0433\u0438\u0438: \u0441\u0435\u0440\u0435\u0434\u0438\u043D\u044B \u043C\u0435\u043D\u044F\u044E\u0442\u0441\u044F \u043F\u043E \u043E\u0447\u0435\u0440\u0435\u0434\u0438 \u043D\u0430 \u0441\u043C\u0435\u043D\u0435 \u0431\u0430\u0441\u0430, \u0437\u0430\u0442\u0435\u043C \u0442\u0435\u043A\u0443\u0449\u0438\u0439 \u0443\u0445\u043E\u0434\u0438\u0442 \u0447\u0435\u0440\u0435\u0437 \u0444\u0438\u043B\u044C\u0442\u0440 \u2014 \u0434\u0432\u0435 \u0432\u0435\u0434\u0443\u0449\u0438\u0435 \u043F\u0430\u0440\u0442\u0438\u0438 \u043F\u043E\u0447\u0442\u0438 \u043D\u0435 \u0437\u0432\u0443\u0447\u0430\u0442 \u0432\u043C\u0435\u0441\u0442\u0435");
+      else if (turns) reasons.push("\u0442\u043E\u043D\u0430\u043B\u044C\u043D\u043E\u0441\u0442\u0438 \u043A\u043E\u043D\u0444\u043B\u0438\u043A\u0442\u0443\u044E\u0442: \u0441\u0435\u0440\u0435\u0434\u0438\u043D\u0430 \u0442\u0440\u0435\u043A\u043E\u0432 \u043C\u0435\u043D\u044F\u0435\u0442\u0441\u044F \u043F\u043E \u043E\u0447\u0435\u0440\u0435\u0434\u0438 \u043D\u0430 \u0441\u043C\u0435\u043D\u0435 \u0431\u0430\u0441\u0430, \u0434\u043B\u0438\u043D\u0430 \u0441\u0432\u0435\u0434\u0435\u043D\u0438\u044F \u043D\u0435 \u0441\u043E\u043A\u0440\u0430\u0449\u0430\u0435\u0442\u0441\u044F");
       else if (midDuck) reasons.push("\u0441\u0440\u0435\u0434\u043D\u0438\u0435 \u0447\u0430\u0441\u0442\u043E\u0442\u044B \u043E\u0431\u043E\u0438\u0445 \u0442\u0440\u0435\u043A\u043E\u0432 \u043F\u043B\u043E\u0442\u043D\u044B\u0435: \u0441\u0435\u0440\u0435\u0434\u0438\u043D\u0430 \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0433\u043E \u0442\u0440\u0435\u043A\u0430 \u0432\u0445\u043E\u0434\u0438\u0442 \u043F\u0440\u0438\u0433\u043B\u0443\u0448\u0451\u043D\u043D\u043E\u0439");
       const exitA = best.e.time + bars * barA;
       echoSafe = !unknownA || (best.e.kind === "phrase" || !!A.structure && closureAt(A.structure, exitA) >= 0.5) && curveMean(A.curves.midDensity, A.curves.rate, exitA - barA, exitA) < 0.2;
@@ -2734,7 +3327,7 @@ var MoraCore = (() => {
     p.automation = lanes;
     const aConf = A.beat.confidence;
     const bConf = B.beat.confidence;
-    const drumShift = Number((_e = (_d = best.drum) == null ? void 0 : _d.k) != null ? _e : 0);
+    const drumShift = Number((_d = (_c = best.drum) == null ? void 0 : _c.k) != null ? _d : 0);
     const phraseAligned = !drumShift && A.phraseConfidence >= 0.2 && B.phraseConfidence >= 0.2 && best.e.kind === "phrase" && (best.n.kind === "phrase" || best.n.kind === "start");
     const phraseConf = (A.phraseConfidence + B.phraseConfidence) / 2;
     p.confidence = r32(Math.sqrt(aConf * bConf) * (0.75 + 0.25 * phraseConf) * (0.75 + 0.25 * keyInfo.compatibility) * (1 - 0.3 * best.conflict));
@@ -2769,6 +3362,7 @@ var MoraCore = (() => {
       ...best.drum ? { drumPattern: best.drum } : {},
       ...fullMix ? { fullMixRules: { looseGrid, barCap: Number.isFinite(barCap) ? barCap : null, localClash: r32(best.localClash), echoSafe } } : {},
       ...p.echo ? { variant: "echo-tail" } : {},
+      ...filterHandoff ? { style: "filter-handoff" } : {},
       consumedA: r32(bars * barA),
       consumedB: r32(bars * barA * r5),
       analysisLimits: ["mid-density-is-not-vocal-detection", "4/4-meter-assumed"]
@@ -2836,6 +3430,112 @@ var MoraCore = (() => {
     ];
     p.debug = { cut: r32(cut), variant: "downbeat-cut" };
     describeEntry(p, B, entry);
+    return p;
+  }
+  function planDropSwap(ctx, A, B, keyInfo, fallbackReason) {
+    var _a;
+    const ga = A.beat, gb = B.beat, beat = ga.period, bar = 4 * beat, barB = 4 * gb.period;
+    const S = 2 * bar >= 3 ? 2 * bar : 4 * bar;
+    const tail = ctx.requestedAt === void 0 ? Math.max(3, Math.min(6, 2 * barB)) : 3;
+    const L = Math.round(bar * 75) / 75;
+    const rollable = ga.confidence >= 0.8 && ga.jitterMs <= 12 && ctx.s.loopBridges !== false && ctx.s.djPhrasing !== false && L >= 1.2 && L <= 8 && 3 * L + tail <= ctx.s.maxBlendSeconds;
+    if (S + tail > ctx.s.maxBlendSeconds && !rollable) return null;
+    const phraseSet = new Set((A.phraseConfidence >= 0.2 ? A.phrases : []).map((t) => Math.round(t * 1e3)));
+    const bodyDens = curveMean(A.curves.midDensity, A.curves.rate, A.audibleStart, A.audibleEnd);
+    const lead = Math.max(S, bar);
+    let best = null;
+    const now = ctx.requestedAt;
+    for (let i = 0; i < ga.downbeats.length; i++) {
+      const d2 = ga.downbeats[i], phrase2 = phraseSet.has(Math.round(d2 * 1e3));
+      if (now === void 0 ? !phrase2 && i % 4 !== 0 || d2 - lead < A.audibleStart + (A.audibleEnd - A.audibleStart) * 0.5 || d2 > A.audibleEnd - 0.5 || A.audibleEnd - d2 > 24 : d2 - lead < now + 0.15 || d2 - lead > now + 0.15 + bar + 0.02 || d2 > A.audibleEnd - 0.5) continue;
+      if (!measuredCurves(A, d2 - lead, d2) || powerLevel(A, d2 - lead, d2) < A.bodyRmsDb - 6) continue;
+      if (A.vocalActivity && vocalMean(A, d2 - 0.2, d2 + 0.25) >= 0.2) continue;
+      const dens2 = curveMean(A.curves.midDensity, A.curves.rate, d2 - beat, d2 + beat) / Math.max(1e-6, bodyDens);
+      const score = (phrase2 ? 0.3 : 0) - 0.5 * clamp4((A.audibleEnd - d2) / 24) - 0.3 * clamp4(dens2 - 0.7);
+      if (!best || score > best.score) best = { d: d2, score, phrase: phrase2, dens: dens2 };
+    }
+    if (!best) return null;
+    const { d, phrase, dens } = best;
+    const loop = rollable && (!phrase || dens > 0.9);
+    if (!loop && S + tail > ctx.s.maxBlendSeconds) return null;
+    const picked = gb.downbeatConfidence >= 0.5 ? pickHandoffEntry(ctx, A, B, d, 0, tail, true) : null;
+    const entry = (picked == null ? void 0 : picked.aligned) ? picked.cue : { time: B.audibleStart, score: 0.6, kind: "start", tags: ["drop-swap-start"] };
+    if (powerLevel(B, entry.time, entry.time + 1) < B.bodyRmsDb - 6 || entry.time + tail > B.audibleEnd) return null;
+    const energyDelta = powerLevel(B, entry.time, entry.time + 8 * barB) + ctx.gainB - (powerLevel(A, d - 2 * bar, d) + ctx.gainA);
+    const calm = gb.bpm < 0.85 * ga.bpm && energyDelta <= -3;
+    const wash = loop && calm, roll = loop && !calm;
+    const opening = B.audibleStart <= 1 ? B.audibleStart : (_a = gb.downbeats.find((t) => t >= B.audibleStart - 0.025)) != null ? _a : B.audibleStart;
+    const bIn = loop || now !== void 0 ? entry : { time: opening, score: 0.6, kind: opening === B.audibleStart ? "start" : "downbeat", tags: ["drop-swap-start"] };
+    const echoSpan = loop ? 0 : now !== void 0 ? Math.min(barB, tail) : Math.min(2 * barB, ctx.s.maxBlendSeconds - S);
+    const softTail = wash ? Math.min(Math.max(tail, Math.min(8, 3 * barB)), ctx.s.maxBlendSeconds - 2 * L) : Math.max(tail, echoSpan);
+    if (wash && (softTail < tail || entry.time + softTail > B.audibleEnd)) return null;
+    const T = roll ? 3 * L : wash ? 2 * L : S;
+    let delay = roll ? beat / 2 : beat * 0.75;
+    while (delay < 0.25) delay *= 2;
+    while (delay > 0.6) delay /= 2;
+    const feedback = Math.min(roll || wash ? 0.72 : 0.78, Math.pow(10, -1.5 / ((wash ? 2.5 : roll ? 1.5 : 3) * bar / delay)));
+    const D = r32(T + softTail);
+    const p = basePlan(ctx, "echo_out");
+    p.bEntry = r32(bIn.time);
+    p.duration = D;
+    p.swapAt = r32(T);
+    p.bDelay = r32(T);
+    p.echo = { delay: r32(delay), feedback: r32(feedback) };
+    if (wash) {
+      const start = Math.round((d - L) * 300) / 300;
+      p.aExit = r32(start);
+      p.loopA = { start, end: start + L, until: start + 2 * L, crossfade: 6e-3 };
+      p.automation = [
+        lane("A", "gain", [[0, 1], [r32(T - 0.03), 1], [r32(T), 0], [D, 0]]),
+        // wash-out: a low-pass closes (no hype high-pass) while the echo send rises
+        lane("A", "filter", [[0, 0]], shape(L / 2, T, (x) => -0.5 * smoothstep(x), 8), [[D, -0.5]]),
+        lane("A", "echo", [[0, 0], [r32(L), 0]], shape(L, T - 0.05, (x) => 0.7 * smoothstep(x), 6), [[r32(T), 0.7], [r32(T + 0.02), 0], [D, 0]]),
+        // B's soft intro rises under the tail over two of its bars and opens from a low-pass
+        lane("B", "gain", [[0, 0], [0.02, 0.6]], shape(0.02, Math.min(2 * barB, D - T), (x) => 0.6 + 0.4 * sinUp(x), 8), [[r32(D - T), 1]]),
+        lane("B", "filter", shape(0, Math.min(barB, D - T), (x) => -0.35 * (1 - smoothstep(x)), 6), [[r32(D - T), 0]])
+      ];
+    } else if (roll) {
+      const start = Math.round((d - L) * 300) / 300;
+      p.aExit = r32(start);
+      p.loopA = {
+        start,
+        end: start + L,
+        until: start + 3 * L,
+        crossfade: 6e-3,
+        roll: [{ at: start + L, length: L / 2 }, { at: start + 2 * L, length: L / 4 }, { at: start + 2.5 * L, length: L / 8 }]
+      };
+      p.automation = [
+        lane("A", "gain", [[0, 1], [r32(T - 0.03), 1], [r32(T), 0], [D, 0]]),
+        lane("A", "filter", [[0, 0]], shape(L, T, (x) => 0.6 * smoothstep(x), 8), [[D, 0.6]]),
+        // wash-out: the send rises through the last bar of the roll and closes on the one
+        lane("A", "echo", [[0, 0], [r32(2 * L), 0]], shape(2 * L, T - 0.05, (x) => 0.8 * smoothstep(x), 6), [[r32(T), 0.8], [r32(T + 0.02), 0], [D, 0]]),
+        lane("B", "gain", [[0, 0], [0.02, 1], [r32(D - T), 1]])
+      ];
+    } else {
+      p.aExit = r32(d - S);
+      p.automation = [
+        lane("A", "gain", [[0, 1], [r32(S - 0.03), 1], [r32(S), 0], [D, 0]]),
+        // v19.4 soft echo out (A/B-approved renders): a gentle low-pass eases in over the sweep and muffles
+        // the echo tail after the cut (-0.25 -> -0.3); no high-pass sweep
+        lane("A", "filter", [[0, 0], [r32(S), -0.25], [r32(S + 0.4), -0.3], [D, -0.3]]),
+        // pre-fader send: open over the last beat (0.6), then 0.4, 0.2 and closed three beats after the cut
+        lane("A", "echo", [[0, 0], [r32(S - beat), 0], [r32(S - 0.05), 0.6], [r32(S), 0.6], [r32(S + beat), 0.4], [r32(S + 2 * beat), 0.2], [r32(S + 3 * beat), 0]]),
+        // B runs on its own clock after bDelay: 0.8 at once, full after a bar of A; no bass gate, no filter
+        lane("B", "gain", [[0, 0], [0.01, 0.8], [r32(bar), 1]])
+      ];
+    }
+    p.confidence = r32(Math.min(0.7, ga.confidence, gb.confidence));
+    p.keyInfo = keyInfo;
+    p.fallbackReason = fallbackReason;
+    const cut = Math.max(0, A.audibleEnd - d);
+    p.reasons = [
+      wash ? `\u043F\u0435\u0442\u043B\u044F \u0441 \u0440\u0430\u0437\u043C\u044B\u0432\u043E\u043C: \u0442\u0435\u043C\u043F\u044B ${ga.bpm.toFixed(0)} \u0438 ${gb.bpm.toFixed(0)} BPM \u043D\u0435 \u0441\u0432\u043E\u0434\u044F\u0442\u0441\u044F, \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u0442\u0440\u0435\u043A \u0441\u043F\u043E\u043A\u043E\u0439\u043D\u0435\u0435 \u2014 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0442\u0430\u043A\u0442 \u0442\u0435\u043A\u0443\u0449\u0435\u0433\u043E \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0435\u0442\u0441\u044F \u0431\u0435\u0437 \u0443\u0441\u043A\u043E\u0440\u0435\u043D\u0438\u044F, \u0443\u0445\u043E\u0434\u0438\u0442 \u0432 \u0444\u0438\u043B\u044C\u0442\u0440 \u0438 \u044D\u0445\u043E, \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u043C\u044F\u0433\u043A\u043E \u043F\u043E\u0434\u043D\u0438\u043C\u0430\u0435\u0442\u0441\u044F \u043F\u043E\u0434 \u0445\u0432\u043E\u0441\u0442` : roll ? `\u043F\u0435\u0442\u043B\u044F \u0441 \u0443\u0441\u043A\u043E\u0440\u0435\u043D\u0438\u0435\u043C: \u0442\u0435\u043C\u043F\u044B ${ga.bpm.toFixed(0)} \u0438 ${gb.bpm.toFixed(0)} BPM \u043D\u0435 \u0441\u0432\u043E\u0434\u044F\u0442\u0441\u044F \u2014 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0442\u0430\u043A\u0442 \u0442\u0435\u043A\u0443\u0449\u0435\u0433\u043E \u0442\u0440\u0435\u043A\u0430 \u043F\u0435\u0440\u0435\u0434 \u0433\u0440\u0430\u043D\u0438\u0446\u0435\u0439 ${phrase ? "\u0444\u0440\u0430\u0437\u044B" : "\u0447\u0435\u0442\u044B\u0440\u0451\u0445 \u0442\u0430\u043A\u0442\u043E\u0432"} \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0435\u0442\u0441\u044F \u0438 \u0434\u0440\u043E\u0431\u0438\u0442\u0441\u044F \u0434\u043E 1/8 \u0442\u0430\u043A\u0442\u0430 \u043F\u043E\u0434 \u043D\u0430\u0440\u0430\u0441\u0442\u0430\u044E\u0449\u0438\u0439 \u0444\u0438\u043B\u044C\u0442\u0440, \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u0432\u0441\u0442\u0443\u043F\u0430\u0435\u0442 \u0432 \u043F\u043E\u043B\u043D\u0443\u044E \u0441\u0438\u043B\u0443 \u043D\u0430 \u0441\u0432\u043E\u0435\u0439 \u0441\u0438\u043B\u044C\u043D\u043E\u0439 \u0434\u043E\u043B\u0435` : `\u0441\u043C\u0435\u043D\u0430 \u043D\u0430 \u0441\u0438\u043B\u044C\u043D\u043E\u0439 \u0434\u043E\u043B\u0435: \u0442\u0435\u043C\u043F\u044B ${ga.bpm.toFixed(0)} \u0438 ${gb.bpm.toFixed(0)} BPM \u043D\u0435 \u0441\u0432\u043E\u0434\u044F\u0442\u0441\u044F \u2014 \u0442\u0435\u043A\u0443\u0449\u0438\u0439 \u0442\u0440\u0435\u043A \u0443\u0445\u043E\u0434\u0438\u0442 \u0432 \u044D\u0445\u043E \u043D\u0430 \u0433\u0440\u0430\u043D\u0438\u0446\u0435 ${phrase ? "\u0444\u0440\u0430\u0437\u044B" : "\u0447\u0435\u0442\u044B\u0440\u0451\u0445 \u0442\u0430\u043A\u0442\u043E\u0432"}, \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u0432\u0445\u043E\u0434\u0438\u0442 \u0441\u043E \u0441\u0432\u043E\u0435\u0433\u043E \u043D\u0430\u0447\u0430\u043B\u0430`,
+      ...fallbackReason ? [fallbackReason] : [],
+      roll || wash ? "\u0434\u0432\u0430 \u0440\u0438\u0442\u043C\u0430 \u043D\u0435 \u0437\u0432\u0443\u0447\u0430\u0442 \u043E\u0434\u043D\u043E\u0432\u0440\u0435\u043C\u0435\u043D\u043D\u043E: \u043F\u043E\u0434 \u043F\u0435\u0440\u0432\u044B\u043C \u0442\u0430\u043A\u0442\u043E\u043C \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0433\u043E \u0437\u0432\u0443\u0447\u0438\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u043E\u0442\u0444\u0438\u043B\u044C\u0442\u0440\u043E\u0432\u0430\u043D\u043D\u044B\u0439 \u0445\u0432\u043E\u0441\u0442 \u044D\u0445\u0430" : "\u0434\u0432\u0430 \u0440\u0438\u0442\u043C\u0430 \u043D\u0435 \u0437\u0432\u0443\u0447\u0430\u0442 \u043E\u0434\u043D\u043E\u0432\u0440\u0435\u043C\u0435\u043D\u043D\u043E: \u044D\u0445\u043E \u0442\u0435\u043A\u0443\u0449\u0435\u0433\u043E \u043D\u0430 3/4 \u0434\u043E\u043B\u0438, \u043F\u0440\u0438\u0433\u043B\u0443\u0448\u0451\u043D\u043D\u043E\u0435 \u0444\u0438\u043B\u044C\u0442\u0440\u043E\u043C, \u0437\u0432\u0443\u0447\u0438\u0442 \u043F\u043E\u0434 \u043F\u0435\u0440\u0432\u044B\u043C \u0442\u0430\u043A\u0442\u043E\u043C \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0433\u043E",
+      cut > 2 ? `\u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u0435\u0442\u0441\u044F ${Math.round(cut)} \u0441 \u0444\u0438\u043D\u0430\u043B\u0430` : "\u0442\u0435\u043A\u0443\u0449\u0438\u0439 \u0442\u0440\u0435\u043A \u0437\u0432\u0443\u0447\u0438\u0442 \u043F\u043E\u0447\u0442\u0438 \u0434\u043E \u043A\u043E\u043D\u0446\u0430"
+    ];
+    describeEntry(p, B, bIn);
+    p.debug = wash ? { variant: "loop-wash", style: "loop-wash", cut: r32(cut), loopWash: { exitSource: r32(d), phrase, dens: r32(dens), bar: r32(L), energyDelta: r32(energyDelta), entryAligned: !!(picked == null ? void 0 : picked.aligned) } } : roll ? { variant: "loop-roll", style: "loop-roll", cut: r32(cut), loopRoll: { exitSource: r32(d), phrase, dens: r32(dens), bar: r32(L), entryAligned: !!(picked == null ? void 0 : picked.aligned) } } : { variant: "drop-swap", style: "drop-swap", cut: r32(cut), dropSwap: { cutSource: r32(d), phrase, sweep: r32(S), entryAligned: bIn.kind === "downbeat" } };
     return p;
   }
   function planCrossfade(ctx, A, B, keyInfo, fallbackReason) {
@@ -3004,7 +3704,7 @@ var MoraCore = (() => {
         };
         const densB = unknownB ? curveMean(B.curves.midDensity, B.curves.rate, entry2, entry2 + T2) / bodyDensity(B) : 0;
         let bMuted = 0;
-        if (s.stemMixing !== false && B.vocalActivity) for (let t = 0; t < T2 / 2; t += 0.25) bMuted += clamp3((vocalMean(B, entry2 + t, entry2 + t + 0.25) - 0.15) / 0.7) * at("B", "gain", t) * 0.25;
+        if (s.stemMixing !== false && B.vocalActivity) for (let t = 0; t < T2 / 2; t += 0.25) bMuted += clamp4((vocalMean(B, entry2 + t, entry2 + t + 0.25) - 0.15) / 0.7) * at("B", "gain", t) * 0.25;
         if (bMuted > 1.5) continue;
         const drops = aGrid ? aGrid.filter((t) => t > A.audibleEnd - 60 && t <= A.audibleEnd - tail) : Array.from({ length: 120 }, (_, i) => A.audibleEnd - tail - i * 0.5);
         for (const drop of drops) {
@@ -3026,7 +3726,7 @@ var MoraCore = (() => {
           if (hole > 3) continue;
           const cut = A.audibleEnd - drop - tail;
           const clash = s.stemMixing !== false ? voiceClash(A, B, exit2, L2, entry2, L2, L2, (x) => [at("A", "gain", x * L2), at("B", "gain", x * L2)]) : 0;
-          const score = 0.45 * cutScore(A, drop + tail) - 0.5 * clamp3(hole / 10) + (phraseSet.has(Math.round(drop * 1e3)) ? 0.08 : 0) + 0.12 * (1 - clamp3(Math.abs(T2 - 12) / 8)) - entrySkipCost(B, entry2, false, unknownB) - Math.min(0.4, 0.08 * clash) - 0.1 * bMuted - 0.1 * vocalMean(A, drop - 0.3, drop + 0.2);
+          const score = 0.45 * cutScore(A, drop + tail) - 0.5 * clamp4(hole / 10) + (phraseSet.has(Math.round(drop * 1e3)) ? 0.08 : 0) + 0.12 * (1 - clamp4(Math.abs(T2 - 12) / 8)) - entrySkipCost(B, entry2, false, unknownB) - Math.min(0.4, 0.08 * clash) - 0.1 * bMuted - 0.1 * vocalMean(A, drop - 0.3, drop + 0.2);
           if (!best || score > best.score) best = { score, exit: exit2, entry: entry2, T: T2, cut, hole, duck };
         }
       }

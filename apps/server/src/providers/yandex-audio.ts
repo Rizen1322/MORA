@@ -5,6 +5,8 @@ import path from 'node:path';
 import type { AppConfig } from '../config.ts';
 import type { FfmpegTools, ProbeResult } from '../ffmpeg.ts';
 import { sha256File } from '../library.ts';
+import { nativeDownload, networkFetch } from '../rust-network.ts';
+import { SharedPreparation } from '../public/shared-preparation.ts';
 
 export interface YandexDownloadVariant {
   codec: string;
@@ -62,16 +64,16 @@ export function parseYandexDownloadXml(xml: string, apiBase: string): string {
 }
 
 export class YandexAudio {
-  private pending = new Map<string, Promise<PreparedYandexAudio>>();
+  private pending = new SharedPreparation<PreparedYandexAudio>();
 
   constructor(private cfg: AppConfig, private ff: FfmpegTools, private apiBase: string,
     private variants: (id: string) => Promise<YandexDownloadVariant[]>) {}
 
-  private async response(url: string, timeout = 120000): Promise<Response> {
+  private async response(url: string, timeout = 120000, signal?: AbortSignal): Promise<Response> {
     let current = validateYandexMediaUrl(url, this.apiBase);
     for (let redirects = 0; redirects <= 3; redirects++) {
       let r: Response;
-      try { r = await fetch(current, { redirect: 'manual', signal: AbortSignal.timeout(timeout) }); }
+      try { r = await networkFetch(current, { redirect: 'manual', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout) }); }
       catch { throw new Error('Не удалось загрузить аудио Яндекса: проверьте подключение'); }
       if (r.status >= 300 && r.status < 400) {
         await r.body?.cancel();
@@ -89,15 +91,11 @@ export class YandexAudio {
     throw new Error('Слишком много перенаправлений аудио Яндекса');
   }
 
-  prepare(id: string, duration: number, expectedHash?: string): Promise<PreparedYandexAudio> {
+  prepare(id: string, duration: number, expectedHash?: string, options: { signal?: AbortSignal; priority?: 0 | 1 | 2 | 3 } = {}): Promise<PreparedYandexAudio> {
     if (!isYandexTrackId(id)) return Promise.reject(new Error('Некорректный ID трека Яндекса'));
     if (expectedHash && !/^[a-f\d]{64}$/.test(expectedHash)) return Promise.reject(new Error('Некорректный хеш аудио'));
     const key = `${id}:${expectedHash ?? ''}`;
-    const existing = this.pending.get(key);
-    if (existing) return existing;
-    const job = this.run(id, duration, expectedHash).finally(() => this.pending.delete(key));
-    this.pending.set(key, job);
-    return job;
+    return this.pending.run(key, options, signal => this.run(id, duration, expectedHash, signal, options.priority ?? 2));
   }
 
   async cover(url: string): Promise<{ data: Buffer; type: string } | null> {
@@ -117,7 +115,8 @@ export class YandexAudio {
     } catch { return null; }
   }
 
-  private async run(id: string, duration: number, expectedHash?: string): Promise<PreparedYandexAudio> {
+  private async run(id: string, duration: number, expectedHash?: string, signal?: AbortSignal, priority: 0 | 1 | 2 | 3 = 2): Promise<PreparedYandexAudio> {
+    signal?.throwIfAborted();
     const dir = path.join(this.cfg.dataDir, 'remote', 'yandex');
     await fsp.mkdir(dir, { recursive: true });
     const cached = expectedHash ? path.join(dir, `${expectedHash}.mp3`) : null;
@@ -131,6 +130,7 @@ export class YandexAudio {
       await fsp.rm(cached, { force: true });
     }
     const all = await this.variants(id);
+    signal?.throwIfAborted();
     const choices = all.filter((v) => v.codec === 'mp3' && v.preview === false && (!v.transport || v.transport === 'raw') && !!v.downloadInfoUrl)
       .sort((a, b) => (b.bitrateInKbps || 0) - (a.bitrateInKbps || 0));
     if (!choices.length) throw new Error(all.some((v) => v.preview)
@@ -140,7 +140,7 @@ export class YandexAudio {
     const choice = choices[0];
     let directUrl = choice.downloadInfoUrl;
     if (!choice.direct) {
-      const r = await this.response(choice.downloadInfoUrl, 15000);
+      const r = await this.response(choice.downloadInfoUrl, 15000, signal);
       const reader = r.body!.getReader();
       const parts: Uint8Array[] = []; let bytes = 0;
       try {
@@ -155,20 +155,28 @@ export class YandexAudio {
     }
     const temp = path.join(dir, `incoming-${crypto.randomUUID()}.mp3`);
     try {
-      const r = await this.response(directUrl);
-      const reader = r.body!.getReader();
-      const out = await fsp.open(temp, 'wx'); let bytes = 0;
-      try {
-        for (;;) {
-          const { done, value } = await reader.read(); if (done) break;
-          bytes += value.length;
-          if (bytes > MAX_AUDIO_BYTES) throw new Error('Аудиофайл Яндекса слишком большой');
-          await out.writeFile(value);
-        }
-      } finally { await out.close(); await reader.cancel().catch(() => {}); }
+      const checked = validateYandexMediaUrl(directUrl, this.apiBase);
+      const native = nativeDownload(checked.href, temp, { maxBytes: MAX_AUDIO_BYTES, timeoutMs: 120000, priority, signal,
+        allowedDomains: ['yandex.net', 'yandex.ru', 'yandex.com', 'yandexmusic.net', 'yandexmusic.ru'],
+        allowedOrigin: ['127.0.0.1', '[::1]', 'localhost'].includes(new URL(this.apiBase).hostname) ? new URL(this.apiBase).origin : undefined });
+      if (native) await native;
+      else {
+        const r = await this.response(directUrl, 120000, signal);
+        const reader = r.body!.getReader();
+        const out = await fsp.open(temp, 'wx'); let bytes = 0;
+        try {
+          for (;;) {
+            const { done, value } = await reader.read(); if (done) break;
+            bytes += value.length;
+            if (bytes > MAX_AUDIO_BYTES) throw new Error('Аудиофайл Яндекса слишком большой');
+            await out.writeFile(value);
+          }
+        } finally { await out.close(); await reader.cancel().catch(() => {}); }
+      }
       const probe = await this.ff.probe(temp).catch(() => { throw new Error('Яндекс вернул файл, который не удалось декодировать'); });
       this.validateAudio(probe, duration);
       const content = await sha256File(temp);
+      signal?.throwIfAborted();
       if (expectedHash && content.hash !== expectedHash) throw new Error('Версия аудио Яндекса изменилась. Добавьте трек заново, чтобы пересчитать точки сведения.');
       const file = path.join(dir, `${content.hash}.mp3`);
       if (!fs.existsSync(file)) {

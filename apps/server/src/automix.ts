@@ -186,7 +186,7 @@ export class AutoMixService {
     const feedback = this.ratingStats();
     const key = fnv1a(
       // Invalidate automatic choices while preserving the exact IDs of listener-approved plans.
-      [a.id, b.id, a.content_hash, b.content_hash, ANALYZER_VERSION, PLANNER_VERSION, 'transition-styles-5-echo-subtle', JSON.stringify(settings), pa.mixingAllowed, pb.mixingAllowed,
+      [a.id, b.id, a.content_hash, b.content_hash, ANALYZER_VERSION, PLANNER_VERSION, 'transition-styles-6-echo-soft', JSON.stringify(settings), pa.mixingAllowed, pb.mixingAllowed,
         ...(process.env.AUTOMIX_DESKTOP === '1' ? ['desktop-full-mix-1'] : []),
         a.album, b.album, pa.albumArtist, pb.albumArtist, a.track_no, b.track_no, a.disc_no, b.disc_no, !!pa.analysis, !!pb.analysis,
         // new ratings make new plans; without any the key stays as before

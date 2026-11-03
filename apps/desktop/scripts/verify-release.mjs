@@ -17,6 +17,11 @@ assert.equal(fs.readFileSync(path.join(resources, 'playback', 'desktop-playback.
   fs.readFileSync(path.join(desktop, 'build', 'playback', 'desktop-playback.mjs'))), 0, 'Packaged playback host differs from the build');
 assert.ok(fs.statSync(path.join(resources, 'audio', 'mora-audio.exe')).size > 0, 'Native Rust audio engine is missing');
 const nativeHash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+for (const [folder, executable] of [['decoder', 'mora-decode.exe'], ['network', 'mora-network.exe']]) {
+  assert.ok(fs.statSync(path.join(resources, folder, executable)).size > 0, `Missing ${executable}`);
+  assert.equal(nativeHash(path.join(resources, folder, executable)), nativeHash(path.join(desktop, 'build', folder, executable)), `Packaged ${executable} differs from build`);
+  assert.ok(fs.statSync(path.join(resources, folder, 'THIRD_PARTY_LICENSES.txt')).size > 0, `Missing ${folder} licenses`);
+}
 assert.equal(nativeHash(path.join(resources, 'audio', 'mora-audio.exe')), nativeHash(path.join(desktop, 'build', 'audio', 'mora-audio.exe')), 'Packaged Rust engine differs from the build');
 assert.ok(fs.statSync(path.join(resources, 'audio', 'mora-smtc.exe')).size > 0, 'Windows media integration is missing');
 assert.equal(nativeHash(path.join(resources, 'audio', 'mora-smtc.exe')), nativeHash(path.join(desktop, 'build', 'audio', 'mora-smtc.exe')), 'Packaged Windows media helper differs from the build');

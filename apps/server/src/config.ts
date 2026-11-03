@@ -38,6 +38,8 @@ export interface AppConfig {
   audiusApiKey: string | null;
   ffmpeg: string;
   ffprobe: string;
+  decoderRust?: string;
+  networkRust?: string;
   /** Optional Python with CUDA/CPU torch + torchaudio. No audio is uploaded. */
   stemsPython: string | null;
   /** Read-only pretrained model directory shipped with the CPU runtime. */
@@ -66,6 +68,8 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     audiusApiKey: env.AUDIUS_API_KEY || null,
     ffmpeg: env.FFMPEG_PATH || 'ffmpeg',
     ffprobe: env.FFPROBE_PATH || 'ffprobe',
+    decoderRust: env.AUTOMIX_DECODER_RUST || undefined,
+    networkRust: env.AUTOMIX_NETWORK_RUST || undefined,
     // Vocal separation only with an explicitly configured Python (development); apps ship no model.
     stemsPython: env.STEMS_PYTHON || null,
     stemsModels: null,

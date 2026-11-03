@@ -5,6 +5,8 @@
 | Electron 44.9.2 (Chromium, Node.js 24) | MIT; Chromium — BSD и др., см. `LICENSES.chromium.html` рядом с MORA.exe | приложение |
 | electron-updater 6.8.9 | MIT | `resources/app.asar`, обновление MORA через GitHub Releases |
 | Rust audio engine и Windows SMTC: CPAL, rtrb, serde, base64, windows-rs и зависимости | MIT / Apache-2.0 и лицензии отдельных компонентов | `resources/audio/THIRD_PARTY_LICENSES.txt`, полные тексты для собранного target |
+| Symphonia 0.6.1, rubato, libopus и зависимости | MPL-2.0 / MIT / Apache-2.0 / BSD и лицензии отдельных компонентов | `resources/decoder/THIRD_PARTY_LICENSES.txt`; исправленный MKV demuxer — `packages/decoder-rust/vendor` в исходниках |
+| reqwest, Tokio, axum и зависимости | MIT / Apache-2.0 и лицензии отдельных компонентов | `resources/network/THIRD_PARTY_LICENSES.txt` |
 | FFmpeg 9.0.2, сборка BtbN `win64-lgpl-shared` | LGPL v3 (собрана с `--enable-version3`, без GPL-компонентов и без x264/x265) | `resources/ffmpeg` (`LICENSE.txt`, `SOURCE.txt` — ссылка на исходники и SHA-256) |
 | yt-dlp 2026.08.19, официальная сборка `yt_dlp_win.zip` | Unlicense; встроенные компоненты PyInstaller-сборки — см. THIRD_PARTY_LICENSES.txt проекта yt-dlp | `resources/yt-dlp` (`SOURCE.txt` — ссылка и SHA-256) |
 | Fastify, @fastify/static, music-metadata и их зависимости | MIT / ISC / BSD | `resources/backend/backend.mjs.LEGAL.txt` |

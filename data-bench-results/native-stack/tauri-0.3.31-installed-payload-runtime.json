@@ -1,0 +1,767 @@
+{
+  "executable": "F:\\вин\\ПРОЕКТЫ\\music\\tools\\.cache\\desktop-0.3.25-source\\tools\\.cache\\tauri-0.3.31-payload-8d9fae57ac2b4dc382c433b1d33ecc00\\mora-desktop-native.exe",
+  "resources": "F:\\вин\\ПРОЕКТЫ\\music\\tools\\.cache\\desktop-0.3.25-source\\tools\\.cache\\tauri-0.3.31-payload-8d9fae57ac2b4dc382c433b1d33ecc00\\resources",
+  "hashes": {
+    "executable": "6431815e3678b3ed98a7ca65ca0b8356e66c97fbb6629e16e605112a913dfcf1",
+    "backend\\tauri-backend.mjs": "a2c7dd56162198b3a386a96442df4cdc52caad5207b4d476a744d6bda3d75b9c",
+    "backend\\analysisWorker.mjs": "c029ee6527e08e80f43cc516e4950c306d97127e806b82558ccc54f976329107",
+    "audio\\mora-audio.exe": "2969bb6794a95cd13211eebd98e2eb53225fe031832e75f71cdcccb31956e6be",
+    "decoder\\mora-decode.exe": "2640d304062d00f6b8f228e6fcaf1e0399867703ae992758fba6afcba24996ab",
+    "network\\mora-network.exe": "19852b2095ff5699f7df7aaaa0d812207e61ec81f967f1a7d60942b3a136805b",
+    "web\\index.html": "9ffa40b83f6e48ecd62a12ddbda727bdc9d1e410e647122d6b31a5d95a747606"
+  },
+  "kind": "tauri",
+  "methodology": "Hidden fresh profile; warm OS cache; silent 60s float WAV; CPU is % of one logical core for surviving processes, not whole-machine %; private working set includes WebView/decoder/network/audio children. Summed working sets double-count shared pages. Command latency ends at native state confirmation, not measured DAC output. No physical audio latency claim.",
+  "results": [
+    {
+      "kind": "tauri",
+      "round": 0,
+      "profile": "F:\\вин\\ПРОЕКТЫ\\music\\tools\\.cache\\desktop-0.3.25-source\\tools\\.cache\\runtime-tauri-ilyeLP",
+      "startupMs": 13993.8506,
+      "commandToConfirmedStateMs": 194.1908000000003,
+      "idle": {
+        "seconds": 8.326463,
+        "cpuOneCorePercent": 2.439511230638988,
+        "privateWorkingSetMiB": 137.5625,
+        "privateCommitMiB": 269.7734375,
+        "summedWorkingSetMiB": 447.78515625,
+        "processes": [
+          {
+            "pid": 12832,
+            "name": "mora-desktop-native",
+            "cpuSeconds": 0.21875,
+            "privateBytes": 5619712,
+            "workingSetBytes": 30388224,
+            "privateWorkingSetBytes": 4128768
+          },
+          {
+            "pid": 4364,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.46875,
+            "privateBytes": 34140160,
+            "workingSetBytes": 105545728,
+            "privateWorkingSetBytes": 28127232
+          },
+          {
+            "pid": 3556,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0,
+            "privateBytes": 2568192,
+            "workingSetBytes": 9961472,
+            "privateWorkingSetBytes": 1638400
+          },
+          {
+            "pid": 6124,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.171875,
+            "privateBytes": 70692864,
+            "workingSetBytes": 55648256,
+            "privateWorkingSetBytes": 13365248
+          },
+          {
+            "pid": 1548,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.125,
+            "privateBytes": 13840384,
+            "workingSetBytes": 43409408,
+            "privateWorkingSetBytes": 8372224
+          },
+          {
+            "pid": 6116,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.046875,
+            "privateBytes": 7823360,
+            "workingSetBytes": 19861504,
+            "privateWorkingSetBytes": 2949120
+          },
+          {
+            "pid": 3664,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.28125,
+            "privateBytes": 40202240,
+            "workingSetBytes": 85061632,
+            "privateWorkingSetBytes": 31072256
+          },
+          {
+            "pid": 9172,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1437696,
+            "workingSetBytes": 8208384,
+            "privateWorkingSetBytes": 995328
+          },
+          {
+            "pid": 3132,
+            "name": "node",
+            "cpuSeconds": 0.59375,
+            "privateBytes": 101974016,
+            "workingSetBytes": 85659648,
+            "privateWorkingSetBytes": 50384896
+          },
+          {
+            "pid": 11372,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1282048,
+            "workingSetBytes": 7290880,
+            "privateWorkingSetBytes": 884736
+          },
+          {
+            "pid": 12264,
+            "name": "mora-network",
+            "cpuSeconds": 0,
+            "privateBytes": 2064384,
+            "workingSetBytes": 11440128,
+            "privateWorkingSetBytes": 1499136
+          },
+          {
+            "pid": 4236,
+            "name": "conhost",
+            "cpuSeconds": 0.015625,
+            "privateBytes": 1232896,
+            "workingSetBytes": 7061504,
+            "privateWorkingSetBytes": 827392
+          }
+        ]
+      },
+      "playing": {
+        "seconds": 8.333037399999997,
+        "cpuOneCorePercent": 3.3751198572563723,
+        "privateWorkingSetMiB": 174.01953125,
+        "privateCommitMiB": 309.16796875,
+        "summedWorkingSetMiB": 525.015625,
+        "processes": [
+          {
+            "pid": 12832,
+            "name": "mora-desktop-native",
+            "cpuSeconds": 0.21875,
+            "privateBytes": 5619712,
+            "workingSetBytes": 30384128,
+            "privateWorkingSetBytes": 4128768
+          },
+          {
+            "pid": 4364,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.46875,
+            "privateBytes": 34164736,
+            "workingSetBytes": 105926656,
+            "privateWorkingSetBytes": 28135424
+          },
+          {
+            "pid": 3556,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0,
+            "privateBytes": 2568192,
+            "workingSetBytes": 9961472,
+            "privateWorkingSetBytes": 1638400
+          },
+          {
+            "pid": 6124,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.171875,
+            "privateBytes": 70696960,
+            "workingSetBytes": 55672832,
+            "privateWorkingSetBytes": 13369344
+          },
+          {
+            "pid": 1548,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.15625,
+            "privateBytes": 13869056,
+            "workingSetBytes": 44560384,
+            "privateWorkingSetBytes": 8384512
+          },
+          {
+            "pid": 6116,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.046875,
+            "privateBytes": 7823360,
+            "workingSetBytes": 19861504,
+            "privateWorkingSetBytes": 2949120
+          },
+          {
+            "pid": 3664,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.328125,
+            "privateBytes": 42110976,
+            "workingSetBytes": 88465408,
+            "privateWorkingSetBytes": 33124352
+          },
+          {
+            "pid": 9172,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1400832,
+            "workingSetBytes": 8187904,
+            "privateWorkingSetBytes": 974848
+          },
+          {
+            "pid": 3132,
+            "name": "node",
+            "cpuSeconds": 1.09375,
+            "privateBytes": 118145024,
+            "workingSetBytes": 101629952,
+            "privateWorkingSetBytes": 65904640
+          },
+          {
+            "pid": 11372,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1241088,
+            "workingSetBytes": 7270400,
+            "privateWorkingSetBytes": 864256
+          },
+          {
+            "pid": 12264,
+            "name": "mora-network",
+            "cpuSeconds": 0,
+            "privateBytes": 2064384,
+            "workingSetBytes": 11440128,
+            "privateWorkingSetBytes": 1499136
+          },
+          {
+            "pid": 4236,
+            "name": "conhost",
+            "cpuSeconds": 0.015625,
+            "privateBytes": 1196032,
+            "workingSetBytes": 7041024,
+            "privateWorkingSetBytes": 806912
+          },
+          {
+            "pid": 2932,
+            "name": "mora-audio",
+            "cpuSeconds": 0.21875,
+            "privateBytes": 18104320,
+            "workingSetBytes": 27316224,
+            "privateWorkingSetBytes": 17248256
+          },
+          {
+            "pid": 9200,
+            "name": "conhost",
+            "cpuSeconds": 0.015625,
+            "privateBytes": 1261568,
+            "workingSetBytes": 7086080,
+            "privateWorkingSetBytes": 851968
+          },
+          {
+            "pid": 2956,
+            "name": "mora-smtc",
+            "cpuSeconds": 0,
+            "privateBytes": 2658304,
+            "workingSetBytes": 18628608,
+            "privateWorkingSetBytes": 1740800
+          },
+          {
+            "pid": 5160,
+            "name": "conhost",
+            "cpuSeconds": 0.015625,
+            "privateBytes": 1261568,
+            "workingSetBytes": 7086080,
+            "privateWorkingSetBytes": 851968
+          }
+        ]
+      },
+      "playingPositionSeconds": 10.669333333333332
+    },
+    {
+      "kind": "tauri",
+      "round": 1,
+      "profile": "F:\\вин\\ПРОЕКТЫ\\music\\tools\\.cache\\desktop-0.3.25-source\\tools\\.cache\\runtime-tauri-hCXOwt",
+      "startupMs": 779.6318000000028,
+      "commandToConfirmedStateMs": 176.46279999999388,
+      "idle": {
+        "seconds": 8.322957199999998,
+        "cpuOneCorePercent": 0,
+        "privateWorkingSetMiB": 146.98046875,
+        "privateCommitMiB": 279.703125,
+        "summedWorkingSetMiB": 454.67578125,
+        "processes": [
+          {
+            "pid": 1924,
+            "name": "mora-desktop-native",
+            "cpuSeconds": 0.09375,
+            "privateBytes": 5664768,
+            "workingSetBytes": 29753344,
+            "privateWorkingSetBytes": 4186112
+          },
+          {
+            "pid": 4764,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.46875,
+            "privateBytes": 34287616,
+            "workingSetBytes": 105852928,
+            "privateWorkingSetBytes": 28241920
+          },
+          {
+            "pid": 10784,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.015625,
+            "privateBytes": 2568192,
+            "workingSetBytes": 9961472,
+            "privateWorkingSetBytes": 1638400
+          },
+          {
+            "pid": 9192,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.140625,
+            "privateBytes": 70643712,
+            "workingSetBytes": 55668736,
+            "privateWorkingSetBytes": 13352960
+          },
+          {
+            "pid": 12480,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.125,
+            "privateBytes": 13893632,
+            "workingSetBytes": 42000384,
+            "privateWorkingSetBytes": 8400896
+          },
+          {
+            "pid": 1632,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.03125,
+            "privateBytes": 7811072,
+            "workingSetBytes": 19845120,
+            "privateWorkingSetBytes": 2940928
+          },
+          {
+            "pid": 9388,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.1875,
+            "privateBytes": 41295872,
+            "workingSetBytes": 85262336,
+            "privateWorkingSetBytes": 31232000
+          },
+          {
+            "pid": 10052,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1433600,
+            "workingSetBytes": 8204288,
+            "privateWorkingSetBytes": 995328
+          },
+          {
+            "pid": 9576,
+            "name": "node",
+            "cpuSeconds": 0.28125,
+            "privateBytes": 111128576,
+            "workingSetBytes": 94982144,
+            "privateWorkingSetBytes": 59940864
+          },
+          {
+            "pid": 12092,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1290240,
+            "workingSetBytes": 7290880,
+            "privateWorkingSetBytes": 884736
+          },
+          {
+            "pid": 2848,
+            "name": "mora-network",
+            "cpuSeconds": 0.015625,
+            "privateBytes": 2056192,
+            "workingSetBytes": 10891264,
+            "privateWorkingSetBytes": 1490944
+          },
+          {
+            "pid": 2900,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1216512,
+            "workingSetBytes": 7049216,
+            "privateWorkingSetBytes": 815104
+          }
+        ]
+      },
+      "playing": {
+        "seconds": 8.595068099999997,
+        "cpuOneCorePercent": 2.363273887265653,
+        "privateWorkingSetMiB": 168.30859375,
+        "privateCommitMiB": 304.26171875,
+        "summedWorkingSetMiB": 515.640625,
+        "processes": [
+          {
+            "pid": 1924,
+            "name": "mora-desktop-native",
+            "cpuSeconds": 0.09375,
+            "privateBytes": 5664768,
+            "workingSetBytes": 29753344,
+            "privateWorkingSetBytes": 4186112
+          },
+          {
+            "pid": 4764,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.484375,
+            "privateBytes": 34291712,
+            "workingSetBytes": 106209280,
+            "privateWorkingSetBytes": 28250112
+          },
+          {
+            "pid": 10784,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.015625,
+            "privateBytes": 2568192,
+            "workingSetBytes": 9961472,
+            "privateWorkingSetBytes": 1638400
+          },
+          {
+            "pid": 9192,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.140625,
+            "privateBytes": 70647808,
+            "workingSetBytes": 55689216,
+            "privateWorkingSetBytes": 13357056
+          },
+          {
+            "pid": 12480,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.125,
+            "privateBytes": 13893632,
+            "workingSetBytes": 43180032,
+            "privateWorkingSetBytes": 8400896
+          },
+          {
+            "pid": 1632,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.03125,
+            "privateBytes": 7811072,
+            "workingSetBytes": 19845120,
+            "privateWorkingSetBytes": 2940928
+          },
+          {
+            "pid": 9388,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.1875,
+            "privateBytes": 44281856,
+            "workingSetBytes": 89518080,
+            "privateWorkingSetBytes": 34017280
+          },
+          {
+            "pid": 10052,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1433600,
+            "workingSetBytes": 8204288,
+            "privateWorkingSetBytes": 995328
+          },
+          {
+            "pid": 9576,
+            "name": "node",
+            "cpuSeconds": 0.609375,
+            "privateBytes": 110673920,
+            "workingSetBytes": 94375936,
+            "privateWorkingSetBytes": 58888192
+          },
+          {
+            "pid": 12092,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1290240,
+            "workingSetBytes": 7290880,
+            "privateWorkingSetBytes": 884736
+          },
+          {
+            "pid": 2848,
+            "name": "mora-network",
+            "cpuSeconds": 0.015625,
+            "privateBytes": 2056192,
+            "workingSetBytes": 10891264,
+            "privateWorkingSetBytes": 1490944
+          },
+          {
+            "pid": 2900,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1216512,
+            "workingSetBytes": 7049216,
+            "privateWorkingSetBytes": 815104
+          },
+          {
+            "pid": 5536,
+            "name": "mora-audio",
+            "cpuSeconds": 0.09375,
+            "privateBytes": 18059264,
+            "workingSetBytes": 26660864,
+            "privateWorkingSetBytes": 17199104
+          },
+          {
+            "pid": 5620,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1261568,
+            "workingSetBytes": 7090176,
+            "privateWorkingSetBytes": 856064
+          },
+          {
+            "pid": 10388,
+            "name": "mora-smtc",
+            "cpuSeconds": 0,
+            "privateBytes": 2637824,
+            "workingSetBytes": 17883136,
+            "privateWorkingSetBytes": 1712128
+          },
+          {
+            "pid": 11968,
+            "name": "conhost",
+            "cpuSeconds": 0.015625,
+            "privateBytes": 1253376,
+            "workingSetBytes": 7086080,
+            "privateWorkingSetBytes": 851968
+          }
+        ]
+      },
+      "playingPositionSeconds": 10.912
+    },
+    {
+      "kind": "tauri",
+      "round": 2,
+      "profile": "F:\\вин\\ПРОЕКТЫ\\music\\tools\\.cache\\desktop-0.3.25-source\\tools\\.cache\\runtime-tauri-N41wiC",
+      "startupMs": 690.9049999999988,
+      "commandToConfirmedStateMs": 174.59870000000228,
+      "idle": {
+        "seconds": 8.316098700000003,
+        "cpuOneCorePercent": 0.7515543316002248,
+        "privateWorkingSetMiB": 138.03515625,
+        "privateCommitMiB": 269.78515625,
+        "summedWorkingSetMiB": 443.89453125,
+        "processes": [
+          {
+            "pid": 2184,
+            "name": "mora-desktop-native",
+            "cpuSeconds": 0.03125,
+            "privateBytes": 5750784,
+            "workingSetBytes": 29786112,
+            "privateWorkingSetBytes": 4210688
+          },
+          {
+            "pid": 4364,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.25,
+            "privateBytes": 34168832,
+            "workingSetBytes": 103829504,
+            "privateWorkingSetBytes": 28131328
+          },
+          {
+            "pid": 2932,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0,
+            "privateBytes": 2568192,
+            "workingSetBytes": 9961472,
+            "privateWorkingSetBytes": 1642496
+          },
+          {
+            "pid": 7596,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.140625,
+            "privateBytes": 70152192,
+            "workingSetBytes": 55693312,
+            "privateWorkingSetBytes": 13377536
+          },
+          {
+            "pid": 2420,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.140625,
+            "privateBytes": 13864960,
+            "workingSetBytes": 41963520,
+            "privateWorkingSetBytes": 8396800
+          },
+          {
+            "pid": 3380,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.03125,
+            "privateBytes": 7815168,
+            "workingSetBytes": 19849216,
+            "privateWorkingSetBytes": 2928640
+          },
+          {
+            "pid": 6168,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.171875,
+            "privateBytes": 40189952,
+            "workingSetBytes": 85196800,
+            "privateWorkingSetBytes": 31145984
+          },
+          {
+            "pid": 3320,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1445888,
+            "workingSetBytes": 8200192,
+            "privateWorkingSetBytes": 999424
+          },
+          {
+            "pid": 6760,
+            "name": "node",
+            "cpuSeconds": 0.28125,
+            "privateBytes": 102412288,
+            "workingSetBytes": 85786624,
+            "privateWorkingSetBytes": 50753536
+          },
+          {
+            "pid": 3612,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1290240,
+            "workingSetBytes": 7286784,
+            "privateWorkingSetBytes": 884736
+          },
+          {
+            "pid": 1100,
+            "name": "mora-network",
+            "cpuSeconds": 0.015625,
+            "privateBytes": 2007040,
+            "workingSetBytes": 10854400,
+            "privateWorkingSetBytes": 1454080
+          },
+          {
+            "pid": 7412,
+            "name": "conhost",
+            "cpuSeconds": 0.015625,
+            "privateBytes": 1224704,
+            "workingSetBytes": 7049216,
+            "privateWorkingSetBytes": 815104
+          }
+        ]
+      },
+      "playing": {
+        "seconds": 8.323850699999996,
+        "cpuOneCorePercent": 3.9419856485412477,
+        "privateWorkingSetMiB": 174.765625,
+        "privateCommitMiB": 309.453125,
+        "summedWorkingSetMiB": 520.1328125,
+        "processes": [
+          {
+            "pid": 2184,
+            "name": "mora-desktop-native",
+            "cpuSeconds": 0.03125,
+            "privateBytes": 5750784,
+            "workingSetBytes": 29786112,
+            "privateWorkingSetBytes": 4210688
+          },
+          {
+            "pid": 4364,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.265625,
+            "privateBytes": 34164736,
+            "workingSetBytes": 104173568,
+            "privateWorkingSetBytes": 28131328
+          },
+          {
+            "pid": 2932,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0,
+            "privateBytes": 2568192,
+            "workingSetBytes": 9961472,
+            "privateWorkingSetBytes": 1642496
+          },
+          {
+            "pid": 7596,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.140625,
+            "privateBytes": 70156288,
+            "workingSetBytes": 55713792,
+            "privateWorkingSetBytes": 13381632
+          },
+          {
+            "pid": 2420,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.171875,
+            "privateBytes": 13860864,
+            "workingSetBytes": 43147264,
+            "privateWorkingSetBytes": 8409088
+          },
+          {
+            "pid": 3380,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.03125,
+            "privateBytes": 7815168,
+            "workingSetBytes": 19849216,
+            "privateWorkingSetBytes": 2928640
+          },
+          {
+            "pid": 6168,
+            "name": "msedgewebview2",
+            "cpuSeconds": 0.25,
+            "privateBytes": 42110976,
+            "workingSetBytes": 88600576,
+            "privateWorkingSetBytes": 33198080
+          },
+          {
+            "pid": 3320,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1445888,
+            "workingSetBytes": 8200192,
+            "privateWorkingSetBytes": 999424
+          },
+          {
+            "pid": 6760,
+            "name": "node",
+            "cpuSeconds": 0.640625,
+            "privateBytes": 119017472,
+            "workingSetBytes": 102080512,
+            "privateWorkingSetBytes": 66600960
+          },
+          {
+            "pid": 3612,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1290240,
+            "workingSetBytes": 7286784,
+            "privateWorkingSetBytes": 884736
+          },
+          {
+            "pid": 1100,
+            "name": "mora-network",
+            "cpuSeconds": 0.015625,
+            "privateBytes": 2007040,
+            "workingSetBytes": 10854400,
+            "privateWorkingSetBytes": 1454080
+          },
+          {
+            "pid": 7412,
+            "name": "conhost",
+            "cpuSeconds": 0.015625,
+            "privateBytes": 1224704,
+            "workingSetBytes": 7049216,
+            "privateWorkingSetBytes": 815104
+          },
+          {
+            "pid": 12568,
+            "name": "mora-audio",
+            "cpuSeconds": 0.109375,
+            "privateBytes": 17903616,
+            "workingSetBytes": 26640384,
+            "privateWorkingSetBytes": 17178624
+          },
+          {
+            "pid": 12904,
+            "name": "conhost",
+            "cpuSeconds": 0,
+            "privateBytes": 1261568,
+            "workingSetBytes": 7086080,
+            "privateWorkingSetBytes": 851968
+          },
+          {
+            "pid": 5956,
+            "name": "mora-smtc",
+            "cpuSeconds": 0,
+            "privateBytes": 2646016,
+            "workingSetBytes": 17883136,
+            "privateWorkingSetBytes": 1716224
+          },
+          {
+            "pid": 12988,
+            "name": "conhost",
+            "cpuSeconds": 0.015625,
+            "privateBytes": 1261568,
+            "workingSetBytes": 7086080,
+            "privateWorkingSetBytes": 851968
+          }
+        ]
+      },
+      "playingPositionSeconds": 10.669333333333332
+    }
+  ]
+}

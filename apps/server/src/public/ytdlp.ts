@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
+import { nativeDownload, rustNetworkEnabled } from '../rust-network.ts';
 
 /**
  * yt-dlp runner. Every call is spawn(bin, [args...], { shell: false }) with a
@@ -243,6 +244,49 @@ export class YtDlp {
     const warmed = opts.skipWarm ? null : this.warmInfo(target);
     const infoFile = path.join(stagingDir, '.source-info.json');
     if (warmed) await fsp.writeFile(infoFile, JSON.stringify(warmed));
+    // yt-dlp keeps site challenges/format selection; direct playback bytes use the pooled native client.
+    if (opts.preserveContainer && rustNetworkEnabled()) {
+      try {
+        const raw = await this.run(['-f', 'bestaudio/best', '--skip-download', '-J', ...(warmed ? ['--load-info-json', infoFile] : ['--', target])],
+          { priority: opts.priority, timeoutMs: 25000, signal: opts.signal, maxBytes: 4 << 20, networkTarget: target });
+        const info = JSON.parse(raw) as Record<string, unknown>;
+        const selected = Array.isArray(info.requested_downloads) && info.requested_downloads.length === 1 ? info.requested_downloads[0] as Record<string, unknown> : info;
+        if (typeof selected.url === 'string' && ['http', 'https'].includes(String(selected.protocol))) {
+          const media = new URL(selected.url);
+          const domains = target.includes('soundcloud.com/') ? ['sndcdn.com', 'soundcloud.com'] : ['googlevideo.com'];
+          if (media.protocol !== 'https:' || media.username || media.password || (media.port && media.port !== '443')
+            || !domains.some(domain => media.hostname === domain || media.hostname.endsWith(`.${domain}`))) throw new ResolverError('Источник вернул неподдерживаемый адрес аудио', 'failed');
+          const id = String(info.id ?? 'audio').replace(/[^a-z\d_-]/gi, '_');
+          const ext = String(selected.ext ?? info.ext ?? 'bin');
+          if (!/^[a-z\d]{1,8}$/i.test(ext)) throw new ResolverError('Источник вернул неподдерживаемый формат аудио', 'failed');
+          const file = path.join(stagingDir, `${id}.${ext}`);
+          const total = Number(selected.filesize ?? selected.filesize_approx ?? 0);
+          const progress = opts.onProgress && total > 0 ? setInterval(() => {
+            void fsp.stat(file).then(stat => opts.onProgress?.(Math.min(.99, stat.size / total))).catch(() => {});
+          }, 200) : null;
+          try {
+            await this.schedule(opts.priority, opts.signal, async () => {
+              const priority = opts.signal ? this.priorities.get(opts.signal) ?? opts.priority : opts.priority;
+              const headers = new Headers();
+              for (const [name, value] of Object.entries((selected.http_headers ?? info.http_headers ?? {}) as Record<string, unknown>)) {
+                if (typeof value === 'string') headers.set(name, value);
+              }
+              const transfer = nativeDownload(media.href, file, { headers, allowedDomains: domains, signal: opts.signal, priority,
+                maxBytes: (opts.maxMb ?? 200) * 1024 * 1024, timeoutMs: 180000,
+                proxy: target.includes('soundcloud.com/') ? this.cfg.proxies?.soundcloud : this.cfg.proxies?.youtube });
+              if (!transfer) throw new Error('native HTTP stopped');
+              await transfer;
+            });
+            opts.onProgress?.(1);
+            return { file, info: { ...info, ext } };
+          } catch (error) {
+            if (opts.signal?.aborted) throw new ResolverError('Отменено', 'cancelled');
+            throw new ResolverError('Источник не отдал полный аудиофайл', /size limit/.test(String(error)) ? 'too-large' : 'timeout');
+          } finally { if (progress) clearInterval(progress); if (warmed) await fsp.rm(infoFile, { force: true }); }
+        }
+        // shortcut: segmented HLS/DASH remains in yt-dlp; migrate only with a tested native manifest reader.
+      } catch (error) { this.warm.delete(target); if (warmed) await fsp.rm(infoFile, { force: true }); throw error; }
+    }
     const fields = 'id,title,track,artist,artists,album,uploader,channel,channel_is_verified,duration,ext,acodec,abr,asr,webpage_url,thumbnail,extractor_key,availability,age_limit';
     let raw: string;
     try { raw = await this.run([

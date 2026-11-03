@@ -171,7 +171,8 @@ export class Echo {
   configure(delayFrames: number, feedback: number): void {
     this.reset();
     this.delay = Math.max(1, Math.min(this.L.length - 1, Math.round(delayFrames)));
-    this.feedback = Math.max(0, Math.min(0.75, feedback));
+    // 0.85 keeps runaway away: the ring is high-passed (250 Hz) and low-passed (6 kHz) on every pass
+    this.feedback = Math.max(0, Math.min(0.85, feedback));
   }
 
   /** Adds the echo of `inL/inR` (send signal) into outL/outR. */

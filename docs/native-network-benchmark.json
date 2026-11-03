@@ -1,0 +1,373 @@
+{
+  "fixture": "loopback HTTP/1.1 keep-alive, 16 metadata requests then 4 × 32 MiB audio files, SHA256 verified, alternating order; elapsed includes process startup, child metrics collection and final verification",
+  "date": "2026-11-02T15:37:48.242Z",
+  "node": "v26.13.0",
+  "results": [
+    {
+      "round": 1,
+      "kind": "node",
+      "coldMetadataMs": 31.003000000000004,
+      "medianWarmMetadataMs": 0.45060000000000144,
+      "firstAudioDiskByteMs": 37.2438,
+      "transferMs": 179.38680000000002,
+      "workloadIncludingStartupMs": 331.34229999999997,
+      "throughputMiBs": 713.5419105530618,
+      "cpuMs": 483,
+      "peakRss": 116391936,
+      "childMetrics": [],
+      "hashes": [
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7"
+      ],
+      "elapsedIncludingStartupAndVerificationMs": 656.8072,
+      "upstreamConnections": 2
+    },
+    {
+      "round": 1,
+      "kind": "electron",
+      "coldMetadataMs": 39.9821,
+      "medianWarmMetadataMs": 0.745599999999996,
+      "firstAudioDiskByteMs": 31.77170000000001,
+      "transferMs": 178.41270000000003,
+      "workloadIncludingStartupMs": 371.45889999999997,
+      "throughputMiBs": 717.4377160370309,
+      "cpuMs": 406,
+      "peakRss": 155439104,
+      "childMetrics": [
+        {
+          "name": "electron",
+          "cpuMs": 31.25,
+          "peakRss": 49094656
+        },
+        {
+          "name": "electron",
+          "cpuMs": 203.125,
+          "peakRss": 52543488
+        },
+        {
+          "name": "electron",
+          "cpuMs": 15.625,
+          "peakRss": 53784576
+        }
+      ],
+      "hashes": [
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7"
+      ],
+      "elapsedIncludingStartupAndVerificationMs": 791.3571,
+      "upstreamConnections": 1
+    },
+    {
+      "round": 1,
+      "kind": "electron-rust",
+      "coldMetadataMs": 15.645700000000005,
+      "medianWarmMetadataMs": 0.6270000000000095,
+      "firstAudioDiskByteMs": 36.511300000000006,
+      "transferMs": 187.85269999999997,
+      "workloadIncludingStartupMs": 431.6126,
+      "throughputMiBs": 681.3849361760572,
+      "cpuMs": 280,
+      "peakRss": 164671488,
+      "childMetrics": [
+        {
+          "name": "electron",
+          "cpuMs": 31.25,
+          "peakRss": 48349184
+        },
+        {
+          "name": "electron",
+          "cpuMs": 31.25,
+          "peakRss": 45015040
+        },
+        {
+          "name": "mora-network",
+          "cpuMs": 93.75,
+          "peakRss": 9822208
+        }
+      ],
+      "hashes": [
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7"
+      ],
+      "elapsedIncludingStartupAndVerificationMs": 844.4062000000001,
+      "upstreamConnections": 1
+    },
+    {
+      "round": 1,
+      "kind": "rust",
+      "coldMetadataMs": 18.1211,
+      "medianWarmMetadataMs": 0.6182000000000016,
+      "firstAudioDiskByteMs": 29.942200000000014,
+      "transferMs": 558.5472,
+      "workloadIncludingStartupMs": 753.5931,
+      "throughputMiBs": 229.16595052307127,
+      "cpuMs": 108,
+      "peakRss": 113733632,
+      "childMetrics": [
+        {
+          "name": "mora-network",
+          "cpuMs": 171.875,
+          "peakRss": 9850880
+        }
+      ],
+      "hashes": [
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7"
+      ],
+      "elapsedIncludingStartupAndVerificationMs": 1104.6562,
+      "upstreamConnections": 1
+    },
+    {
+      "round": 2,
+      "kind": "rust",
+      "coldMetadataMs": 18.5636,
+      "medianWarmMetadataMs": 0.68719999999999,
+      "firstAudioDiskByteMs": 38.387600000000006,
+      "transferMs": 506.60780000000005,
+      "workloadIncludingStartupMs": 684.0955,
+      "throughputMiBs": 252.66093415853445,
+      "cpuMs": 92,
+      "peakRss": 99610624,
+      "childMetrics": [
+        {
+          "name": "mora-network",
+          "cpuMs": 15.625,
+          "peakRss": 9797632
+        }
+      ],
+      "hashes": [
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7"
+      ],
+      "elapsedIncludingStartupAndVerificationMs": 1030.9916000000003,
+      "upstreamConnections": 1
+    },
+    {
+      "round": 2,
+      "kind": "electron-rust",
+      "coldMetadataMs": 17.541700000000006,
+      "medianWarmMetadataMs": 0.5865000000000009,
+      "firstAudioDiskByteMs": 35.82440000000001,
+      "transferMs": 170.0612,
+      "workloadIncludingStartupMs": 362,
+      "throughputMiBs": 752.6702151931186,
+      "cpuMs": 139,
+      "peakRss": 110702592,
+      "childMetrics": [
+        {
+          "name": "electron",
+          "cpuMs": 31.25,
+          "peakRss": 48361472
+        },
+        {
+          "name": "electron",
+          "cpuMs": 46.875,
+          "peakRss": 44941312
+        },
+        {
+          "name": "mora-network",
+          "cpuMs": 31.25,
+          "peakRss": 9756672
+        }
+      ],
+      "hashes": [
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7"
+      ],
+      "elapsedIncludingStartupAndVerificationMs": 767.2766000000001,
+      "upstreamConnections": 1
+    },
+    {
+      "round": 2,
+      "kind": "electron",
+      "coldMetadataMs": 30.926300000000005,
+      "medianWarmMetadataMs": 0.9527000000000072,
+      "firstAudioDiskByteMs": 37.50189999999999,
+      "transferMs": 205.9246,
+      "workloadIncludingStartupMs": 395.00239999999997,
+      "throughputMiBs": 621.5867361160348,
+      "cpuMs": 327,
+      "peakRss": 156975104,
+      "childMetrics": [
+        {
+          "name": "electron",
+          "cpuMs": 31.25,
+          "peakRss": 49094656
+        },
+        {
+          "name": "electron",
+          "cpuMs": 187.5,
+          "peakRss": 52416512
+        },
+        {
+          "name": "electron",
+          "cpuMs": 31.25,
+          "peakRss": 54022144
+        }
+      ],
+      "hashes": [
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7"
+      ],
+      "elapsedIncludingStartupAndVerificationMs": 808.1863000000003,
+      "upstreamConnections": 1
+    },
+    {
+      "round": 2,
+      "kind": "node",
+      "coldMetadataMs": 16.9043,
+      "medianWarmMetadataMs": 0.3792000000000044,
+      "firstAudioDiskByteMs": 37.3713,
+      "transferMs": 190.38070000000002,
+      "workloadIncludingStartupMs": 327.07969999999995,
+      "throughputMiBs": 672.3370593762918,
+      "cpuMs": 312,
+      "peakRss": 119132160,
+      "childMetrics": [],
+      "hashes": [
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7"
+      ],
+      "elapsedIncludingStartupAndVerificationMs": 639.4228000000003,
+      "upstreamConnections": 2
+    },
+    {
+      "round": 3,
+      "kind": "node",
+      "coldMetadataMs": 16.3919,
+      "medianWarmMetadataMs": 0.4195999999999991,
+      "firstAudioDiskByteMs": 29.48830000000001,
+      "transferMs": 176.4853,
+      "workloadIncludingStartupMs": 317.68469999999996,
+      "throughputMiBs": 725.2728697517584,
+      "cpuMs": 406,
+      "peakRss": 124841984,
+      "childMetrics": [],
+      "hashes": [
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7"
+      ],
+      "elapsedIncludingStartupAndVerificationMs": 645.8981000000003,
+      "upstreamConnections": 2
+    },
+    {
+      "round": 3,
+      "kind": "electron",
+      "coldMetadataMs": 31.245900000000006,
+      "medianWarmMetadataMs": 0.8140999999999963,
+      "firstAudioDiskByteMs": 37.98310000000001,
+      "transferMs": 220.88770000000002,
+      "workloadIncludingStartupMs": 404.7791,
+      "throughputMiBs": 579.4799800984844,
+      "cpuMs": 546,
+      "peakRss": 157143040,
+      "childMetrics": [
+        {
+          "name": "electron",
+          "cpuMs": 31.25,
+          "peakRss": 49057792
+        },
+        {
+          "name": "electron",
+          "cpuMs": 187.5,
+          "peakRss": 52502528
+        },
+        {
+          "name": "electron",
+          "cpuMs": 15.625,
+          "peakRss": 53628928
+        }
+      ],
+      "hashes": [
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7"
+      ],
+      "elapsedIncludingStartupAndVerificationMs": 820.5407000000005,
+      "upstreamConnections": 1
+    },
+    {
+      "round": 3,
+      "kind": "electron-rust",
+      "coldMetadataMs": 17.947900000000004,
+      "medianWarmMetadataMs": 0.6139999999999901,
+      "firstAudioDiskByteMs": 38.45320000000001,
+      "transferMs": 599.2593,
+      "workloadIncludingStartupMs": 801.3705,
+      "throughputMiBs": 213.59701885310747,
+      "cpuMs": 155,
+      "peakRss": 113156096,
+      "childMetrics": [
+        {
+          "name": "electron",
+          "cpuMs": 31.25,
+          "peakRss": 48381952
+        },
+        {
+          "name": "electron",
+          "cpuMs": 78.125,
+          "peakRss": 45047808
+        },
+        {
+          "name": "mora-network",
+          "cpuMs": 15.625,
+          "peakRss": 9732096
+        }
+      ],
+      "hashes": [
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7"
+      ],
+      "elapsedIncludingStartupAndVerificationMs": 1229.0864000000001,
+      "upstreamConnections": 1
+    },
+    {
+      "round": 3,
+      "kind": "rust",
+      "coldMetadataMs": 18.438499999999998,
+      "medianWarmMetadataMs": 0.6291000000000082,
+      "firstAudioDiskByteMs": 29.7166,
+      "transferMs": 284.0404,
+      "workloadIncludingStartupMs": 448.3861,
+      "throughputMiBs": 450.6401202082521,
+      "cpuMs": 108,
+      "peakRss": 100511744,
+      "childMetrics": [
+        {
+          "name": "mora-network",
+          "cpuMs": 140.625,
+          "peakRss": 9785344
+        }
+      ],
+      "hashes": [
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7",
+        "f289dca6ac2b3a2dc58961d1e3edc06233ecb5777ee771c546eba0e7319f1ca7"
+      ],
+      "elapsedIncludingStartupAndVerificationMs": 805.3964999999989,
+      "upstreamConnections": 1
+    }
+  ]
+}

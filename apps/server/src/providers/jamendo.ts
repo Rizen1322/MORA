@@ -1,3 +1,4 @@
+import { networkFetch as fetch } from '../rust-network.ts';
 import path from 'node:path';
 import fs from 'node:fs';
 import type { AppConfig } from '../config.ts';
@@ -145,13 +146,13 @@ export class JamendoProvider implements Provider {
     }).id;
   }
 
-  async fetchAudio(src: SourceRow): Promise<string> {
+  async fetchAudio(src: SourceRow, signal?: AbortSignal, priority: 0 | 1 | 2 | 3 = 0): Promise<string> {
     // session-only cache, wiped on restart (terms: no offline access)
     const file = path.join(this.cfg.dataDir, 'session-cache', 'jamendo', `${String(src.external_id).replace(/\D/g, '')}.mp3`);
     if (fs.existsSync(file)) return file;
     const [full] = await this.api('tracks', { id: String(src.external_id), audioformat: 'mp32' });
     if (!full?.audio) throw new Error('трек больше недоступен на Jamendo');
-    await downloadTo(full.audio, file);
+    await downloadTo(full.audio, file, undefined, { signal, priority });
     return file;
   }
   async nativeSource(src: SourceRow): Promise<import('@automix/core/native-preparation.ts').NativeMediaSource> {

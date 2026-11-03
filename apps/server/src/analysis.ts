@@ -227,7 +227,7 @@ export class AnalysisService {
             r.item = { ...next, hash: fresh.content_hash };
             q(this.db, "INSERT OR REPLACE INTO analysis(content_hash, version, status, updated_at) VALUES (?, ?, 'running', ?)").run(fresh.content_hash, ANALYZER_VERSION, Date.now());
           }
-          pw.w.postMessage({ type: 'job', jobId, input, duration: t?.duration ?? 300, ffmpeg: this.cfg.ffmpeg });
+          pw.w.postMessage({ type: 'job', jobId, input, duration: t?.duration ?? 300, ffmpeg: this.cfg.ffmpeg, ffprobe: this.cfg.ffprobe, decoder: this.cfg.decoderRust });
         })
         .catch((e) => {
           pw.busy = false;

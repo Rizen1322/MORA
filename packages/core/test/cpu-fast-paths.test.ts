@@ -53,6 +53,18 @@ describe('CPU fast paths are inaudible', () => {
     }
   });
 
+  it('soft echo feedback above 0.75 reaches the ring and stays capped at 0.85', () => {
+    const render = (feedback: number) => {
+      const echo = new Echo(48000), input = new Float32Array(4096), output = new Float32Array(4096);
+      input[0] = 0.5;
+      echo.configure(512, feedback);
+      echo.process(input, input, output, new Float32Array(4096), input.length);
+      return output;
+    };
+    expect(render(0.78)).not.toEqual(render(0.75));
+    expect(render(1)).toEqual(render(0.85));
+  });
+
   it('a silent echo is skipped without changing what it plays later', () => {
     const sr = 44100, ref = new EchoV1(sr), fast = new Echo(sr);
     for (const e of [ref, fast]) e.configure(Math.round(sr * 0.375), 0.6);

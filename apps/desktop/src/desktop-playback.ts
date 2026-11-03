@@ -342,7 +342,7 @@ export class DesktopPlayback {
     this.incoming = item;
     await this.arm(cur, item, plan);
     this.error = undefined; this.failureStreak = 0;
-    if (plan === fallback || early?.pending.length) void this.refresh(cur, item, entry, generation);
+    if (plan === fallback || early?.pending.length) void this.refresh(cur, item, entry, generation, early ? undefined : planned);
     // Only two future starts are warmed; the shared cache still enforces its disk budget.
     for (const future of this.future.slice(1, 1 + this.budget.candidates())) void this.source(future, 'candidate').catch(() => {});
     if (this.waiting && this.current === cur) await this.advance(false);
@@ -367,10 +367,10 @@ export class DesktopPlayback {
     item.sentPlans.set(plan.id, plan);
     await this.audio.command({ cmd: 'arm', transition: armed });
   }
-  private async refresh(cur: Item, item: Item, entry: NativeQueueEntry, generation: number): Promise<void> {
+  private async refresh(cur: Item, item: Item, entry: NativeQueueEntry, generation: number, initial?: Promise<{ plan: TransitionPlan; pending: string[] } | null>): Promise<void> {
     const revision = this.manifestRevision;
     try {
-      const result = await this.request<{ plan: TransitionPlan; pending: string[] }>(`/api/automix/plan?${this.planQuery(cur, entry)}`);
+      const result = await initial ?? await this.request<{ plan: TransitionPlan; pending: string[] }>(`/api/automix/plan?${this.planQuery(cur, entry)}`);
       if (this.current !== cur || this.incoming !== item || generation !== this.generation || revision !== this.manifestRevision || this.tick?.transition?.active || item.manualRequested) return;
       item.source = await this.source(item, 'next', 0, 1);
       if (this.current !== cur || this.incoming !== item || generation !== this.generation || revision !== this.manifestRevision || this.tick?.transition?.active || item.manualRequested) return;
@@ -568,8 +568,10 @@ export class DesktopPlayback {
     cur.position = frame / this.sampleRate; this.tick = null;
     this.listening.tick(cur.position, false);
     if (this.incoming) {
-      const item = this.incoming; item.abort.abort(); this.incoming = null;
-      this.retireUntil[item.deck] = Date.now() + 400;
+      const item = this.incoming; this.incoming = null;
+      // After the swap the incoming track is audible and must keep receiving PCM.
+      if (item !== cur) item.abort.abort();
+      this.retireUntil[1 - cur.deck] = Date.now() + 400;
       void this.prepare().catch(e => this.preparationError(e));
     }
   }

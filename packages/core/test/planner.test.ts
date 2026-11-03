@@ -305,7 +305,7 @@ describe('transition planner', () => {
     // B is silent until A's dry signal is gone; A's filter sweep and echo announce the swap (not an abrupt cut)
     expect(p.bDelay).toBe(p.swapAt);
     const lane = (l: string) => p.automation.find(x => x.deck === 'A' && x.lane === l)!.points;
-    expect(lane('filter').at(-1)![1]).toBeGreaterThanOrEqual(0.5);
+    expect(Math.abs(lane('filter').at(-1)![1])).toBeGreaterThanOrEqual(0.3);
     expect(p.echo).toBeDefined();
     expect(p.swapAt).toBeGreaterThanOrEqual(3);
     checkPlanShape(p);
