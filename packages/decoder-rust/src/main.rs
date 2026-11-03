@@ -93,7 +93,7 @@ fn fallback_stream(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::{
         ffi::c_void,
-        os::windows::io::AsRawHandle,
+        os::windows::{io::AsRawHandle, process::CommandExt},
         process::{Command, Stdio},
     };
     #[repr(C)]
@@ -177,6 +177,7 @@ fn fallback_stream(
             "pipe:1",
         ])
         .stdin(Stdio::piped())
+        .creation_flags(0x08000000)
         .spawn()?;
     if unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle() as *mut c_void) } == 0 {
         let _ = child.kill();

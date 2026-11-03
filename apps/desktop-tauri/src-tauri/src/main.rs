@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod secrets;
 mod power;
 use serde_json::{json, Value};
@@ -123,12 +125,19 @@ fn offer_recovery(child: &mut Child, recovery: bool) {
 #[tauri::command]
 async fn desktop_action(window: tauri::WebviewWindow, state: tauri::State<'_, Session>, action: String, value: Option<Value>) -> Result<Value, String> {
     match action.as_str() {
+        "window-drag" => { window.start_dragging().map_err(|e| e.to_string())?; Ok(Value::Null) }
+        "window-minimize" => { window.minimize().map_err(|e| e.to_string())?; Ok(Value::Null) }
+        "window-maximize" => {
+            if window.is_maximized().map_err(|e| e.to_string())? { window.unmaximize() } else { window.maximize() }.map_err(|e| e.to_string())?;
+            Ok(Value::Null)
+        }
+        "window-close" => { window.close().map_err(|e| e.to_string())?; Ok(Value::Null) }
         "close-to-tray" => {
             let enabled = value.and_then(|v| v.as_bool()).ok_or("invalid setting")?;
             save_preferences(&state, "closeToTray", json!(enabled))?;
             *state.close_to_tray.lock().unwrap() = enabled; Ok(json!({"closeToTray":enabled}))
         }
-        "window-settings" => Ok(json!({"closeToTray":*state.close_to_tray.lock().unwrap(),"compact":state.compact.lock().unwrap().is_some()})),
+        "window-settings" => Ok(json!({"closeToTray":*state.close_to_tray.lock().unwrap(),"compact":state.compact.lock().unwrap().is_some(),"decorated":window.is_decorated().unwrap_or(true),"maximized":window.is_maximized().unwrap_or(false),"minimized":window.is_minimized().unwrap_or(false)})),
         "pick-folder" => {
             let selected = window.app_handle().dialog().file().set_title("Папка с музыкой").blocking_pick_folder();
             Ok(selected.and_then(|v| v.into_path().ok()).map(|p| json!(p.to_string_lossy())).unwrap_or(Value::Null))
@@ -239,7 +248,7 @@ fn main() {
             let trusted = origin.clone();
             let hidden = env::var_os("AUTOMIX_TEST").is_some();
             let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(format!("{origin}/").parse()?))
-                .title("MORA").inner_size(1280.0, 820.0).min_inner_size(960.0, 680.0).visible(!hidden)
+                .title("MORA").decorations(false).inner_size(1280.0, 820.0).min_inner_size(960.0, 680.0).visible(!hidden)
                 .data_directory(profile.join("webview2")).initialization_script(script)
                 .on_navigation(move |url| url.origin().ascii_serialization() == trusted);
             if hidden {

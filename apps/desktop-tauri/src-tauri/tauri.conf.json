@@ -1,6 +1,6 @@
 {
-  "productName": "MORA Native Preview",
-  "version": "0.3.34-preview.1",
+  "productName": "MORA Native",
+  "version": "0.4.1",
   "identifier": "ru.mora.desktop.native.preview",
   "build": {
     "frontendDist": "../embedded"
@@ -40,7 +40,13 @@
     },
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "languages": [
+          "Russian",
+          "English"
+        ],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico"
       }
     },
     "useLocalToolsDir": true

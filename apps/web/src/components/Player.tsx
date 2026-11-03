@@ -1,3 +1,4 @@
+import { WindowControls } from './WindowControls.tsx';
 import { TrackArtists } from './TrackArtists.tsx';
 import { Radio } from '@phosphor-icons/react';
 import { startSimilar } from '../lib/radio.ts';
@@ -503,6 +504,7 @@ export function FullPlayer() {
     <div className="full-player" role="dialog" aria-modal="true" aria-label="Сейчас играет" ref={dialogRef}>
       <PlayerBackdrop cover={t.coverUrl} next={blend.to?.coverUrl ?? null} k={blend.k} />
       <div className="fp-top" {...swipeTop}>
+        <WindowControls />
         <button className="icon-btn" aria-label="Свернуть" onClick={close}>
           <CaretDown size={24} />
         </button>

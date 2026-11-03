@@ -30,11 +30,19 @@ try {
   try {
     await cdp.waitFor('!!window.automixDesktop && document.documentElement.classList.contains("desktop")', { timeoutMs: 45000 });
     assert.equal(await cdp.evaluate('document.hidden'), true);
+    assert.equal(await cdp.evaluate('window.automixDesktop.getSettings().then(x => x.decorated)'), false);
+    assert.equal(await cdp.evaluate('document.querySelectorAll(".titlebar .window-controls button").length'), 3);
+    assert.equal(await cdp.evaluate('getComputedStyle(document.querySelector(".titlebar")).height'), '40px');
+    await cdp.evaluate(`window.__windowCommands=[];window.__originalWindowCommand=window.automixDesktop.windowCommand;window.automixDesktop.windowCommand=async action=>{window.__windowCommands.push(action)};document.querySelectorAll('.titlebar .window-controls button').forEach(b=>b.click())`);
+    assert.deepEqual(await cdp.evaluate('window.__windowCommands'), ['minimize', 'maximize', 'close']);
+    await cdp.evaluate('window.automixDesktop.windowCommand=window.__originalWindowCommand;delete window.__originalWindowCommand');
     assert.equal(await cdp.evaluate('typeof window.automixDesktop.nativeMix.state'), 'function');
     assert.equal(await cdp.evaluate('window.automixDesktop.nativeMix.state().then(x => x.active)'), false);
     await cdp.evaluate("window.automixDesktop.audioCommand({cmd:'output',device:''})");
     assert.equal(await cdp.evaluate('window.automixDesktop.getSettings().then(x => x.audio.outputDevice)'), '');
     assert.equal(await cdp.evaluate('window.automixDesktop.setCompact(true).then(x => x.on).catch(e => String(e))'), true);
+    await cdp.waitFor('document.documentElement.classList.contains("compact")');
+    assert.equal(await cdp.evaluate('getComputedStyle(document.querySelector(".window-controls")).display'), 'flex');
     assert.equal(await cdp.evaluate('window.automixDesktop.setCompact(false).then(x => x.on)'), false);
     await cdp.evaluate('window.automixDesktop.restartBackend()');
     assert.equal(await cdp.evaluate('window.automixDesktop.nativeMix.state().then(x => x.active)'), false);

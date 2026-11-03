@@ -9,6 +9,7 @@ export interface AppUpdateStatus {
   error: string | null;
 }
 export interface DesktopBridge {
+  windowCommand?(action: 'minimize' | 'maximize' | 'close'): Promise<void>;
   nativeMix?: Pick<import('./native-mix.ts').NativeMix, 'startSource' | 'startStation' | 'setStation' | 'prepareQueue' | 'settings' | 'stop' | 'state' | 'command'>;
   audioStart?(device?: string): Promise<{ sampleRate: number; engine: 'rust'; queueFrames: number }>;
   audioCommand?(command: import('../audio/engine.worklet.ts').EngineCommand | { cmd: 'output'; device: string } | { cmd: 'suspend' | 'resume' }): Promise<void>;

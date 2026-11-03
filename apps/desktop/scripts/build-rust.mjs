@@ -8,7 +8,7 @@ import { writeRustLicenses } from '../../../tools/rust-licenses.mjs';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const local = path.join(os.homedir(), '.cargo/bin/cargo.exe');
 const cargo = process.env.CARGO || (process.platform === 'win32' && fs.existsSync(local) ? local : 'cargo');
-const env = { ...process.env };
+const env = { ...process.env, CARGO_BUILD_JOBS: '1' };
 // GNU Rust ships a self-contained linker, so Windows builds need no Visual Studio installation.
 const version = spawnSync(cargo, ['-vV'], { encoding: 'utf8', windowsHide: true, env });
 if (version.status !== 0) throw new Error('Нужен Rust: установите rustup с https://rust-lang.org/tools/install/');

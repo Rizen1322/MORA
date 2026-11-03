@@ -44,6 +44,7 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
       const library = s.lib.listDTO();
       const history = q(s.db, 'SELECT track_id, started_at FROM plays ORDER BY id DESC LIMIT 200').all() as { track_id: string; started_at: number }[];
       const byId = new Map(library.map(t => [t.id, t]));
+      const recentArtists = [...excluded].flatMap(id => { const t = byId.get(id); return t ? [t.artist] : []; }).slice(-5);
       const seen = new Set<string>();
       for (const id of excluded) {
         const t = byId.get(id); if (t) seen.add(radioIdentity(t));
@@ -70,7 +71,7 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
         picks = [first, ...rankRadio([...found.slice(1), ...pool], library, seen, [first.artist], settings, primary)];
       } else {
         for (const t of found) { seen.add(radioIdentity(t)); seen.add(`${t.audioProvider}:${t.externalId}`); }
-        picks = rankRadio(pool, library, seen, [], settings, primary);
+        picks = rankRadio(pool, library, seen, recentArtists, settings, primary);
       }
       if (!picks.length) throw new Error('Пока нет свежих рекомендаций');
       const entries = await Promise.all(picks.slice(0, count).map(async t => ({ trackId: await s.publicMusic.prepareProgressive(t.audioProvider, t.externalId), entryId: randomUUID(), origin: 'wave' })));

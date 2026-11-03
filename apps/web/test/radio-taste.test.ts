@@ -5,6 +5,18 @@ const tune = { mood: 'normal', diversity: 'balanced', mode: 'normal' } as const;
 const track = (title: string, artist: string, patch: Partial<Track> = {}) => ({ id: title, title, artist, reaction: 0, status: 'ok', addedAt: 1, playCount: 0, skipCount: 0, analysis: {}, ...patch }) as Track;
 const candidate = (title: string, artist: string, patch: Partial<PublicTrack> = {}) => ({ externalId: title, title, artist, playable: true, audioProvider: 'youtube', ...patch }) as PublicTrack;
 describe('personal online radio ranking', () => {
+  it('spaces all credited artists across batches even when one artist dominates likes', () => {
+    const lib = Array.from({ length: 12 }, (_, i) => track(`liked-${i}`, 'PHARAOH', { reaction: 1, playCount: 20 }));
+    const items = Array.from({ length: 3 }, (_, round) => ['PHARAOH', 'Boulevard Depo, PHARAOH', 'OG Buda', 'SABU', 'ROCKET', 'Heronwater'].map((artist, i) => candidate(`${round}-${i}`, artist))).flat();
+    const ranked = rankRadio(items, lib, new Set(), ['PHARAOH'], tune);
+    expect(ranked.slice(0, 4).every(t => !t.artist.includes('PHARAOH'))).toBe(true);
+    expect(ranked[4].artist).toBe('PHARAOH');
+    expect(ranked[5].artist).not.toContain('PHARAOH');
+  });
+  it('uses the least recent artist when the pool cannot fill a four-song gap', () => {
+    const ranked = rankRadio([candidate('a', 'one'), candidate('b', 'two')], [], new Set(), ['one', 'two'], tune);
+    expect(ranked.map(t => t.artist)).toEqual(['one', 'two']);
+  });
   it('opens balanced radio with discoveries instead of the same block of liked songs', () => {
     const lib = Array.from({length:8}, (_,i) => track(`liked-${i}`,`artist-${i}`,{reaction:1,playCount:4}));
     const items = [...lib.map(t=>candidate(t.title,t.artist)),...Array.from({length:5},(_,i)=>candidate(`fresh-${i}`,`new-${i}`))];

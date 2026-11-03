@@ -137,6 +137,8 @@ it('keeps feeding the audible track when seeking after the swap of a running tra
     host.onEvent({ type: 'swap', planId: b.plan!.id, token } as any);
     expect(host.state().entryId).toBe('entry-b');
     await host.command('seekto', 10);
+    expect(audio.command).toHaveBeenCalledWith({ cmd: 'seek', token, frame: 10 * 48000 });
+    expect(host.state()).toMatchObject({ entryId: 'entry-b', position: 10, blend: null });
     files.length = 0;
     host.onEvent({ type: 'need', deck: 1, token, chunks: [20] } as any);
     await vi.waitFor(() => expect(files.some(f => f.token === token && f.chunk === 20)).toBe(true));

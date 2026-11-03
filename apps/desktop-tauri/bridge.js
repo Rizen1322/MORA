@@ -29,6 +29,12 @@
     try { const value = JSON.parse(e.data); for (const fn of audioListeners) fn(value); } catch { /* invalid event */ }
   };
   const shell = (action, value) => window.__TAURI_INTERNALS__.invoke('desktop_action', { action, value });
+  document.addEventListener('mousedown', event => {
+    if (event.button !== 0 || !(event.target instanceof Element) || !event.target.closest('.titlebar, .fp-top') ||
+        event.target.closest('button, a, input, select, textarea, [role="button"]')) return;
+    event.preventDefault();
+    void shell(event.detail === 2 ? 'window-maximize' : 'window-drag').catch(() => {});
+  });
   const subscribe = listeners => callback => {
     if (typeof callback !== 'function') return () => {};
     listeners.add(callback); return () => listeners.delete(callback);
@@ -40,6 +46,7 @@
   const noEvents = () => () => {};
   const update = { phase: 'disabled', currentVersion: '__MORA_VERSION__', version: null, size: null, percent: 0, error: null };
   window.automixDesktop = {
+    windowCommand: action => shell(`window-${action}`),
     nativeMix: {
       startStation: native('startStation'), setStation: native('setStation'), startSource: native('startSource'),
       prepareQueue: (from, entries, previousId, loop, _signal, replaceFuture, manifest) => native('prepareQueue')(from, entries, previousId, loop, replaceFuture, manifest),

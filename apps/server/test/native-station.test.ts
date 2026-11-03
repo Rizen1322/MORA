@@ -3,6 +3,22 @@ import { expect, it, vi } from 'vitest';
 import type { Services } from '../src/app.ts';
 import { registerNativeStationRoutes } from '../src/routes/native-station.ts';
 
+it('carries artist spacing over the native queue refill boundary including collaborations', async () => {
+  const app = Fastify();
+  const item = (id: string, artist: string) => ({ externalId: id, title: id, artist, playable: true, audioProvider: 'youtube' });
+  const library = [{ id: 'queued', title: 'queued', artist: 'PHARAOH', reaction: 1, status: 'ok', addedAt: 1, playCount: 10, lastPlayedAt: null }];
+  const prepareProgressive = vi.fn(async (_provider: string, id: string) => `local-${id}`);
+  const services = { cfg: { desktopPlaybackToken: 'secret' }, db: { prepare: () => ({ get: () => undefined, all: () => [] }) },
+    lib: { listDTO: () => library, sources: () => [] }, publicMusic: { search: async () => [item('queued', 'PHARAOH')],
+      radio: async () => [item('repeat', 'PHARAOH'), item('collab', 'Boulevard Depo, PHARAOH'), item('fresh', 'ROCKET')], prepareProgressive } } as unknown as Services;
+  registerNativeStationRoutes(app, services);
+  try {
+    const response = await app.inject({ method: 'POST', url: '/internal/desktop/station-next', headers: { 'x-mora-desktop-token': 'secret' }, payload: { kind: 'online', currentId: 'queued', exclude: ['queued'], count: 2 } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().entries[0].trackId).toBe('local-fresh');
+  } finally { await app.close(); }
+});
+
 it('protects and validates station requests and carries Yandex attribution', async () => {
   const app = Fastify();
   const wave = vi.fn(async () => ({ sessionId: 'session', batchId: 'batch', items: [{ trackId: 'new', yandexId: '42:1' }, { trackId: 'queued', yandexId: '10:2' }] }));

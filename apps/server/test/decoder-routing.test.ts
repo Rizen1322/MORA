@@ -82,3 +82,18 @@ it.skipIf(!available)('selects native decoding for a probed WebM Opus file', asy
   expect(child.spawnfile).toBe(decoder);
   await stop(child);
 });
+
+it.skipIf(!available)('preserves AAC playback timing through the compatibility decoder', async () => {
+  const file = join(dir, 'source.m4a');
+  execFileSync(ffmpeg, ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'sine=duration=1:sample_rate=44100', '-ac', '2', '-c:a', 'aac', file], { windowsHide: true });
+  const tools = new FfmpegTools(ffmpeg, ffprobe, decoder);
+  expect((await tools.probe(file)).codec).toBe('aac');
+  const child = tools.decode(file, { ...opts, sampleRate: 44100 });
+  expect(child.spawnfile).toBe(ffmpeg);
+  const chunks: Buffer[] = [];
+  child.stdout.on('data', chunk => chunks.push(chunk));
+  child.stderr.resume();
+  const code = await new Promise<number | null>((resolve, reject) => { child.once('close', resolve); child.once('error', reject); });
+  expect(code).toBe(0);
+  expect(Buffer.concat(chunks)).toEqual(execFileSync(ffmpeg, ['-v', 'error', '-i', file, '-ac', '2', '-ar', '44100', '-f', 'f32le', 'pipe:1'], { windowsHide: true }));
+});

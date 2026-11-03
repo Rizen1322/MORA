@@ -24,7 +24,7 @@ export function AppUpdates() {
     } catch { setError('Не удалось выполнить действие. Повторите попытку после окончания других операций.'); }
   };
   const phase = status?.phase;
-  const message = phase === 'disabled' ? 'Обновления доступны в установленной версии MORA для Windows.'
+  const message = phase === 'disabled' ? 'Обновляйте приложение установщиком новой версии.'
     : phase === 'checking' ? 'Проверяем новую версию…'
     : phase === 'current' ? 'Установлена актуальная версия.'
     : phase === 'available' ? `Доступна MORA ${status?.version}${status?.size ? ` · ${Math.ceil(status.size / 1048576)} МБ` : ''}.`

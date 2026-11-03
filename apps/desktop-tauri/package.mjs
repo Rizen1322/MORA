@@ -28,7 +28,7 @@ try {
   const toolchain = spawnSync(process.execPath, [`${app}/fetch-toolchain.mjs`], { cwd: app, stdio: 'inherit', windowsHide: true });
   if (toolchain.status !== 0 || !fs.existsSync(`${compiler}/clang.exe`)) throw Error('Unable to prepare LLVM-MinGW toolchain');
   const cargoBin = path.join(os.homedir(), '.cargo/bin');
-  const env = { ...process.env, PATH: `${compiler};${cargoBin};${process.env.PATH}`, CARGO_TARGET_DIR: `${app}/src-tauri/target`,
+  const env = { ...process.env, CARGO_BUILD_JOBS: '1', PATH: `${compiler};${cargoBin};${process.env.PATH}`, CARGO_TARGET_DIR: `${app}/src-tauri/target`,
     RUSTFLAGS: process.env.RUSTFLAGS || '-C linker=rust-lld -C link-self-contained=yes' };
   const run = args => {
     const result = spawnSync(process.execPath, args, { cwd: app, env, stdio: 'inherit', windowsHide: true });
@@ -36,6 +36,11 @@ try {
   };
   run([`${app}/prepare.mjs`]);
   run([`${drive}:/node_modules/@tauri-apps/cli/tauri.js`, 'build', '--bundles', 'nsis', '--no-sign', '--', '--locked']);
+  const image = fs.readFileSync(`${app}/src-tauri/target/release/mora-desktop-native.exe`);
+  const pe = image.readUInt32LE(0x3c);
+  if (image.toString('ascii', pe, pe + 4) !== 'PE\0\0' || image.readUInt16LE(pe + 24 + 68) !== 2) {
+    throw Error('Release executable must use the Windows GUI subsystem (no console)');
+  }
 } finally {
   if (owned) spawnSync('subst.exe', [`${drive}:`, '/D'], { windowsHide: true });
 }

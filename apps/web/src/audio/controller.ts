@@ -330,9 +330,10 @@ export class PlayerController {
     this.set({ waveLoading: true, waveRefillError: null, error: null });
     try {
       const state = await desktop.nativeMix.startStation(station, { sampleRate: NATIVE_SR, position: 0, ...this.nativeSettings() });
-      if (intent !== this.previewRevision) return;
+      // Pause, seek or a settings save also bump previewRevision; only a newer native start supersedes this one.
+      if (nativeRevision !== this.nativeRevision) return;
       await this.refreshLibrary();
-      if (intent !== this.previewRevision) return;
+      if (nativeRevision !== this.nativeRevision) return;
       if (context) await desktop.nativeMix.setStation?.(station, context);
       this.finishPlay('skip'); this.nativeAt = state.index; this.nativeTracks = []; this.nativeManifestKey = '';
       this.set({ queue: (state.queue ?? []).map(e => ({ ...e, origin: e.origin ?? 'wave' })), index: state.index,
@@ -340,8 +341,8 @@ export class PlayerController {
       this.nativeStarting = false;
       this.onNativeState(state); this.nativePoll(state.sampleRate); this.scheduleSave();
     } catch (e) {
-      if (intent === this.previewRevision) { this.set({ error: (e as Error).message }); throw e; }
-    } finally { if (intent === this.previewRevision) { this.nativeStarting = false; this.set({ waveLoading: false }); } }
+      if (nativeRevision === this.nativeRevision) { this.set({ error: (e as Error).message }); throw e; }
+    } finally { if (nativeRevision === this.nativeRevision) { this.nativeStarting = false; this.set({ waveLoading: false }); } }
   }
 
   async configureDesktopStation(station: NativeRadioConfig, context?: PlayContext): Promise<void> {
