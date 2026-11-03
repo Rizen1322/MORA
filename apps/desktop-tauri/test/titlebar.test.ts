@@ -12,7 +12,7 @@ it('routes window controls and drags only empty title-bar areas', async () => {
   const window: any = { __TAURI_INTERNALS__: { invoke } };
   const document = { cookie: '', addEventListener: (type: string, callback: (e: any) => void) => listeners.set(type, callback) };
   const script = readFileSync(new URL('../bridge.js', import.meta.url), 'utf8');
-  vm.runInNewContext(script, { window, document, location: { origin: 'http://127.0.0.1:__MORA_PORT__' }, Element, EventSource: class {} });
+  vm.runInNewContext(script, { window, document, location: { origin: 'http://127.0.0.1:__MORA_PORT__' }, Element, EventSource: class {}, setTimeout: () => 0, clearTimeout: () => {} });
   const down = (target: unknown, button = 0, detail = 1) => listeners.get('mousedown')!({ target, button, detail, preventDefault() {} });
   down(new Element(true));
   down(new Element(true), 0, 2);

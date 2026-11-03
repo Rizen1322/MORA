@@ -44,7 +44,23 @@
     if (value && Number.isFinite(value.done) && Number.isFinite(value.total)) for (const fn of importListeners) fn(value);
   } });
   const noEvents = () => () => {};
-  const update = { phase: 'disabled', currentVersion: '__MORA_VERSION__', version: null, size: null, percent: 0, error: null };
+  const updateListeners = new Set();
+  let lastUpdate = '', updateTimer;
+  const publishUpdate = status => {
+    const key = JSON.stringify(status);
+    if (key !== lastUpdate) { lastUpdate = key; for (const fn of updateListeners) fn(status); }
+    clearTimeout(updateTimer);
+    // shortcut: polling instead of a push channel; 1 s while busy is enough for a progress bar.
+    updateTimer = setTimeout(() => void invoke('/api/desktop/app-update').then(publishUpdate, () => publishUpdate(status)),
+      ['checking', 'downloading'].includes(status.phase) ? 1000 : 60000);
+    return status;
+  };
+  const updateAction = action => () => {
+    const pending = invoke(`/api/desktop/app-update/${action}`, {}).then(publishUpdate);
+    setTimeout(() => void invoke('/api/desktop/app-update').then(publishUpdate, () => {}), 300);
+    return pending;
+  };
+  setTimeout(() => void invoke('/api/desktop/app-update').then(publishUpdate, () => {}), 2000);
   window.automixDesktop = {
     windowCommand: action => shell(`window-${action}`),
     nativeMix: {
@@ -56,8 +72,16 @@
     audioCommand: command => invoke('/api/desktop/audio-command', command), audioStop: () => invoke('/api/desktop/audio-stop', {}),
     audioDevices: () => invoke('/api/desktop/audio-devices'), onAudio: subscribe(audioListeners),
     getSettings: async () => ({ ...await invoke('/api/desktop/settings'), ...await shell('window-settings') }),
-    appUpdateStatus: async () => update, appUpdateCheck: async () => update, appUpdateDownload: async () => update,
-    appUpdateCancel: async () => update, appUpdateInstall: async () => update, onAppUpdate: noEvents,
+    appUpdateStatus: () => invoke('/api/desktop/app-update'), appUpdateCheck: updateAction('check'), appUpdateDownload: updateAction('download'),
+    appUpdateCancel: updateAction('cancel'), onAppUpdate: subscribe(updateListeners),
+    appUpdateInstall: async () => {
+      const status = await invoke('/api/desktop/app-update');
+      if (status.phase !== 'downloaded') throw Error('Сначала скачайте обновление');
+      if (!window.confirm(`Установить MORA ${status.version}?\n\nМузыка остановится, MORA закроется и запустится после установки. Медиатека и настройки сохранятся.`)) return status;
+      const installing = publishUpdate(await invoke('/api/desktop/app-update/install', {}));
+      if (installing.phase === 'installing') await shell('install-update');
+      return installing;
+    },
     resolverStatus: () => invoke('/api/desktop/resolver'), resolverCheck: () => invoke('/api/desktop/resolver/check', {}),
     resolverInstall: () => invoke('/api/desktop/resolver/install', {}), resolverRollback: () => invoke('/api/desktop/resolver/rollback', {}),
     setCloseToTray: value => shell('close-to-tray', value === true), pickFolder: () => shell('pick-folder'),

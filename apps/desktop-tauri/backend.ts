@@ -8,6 +8,8 @@ import { setSoundCloudTransport } from '../server/src/public/soundcloud.ts';
 import { setYtmTransport } from '../server/src/public/ytmusic.ts';
 import { createPlaybackHost } from './playback.ts';
 import { ResolverUpdater } from '../desktop/src/resolver-update.mjs';
+import { AppUpdates } from '../desktop/src/app-update.mjs';
+import { GithubNsisUpdater } from './app-updater.mjs';
 import path from 'node:path';
 
 const token = process.env.AUTOMIX_LAUNCH_TOKEN ?? '';
@@ -68,6 +70,16 @@ try {
     if (request.params.action === 'check') return resolver.check();
     if (request.params.action === 'install') return resolver.install();
     if (request.params.action === 'rollback') return resolver.rollback();
+    return reply.code(400).send({ error: 'Некорректная команда' });
+  });
+  const version = process.env.AUTOMIX_VERSION || '0.0.0';
+  const updates = new AppUpdates({ currentVersion: version, enabled: !process.env.AUTOMIX_TEST && !!process.env.AUTOMIX_VERSION,
+    updater: new GithubNsisUpdater({ directory: path.join(profile, 'app-updates'), currentVersion: version, fetcher: network.fetch }) });
+  updates.start();
+  created.app.get('/api/desktop/app-update', async () => updates.status());
+  created.app.post<{ Params: { action: string } }>('/api/desktop/app-update/:action', async (request, reply) => {
+    const action = request.params.action;
+    if (action === 'check' || action === 'download' || action === 'cancel' || action === 'install') return updates[action]();
     return reply.code(400).send({ error: 'Некорректная команда' });
   });
   let port = 0;

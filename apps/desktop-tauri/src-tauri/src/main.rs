@@ -147,6 +147,19 @@ async fn desktop_action(window: tauri::WebviewWindow, state: tauri::State<'_, Se
             Command::new("explorer.exe").arg(&state.data_dir).spawn().map_err(|e| e.to_string())?;
             Ok(json!(""))
         }
+        "install-update" => {
+            if state.maintenance.load(Ordering::Acquire) { return Err("Дождитесь окончания переноса медиатеки".into()); }
+            let directory = state.profile.join("app-updates");
+            let pending: Value = serde_json::from_slice(&fs::read(directory.join("pending.json")).map_err(|_| "Обновление не скачано")?).map_err(|_| "Обновление не скачано")?;
+            // The backend verified sha512 against the release feed; only a plain installer name inside app-updates is accepted.
+            let name = pending["file"].as_str().filter(|n| n.len() > 15 && n.starts_with("MORA-Setup-") && n.ends_with(".exe") && n[11..n.len() - 4].chars().all(|c| c.is_ascii_digit() || c == '.')).ok_or("Некорректное обновление")?;
+            let installer = directory.join(name);
+            if !installer.is_file() { return Err("Обновление не скачано".into()); }
+            state.quitting.store(true, Ordering::Release);
+            stop_child(&mut state.child.lock().unwrap(), false);
+            Command::new(&installer).args(["--updated", "/S", "--force-run"]).spawn().map_err(|e| format!("Не удалось запустить установщик: {e}"))?;
+            window.app_handle().exit(0); Ok(Value::Null)
+        }
         "restart-backend" => { restart_child(&state, true)?; Ok(Value::Null) }
         "import-library" => {
             let selected = window.app_handle().dialog().file().set_title("Папка медиатеки (с automix.sqlite)").blocking_pick_folder();
