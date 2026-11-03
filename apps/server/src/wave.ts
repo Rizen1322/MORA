@@ -40,7 +40,7 @@ export class WaveService {
     });
   }
 
-  next(input: { currentId: string | null; session: string[]; mood: WaveMood; diversity: WaveDiversity; mix?: boolean; count: number; exclude?: string[] }): WavePick[] {
+  next(input: { currentId: string | null; session: string[]; mood: WaveMood; diversity: WaveDiversity; mix?: boolean; count: number; exclude?: string[]; analyze?: boolean }): WavePick[] {
     const reactions = q(this.db, 'SELECT track_id, value FROM reactions').all() as { track_id: string; value: number }[];
     const likes = new Set(reactions.filter((r) => r.value > 0).map((r) => r.track_id));
     const dislikes = new Set(reactions.filter((r) => r.value < 0).map((r) => r.track_id));
@@ -68,7 +68,7 @@ export class WaveService {
       Math.max(1, Math.min(10, input.count)),
     );
     // get candidates analyzed early so their transitions can be planned
-    this.analysis.prioritize(
+    if (input.analyze !== false) this.analysis.prioritize(
       picks.map((p) => p.id),
       PRIORITY.wave,
     );

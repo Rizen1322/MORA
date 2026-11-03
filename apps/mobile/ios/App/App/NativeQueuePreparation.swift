@@ -201,7 +201,11 @@ final class NativeMixAnalysis: @unchecked Sendable {
     private static let bundledScriptKey: String? = Bundle.main.url(forResource: "native-preparation", withExtension: "js", subdirectory: "public")
         .flatMap { try? Data(contentsOf: $0) }.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
     /// Set once at launch by the app (NativeRustAnalysis); test hosts without the static library keep the script analyzer.
-    static var compiled: (version: String, analyze: (URL, Int, @escaping () -> Bool) -> [String: Any]?)?
+    /// `begin(expectedFrames)` opens an in-memory analysis of 44100 Hz interleaved stereo blocks.
+    static var compiled: (version: String, begin: (Int) -> (push: (UnsafePointer<Float>, Int) -> Bool, finish: (Bool) -> [String: Any]?)?)?
+    /// Thermal duty cycle: look-ahead MIR starts at least this long after the previous analysis ended.
+    private static let cooldown: TimeInterval = 20
+    private static var lastAnalysisEnd = -TimeInterval.infinity // executor only
     private let lock = NSLock()
     private var pending: [Request] = []
     private var active: Request?
@@ -327,8 +331,21 @@ final class NativeMixAnalysis: @unchecked Sendable {
     /// Executor thread only. Lookahead MIR (not the very next transition) drops to
     /// background QoS, which iOS runs on efficiency cores; re-checked at each checkpoint.
     private func pace(_ request: Request) {
-        lock.lock(); let urgent = audible < 0 || request.index <= audible + 1; lock.unlock()
-        pthread_set_qos_class_self_np(urgent ? QOS_CLASS_UTILITY : QOS_CLASS_BACKGROUND, 0)
+        pthread_set_qos_class_self_np(urgent(request) ? QOS_CLASS_UTILITY : QOS_CLASS_BACKGROUND, 0)
+    }
+    private func urgent(_ request: Request) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return audible < 0 || request.index <= audible + 1
+    }
+    /// Executor thread only. Sleeps (no CPU) until the cooldown since the last analysis has passed;
+    /// returns at once when the request becomes the very next transition.
+    private func rest(_ request: Request, role: String) throws {
+        guard ProcessInfo.processInfo.systemUptime < Self.lastAnalysisEnd + Self.cooldown, !urgent(request) else { return }
+        stage("cooldown", request, role: role)
+        while ProcessInfo.processInfo.systemUptime < Self.lastAnalysisEnd + Self.cooldown, !urgent(request) {
+            if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
     }
     private func analyze(_ source: Source, core: NativePreparationCore, scriptKey: String, request: Request, role: String) throws -> Any {
         guard source.value["mixingAllowed"] as? Bool == true else { return NSNull() }
@@ -349,23 +366,34 @@ final class NativeMixAnalysis: @unchecked Sendable {
            let ready = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             Self.remember(key, ready); stage("cacheHit", request, role: role); return ready
         }
+        try rest(request, role: role)
+        pace(request)
         // Apple thermal guidance: at serious+ defer optional work. The pair falls back to a crossfade.
         if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue {
             stage("thermalSkip", request, role: role); throw NativePreparationCore.Failure.analysis
         }
-        stage("resampling", request, role: role)
-        let temporary = source.url.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).mir-44100")
-        defer { try? FileManager.default.removeItem(at: temporary) }
-        let frames = try NativePCMDecoder.resample(source.url, from: 48000, to: temporary, sampleRate: 44100, cancelled: { request.ticket.cancelled })
-        stage("analyzing", request, role: role)
+        defer { Self.lastAnalysisEnd = ProcessInfo.processInfo.systemUptime }
         let result: [String: Any]
         if let compiled = Self.compiled, compiled.version == core.analyzerVersion {
+            // 48 → 44.1 kHz in memory straight into Rust: no ~85 MB temporary file written and read back.
             stage("compiledAnalysis", request, role: role)
-            guard let value = compiled.analyze(temporary, frames, { request.ticket.cancelled }) else {
+            guard let stream = compiled.begin(source.frames * 147 / 160) else { throw NativePreparationCore.Failure.analysis }
+            do {
+                _ = try NativePCMDecoder.resample(source.url, from: 48000, sampleRate: 44100, cancelled: { request.ticket.cancelled }) { samples, count in
+                    guard stream.push(samples, count) else { throw NativePreparationCore.Failure.analysis }
+                }
+            } catch {
+                _ = stream.finish(true)
                 throw request.ticket.cancelled ? NativeMediaHTTP.Failure.cancelled : NativePreparationCore.Failure.analysis
             }
+            guard let value = stream.finish(false) else { throw NativePreparationCore.Failure.analysis }
             result = value
         } else {
+            stage("resampling", request, role: role)
+            let temporary = source.url.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).mir-44100")
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            let frames = try NativePCMDecoder.resample(source.url, from: 48000, to: temporary, sampleRate: 44100, cancelled: { request.ticket.cancelled })
+            stage("analyzing", request, role: role)
             result = try core.analyze(temporary, frames: frames, ticket: request.ticket) { [self] name in pace(request); stage(name, request, role: role) }
         }
         if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }

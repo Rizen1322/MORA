@@ -159,7 +159,7 @@ export async function continueQueue(entryId: string): Promise<void> {
       continued = true;
       return;
     }
-    const { picks } = await api.waveNext({ currentId: p.queue[p.index]?.trackId ?? null, session: controller.state.queue.map((e) => e.trackId), count: 2 });
+    const { picks } = await api.waveNext({ currentId: p.queue[p.index]?.trackId ?? null, session: controller.state.queue.map((e) => e.trackId), count: 2, analyze: controller.pageAnalysis });
     if (!relevant() || !picks.length) return;
     const context: PlayContext = { type: 'wave', label: 'Моя волна' };
     controller.continueAs(context, picks.map((pick) => pick.id), 'wave');

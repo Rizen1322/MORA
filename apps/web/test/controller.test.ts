@@ -1259,7 +1259,7 @@ describe('continuous wave reservoir', () => {
     vi.mocked(api.yandexWave).mockResolvedValueOnce(batch(['d','e','f','g']));
     await w.topUpWave();
     expect(api.yandexWave).toHaveBeenCalledTimes(1);
-    expect(api.yandexWave).toHaveBeenCalledWith('session-old', { queue: ['100:10','101:10','102:10'], count: 4 });
+    expect(api.yandexWave).toHaveBeenCalledWith('session-old', { queue: ['100:10','101:10','102:10'], count: 4, analyze: true });
     expect(controller.state.queue.slice(3).map(e => e.trackId)).toEqual(['d','e','f','g']);
     expect(controller.state.queue[3].yandexBatchId).toBe('new');
     expect(api.focus).toHaveBeenCalled();
@@ -1463,7 +1463,7 @@ describe('continuous wave reservoir', () => {
     vi.mocked(api.yandexWave).mockResolvedValueOnce(batch(['d','e','f','g']));
     const start = vi.spyOn(controller, 'startAt').mockResolvedValue(undefined);
     await controller.refreshYandexWave();
-    expect(api.yandexWave).toHaveBeenCalledWith(null, { queue: ['100:10','101:10'], count: 4 });
+    expect(api.yandexWave).toHaveBeenCalledWith(null, { queue: ['100:10','101:10'], count: 4, analyze: true });
     expect(controller.state.queue.map(e => e.trackId)).toEqual(['a','b','h','d','e','f','g']);
     expect(h.current).toBe(slot);
     expect(h.next?.slot).toBe(incoming);

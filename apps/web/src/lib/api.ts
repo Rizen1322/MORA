@@ -318,7 +318,7 @@ export const api = {
   rateTransition: (id: number, rating: TransitionRating | null, reason: TransitionRatingReason | null = null) => req('POST', `/api/automix/log/${id}/rating`, { rating, reason }),
   mixNow: (from:string,to:string,position:number) => req<{plan:TransitionPlan}>('POST','/api/automix/mix-now',{from,to,position}),
   transitions: (limit = 30) => req<{ items: TransitionLogItem[] }>('GET', `/api/automix/log?limit=${limit}`),
-  waveNext: (b: { currentId: string | null; session: string[]; count: number; mood?: string; diversity?: string; exclude?: string[] }) =>
+  waveNext: (b: { currentId: string | null; session: string[]; count: number; mood?: string; diversity?: string; exclude?: string[]; analyze?: boolean }) =>
     req<{ picks: WavePick[] }>('POST', '/api/wave/next', b),
   startPlay: (trackId: string, context: string) => req<{ id: number }>('POST', '/api/plays', { trackId, context }),
   endPlay: (id: number, playedMs: number, endReason: string, transitionId?: string) => req('PATCH', `/api/plays/${id}`, { playedMs, endReason, transitionId }),
@@ -343,7 +343,7 @@ export const api = {
   providerSearch: (id: string, q: string) => req<{ items: ExternalTrack[] }>('GET', `/api/providers/${id}/search?q=${encodeURIComponent(q)}`),
   providerImport: (id: string, track: ExternalTrack) => req<{ trackId: string }>('POST', `/api/providers/${id}/import`, { track }),
   yandexWaveSettings: () => req<{ groups: { id: string; name: string; values: { name: string; seed: string }[] }[] }>('GET', '/api/providers/yandex/wave/settings'),
-  yandexWave: (session?: string | null, options: { queue?: string[]; count?: number } = {}) =>
+  yandexWave: (session?: string | null, options: { queue?: string[]; count?: number; analyze?: boolean } = {}) =>
     req<{ sessionId: string; batchId: string | null; items: { yandexId: string; title: string; artist: string; trackId: string | null }[] }>(
       'POST',
       '/api/providers/yandex/wave',
