@@ -7,10 +7,17 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const dir = await mkdtemp(join(tmpdir(), 'mora-native-host-'));
-const run = (command, args) => {
+const run = (command, args, timeout = 180000) => {
   console.log('[native-host]', command, args.slice(0, 4).join(' '));
-  const result = spawnSync(command, args, { encoding: 'utf8', timeout: 180000, killSignal: 'SIGKILL' });
-  assert.equal(result.status, 0, `${command}: ${result.stderr || result.stdout}`); return result.stdout.trim();
+  const result = spawnSync(command, args, { encoding: 'utf8', timeout, killSignal: 'SIGKILL' });
+  assert.equal(result.status, 0, `${command}: ${result.signal ? `killed (${result.signal}) after ${timeout} ms` : result.stderr || result.stdout}`); return result.stdout.trim();
+};
+// `simctl launch` on a just-booted simulator sometimes never returns (seen on macos-15-arm64 / Xcode 26.2,
+// run 41729416553); it normally takes seconds, and --terminate-running-process makes a retry safe.
+const launch = args => {
+  for (let attempt = 1; ; attempt++) {
+    try { return run('xcrun', args, 45000); } catch (error) { if (attempt === 3) throw error; console.log(`[native-host] launch attempt ${attempt} failed: ${error.message}`); }
+  }
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let device;
@@ -56,7 +63,8 @@ try {
   const container = run('xcrun', ['simctl', 'get_app_container', device.udid, bundle, 'data']);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   for (const mode of ['natural', 'skip', 'slow-analysis', 'slow-analysis-eof', 'retained-analysis', 'source-start']) {
-    run('xcrun', ['simctl', 'launch', '--terminate-running-process', device.udid, bundle,
+    await rm(join(container, 'Documents', `${mode}.json`), { force: true });
+    launch(['simctl', 'launch', '--terminate-running-process', device.udid, bundle,
       '--fixture-base', `http://127.0.0.1:${server.address().port}`, ...(mode === 'natural' ? [] : [`--${mode}`])]);
     let report;
     for (let i = 0; i < 90; i++) {
