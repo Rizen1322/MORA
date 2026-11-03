@@ -33,6 +33,10 @@ final class NativePlayerModel: ObservableObject {
     private let host: NativeMixHost
     private var timer: Timer?
     private var artworkKey = ""
+    /// Queue edits, swap and likes are the page's (lib/native-ui.ts); nil when the native shell is not installed.
+    private(set) weak var shell = NativeShellStore.shared
+    @Published private var edit: NativeQueueEdit?
+    var upcoming: [NativePlayerRow] { edit?.apply(state.upcoming) ?? state.upcoming }
 
     init(host: NativeMixHost) { self.host = host }
 
@@ -53,6 +57,8 @@ final class NativePlayerModel: ObservableObject {
             let next = NativePlayerState(value)
             if !next.active { self.stop(); self.close("close"); return }
             if next.entryId != self.state.entryId { self.scrub = nil }
+            // shortcut: 20 s covers re-preparing a few tracks; a stuck page shows the host's order again after that.
+            if let edit = self.edit, edit.landed(next.upcoming) || Date().timeIntervalSince(edit.at) > 20 { self.edit = nil }
             self.receivedAt = Date()
             if next != self.state { self.state = next }
             let key = "\(next.entryId)|\(next.artworkReady)"
@@ -80,6 +86,35 @@ final class NativePlayerModel: ObservableObject {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         send("seekto", time: time) { [weak self] in
             if self?.scrub == time { self?.scrub = nil }
+        }
+    }
+
+    func jump(_ row: NativePlayerRow) { shell?.run("queueJump", ["entryId": row.id]) }
+    func remove(_ offsets: IndexSet) {
+        var rows = upcoming
+        let gone = offsets.map { rows[$0].id }
+        rows.remove(atOffsets: offsets)
+        edit = NativeQueueEdit(order: rows.map(\.id), removed: Set(gone))
+        for id in gone { shell?.run("queueRemove", ["entryId": id]) }
+    }
+    /// List.onMove semantics: `destination` is the slot before the move.
+    func move(_ offsets: IndexSet, to destination: Int) {
+        var rows = upcoming
+        // Nothing goes ahead of the track already blending in.
+        guard offsets.count == 1, let from = offsets.first, rows.indices.contains(from), !(state.blending && destination == 0) else { return }
+        let id = rows[from].id, target = rows[min(rows.count - 1, destination > from ? destination - 1 : destination)].id
+        guard id != target else { return }
+        rows.move(fromOffsets: offsets, toOffset: destination)
+        edit = NativeQueueEdit(order: rows.map(\.id))
+        shell?.run("queueMove", ["entryId": id, "to": target])
+    }
+    /// Wave: the page puts the best tempo/key match from its reserve in place of the upcoming track.
+    func swap() {
+        guard let shell, let first = upcoming.first else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Task { @MainActor in
+            do { _ = try await shell.call("swap") } catch { return } // refused (blend started, no Wave): the queue stays
+            self.edit = NativeQueueEdit(order: [], removed: [first.id])
         }
     }
 
@@ -111,6 +146,37 @@ private struct IconButton: View {
                 .frame(width: 44, height: 44).contentShape(Rectangle())
         }
         .accessibilityLabel(label)
+    }
+}
+
+/// The page's `react` (server, Yandex sync, dislike skips on in a Wave); the shell shows it at once.
+private struct RatingButtons: View {
+    @ObservedObject var shell: NativeShellStore
+    let trackId: String
+    var body: some View {
+        if let track = shell.byId[trackId] {
+            HStack(spacing: 0) {
+                IconButton(symbol: track.reaction < 0 ? "hand.thumbsdown.fill" : "hand.thumbsdown",
+                           label: track.reaction < 0 ? "Убрать «Не нравится»" : "Не нравится") { shell.react(track, track.reaction < 0 ? 0 : -1) }
+                    .foregroundStyle(.white.opacity(track.reaction < 0 ? 1 : 0.7))
+                IconButton(symbol: track.liked ? "heart.fill" : "heart",
+                           label: track.liked ? "Убрать из любимого" : "Нравится") { shell.react(track, track.liked ? 0 : 1) }
+                    .foregroundStyle(track.liked ? Color.moraMint : .white.opacity(0.7))
+            }
+        }
+    }
+}
+
+/// Only in «Моя волна» (own or Yandex): elsewhere the next track is the listener's own choice.
+private struct SwapButton: View {
+    @ObservedObject var shell: NativeShellStore
+    let enabled: Bool
+    let action: () -> Void
+    var body: some View {
+        if shell.ui.wave.active == .own || shell.ui.wave.active == .yandex {
+            IconButton(symbol: "arrow.triangle.2.circlepath", label: "Заменить следующий трек", action: action)
+                .disabled(!enabled)
+        }
     }
 }
 
@@ -146,12 +212,15 @@ struct NativePlayerView: View {
             Spacer(minLength: 12)
             cover(playing: s.playing)
             Spacer(minLength: 12)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(s.title.isEmpty ? "MORA" : s.title).font(.title2.bold()).lineLimit(2)
-                Text(s.artist).font(.title3).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(s.title.isEmpty ? "MORA" : s.title).font(.title2.bold()).lineLimit(2)
+                    Text(s.artist).font(.title3).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+                if let shell = model.shell { RatingButtons(shell: shell, trackId: s.trackId) }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
             NativeScrubber(state: s, receivedAt: model.receivedAt, pending: model.scrub) { model.seek(to: $0) }
                 .id(s.entryId).padding(.top, 18)
             transport(playing: s.playing).padding(.vertical, 6)
@@ -168,6 +237,10 @@ struct NativePlayerView: View {
             HStack {
                 RoutePicker().frame(width: 44, height: 44)
                 Spacer()
+                if let shell = model.shell {
+                    SwapButton(shell: shell, enabled: !s.blending && !model.upcoming.isEmpty) { model.swap() }
+                        .foregroundStyle(.white.opacity(0.7))
+                }
                 IconButton(symbol: "list.bullet", label: "Очередь") { queueOpen = true }
                     .foregroundStyle(.white.opacity(0.7))
             }
@@ -250,25 +323,46 @@ private struct NativeQueueView: View {
     var body: some View {
         NavigationStack {
             List {
-                if model.state.upcoming.isEmpty {
+                let rows = model.upcoming, editable = model.shell != nil
+                if rows.isEmpty {
                     Text("Очередь пуста").foregroundStyle(.secondary).listRowBackground(Color.clear)
                 }
-                ForEach(model.state.upcoming) { row in
-                    HStack(spacing: 12) {
-                        NativeCover(url: row.cover, size: 44, radius: 6)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(row.title).font(.body.weight(.medium)).lineLimit(1)
-                            Text(row.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                            if row.automix {
-                                HStack(spacing: 4) { Image(systemName: "sparkles"); Text("AutoMix") }
-                                    .font(.caption.weight(.medium)).foregroundStyle(Color.moraGold)
+                ForEach(rows) { row in
+                    // The track already blending in cannot be dropped or moved.
+                    let locked = !editable || (model.state.blending && row.id == rows.first?.id)
+                    Button { model.jump(row); dismiss() } label: {
+                        HStack(spacing: 12) {
+                            NativeCover(url: row.cover, size: 44, radius: 6)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(row.title).font(.body.weight(.medium)).lineLimit(1)
+                                Text(row.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                                if row.automix {
+                                    HStack(spacing: 4) { Image(systemName: "sparkles"); Text("AutoMix") }
+                                        .font(.caption.weight(.medium)).foregroundStyle(Color.moraGold)
+                                }
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
+                        .frame(minHeight: 56)
+                        .contentShape(Rectangle())
                     }
-                    .frame(minHeight: 56)
+                    .buttonStyle(.plain)
+                    .disabled(!editable)
                     .accessibilityElement(children: .combine)
+                    .accessibilityHint("Играть сейчас")
+                    // Drag reordering is not reachable with VoiceOver.
+                    .accessibilityAction(named: "Выше") {
+                        if !locked, let i = rows.firstIndex(of: row), i > 0 { model.move([i], to: i - 1) }
+                    }
+                    .accessibilityAction(named: "Ниже") {
+                        if !locked, let i = rows.firstIndex(of: row), i + 1 < rows.count { model.move([i], to: i + 2) }
+                    }
+                    .deleteDisabled(locked)
+                    .moveDisabled(locked)
                     .listRowBackground(Color.clear)
                 }
+                .onDelete { model.remove($0) }
+                .onMove { model.move($0, to: $1) }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)

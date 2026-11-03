@@ -1712,6 +1712,29 @@ export class PlayerController {
     void this.startAt(i, 0, 'skip');
   }
 
+  /** Wave only: replaces the upcoming entry with the reserve entry closest in tempo (then key) to the
+   * audible track; the audible track keeps playing. False when there is nothing to replace. */
+  swapNext(): boolean {
+    const q = this.state.queue, i = this.state.index + 1;
+    if (!this.isWave() || !q[i] || this.state.transition?.active) return false;
+    const cur = this.track(q[this.state.index]?.trackId)?.analysis;
+    // Same tempo rule as radio-taste.ts mix mode: half/double time counts as a match.
+    const fit = (e: QueueEntry) => {
+      const a = this.track(e.trackId)?.analysis;
+      if (!cur?.bpm || !a?.bpm) return 0;
+      const d = Math.min(...[0.5, 1, 2].map((r) => Math.abs(Math.log2(a.bpm! * r / cur.bpm!))));
+      return Math.max(-1, 1.5 - d * 8) + (cur.camelot && a.camelot === cur.camelot ? 0.3 : 0);
+    };
+    let best = i + 1;
+    for (let j = i + 2; j < q.length; j++) if (fit(q[j]) > fit(q[best])) best = j;
+    const queue = [...q];
+    if (best < queue.length) queue[i] = queue.splice(best, 1)[0];
+    else queue.splice(i, 1); // no reserve yet: the refill below brings the next pick
+    this.set({ queue });
+    this.onQueueChanged();
+    return true;
+  }
+
   toggleShuffle(): void {
     const on = !this.state.shuffle;
     const { queue, index } = this.state;

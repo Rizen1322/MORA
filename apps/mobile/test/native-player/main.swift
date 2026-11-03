@@ -38,3 +38,17 @@ precondition(mix.mixStart == 180 && mix.mixLength == 20, "window clipped to the 
 precondition(NativePlayerState(["duration": 200.0, "transitionStart": 250.0]).mixStart == nil)
 precondition(NativePlayerState(["duration": 200.0, "transitionStart": 10.0]).mixLength == 0)
 print("Native player: AutoMix window")
+
+precondition(NativePlayerState(["currentTrack": ["trackId": "t1"]]).trackId == "t1")
+let b = NativePlayerRow(id: "b", title: "", artist: "", automix: false, cover: nil)
+let c = NativePlayerRow(id: "c", title: "", artist: "", automix: false, cover: nil)
+let d = NativePlayerRow(id: "d", title: "", artist: "", automix: false, cover: nil)
+// Move: the edited order shows until the host reports it.
+let moved = NativeQueueEdit(order: ["c", "b", "d"])
+precondition(moved.apply([b, c, d]).map(\.id) == ["c", "b", "d"] && !moved.landed([b, c, d]) && moved.landed([c, b, d]))
+// Remove/swap: the row stays hidden; a Wave refill appended after the edit still counts as landed.
+let removed = NativeQueueEdit(order: ["b", "c"], removed: ["d"])
+precondition(removed.apply([b, c, d]).map(\.id) == ["b", "c"] && !removed.landed([b, c, d]) && removed.landed([b, c, NativePlayerRow(id: "e", title: "", artist: "", automix: false, cover: nil)]))
+let swapped = NativeQueueEdit(order: [], removed: ["b"])
+precondition(swapped.apply([b, c, d]).map(\.id) == ["c", "d"] && swapped.landed([d, c]))
+print("Native player: pending queue edits")

@@ -69,6 +69,11 @@ async function base64(blob: Blob): Promise<string> {
 
 type Args = Record<string, unknown>;
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
+/** Queue index of an entry after the audible one; -1 otherwise. */
+const upcoming = (id: unknown) => {
+  const i = controller.state.queue.findIndex((e) => e.entryId === id);
+  return i > controller.state.index ? i : -1;
+};
 const source = (v: unknown): PublicSource => {
   if (v === 'ytmusic' || v === 'youtube' || v === 'soundcloud') return v;
   throw new Error('Неизвестный источник');
@@ -100,6 +105,16 @@ export const commands: Record<string, (a: Args) => unknown> = {
     const ids = Array.isArray(a.ids) ? a.ids.filter((x): x is string => typeof x === 'string' && trackOf(x)?.status === 'ok') : [];
     controller.addToQueue(ids, a.next === true);
     useApp.getState().toast(a.next === true ? 'Сыграет следующим' : 'Добавлено в очередь');
+  },
+  /** Native player queue sheet: rows are upcoming entries, addressed by entryId; played ones are ignored. */
+  queueJump: (a) => { const i = upcoming(a.entryId); if (i >= 0) controller.jumpTo(i); },
+  queueRemove: (a) => { const i = upcoming(a.entryId); if (i >= 0) controller.removeAt(i); },
+  queueMove: (a) => {
+    const from = upcoming(a.entryId), to = upcoming(a.to);
+    if (from >= 0 && to >= 0) controller.move(from, to);
+  },
+  swap: () => {
+    if (!controller.swapNext()) throw new Error('Заменить следующий трек сейчас нельзя');
   },
   react: (a) => {
     const t = trackOf(str(a.id));

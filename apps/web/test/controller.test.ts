@@ -1402,6 +1402,20 @@ describe('continuous wave reservoir', () => {
     }
   });
 
+  it('swaps the upcoming wave track for the reserve entry closest in tempo, then key', () => {
+    const { controller, tracks } = waveSetup();
+    const set = (id: string, bpm: number, camelot?: string) => { tracks.get(id)!.analysis = { status: 'done', bpm, camelot }; };
+    set('a', 120, '8A'); set('b', 90); set('c', 100); set('d', 61, '8A'); set('e', 121, '3B');
+    controller.state = { ...controller.state, queue: [...controller.state.queue, ...['d', 'e'].map((id) => ({ entryId: id, trackId: id, origin: 'wave' as const }))] };
+    vi.mocked(api.yandexWave).mockResolvedValue(batch([]));
+    // d is half time (61 → 122) and shares the key, so it beats e (121, other key); b is discarded.
+    expect(controller.swapNext()).toBe(true);
+    expect(controller.state.queue.map((e) => e.trackId)).toEqual(['a', 'd', 'c', 'e']);
+    expect(controller.state.index).toBe(0);
+    controller.state = { ...controller.state, context: { type: 'library', label: 'Медиатека' } };
+    expect(controller.swapNext()).toBe(false);
+  });
+
   it('finishes the old radio entry after another context has already replaced the queue', () => {
     const { controller, w } = waveSetup();
     controller.state = {...controller.state,queue:[...controller.state.queue,...['d','e','f'].map(id=>({entryId:id,trackId:id,origin:'wave' as const}))]};

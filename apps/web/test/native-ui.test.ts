@@ -2,10 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   app: {} as any, listeners: [] as (() => void)[], radio: { active: false, loading: false, error: null as string | null },
   playTracks: vi.fn(), addToQueue: vi.fn(), toggle: vi.fn(), startWave: vi.fn(), startRadio: vi.fn(), toast: vi.fn(),
+  queue: { queue: [{ entryId: 'p' }, { entryId: 'n' }, { entryId: 'x' }, { entryId: 'y' }], index: 1 },
+  jumpTo: vi.fn(), removeAt: vi.fn(), move: vi.fn(), swapNext: vi.fn(),
 }));
 vi.mock('../src/store/app.ts', () => ({
   phone: true,
-  controller: { playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k) },
+  controller: { playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k),
+    get state() { return h.queue; }, jumpTo: (i: number) => h.jumpTo(i), removeAt: (i: number) => h.removeAt(i),
+    move: (a: number, b: number) => h.move(a, b), swapNext: () => h.swapNext() },
   trackOf: (id: string) => h.app.tracks.get(id),
   useApp: { getState: () => h.app, setState: vi.fn(), subscribe: (fn: () => void) => h.listeners.push(fn) },
 }));
@@ -49,6 +53,23 @@ describe('native shell bridge (page side)', () => {
     expect(h.startRadio).toHaveBeenCalledTimes(1);
     expect(() => commands.publicPlay({ source: 'ytmusic', id: 'x' })).toThrow('устарел');
     await expect(commands.cover({ url: 'https://evil/' })).rejects.toThrow();
+  });
+
+  it('edits only upcoming queue entries, addressed by entryId', async () => {
+    const { commands } = await import('../src/lib/native-ui.ts');
+    commands.queueJump({ entryId: 'y' });
+    commands.queueJump({ entryId: 'n' }); // audible
+    commands.queueJump({ entryId: 'p' }); // played
+    expect(h.jumpTo.mock.calls).toEqual([[3]]);
+    commands.queueRemove({ entryId: 'x' });
+    commands.queueRemove({ entryId: 'gone' });
+    expect(h.removeAt.mock.calls).toEqual([[2]]);
+    commands.queueMove({ entryId: 'y', to: 'x' });
+    commands.queueMove({ entryId: 'y', to: 'n' });
+    expect(h.move.mock.calls).toEqual([[3, 2]]);
+    h.swapNext.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    commands.swap({});
+    expect(() => commands.swap({})).toThrow('нельзя');
   });
 
   it('pushes the library only when it changed, and follows the shell on the page', async () => {

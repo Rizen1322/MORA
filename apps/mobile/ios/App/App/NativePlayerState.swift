@@ -12,7 +12,7 @@ struct NativePlayerRow: Equatable, Identifiable {
 
 struct NativePlayerState: Equatable {
     var active = false, playing = false, blending = false, artworkReady = false
-    var title = "", artist = "", entryId = ""
+    var title = "", artist = "", entryId = "", trackId = ""
     var position = 0.0, duration = 0.0
     var upcoming: [NativePlayerRow] = []
     /// Where the AutoMix transition into the next track starts and how long it lasts (seconds), if planned.
@@ -27,6 +27,7 @@ struct NativePlayerState: Equatable {
         artworkReady = value["artworkReady"] as? Bool == true
         title = current["title"] as? String ?? ""
         artist = current["artist"] as? String ?? ""
+        trackId = current["trackId"] as? String ?? ""
         entryId = value["entryId"] as? String ?? current["entryId"] as? String ?? ""
         duration = max(0, value["duration"] as? Double ?? 0)
         position = min(duration, max(0, value["position"] as? Double ?? 0))
@@ -67,6 +68,22 @@ struct NativePlayerState: Equatable {
         let tail = manifest.lastIndex { seen.contains($0["entryId"] as? String ?? "") }.map { $0 + 1 } ?? 0
         for item in manifest[tail...] { add(item, automix: false) }
         return rows
+    }
+}
+
+/// A queue edit made in the sheet, shown until the host reports it: the page re-prepares the
+/// changed tracks first, and the List would otherwise snap back to the old order meanwhile.
+struct NativeQueueEdit {
+    var order: [String], removed: Set<String> = []
+    var at = Date()
+
+    func apply(_ rows: [NativePlayerRow]) -> [NativePlayerRow] {
+        let byId = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }), known = Set(order)
+        return order.compactMap { byId[$0] } + rows.filter { !known.contains($0.id) && !removed.contains($0.id) }
+    }
+    /// The host's own rows show the edit (a Wave refill may have appended more after it).
+    func landed(_ rows: [NativePlayerRow]) -> Bool {
+        rows.map(\.id).starts(with: order) && !rows.contains { removed.contains($0.id) }
     }
 }
 
