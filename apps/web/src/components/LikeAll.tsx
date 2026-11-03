@@ -5,7 +5,7 @@ import { likeAllSummary, likeEach, toLike } from '../lib/like-all.ts';
 import { useApp } from '../store/app.ts';
 
 /** "Like all" for a playlist, album or artist page. */
-export function LikeAllButton<T>({ items, reaction, like, parallel }: { items: T[]; reaction: (item: T) => number; like: (item: T) => Promise<void>; parallel?: number }) {
+export function LikeAllButton<T>({ items, reaction, like, parallel, menu = false }: { items: T[]; reaction: (item: T) => number; like: (item: T) => Promise<void>; parallel?: number; menu?: boolean }) {
   const [busy, setBusy] = useState(false);
   const pending = toLike(items, reaction);
   const run = async () => {
@@ -16,7 +16,7 @@ export function LikeAllButton<T>({ items, reaction, like, parallel }: { items: T
     } finally { setBusy(false); }
   };
   return (
-    <button className="btn btn-ghost" disabled={busy || !pending.length} onClick={() => void run()} aria-label={pending.length ? `Лайкнуть все: ${pending.length}` : 'Всё уже в любимом'}>
+    <button className={menu ? undefined : 'btn btn-ghost'} role={menu ? 'menuitem' : undefined} disabled={busy || !pending.length} onClick={(e) => { if (menu) e.stopPropagation(); if (!busy) void run(); }} aria-label={pending.length ? `Лайкнуть все: ${pending.length}` : 'Всё уже в любимом'}>
       <Heart size={18} weight={pending.length ? 'regular' : 'fill'} /> {busy ? 'Добавляю в любимое…' : pending.length ? 'Лайкнуть все' : 'Всё в любимом'}
     </button>
   );
@@ -28,6 +28,6 @@ export async function likeLibraryTrack(t: Pick<Track, 'id'>): Promise<void> {
   useApp.getState().patchTrack(t.id, { reaction: result.value, reactionSync: result.sync });
 }
 
-export function LikeAllTracks({ tracks }: { tracks: Track[] }) {
-  return <LikeAllButton items={tracks} reaction={(t) => t.reaction} like={likeLibraryTrack} />;
+export function LikeAllTracks({ tracks, menu = false }: { tracks: Track[]; menu?: boolean }) {
+  return <LikeAllButton items={tracks} reaction={(t) => t.reaction} like={likeLibraryTrack} menu={menu} />;
 }

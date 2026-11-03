@@ -1,0 +1,24 @@
+{
+  "version": "0.3.28",
+  "sourceCommit": "7d4bb2f",
+  "installerSha256": "580f099756a9da156c0694543c931b73075f5105001e07b1162a0c977afc1801",
+  "bytes": 170271670,
+  "tests": 1215,
+  "testFiles": 159,
+  "plannerComparisons": 266,
+  "newPlannerComparisons": 110,
+  "frozenStationSeconds": 45,
+  "initialIndex": 0,
+  "finalIndex": 9,
+  "newPlaysDuringFreeze": 9,
+  "recovery": {
+    "muted": true,
+    "queue": true,
+    "cleanExit": true,
+    "dialogTest": "main inspector mock, no visible window",
+    "position": true,
+    "volume": 0.35,
+    "output": true
+  },
+  "releaseUrl": "https://github.com/Rizen1322/MORA/releases/tag/v0.3.28"
+}

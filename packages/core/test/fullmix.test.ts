@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { effectiveExit, fullMixCost, localClashFraction, pickupLost, voiceUnknown, withBassShift } from '../src/plan/fullmix.ts';
+import { effectiveExit, hasMaterialMixRegression, leadExposure, fullMixCost, localClashFraction, outgoingAfterArrival, pickupLost, voiceUnknown, withBassShift, type FullMixCost } from '../src/plan/fullmix.ts';
 import { planFinalists, planTransition } from '../src/plan/planner.ts';
-import { chooseByRender, finalistSpans, renderMetrics } from '../src/engine/render-check.ts';
+import { chooseByRender, finalistSpans, renderMetrics, selectRenderedFinalist, type RenderMetrics } from '../src/engine/render-check.ts';
 import { DEFAULT_AUTOMIX_SETTINGS as S, ANALYZER_VERSION, type PlannerTrack, type TrackAnalysis, type TransitionPlan } from '../src/types.ts';
 import { fixture } from './helpers.ts';
 
@@ -35,6 +35,16 @@ function blend(D: number, fadeFrom: number): TransitionPlan {
 }
 
 describe('full-mix rules without vocal maps', () => {
+  it('detects meaningful new collisions without blocking small changes or missing measurements', () => {
+    const baseline = { leadRisk: 3, leadRun: 2, doubleBass: 0, tonalClash: 0, spectralDamage: 0 };
+    for (const altered of [{ leadRisk: 5 }, { leadRun: 4 }, { doubleBass: 2 }, { tonalClash: 2 }, { spectralDamage: 2 }])
+      expect(hasMaterialMixRegression(baseline, { ...baseline, ...altered })).toBe(true);
+    expect(hasMaterialMixRegression(baseline, { ...baseline, leadRisk: 3.5, doubleBass: 0.5 })).toBe(false);
+    expect(hasMaterialMixRegression(baseline, { leadRisk: NaN })).toBe(false);
+    // Actual #198 moved its reported exposure slightly down, not up.
+    expect(hasMaterialMixRegression({ leadRisk: 8.803, leadRun: 8.641, spectralDamage: 1.857 },
+      { leadRisk: 8.662, leadRun: 8.525, spectralDamage: 2.327 })).toBe(false);
+  });
   it('distinguishes unknown voices from measured ones (research §3.2)', () => {
     const plain = song('a', 120).analysis!, measured = song('b', 120, { voice: true }).analysis!;
     expect(voiceUnknown(plain, S)).toBe(true);
@@ -61,14 +71,92 @@ describe('full-mix rules without vocal maps', () => {
     expect(pickupLost(B, 31.5)).toBe(1);
   });
 
-  it('counts overlap risks as shares of the overlap, so a longer blend is not punished for its length', () => {
+  it('counts both exposure share and absolute duration of possible lead conflicts', () => {
     const A = song('a', 120).analysis!, B = song('b', 120).analysis!;
-    const both = (D: number) => ({ ...blend(D, D - 1), automation: [{ deck: 'A' as const, lane: 'gain' as const, points: [[0, 1], [D, 1]] as [number, number][] },
+    const both = (D: number) => ({ ...blend(D, D - 1), aExit: 180 - D, automation: [{ deck: 'A' as const, lane: 'gain' as const, points: [[0, 1], [D, 1]] as [number, number][] },
       { deck: 'B' as const, lane: 'gain' as const, points: [[0, 1], [D, 1]] as [number, number][] }] });
     const short = fullMixCost(both(6), A, B, S)!, long = fullMixCost(both(18), A, B, S)!;
     expect(long.leadRisk).toBeGreaterThan(short.leadRisk);
     expect(long.leadRisk / 18).toBeCloseTo(short.leadRisk / 6, 1);
     expect(long.doubleBass / 18).toBeCloseTo(short.doubleBass / 6, 1);
+    expect(long.leadRun).toBeGreaterThan(short.leadRun);
+    expect(long.total).toBeGreaterThan(short.total);
+  });
+
+  it('keeps attenuated lead overlap visible below the former hard 0.5 threshold', () => {
+    const A = song('a', 120).analysis!, B = song('b', 120).analysis!;
+    const p = blend(12, 10);
+    p.automation = ['A', 'B'].map(deck => ({ deck: deck as 'A' | 'B', lane: 'gain', points: [[0, 0.4], [12, 0.4]] }));
+    expect(leadExposure(p, A, B).seconds).toBeCloseTo(4.8, 1);
+    p.bDelay = 6;
+    expect(leadExposure(p, A, B).seconds).toBeCloseTo(2.4, 1);
+  });
+  it('estimates a quiet full-spectrum remainder only after delayed B arrives, including normalization', () => {
+    const A = song('a', 120).analysis!, B = song('b', 120).analysis!;
+    const p = { ...blend(12, 11), bDelay: 4, automation: [
+      { deck: 'A' as const, lane: 'gain' as const, points: [[0, 0.2], [12, 0.2]] as [number, number][] },
+      { deck: 'B' as const, lane: 'gain' as const, points: [[0, 0], [2, 1], [8, 1]] as [number, number][] },
+    ] };
+    expect(outgoingAfterArrival(p, A, B)!.residualSeconds).toBeCloseTo(6, 0);
+    const quiet = outgoingAfterArrival(p, A, B)!;
+    expect(quiet.quietBandSeconds).toBeCloseTo(6, 0);
+    expect(quiet.totalAudibleSeconds).toBe(quiet.quietBandSeconds);
+    expect(quiet.loudSeconds).toBe(0);
+    const loud = outgoingAfterArrival({ ...p, gainA: 10 }, A, B)!;
+    expect(loud.loudSeconds).toBeCloseTo(6, 0);
+    expect(loud.quietBandSeconds).toBe(0);
+    expect(loud.totalAudibleSeconds).toBe(loud.loudSeconds);
+    expect(outgoingAfterArrival({ ...p, gainA: -20 }, A, B)!.residualSeconds).toBe(0);
+    const mutedB = { ...p, automation: [...p.automation, { deck: 'B' as const, lane: 'mid' as const, points: [[0, 0], [8, 0]] as [number, number][] }] };
+    expect(outgoingAfterArrival(mutedB, A, B)!.seconds).toBe(0);
+  });
+  it('does not call an audible full mix voiceless after killing only its middle band', () => {
+    const A = song('a', 120).analysis!, B = song('b', 120).analysis!, p = blend(12, 11);
+    p.automation = ['A', 'B'].flatMap(deck => [
+      { deck: deck as 'A' | 'B', lane: 'gain' as const, points: [[0, 1], [12, 1]] as [number, number][] },
+      { deck: deck as 'A' | 'B', lane: 'mid' as const, points: [[0, 0], [12, 0]] as [number, number][] },
+    ]);
+    const cost = fullMixCost(p, A, B, S)!;
+    expect(cost.leadRisk).toBeGreaterThan(5);
+    expect(cost.spectralDamage).toBeGreaterThan(0);
+  });
+  it('penalizes consuming a substantial opening under a muted fader, but not holding B before playback', () => {
+    const A = song('a', 120).analysis!, B = song('b', 120).analysis!, p = blend(12, 11);
+    p.automation = [{ deck: 'A', lane: 'gain', points: [[0, 1], [12, 0]] }, { deck: 'B', lane: 'gain', points: [[0, 0], [8, 0], [8.2, 1], [12, 1]] }];
+    expect(fullMixCost(p, A, B, S)!.openingSuppression).toBeGreaterThan(7);
+    const delayed = { ...p, bDelay: 8, automation: [p.automation[0], { deck: 'B' as const, lane: 'gain' as const, points: [[0, 0], [0.12, 1], [4, 1]] as [number, number][] }] };
+    expect(fullMixCost(delayed, A, B, S)!.openingSuppression).toBeLessThan(0.3);
+  });
+
+  it('separates the longest continuous lead collision from cumulative exposure', () => {
+    const A = song('a', 120).analysis!, B = song('b', 120).analysis!, p = blend(12, 11);
+    p.automation = [
+      { deck: 'A', lane: 'gain', points: [[0, 1], [12, 1]] },
+      { deck: 'B', lane: 'gain', points: [[0, 1], [3.9, 1], [4, 0], [8, 0], [8.1, 1], [12, 1]] },
+    ];
+    const exposure = leadExposure(p, A, B);
+    expect(exposure.seconds).toBeCloseTo(8, 1);
+    expect(exposure.run).toBeCloseTo(4, 1);
+  });
+
+  it('penalizes a dense 52-second ending cut more than a 14-second cut', () => {
+    const A = song('a', 120).analysis!, B = song('b', 120).analysis!;
+    const p = blend(12, 11);
+    const modest = fullMixCost({ ...p, aExit: 154 }, A, B, S)!;
+    const large = fullMixCost({ ...p, aExit: 116 }, A, B, S)!;
+    expect(large.cutA).toBeGreaterThan(modest.cutA + 2);
+    expect(large.total).toBeGreaterThan(modest.total + 0.4);
+  });
+  it('does not mistake a brief sparse midpoint for an entirely sparse discarded ending', () => {
+    const A = song('a', 120).analysis!, B = song('b', 120).analysis!;
+    const p = { ...blend(12, 11), aExit: 116 };
+    const dense = fullMixCost(p, A, B, S)!;
+    const midpoint = Math.floor((effectiveExit(p, A).source + A.audibleEnd) / 2 * A.curves.rate);
+    A.curves.midDensity[midpoint] = 0;
+    const mostlyDense = fullMixCost(p, A, B, S)!;
+    expect(mostlyDense.cutA).toBeCloseTo(dense.cutA, 1);
+    A.curves.midDensity.fill(0, Math.floor(effectiveExit(p, A).source * A.curves.rate));
+    expect(fullMixCost(p, A, B, S)!.cutA).toBeLessThan(mostlyDense.cutA);
   });
 
   it('reads clashing local keys only where both are confident (P9)', () => {
@@ -98,9 +186,29 @@ describe('planner integration', () => {
   it('plans unknown voices as a full mix and keeps measured-voice plans on the stem path', () => {
     const stemless = planTransition(song('a', 120), song('b', 122), S);
     expect(stemless.debug.fullMix).toMatchObject({ policy: 'full-mix-1' });
-    expect((stemless.debug.fullMix as { candidates: unknown[] }).candidates.length).toBeGreaterThanOrEqual(2);
+    const candidates = (stemless.debug.fullMix as { candidates: { name: string }[] }).candidates;
+    // A phrase grid alone is an audition hypothesis, not a measured closure.
+    expect(candidates.some(c => c.name === 'section-handoff')).toBe(false);
+    expect(candidates.some(c => c.name === 'lead-handoff')).toBe(false);
+    expect(candidates.some(c => c.name === 'clean-out')).toBe(false);
+    expect(candidates.some(c => c.name === 'sequential-relay')).toBe(false);
+    expect(candidates.some(c => c.name === 'shorter')).toBe(true);
     const voiced = planTransition(song('a', 120, { voice: true }), song('b', 122, { voice: true }), S);
     expect(voiced.debug.fullMix).toBeUndefined();
+  });
+
+  it('keeps the trusted local beatmatch as an option without fabricating a voiceless mid kill', () => {
+    const a = song('a', 120), b = song('b', 122);
+    for (const [an, start, end] of [[a.analysis!, 140, 180], [b.analysis!, 0, 40]] as const) {
+      an.beatRegions = [{ ...an.beat!, start, end, beats: an.beat!.beats.filter(t => t >= start && t < end), downbeats: an.beat!.downbeats.filter(t => t >= start && t < end) }];
+      an.beat = null;
+    }
+    const finalists = planFinalists(a, b, S);
+    const p = finalists.find(p => p.beatAlign?.regions)!;
+    expect(p.beatAlign?.regions).toBeDefined();
+    expect((p.debug.fullMix as { candidates: { name: string }[] }).candidates.some(c => c.name === 'lead-handoff')).toBe(false);
+    expect(p.aExit).toBeGreaterThanOrEqual(140);
+    expect(p.aExit + p.duration).toBeLessThanOrEqual(180.1);
   });
 
   it('offers the selected plan first among render finalists, with bass variants', () => {
@@ -108,8 +216,30 @@ describe('planner integration', () => {
     const finalists = planFinalists(a, b, S), selected = planTransition(a, b, S);
     expect(finalists[0]).toEqual(selected);
     expect(finalists.length).toBeGreaterThan(1);
-    expect(finalists.some(p => typeof p.debug.bassShift === 'number')).toBe(true);
+    expect(finalists.some(p => p.beatAlign)).toBe(true);
+    // A native-time short handoff has no bass exchange to shift; the beatmatched control remains.
+    if (selected.method === 'beatmatch_blend') expect(finalists.some(p => typeof p.debug.bassShift === 'number')).toBe(true);
     expect(planFinalists(song('a', 120, { voice: true }), song('b', 122, { voice: true }), S)).toHaveLength(1);
+  });
+
+  it('recomputes musical costs for bass-shift finalists and leaves unavailable fields unknown', () => {
+    const a = song('a', 120), b = song('b', 122), finalists = planFinalists(a, b, S);
+    const top = finalists[0], topFull = top.debug.fullMix as { this: string; candidates: { name: string; cost: FullMixCost | null }[] };
+    const topCost = topFull.candidates.find(c => c.name === topFull.this)!.cost!;
+    const shifted = finalists.find(p => typeof p.debug.bassShift === 'number')!;
+    const shiftedFull = shifted.debug.fullMix as { this: string; candidates: { name: string; cost: FullMixCost | null }[] };
+    const shiftedCost = shiftedFull.candidates.find(c => c.name === shiftedFull.this)!.cost!;
+    expect(shiftedFull.this).toMatch(/^bass-shift-/);
+    expect(shiftedCost).toEqual(fullMixCost(shifted, a.analysis!, b.analysis!, S));
+    expect(shiftedCost).not.toBe(topCost);
+    // The final render guard reads the shifted record by its own `this` key.
+    const regressed = { ...shiftedCost, total: topCost.total - 0.2, doubleBass: topCost.doubleBass + 2 };
+    const guardedShift = { ...shifted, debug: { ...shifted.debug, fullMix: { ...shiftedFull,
+      candidates: shiftedFull.candidates.map(c => c.name === shiftedFull.this ? { ...c, cost: regressed } : c) } } };
+    const render = (cost: number): RenderMetrics => ({ dipLU: -1, bumpLU: 0, limiterDb: 0, lowHoleSeconds: 0, flams: 0, underruns: 0, cost });
+    expect(selectRenderedFinalist([{ plan: top, m: render(1) }, { plan: guardedShift, m: render(0.5) }]).plan).toBe(top);
+    // Older costs without newly-added metrics remain unknown; do not synthesize zeros.
+    expect(hasMaterialMixRegression({ leadRisk: 1 }, { spectralDamage: 2 })).toBe(false);
   });
 
   it('does not throw the echo over a dense, unknown last bar of A (P7)', () => {
@@ -147,6 +277,7 @@ describe('render check of finalists (P10)', () => {
   it('measures every finalist on the same PCM and keeps a clean planner choice', async () => {
     const finalists = planFinalists(a, b, S);
     expect(finalists.length).toBeGreaterThan(1);
+    expect(finalists.some(p => (p.debug.fullMix as { this?: string } | undefined)?.this === 'baseline')).toBe(true);
     const chosen = await chooseByRender(finalists, span(fa), span(fb));
     const check = chosen.debug.renderCheck as { candidates: { metrics: { cost: number } | null }[]; selected: string };
     expect(check.candidates).toHaveLength(finalists.length);
@@ -211,5 +342,74 @@ describe('render check of finalists (P10)', () => {
   it('covers every finalist with one source span per deck', () => {
     const finalists = planFinalists(a, b, S), s = finalistSpans(finalists);
     for (const p of finalists) { expect(s.a[0]).toBeLessThanOrEqual(p.aExit - 2); expect(s.b[0]).toBeLessThanOrEqual(p.bEntry); }
+  });
+});
+
+
+describe('render policy preserves musical intent', () => {
+  const metrics = (overrides: Partial<RenderMetrics> = {}): RenderMetrics => ({ dipLU: -1, bumpLU: 0.5, limiterDb: 0, lowHoleSeconds: 0, flams: 0, underruns: 0, cost: 0, ...overrides });
+  const candidate = (name: string, duration: number, music: number, bias = 0): TransitionPlan => ({ ...blend(duration, duration - 1), id: name,
+    debug: { fullMix: { this: name, candidates: [{ name, cost: { total: music } }] }, ratingFeedback: { candidates: [{ name, bias }] } } });
+
+  it('cannot return a double-length overlap even when technical cost is lower', () => {
+    const base = { plan: candidate('short', 16, 0.2), m: metrics({ cost: 1 }) };
+    const long = { plan: candidate('long', 32, 0), m: metrics() };
+    expect(selectRenderedFinalist([base, long])).toBe(base);
+  });
+
+  it('can compare an event handoff with a long blend without relaxing render damage checks', () => {
+    const base = { plan: candidate('blend', 16, 1), m: metrics({ cost: 1 }) };
+    const handoff = { plan: { ...candidate('handoff', 1.2, 0.2), debug: {
+      ...candidate('handoff', 1.2, 0.2).debug,
+      humanScenario: { policy: 'human-1', kind: 'phrase-handoff', auditionOnly: false },
+    } }, m: metrics() };
+    expect(selectRenderedFinalist([base, handoff])).toBe(handoff);
+    expect(selectRenderedFinalist([base, { ...handoff, m: metrics({ underruns: 1 }) }])).toBe(base);
+    expect(selectRenderedFinalist([base, { ...handoff, m: metrics({ dipLU: -8 }) }])).toBe(base);
+  });
+
+  it('includes music costs and rating preferences in the final choice', () => {
+    const base = { plan: candidate('preferred', 16, 0.5, 0.15), m: metrics({ cost: 0.5 }) };
+    const collision = { plan: candidate('collision', 16, 1.2), m: metrics() };
+    expect(selectRenderedFinalist([base, collision])).toBe(base);
+    const close = { plan: candidate('close', 16, 0.5, -0.15), m: metrics({ cost: 0.3 }) };
+    expect(selectRenderedFinalist([base, close])).toBe(base);
+  });
+
+  it('cannot undo the planner musical guard or promote a manual audition', () => {
+    const base = { plan: candidate('base', 16, 1), m: metrics({ cost: 1 }) };
+    const manual = { plan: candidate('manual', 16, 0), m: metrics() };
+    manual.plan.debug.humanScenario = { auditionOnly: true };
+    expect(selectRenderedFinalist([base, manual])).toBe(base);
+    delete manual.plan.debug.humanScenario;
+    manual.plan.debug.fullMix = { this: 'manual', candidates: [{ name: 'manual', automaticEligible: false, cost: { total: 0 } }] };
+    expect(selectRenderedFinalist([base, manual])).toBe(base);
+  });
+
+  it('allows a clear safe flam reduction smaller than the old 0.3 margin', () => {
+    const base = { plan: candidate('base', 16, 0.5), m: metrics({ flams: 10, cost: 0.81 }) };
+    const shifted = { plan: candidate('shifted', 16, 0.5), m: metrics({ flams: 4, cost: 0.55 }) };
+    expect(selectRenderedFinalist([base, shifted])).toBe(shifted);
+    expect(selectRenderedFinalist([base, { ...shifted, m: metrics({ flams: 4, cost: 0.55, dipLU: -5 }) }])).toBe(base);
+  });
+  it('does not trade a smoother level for a major new double-attack regression', () => {
+    const base = { plan: candidate('base', 16, 0.5), m: metrics({ flams: 6, dipLU: -4, cost: 1.1 }) };
+    const doubled = { plan: candidate('doubled', 16, 0.4), m: metrics({ flams: 19, dipLU: -0.4, cost: 0.74 }) };
+    expect(selectRenderedFinalist([base, doubled])).toBe(base);
+  });
+  it('does not trade a better rendered level for a substantial measured lead or bass regression', () => {
+    const make = (name: string, extra: Partial<{ leadRisk: number; leadRun: number; doubleBass: number; tonalClash: number; spectralDamage: number }>) => {
+      const plan = candidate(name, 16, 0.3);
+      plan.debug.fullMix = { this: name, candidates: [{ name, automaticEligible: true,
+        cost: { total: 0.3, leadRisk: 2, leadRun: 2, doubleBass: 0, tonalClash: 0, spectralDamage: 0, ...extra } }] };
+      return plan;
+    };
+    const base = { plan: make('base', {}), m: metrics({ dipLU: -3, cost: 0.7 }) };
+    for (const extra of [{ leadRun: 5 }, { leadRisk: 5 }, { doubleBass: 2 }, { tonalClash: 2 }, { spectralDamage: 2 }]) {
+      const alternative = { plan: make('alternative', extra), m: metrics({ dipLU: -0.5, cost: 0 }) };
+      expect(selectRenderedFinalist([base, alternative])).toBe(base);
+    }
+    const improved = { plan: make('improved', { leadRun: 2.2 }), m: metrics({ dipLU: -0.5, cost: 0 }) };
+    expect(selectRenderedFinalist([base, improved])).toBe(improved);
   });
 });

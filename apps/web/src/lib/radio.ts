@@ -25,6 +25,13 @@ async function resolveSeed(seed: { title: string; artist: string }, signal: Abor
 
 /** Multi-seed service candidates, filtered/ranked locally with current reactions on every refill. */
 export async function startRadio(seed?: { title: string; artist: string }): Promise<void> {
+  if (controller.autonomousRadio) {
+    useRadio.setState({ loading: true, error: null });
+    try { await controller.startDesktopStation({ kind: 'online', ...(seed ? { seed } : {}) }); }
+    catch (e) { const error = (e as Error).message; useRadio.setState({ error }); useApp.getState().toast(error, 'error'); }
+    finally { useRadio.setState({ loading: false }); }
+    return;
+  }
   const request = ++startRequest, intent = controller.intentVersion;
   startAbort?.abort(); session?.abort.abort();
   const abort = new AbortController(); startAbort = abort; startIntent = intent;
@@ -33,7 +40,9 @@ export async function startRadio(seed?: { title: string; artist: string }): Prom
     // Unlock during the launch gesture, before recommendation network requests.
     await controller.unlockAudio();
     if (request !== startRequest || intent !== controller.intentVersion) return;
-    const seeds = tasteSeeds(library(), seedCursor++);
+    const history = await api.history(200).catch(() => ({ items: [] }));
+    if (request !== startRequest || intent !== controller.intentVersion) return;
+    const seeds = tasteSeeds(library(), seedCursor++ + (history.items[0]?.id ?? 0));
     const primary = seed ?? seeds.shift();
     if (!primary) throw new Error('Поставьте лайк или запустите радио по найденному треку — так появится основа для подбора.');
     const resolved = await Promise.allSettled([primary, ...seeds.slice(0, 2)].map(seed => resolveSeed(seed, abort.signal)));
@@ -46,6 +55,10 @@ export async function startRadio(seed?: { title: string; artist: string }): Prom
     const pool = await candidates(found.map(t => t.externalId), abort.signal);
     if (request !== startRequest || intent !== controller.intentVersion) return;
     const seen = new Set<string>();
+    for (const play of history.items) {
+      const track = useApp.getState().tracks.get(play.trackId);
+      if (track && Date.now() - play.startedAt < 2 * 3600000) seen.add(radioIdentity(track));
+    }
     // The explicit seed may be played again deliberately; subsequent picks respect recency.
     let playlist: PublicTrack[];
     if (seed) {
@@ -53,7 +66,10 @@ export async function startRadio(seed?: { title: string; artist: string }): Prom
       seen.add(radioIdentity(first)); seen.add(`${first.audioProvider}:${first.externalId}`);
       playlist = [first, ...rankRadio([...found.slice(1), ...pool], library(), seen, [first.artist], tuning(), primary)];
     } else {
-      playlist = rankRadio([...found, ...pool], library(), seen, [], tuning(), primary);
+      // Liked seeds describe taste; they must not become the same compulsory opening songs.
+      for (const track of found) { seen.add(radioIdentity(track)); seen.add(`${track.audioProvider}:${track.externalId}`); }
+      const offset = Math.floor(Math.random() * pool.length);
+      playlist = rankRadio([...pool.slice(offset), ...pool.slice(0, offset)], library(), seen, [], tuning(), primary);
     }
     if (!playlist.length) throw new Error('Пока нет свежих рекомендаций. Попробуйте радио по другому треку.');
     // play() changes transport intent itself; only pending recommendation requests need cancelling.
@@ -73,7 +89,7 @@ controller.subscribe(() => {
   const s = session;
   if (!s && useRadio.getState().loading && controller.intentVersion !== startIntent) startAbort?.abort();
   if (!s) return;
-  if (publicPlayer.sessionVersion !== s.owner || publicPlayer.remaining < 0) {
+  if (controller.state.context?.type !== 'online-radio' || publicPlayer.sessionVersion !== s.owner || publicPlayer.remaining < 0) {
     s.abort.abort(); session = null; useRadio.setState({ active: false }); return;
   }
   if (s.loading || Date.now() < s.retryAt || publicPlayer.remaining >= 10) return;
@@ -115,6 +131,7 @@ async function station(seeds: Seed[], queue: QueueEntry[], anchor: Seed, signal:
 }
 
 function followStation(found: Station, items: PublicTrack[], abort: AbortController): void {
+  if (controller.autonomousRadio) { void controller.configureDesktopStation({ kind: 'online' }); return; }
   session?.abort.abort();
   session = { seen: found.seen, loading: false, retryAt: 0, owner: publicPlayer.follow(items.map(asCatalog)), cursor: 0, abort };
   useRadio.setState({ active: true, error: null });
@@ -238,6 +255,7 @@ export function startSimilar(t: Track): Promise<void> {
 
 /** Radio by an artist: seeds from their songs in the library (liked first), or the catalog's popular ones. */
 export function startArtistRadio(artist: string, songs: Seed[] = []): Promise<void> {
+  if (controller.autonomousRadio) return controller.startDesktopStation({ kind: 'online', seed: artistSeeds(artist, library(), songs)[0] }, { type: 'online-radio', label: `Радио: ${artist}` });
   return buttonStation(async (request, abort) => {
     await controller.unlockAudio();
     const intent = controller.intentVersion;

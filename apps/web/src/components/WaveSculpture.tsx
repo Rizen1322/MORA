@@ -3,6 +3,7 @@ import { controller, useApp } from '../store/app.ts';
 import { useReducedMotion } from './common.tsx';
 import { AudibleMotion, audibleDelay } from '../lib/audible-motion.ts';
 import { startSculptureCanvas } from '../lib/sculpture-canvas.ts';
+import { WaveStill } from './WaveStill.tsx';
 
 /** Lazy, isolated WebGL scene: no changes to the audio graph or playback clock. */
 export function WaveSculpture({ energy }: { energy: number }) {
@@ -169,5 +170,5 @@ export function WaveSculpture({ energy }: { energy: number }) {
     }).catch(fallback);
     return () => { disposed = true; cleanup();fallbackCleanup?.(); };
   }, [reduced, covered, graphics]);
-  return <div className="wave-sculpture" ref={host} aria-hidden="true"><div className="wave-sculpture-fallback" /></div>;
+  return <div className="wave-sculpture" ref={host} data-motion={reduced ? 'still' : 'full'} aria-hidden="true"><div className="wave-sculpture-fallback"><WaveStill /></div></div>;
 }

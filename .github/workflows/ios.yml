@@ -1,0 +1,61 @@
+name: iOS unsigned IPA
+
+on:
+  push:
+    branches: [ios]
+    paths:
+      - 'apps/mobile/**'
+      - 'apps/web/**'
+      - 'apps/server/**'
+      - 'packages/**'
+      - 'package*.json'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Test native diagnostic WAV generator
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeProbeWave.swift apps/mobile/test/native-wave/main.swift -o "$RUNNER_TEMP/mora-wave-check"
+          "$RUNNER_TEMP/mora-wave-check"
+      - name: Test native prepared-track timeline
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeMixTimeline.swift apps/mobile/test/native-timeline/main.swift -o "$RUNNER_TEMP/mora-timeline-check"
+          "$RUNNER_TEMP/mora-timeline-check"
+      - name: Test native artwork thumbnail decoder
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeArtworkImage.swift apps/mobile/test/native-artwork/main.swift -o "$RUNNER_TEMP/mora-artwork-check"
+          "$RUNNER_TEMP/mora-artwork-check"
+      - name: Build unsigned device IPA
+        run: sh apps/mobile/scripts/ios-mac.sh --ipa
+      - name: Test native media preparation
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeProbeWave.swift apps/mobile/ios/App/App/NativePCMDecoder.swift apps/mobile/test/native-preparation/main.swift -o "$RUNNER_TEMP/mora-preparation-check"
+          "$RUNNER_TEMP/mora-preparation-check"
+      - name: Compare the Swift AutoMix mixer with Node
+        run: node apps/mobile/scripts/check-native-dsp.mjs
+      - name: Test native HTTP preparation transport
+        run: node apps/mobile/scripts/check-native-http.mjs --long-analysis
+      - name: Test the real native host in a background iOS app
+        run: node apps/mobile/scripts/check-native-host.mjs
+      - name: Test the native queue on PCM files
+        run: node apps/mobile/scripts/check-native-mix.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MORA-unsigned-ipa
+          path: apps/mobile/MORA-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14

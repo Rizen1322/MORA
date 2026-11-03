@@ -398,6 +398,13 @@ export class YtDlp {
   }
 
   /** Downloads the published audio (no re-encoding) into a fresh staging folder. */
+  async nativeSource(url: string): Promise<import('@automix/core/native-preparation.ts').NativeMediaSource> {
+    const target = checkedMediaUrl(url);
+    const audio = /soundcloud\.com/.test(target)
+      ? await soundcloudAudio(target)
+      : await youtubeAudio(ytId(target) ?? '');
+    return { kind: audio.kind, url: audio.url, headers: audio.headers, ext: audio.ext };
+  }
   async download(url: string, stagingDir: string, opts: { priority: Priority; signal?: AbortSignal; maxMb?: number; onProgress?: (fraction: number) => void }): Promise<{ file: string; info: Info }> {
     const target = checkedMediaUrl(url);
     await fsp.mkdir(stagingDir, { recursive: true });

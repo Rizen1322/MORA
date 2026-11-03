@@ -1,0 +1,3435 @@
+{
+  "generatedAt": "2026-10-26T15:50:34.001Z",
+  "database": "C:\\Users\\aivaz\\AppData\\Local\\MORA\\data\\automix.sqlite",
+  "totalLogged": 179,
+  "rated": 18,
+  "good": 4,
+  "bad": 14,
+  "settings": {
+    "enabled": true,
+    "maxStretchPercent": 12,
+    "maxBlendSeconds": 32,
+    "eqHandoff": true,
+    "respectAlbums": true,
+    "loudnessTarget": -16,
+    "style": "auto",
+    "fallbackSeconds": 6,
+    "entryMode": "smart",
+    "maxEntrySkipSeconds": 45,
+    "mixOnNext": false,
+    "stemMixing": true,
+    "loopBridges": true,
+    "masterTempo": true,
+    "djPhrasing": true
+  },
+  "counts": {
+    "am-planner-v13-length-1/crossfade": {
+      "good": 1,
+      "bad": 2
+    },
+    "am-planner-v13-length-1/beatmatch_blend": {
+      "good": 3,
+      "bad": 12
+    }
+  },
+  "transitions": [
+    {
+      "id": 112,
+      "executedAt": "2026-10-25T18:37:28.280Z",
+      "rating": "bad",
+      "reason": null,
+      "from": {
+        "id": "56a0d721-4613-48a4-9cb2-bc3b0871a024",
+        "artist": "will.i.am, Jamie Foxx, Anne Hathaway",
+        "title": "Hot Wings (I Wanna Party)"
+      },
+      "to": {
+        "id": "bc7b42ef-3443-40f9-a000-d248bab5badf",
+        "artist": "Kendrick Lamar, Dody6",
+        "title": "hey now"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "crossfade",
+      "duration": 17.25,
+      "aExit": 116.9,
+      "bEntry": 0.3,
+      "bDelay": 0,
+      "nominalCutSeconds": null,
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "preserve-start",
+        "reason": "полный микс: следующий трек входит со своего начала, без срезанного затакта и вступления",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "crossfade",
+            "variant": "intro-drop",
+            "duration": 9.059,
+            "bEntry": 2.659,
+            "cost": {
+              "total": 1.012,
+              "closureMiss": 0.85,
+              "cutA": 0.481,
+              "pickup": 0,
+              "holeDb": 9.522,
+              "unsupported": 0,
+              "jumpDb": 7.106,
+              "doubleBass": 0,
+              "leadRisk": 0,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          },
+          {
+            "name": "preserve-start",
+            "method": "crossfade",
+            "duration": 17.25,
+            "bEntry": 0.3,
+            "cost": {
+              "total": 0.616,
+              "closureMiss": 0.85,
+              "cutA": 0.421,
+              "pickup": 0,
+              "holeDb": 5.549,
+              "unsupported": 0,
+              "jumpDb": 1.094,
+              "doubleBass": 0,
+              "leadRisk": 0.5,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          }
+        ],
+        "this": "preserve-start"
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "preserve-start",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "preserve-start",
+            "method": "crossfade",
+            "duration": 17.25,
+            "metrics": {
+              "dipLU": -2.12,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.18
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "crossfade",
+            "duration": 9.059,
+            "metrics": {
+              "dipLU": -0.42,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.8,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.24
+            }
+          },
+          {
+            "name": "bass -0.588",
+            "method": "crossfade",
+            "duration": 17.25,
+            "metrics": {
+              "dipLU": -1.66,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.05
+            }
+          },
+          {
+            "name": "bass 0.588",
+            "method": "crossfade",
+            "duration": 17.25,
+            "metrics": {
+              "dipLU": -2.98,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.44
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": -2.12,
+        "bumpLU": 0,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.18
+      }
+    },
+    {
+      "id": 122,
+      "executedAt": "2026-10-25T19:09:26.078Z",
+      "rating": "bad",
+      "reason": null,
+      "from": {
+        "id": "1ad876b1-92e8-4850-8ec3-f20385949ea2",
+        "artist": "PHARAOH, Noa",
+        "title": "Порнозвезда (Bonus Track; Remix)"
+      },
+      "to": {
+        "id": "70878df9-3e7b-4726-9e91-2877d1f98595",
+        "artist": "ooes",
+        "title": "night (sped up)"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 17.654,
+      "aExit": 226.938,
+      "bEntry": 1.704,
+      "bDelay": 0,
+      "nominalCutSeconds": 19.158,
+      "beatAlign": {
+        "bpmA": 110,
+        "bpmB": 107.51,
+        "relation": 1,
+        "ratio": 1.02316,
+        "stretchPercent": 2.32,
+        "overlapBeats": 32,
+        "phraseAligned": false,
+        "glide": true
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "baseline",
+        "reason": "альтернативы полного микса не дали заметного улучшения",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "variant": "echo-tail",
+            "duration": 17.654,
+            "bEntry": 1.704,
+            "cost": {
+              "total": 0.583,
+              "closureMiss": 0.85,
+              "cutA": 1,
+              "pickup": 0,
+              "holeDb": 2.733,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 0,
+              "tonalClash": 3,
+              "skippedUnknownB": 0
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 17.654,
+            "bEntry": 0.03,
+            "cost": {
+              "total": 0.906,
+              "closureMiss": 0.916,
+              "cutA": 0.513,
+              "pickup": 0,
+              "holeDb": 8.997,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 7,
+              "tonalClash": 0.5,
+              "skippedUnknownB": 0
+            }
+          }
+        ],
+        "this": "baseline"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-1czbdcp",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.018,
+            "features": {
+              "length:10-20": -0.056,
+              "vocals:none": -0.056
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "bias": -0.018,
+            "features": {
+              "length:10-20": -0.056,
+              "vocals:none": -0.056
+            }
+          }
+        ],
+        "selected": "baseline",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "baseline",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 17.654,
+            "metrics": {
+              "dipLU": -0.69,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 17.654,
+            "metrics": {
+              "dipLU": -4.25,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 11,
+              "underruns": 0,
+              "cost": 1.37
+            }
+          },
+          {
+            "name": "bass -0.552",
+            "method": "beatmatch_blend",
+            "duration": 17.654,
+            "metrics": {
+              "dipLU": -0.69,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 7,
+              "underruns": 0,
+              "cost": 0.35
+            }
+          },
+          {
+            "name": "bass 0.552",
+            "method": "beatmatch_blend",
+            "duration": 17.654,
+            "metrics": {
+              "dipLU": -0.69,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 6,
+              "underruns": 0,
+              "cost": 0.3
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": -0.69,
+        "bumpLU": 0,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0
+      }
+    },
+    {
+      "id": 123,
+      "executedAt": "2026-10-25T19:09:40.307Z",
+      "rating": "bad",
+      "reason": null,
+      "from": {
+        "id": "70878df9-3e7b-4726-9e91-2877d1f98595",
+        "artist": "ooes",
+        "title": "night (sped up)"
+      },
+      "to": {
+        "id": "a153d672-8a61-4d92-9cc4-c8d43abf63af",
+        "artist": "ROCKET",
+        "title": "Money"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 9.253,
+      "aExit": 116.113,
+      "bEntry": 5.635,
+      "bDelay": 0,
+      "nominalCutSeconds": 0.006,
+      "beatAlign": {
+        "bpmA": 107.51,
+        "bpmB": 100,
+        "relation": 1,
+        "ratio": 1.0751,
+        "stretchPercent": 7.51,
+        "overlapBeats": 16,
+        "phraseAligned": false,
+        "glide": true
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "baseline",
+        "reason": "альтернативы полного микса не дали заметного улучшения",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 9.253,
+            "bEntry": 5.635,
+            "cost": {
+              "total": 0.311,
+              "closureMiss": 0,
+              "cutA": 0,
+              "pickup": 0,
+              "holeDb": 4.677,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 2,
+              "tonalClash": 0,
+              "skippedUnknownB": 0.285
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 9.253,
+            "bEntry": 5.635,
+            "cost": {
+              "total": 0.721,
+              "closureMiss": 0.947,
+              "cutA": 0.731,
+              "pickup": 0,
+              "holeDb": 4.228,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 3.5,
+              "tonalClash": 0,
+              "skippedUnknownB": 0.285
+            }
+          }
+        ],
+        "this": "baseline"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-1czbdcp",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.009,
+            "features": {
+              "vocals:none": -0.056
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "bias": -0.009,
+            "features": {
+              "vocals:none": -0.056
+            }
+          }
+        ],
+        "selected": "baseline",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "baseline",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 9.253,
+            "metrics": {
+              "dipLU": -0.49,
+              "bumpLU": 0.89,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 9.253,
+            "metrics": {
+              "dipLU": -1.28,
+              "bumpLU": 0.51,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "bass -0.578",
+            "method": "beatmatch_blend",
+            "duration": 9.253,
+            "metrics": {
+              "dipLU": -0.49,
+              "bumpLU": 0.9,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": -0.49,
+        "bumpLU": 0.89,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0
+      }
+    },
+    {
+      "id": 124,
+      "executedAt": "2026-10-25T19:10:06.787Z",
+      "rating": "bad",
+      "reason": null,
+      "from": {
+        "id": "a153d672-8a61-4d92-9cc4-c8d43abf63af",
+        "artist": "ROCKET",
+        "title": "Money"
+      },
+      "to": {
+        "id": "f2a462ab-304c-4027-929c-2135ae3b5a22",
+        "artist": "Øneheart",
+        "title": "outside"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 19.2,
+      "aExit": 154.432,
+      "bEntry": 9.029,
+      "bDelay": 0,
+      "nominalCutSeconds": 1.318,
+      "beatAlign": {
+        "bpmA": 100,
+        "bpmB": 100,
+        "relation": 1,
+        "ratio": 1,
+        "stretchPercent": 0,
+        "overlapBeats": 32,
+        "phraseAligned": false,
+        "glide": false
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "baseline",
+        "reason": "альтернативы полного микса не дали заметного улучшения",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 19.2,
+            "bEntry": 9.029,
+            "cost": {
+              "total": 0.445,
+              "closureMiss": 0.85,
+              "cutA": 0.205,
+              "pickup": 0,
+              "holeDb": 2.93,
+              "unsupported": 0,
+              "jumpDb": 1.213,
+              "doubleBass": 0,
+              "leadRisk": 0,
+              "tonalClash": 0,
+              "skippedUnknownB": 1.829
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 19.2,
+            "bEntry": 9.629,
+            "cost": {
+              "total": 0.554,
+              "closureMiss": 0.85,
+              "cutA": 0.432,
+              "pickup": 0,
+              "holeDb": 3.211,
+              "unsupported": 0,
+              "jumpDb": 2.761,
+              "doubleBass": 0,
+              "leadRisk": 0,
+              "tonalClash": 0,
+              "skippedUnknownB": 2.429
+            }
+          }
+        ],
+        "this": "baseline"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-1czbdcp",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.018,
+            "features": {
+              "length:10-20": -0.056,
+              "vocals:none": -0.056
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "bias": -0.018,
+            "features": {
+              "length:10-20": -0.056,
+              "vocals:none": -0.056
+            }
+          }
+        ],
+        "selected": "baseline",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "baseline",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 19.2,
+            "metrics": {
+              "dipLU": -0.72,
+              "bumpLU": 0.39,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 19.2,
+            "metrics": {
+              "dipLU": -0.99,
+              "bumpLU": 0.47,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "bass -0.6",
+            "method": "beatmatch_blend",
+            "duration": 19.2,
+            "metrics": {
+              "dipLU": -1.43,
+              "bumpLU": 0.39,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.4,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.12
+            }
+          },
+          {
+            "name": "bass 0.6",
+            "method": "beatmatch_blend",
+            "duration": 19.2,
+            "metrics": {
+              "dipLU": -0.4,
+              "bumpLU": 0.39,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": -0.72,
+        "bumpLU": 0.39,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0
+      }
+    },
+    {
+      "id": 125,
+      "executedAt": "2026-10-25T19:10:42.937Z",
+      "rating": "bad",
+      "reason": null,
+      "from": {
+        "id": "f2a462ab-304c-4027-929c-2135ae3b5a22",
+        "artist": "Øneheart",
+        "title": "outside"
+      },
+      "to": {
+        "id": "5d7f218f-b43e-4800-87f3-b3e0b14fcbb1",
+        "artist": "VILLIAN",
+        "title": "Оторву Руки"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 18.752,
+      "aExit": 76.829,
+      "bEntry": 1.173,
+      "bDelay": 0,
+      "nominalCutSeconds": 3.722,
+      "beatAlign": {
+        "bpmA": 100,
+        "bpmB": 104.77,
+        "relation": 1,
+        "ratio": 0.95447,
+        "stretchPercent": 4.77,
+        "overlapBeats": 32,
+        "phraseAligned": false,
+        "glide": true,
+        "regions": {
+          "B": {
+            "start": 0.0275,
+            "end": 32,
+            "period": 0.572709910766798,
+            "downbeat": 1.1729
+          }
+        }
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "baseline",
+        "reason": "альтернативы полного микса не дали заметного улучшения",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 18.752,
+            "bEntry": 1.173,
+            "cost": {
+              "total": 0.407,
+              "closureMiss": 0.992,
+              "cutA": 0.676,
+              "pickup": 0,
+              "holeDb": 0,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0.5,
+              "leadRisk": 1,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          }
+        ],
+        "this": "baseline"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-1czbdcp",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.018,
+            "features": {
+              "length:10-20": -0.056,
+              "vocals:none": -0.056
+            }
+          }
+        ],
+        "selected": "baseline",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "baseline",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 18.752,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.68,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.21
+            }
+          },
+          {
+            "name": "bass -0.587",
+            "method": "beatmatch_blend",
+            "duration": 18.752,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.69,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.21
+            }
+          },
+          {
+            "name": "bass 0.587",
+            "method": "beatmatch_blend",
+            "duration": 18.752,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.72,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.22
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": 0,
+        "bumpLU": 1.68,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.21
+      }
+    },
+    {
+      "id": 127,
+      "executedAt": "2026-10-25T19:16:35.934Z",
+      "rating": "good",
+      "reason": null,
+      "from": {
+        "id": "aef3eb66-d7cd-4014-8267-2ccaaab6f073",
+        "artist": "SODA LUV",
+        "title": "Бехелит"
+      },
+      "to": {
+        "id": "310ba39f-995b-4ae4-a59f-c828b407e3eb",
+        "artist": "ЕГОР КРИД, OG Buda, Toxi$, Мэйби Бэйби",
+        "title": "Malo 2.0"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 14.769,
+      "aExit": 155.081,
+      "bEntry": 7.623,
+      "bDelay": 0,
+      "nominalCutSeconds": 6.05,
+      "beatAlign": {
+        "bpmA": 130,
+        "bpmB": 130,
+        "relation": 1,
+        "ratio": 1,
+        "stretchPercent": 0,
+        "overlapBeats": 32,
+        "phraseAligned": false,
+        "glide": false
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "baseline",
+        "reason": "альтернативы полного микса не дали заметного улучшения",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 14.769,
+            "bEntry": 7.623,
+            "cost": {
+              "total": 0.57,
+              "closureMiss": 0.85,
+              "cutA": 0.732,
+              "pickup": 0,
+              "holeDb": 2.554,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 1.5,
+              "tonalClash": 3,
+              "skippedUnknownB": 2.423
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 14.769,
+            "bEntry": 8.085,
+            "cost": {
+              "total": 0.627,
+              "closureMiss": 0.955,
+              "cutA": 1,
+              "pickup": 0,
+              "holeDb": 2.657,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 0,
+              "tonalClash": 3,
+              "skippedUnknownB": 2.885
+            }
+          }
+        ],
+        "this": "baseline"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-d9nqmt",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.093,
+            "features": {
+              "method:beatmatch_blend": -0.167,
+              "bpm:beatmatch_blend:<2": -0.056,
+              "length:10-20": -0.167,
+              "vocals:none": -0.192
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "bias": -0.093,
+            "features": {
+              "method:beatmatch_blend": -0.167,
+              "bpm:beatmatch_blend:<2": -0.056,
+              "length:10-20": -0.167,
+              "vocals:none": -0.192
+            }
+          }
+        ],
+        "selected": "baseline",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "baseline",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 14.769,
+            "metrics": {
+              "dipLU": -0.75,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.1,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.03
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 14.769,
+            "metrics": {
+              "dipLU": -0.51,
+              "bumpLU": 0.96,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.1,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.03
+            }
+          },
+          {
+            "name": "bass -0.462",
+            "method": "beatmatch_blend",
+            "duration": 14.769,
+            "metrics": {
+              "dipLU": -0.75,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.1,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.03
+            }
+          },
+          {
+            "name": "bass 0.462",
+            "method": "beatmatch_blend",
+            "duration": 14.769,
+            "metrics": {
+              "dipLU": -0.75,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.1,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.03
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": -0.75,
+        "bumpLU": 0,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0.1,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.03
+      }
+    },
+    {
+      "id": 139,
+      "executedAt": "2026-10-25T19:35:16.836Z",
+      "rating": "bad",
+      "reason": "голоса наложились",
+      "from": {
+        "id": "20bbb8c4-bf4e-4fec-8d35-e0345d17a56d",
+        "artist": "TAKETAKE",
+        "title": "Tonight"
+      },
+      "to": {
+        "id": "80dcba75-3cef-4b3e-b28e-f67ad6cc25da",
+        "artist": "BUSHIDO ZHO",
+        "title": "Heaven"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 31.866,
+      "aExit": 84.835,
+      "bEntry": 0.005,
+      "bDelay": 0,
+      "nominalCutSeconds": 7.062,
+      "beatAlign": {
+        "bpmA": 116,
+        "bpmB": 125,
+        "relation": 1,
+        "ratio": 0.928,
+        "stretchPercent": 7.76,
+        "overlapBeats": 64,
+        "phraseAligned": true,
+        "glide": true
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "baseline",
+        "reason": "альтернативы полного микса не дали заметного улучшения",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 31.866,
+            "bEntry": 0.005,
+            "cost": {
+              "total": 0.376,
+              "closureMiss": 0.976,
+              "cutA": 0.47,
+              "pickup": 0,
+              "holeDb": 0,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 1,
+              "leadRisk": 3,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 31.866,
+            "bEntry": 0.005,
+            "cost": {
+              "total": 0.797,
+              "closureMiss": 0.976,
+              "cutA": 0.838,
+              "pickup": 0,
+              "holeDb": 4.782,
+              "unsupported": 0,
+              "jumpDb": 2.702,
+              "doubleBass": 1,
+              "leadRisk": 5,
+              "tonalClash": 1.5,
+              "skippedUnknownB": 0
+            }
+          }
+        ],
+        "this": "baseline"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-1iqxrx0",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.077,
+            "features": {
+              "method:beatmatch_blend": -0.115,
+              "bpm:beatmatch_blend:5-8": -0.056,
+              "key:beatmatch_blend:mid": -0.167,
+              "vocals:none": -0.143
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "bias": -0.077,
+            "features": {
+              "method:beatmatch_blend": -0.115,
+              "bpm:beatmatch_blend:5-8": -0.056,
+              "key:beatmatch_blend:mid": -0.167,
+              "vocals:none": -0.143
+            }
+          }
+        ],
+        "selected": "baseline",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "baseline",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 31.866,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.37,
+              "limiterDb": 0.08,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.11
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 31.866,
+            "metrics": {
+              "dipLU": -0.24,
+              "bumpLU": 1.25,
+              "limiterDb": 0,
+              "lowHoleSeconds": 1.6,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.56
+            }
+          },
+          {
+            "name": "bass -0.497",
+            "method": "beatmatch_blend",
+            "duration": 31.866,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.34,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.1
+            }
+          },
+          {
+            "name": "bass 0.497",
+            "method": "beatmatch_blend",
+            "duration": 31.866,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.42,
+              "limiterDb": 0.29,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.13
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": 0,
+        "bumpLU": 1.37,
+        "limiterDb": 0.08,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.11
+      }
+    },
+    {
+      "id": 141,
+      "executedAt": "2026-10-25T19:39:00.734Z",
+      "rating": "bad",
+      "reason": null,
+      "from": {
+        "id": "bc15cbaf-d72f-4eff-a9bb-890f6502313d",
+        "artist": "Aarne, FEDUK, Scally Milano",
+        "title": "Мечты"
+      },
+      "to": {
+        "id": "85b1d3d1-a5b6-4800-82f4-0aca2f870f1f",
+        "artist": "nkeeei, Yanix",
+        "title": "Поцелуи"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 15.421,
+      "aExit": 92.907,
+      "bEntry": 1.474,
+      "bDelay": 0,
+      "nominalCutSeconds": 0.009,
+      "beatAlign": {
+        "bpmA": 124,
+        "bpmB": 125.01,
+        "relation": 1,
+        "ratio": 0.99192,
+        "stretchPercent": 0.81,
+        "overlapBeats": 32,
+        "phraseAligned": true,
+        "glide": true
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "baseline",
+        "reason": "альтернативы полного микса не дали заметного улучшения",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 15.421,
+            "bEntry": 1.474,
+            "cost": {
+              "total": 0.353,
+              "closureMiss": 0.85,
+              "cutA": 0.389,
+              "pickup": 0,
+              "holeDb": 0.676,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0.5,
+              "leadRisk": 1,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 15.421,
+            "bEntry": 1.474,
+            "cost": {
+              "total": 0.457,
+              "closureMiss": 0.85,
+              "cutA": 0.913,
+              "pickup": 0,
+              "holeDb": 1.051,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 0.5,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          }
+        ],
+        "this": "baseline"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-12g2vxa",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.099,
+            "features": {
+              "method:beatmatch_blend": -0.143,
+              "bpm:beatmatch_blend:<2": 0,
+              "key:beatmatch_blend:mid": -0.192,
+              "length:10-20": -0.115,
+              "vocals:none": -0.167
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "bias": -0.099,
+            "features": {
+              "method:beatmatch_blend": -0.143,
+              "bpm:beatmatch_blend:<2": 0,
+              "key:beatmatch_blend:mid": -0.192,
+              "length:10-20": -0.115,
+              "vocals:none": -0.167
+            }
+          }
+        ],
+        "selected": "baseline",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "baseline",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 15.421,
+            "metrics": {
+              "dipLU": -0.73,
+              "bumpLU": 1.49,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.15
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 15.421,
+            "metrics": {
+              "dipLU": -0.24,
+              "bumpLU": 0.87,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "bass -0.482",
+            "method": "beatmatch_blend",
+            "duration": 15.421,
+            "metrics": {
+              "dipLU": -0.73,
+              "bumpLU": 1.59,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.18
+            }
+          },
+          {
+            "name": "bass 0.482",
+            "method": "beatmatch_blend",
+            "duration": 15.421,
+            "metrics": {
+              "dipLU": -0.73,
+              "bumpLU": 1.35,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.11
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": -0.73,
+        "bumpLU": 1.49,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.15
+      }
+    },
+    {
+      "id": 150,
+      "executedAt": "2026-10-25T20:18:13.969Z",
+      "rating": "bad",
+      "reason": "голоса наложились",
+      "from": {
+        "id": "db3adf9e-3b9e-4d3c-9609-e59f6ce70447",
+        "artist": "uglystephan, Scally Milano",
+        "title": "Заберу"
+      },
+      "to": {
+        "id": "c655bb87-9cd4-4720-9fc4-4c17ce75490c",
+        "artist": "TAKETAKE",
+        "title": "baby my type"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 20.681,
+      "aExit": 100.152,
+      "bEntry": 0.692,
+      "bDelay": 0,
+      "nominalCutSeconds": 0.737,
+      "beatAlign": {
+        "bpmA": 96.67,
+        "bpmB": 89,
+        "relation": 1,
+        "ratio": 1.08618,
+        "stretchPercent": 8.62,
+        "overlapBeats": 32,
+        "phraseAligned": false,
+        "glide": true
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "baseline",
+        "reason": "альтернативы полного микса не дали заметного улучшения",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 20.681,
+            "bEntry": 0.692,
+            "cost": {
+              "total": 0.461,
+              "closureMiss": 0.946,
+              "cutA": 0.584,
+              "pickup": 0,
+              "holeDb": 1.37,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 1,
+              "tonalClash": 2.5,
+              "skippedUnknownB": 0
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 20.681,
+            "bEntry": 0.018,
+            "cost": {
+              "total": 0.5,
+              "closureMiss": 0.641,
+              "cutA": 1,
+              "pickup": 0,
+              "holeDb": 2.358,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 1.5,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          }
+        ],
+        "this": "baseline"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-99bagr",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.1,
+            "features": {
+              "method:beatmatch_blend": -0.167,
+              "key:beatmatch_blend:mid": -0.214,
+              "length:20+": -0.056,
+              "vocals:none": -0.187
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "bias": -0.1,
+            "features": {
+              "method:beatmatch_blend": -0.167,
+              "key:beatmatch_blend:mid": -0.214,
+              "length:20+": -0.056,
+              "vocals:none": -0.187
+            }
+          }
+        ],
+        "selected": "baseline",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "baseline",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 20.681,
+            "metrics": {
+              "dipLU": -0.88,
+              "bumpLU": 1.5,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.3,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.24
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 20.681,
+            "metrics": {
+              "dipLU": -0.49,
+              "bumpLU": 1.7,
+              "limiterDb": 0,
+              "lowHoleSeconds": 2,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.81
+            }
+          },
+          {
+            "name": "bass -0.645",
+            "method": "beatmatch_blend",
+            "duration": 20.681,
+            "metrics": {
+              "dipLU": -0.88,
+              "bumpLU": 1.25,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.3,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.17
+            }
+          },
+          {
+            "name": "bass 0.645",
+            "method": "beatmatch_blend",
+            "duration": 20.681,
+            "metrics": {
+              "dipLU": -0.88,
+              "bumpLU": 1.61,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.3,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.27
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": -0.88,
+        "bumpLU": 1.5,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0.3,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.24
+      }
+    },
+    {
+      "id": 151,
+      "executedAt": "2026-10-25T20:18:42.570Z",
+      "rating": "bad",
+      "reason": null,
+      "from": {
+        "id": "c655bb87-9cd4-4720-9fc4-4c17ce75490c",
+        "artist": "TAKETAKE",
+        "title": "baby my type"
+      },
+      "to": {
+        "id": "ab66ab9a-0d33-409d-bbc2-035cded491a6",
+        "artist": "Пошлая Молли, HOFMANNITA",
+        "title": "#HABIBATI"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "crossfade",
+      "duration": 13.623,
+      "aExit": 91.546,
+      "bEntry": 0.2,
+      "bDelay": 0,
+      "nominalCutSeconds": null,
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "baseline",
+        "reason": "альтернативы полного микса не дали заметного улучшения",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "crossfade",
+            "duration": 13.623,
+            "bEntry": 0.2,
+            "cost": {
+              "total": 0.45,
+              "closureMiss": 0.85,
+              "cutA": 0.329,
+              "pickup": 0,
+              "holeDb": 2.117,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 2,
+              "tonalClash": 1.5,
+              "skippedUnknownB": 0
+            }
+          }
+        ],
+        "this": "baseline"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-99bagr",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.071,
+            "features": {
+              "method:crossfade": -0.056,
+              "bpm:crossfade:12+": -0.056,
+              "length:10-20": -0.143,
+              "vocals:none": -0.187
+            }
+          }
+        ],
+        "selected": "baseline",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "baseline",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "crossfade",
+            "duration": 13.623,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 1,
+              "underruns": 0,
+              "cost": 0.05
+            }
+          },
+          {
+            "name": "bass -0.522",
+            "method": "crossfade",
+            "duration": 13.623,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "bass 0.522",
+            "method": "crossfade",
+            "duration": 13.623,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.1,
+              "flams": 2,
+              "underruns": 0,
+              "cost": 0.13
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": 0,
+        "bumpLU": 0,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 1,
+        "underruns": 0,
+        "cost": 0.05
+      }
+    },
+    {
+      "id": 153,
+      "executedAt": "2026-10-25T20:19:23.690Z",
+      "rating": "bad",
+      "reason": null,
+      "from": {
+        "id": "579a7d91-ba47-445f-84d2-1ca8b3a201cd",
+        "artist": "NEWLIGHTCHILD",
+        "title": "roman"
+      },
+      "to": {
+        "id": "8e054654-5ed7-48fa-92ca-b48f1a569e07",
+        "artist": "Scally Milano, uglystephan",
+        "title": "Дай Мне Шанс"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 13.196,
+      "aExit": 74.895,
+      "bEntry": 8.785,
+      "bDelay": 0,
+      "nominalCutSeconds": 13.088,
+      "beatAlign": {
+        "bpmA": 141,
+        "bpmB": 75,
+        "relation": 2,
+        "ratio": 0.94,
+        "stretchPercent": 6.38,
+        "overlapBeats": 32,
+        "phraseAligned": false,
+        "glide": true
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "neighbor-exit",
+        "reason": "полный микс: выход на соседней фразе, где текущий трек слышно заканчивает раздел",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 13.196,
+            "bEntry": 8.785,
+            "cost": {
+              "total": 0.7,
+              "closureMiss": 0.85,
+              "cutA": 0.15,
+              "pickup": 0,
+              "holeDb": 7.858,
+              "unsupported": 0,
+              "jumpDb": 1.524,
+              "doubleBass": 0,
+              "leadRisk": 0,
+              "tonalClash": 0,
+              "skippedUnknownB": 3.785
+            }
+          },
+          {
+            "name": "shorter",
+            "method": "beatmatch_blend",
+            "variant": "echo-tail",
+            "duration": 6.598,
+            "bEntry": 8.785,
+            "cost": {
+              "total": 0.77,
+              "closureMiss": 0.85,
+              "cutA": 0.252,
+              "pickup": 0,
+              "holeDb": 7.833,
+              "unsupported": 0,
+              "jumpDb": 1.519,
+              "doubleBass": 0,
+              "leadRisk": 0,
+              "tonalClash": 0,
+              "skippedUnknownB": 3.785
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 13.196,
+            "bEntry": 8.785,
+            "cost": {
+              "total": 0.356,
+              "closureMiss": 0.943,
+              "cutA": 0.413,
+              "pickup": 0,
+              "holeDb": 0,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 0.5,
+              "tonalClash": 0.5,
+              "skippedUnknownB": 3.785
+            }
+          }
+        ],
+        "this": "neighbor-exit"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-6f4xnc",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.099,
+            "features": {
+              "method:beatmatch_blend": -0.187,
+              "bpm:beatmatch_blend:5-8": -0.1,
+              "key:beatmatch_blend:low": 0.056,
+              "length:10-20": -0.167,
+              "vocals:none": -0.222
+            }
+          },
+          {
+            "name": "shorter",
+            "bias": -0.082,
+            "features": {
+              "method:beatmatch_blend": -0.187,
+              "bpm:beatmatch_blend:5-8": -0.1,
+              "key:beatmatch_blend:low": 0.056,
+              "length:4-10": -0.056,
+              "vocals:none": -0.222
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "bias": -0.099,
+            "features": {
+              "method:beatmatch_blend": -0.187,
+              "bpm:beatmatch_blend:5-8": -0.1,
+              "key:beatmatch_blend:low": 0.056,
+              "length:10-20": -0.167,
+              "vocals:none": -0.222
+            }
+          }
+        ],
+        "selected": "neighbor-exit",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "neighbor-exit",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 13.196,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0.73,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 13.196,
+            "metrics": {
+              "dipLU": -2.39,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 1.3,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.66
+            }
+          },
+          {
+            "name": "shorter",
+            "method": "beatmatch_blend",
+            "duration": 6.598,
+            "metrics": {
+              "dipLU": -2.46,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 1.4,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.71
+            }
+          },
+          {
+            "name": "bass -0.824",
+            "method": "beatmatch_blend",
+            "duration": 13.196,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0.87,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "bass 0.824",
+            "method": "beatmatch_blend",
+            "duration": 13.196,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0.67,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": 0,
+        "bumpLU": 0.73,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0
+      }
+    },
+    {
+      "id": 156,
+      "executedAt": "2026-10-25T20:20:02.571Z",
+      "rating": "good",
+      "reason": null,
+      "from": {
+        "id": "5cc7a879-2daf-4c09-8a22-486325fdfd45",
+        "artist": "madk1d, VILLIAN",
+        "title": "8 миля"
+      },
+      "to": {
+        "id": "d1a646ad-7ffe-40a2-a82f-bdd9dfa60715",
+        "artist": "gotlibgotlibgotlib, SABU",
+        "title": "агентство насилия™"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "crossfade",
+      "duration": 9,
+      "aExit": 106.2,
+      "bEntry": 4.87,
+      "bDelay": 0,
+      "nominalCutSeconds": null,
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "baseline",
+        "reason": "альтернативы полного микса не дали заметного улучшения",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "crossfade",
+            "duration": 9,
+            "bEntry": 4.87,
+            "cost": {
+              "total": 0.516,
+              "closureMiss": 0.85,
+              "cutA": 0.12,
+              "pickup": 0,
+              "holeDb": 5.08,
+              "unsupported": 0,
+              "jumpDb": 0.343,
+              "doubleBass": 0,
+              "leadRisk": 0,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          },
+          {
+            "name": "preserve-start",
+            "method": "crossfade",
+            "duration": 10.55,
+            "bEntry": 0.1,
+            "cost": {
+              "total": 1.268,
+              "closureMiss": 0.85,
+              "cutA": 0.1,
+              "pickup": 0,
+              "holeDb": 15.841,
+              "unsupported": 0,
+              "jumpDb": 7.647,
+              "doubleBass": 0,
+              "leadRisk": 0.5,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          }
+        ],
+        "this": "baseline"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-op3h7i",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.088,
+            "features": {
+              "method:crossfade": -0.1,
+              "bpm:crossfade:12+": -0.1,
+              "key:crossfade:mid": -0.056,
+              "length:4-10": -0.056,
+              "vocals:none": -0.237
+            }
+          },
+          {
+            "name": "preserve-start",
+            "bias": -0.109,
+            "features": {
+              "method:crossfade": -0.1,
+              "bpm:crossfade:12+": -0.1,
+              "key:crossfade:mid": -0.056,
+              "length:10-20": -0.187,
+              "vocals:none": -0.237
+            }
+          }
+        ],
+        "selected": "baseline",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "baseline",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "crossfade",
+            "duration": 9,
+            "metrics": {
+              "dipLU": -1.47,
+              "bumpLU": 0.62,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "preserve-start",
+            "method": "crossfade",
+            "duration": 10.55,
+            "metrics": {
+              "dipLU": -5.65,
+              "bumpLU": 1.2,
+              "limiterDb": 0,
+              "lowHoleSeconds": 1,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 1.6
+            }
+          },
+          {
+            "name": "bass -0.65",
+            "method": "crossfade",
+            "duration": 9,
+            "metrics": {
+              "dipLU": -1.62,
+              "bumpLU": 0.45,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.04
+            }
+          },
+          {
+            "name": "bass 0.65",
+            "method": "crossfade",
+            "duration": 9,
+            "metrics": {
+              "dipLU": -1.39,
+              "bumpLU": 0.63,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.3,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.09
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": -1.47,
+        "bumpLU": 0.62,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0
+      }
+    },
+    {
+      "id": 157,
+      "executedAt": "2026-10-25T20:20:34.663Z",
+      "rating": "good",
+      "reason": null,
+      "from": {
+        "id": "d1a646ad-7ffe-40a2-a82f-bdd9dfa60715",
+        "artist": "gotlibgotlibgotlib, SABU",
+        "title": "агентство насилия™"
+      },
+      "to": {
+        "id": "fa0da83a-2c79-4739-a904-ae9bcbed2d27",
+        "artist": "GENER8ION, Yannis",
+        "title": "Love & Tears"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 10.356,
+      "aExit": 119.774,
+      "bEntry": 13.126,
+      "bDelay": 0,
+      "nominalCutSeconds": 2.847,
+      "beatAlign": {
+        "bpmA": 93.39,
+        "bpmB": 183.99,
+        "relation": 0.5,
+        "ratio": 1.01516,
+        "stretchPercent": 1.52,
+        "overlapBeats": 16,
+        "phraseAligned": false,
+        "glide": true,
+        "regions": {
+          "A": {
+            "start": 102.4279,
+            "end": 131.3374,
+            "period": 0.6424398652414643,
+            "downbeat": 104.3552
+          }
+        }
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "baseline",
+        "reason": "альтернативы полного микса не дали заметного улучшения",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 10.356,
+            "bEntry": 13.126,
+            "cost": {
+              "total": 0.237,
+              "closureMiss": 0.733,
+              "cutA": 0.133,
+              "pickup": 0,
+              "holeDb": 0.242,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0.5,
+              "leadRisk": 0,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          }
+        ],
+        "this": "baseline"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-op3h7i",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.145,
+            "features": {
+              "method:beatmatch_blend": -0.206,
+              "bpm:beatmatch_blend:<2": -0.045,
+              "key:beatmatch_blend:mid": -0.233,
+              "length:10-20": -0.187,
+              "vocals:none": -0.237
+            }
+          }
+        ],
+        "selected": "baseline",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "baseline",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 10.356,
+            "metrics": {
+              "dipLU": -0.04,
+              "bumpLU": 1.51,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.15
+            }
+          },
+          {
+            "name": "bass -0.324",
+            "method": "beatmatch_blend",
+            "duration": 10.356,
+            "metrics": {
+              "dipLU": -0.04,
+              "bumpLU": 1.52,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.16
+            }
+          },
+          {
+            "name": "bass 0.324",
+            "method": "beatmatch_blend",
+            "duration": 10.356,
+            "metrics": {
+              "dipLU": -0.04,
+              "bumpLU": 1.51,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.15
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": -0.04,
+        "bumpLU": 1.51,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.15
+      }
+    },
+    {
+      "id": 158,
+      "executedAt": "2026-10-25T20:21:04.462Z",
+      "rating": "good",
+      "reason": null,
+      "from": {
+        "id": "fa0da83a-2c79-4739-a904-ae9bcbed2d27",
+        "artist": "GENER8ION, Yannis",
+        "title": "Love & Tears"
+      },
+      "to": {
+        "id": "c62a977b-dfc4-4458-aaff-1eda2df0c08e",
+        "artist": "Yung Lean",
+        "title": "Agony"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 20.001,
+      "aExit": 195.746,
+      "bEntry": 6.119,
+      "bDelay": 0,
+      "nominalCutSeconds": 1.133,
+      "beatAlign": {
+        "bpmA": 183.99,
+        "bpmB": 100,
+        "relation": 2,
+        "ratio": 0.91995,
+        "stretchPercent": 8.7,
+        "overlapBeats": 64,
+        "phraseAligned": false,
+        "glide": true
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "baseline",
+        "reason": "альтернативы полного микса не дали заметного улучшения",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 20.001,
+            "bEntry": 6.119,
+            "cost": {
+              "total": 0.663,
+              "closureMiss": 0.852,
+              "cutA": 0.733,
+              "pickup": 0,
+              "holeDb": 5.78,
+              "unsupported": 0,
+              "jumpDb": 0.412,
+              "doubleBass": 0,
+              "leadRisk": 0,
+              "tonalClash": 0,
+              "skippedUnknownB": 0.419
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 20.001,
+            "bEntry": 6.119,
+            "cost": {
+              "total": 0.699,
+              "closureMiss": 0.852,
+              "cutA": 1,
+              "pickup": 0,
+              "holeDb": 5.564,
+              "unsupported": 0,
+              "jumpDb": 0.191,
+              "doubleBass": 0,
+              "leadRisk": 0,
+              "tonalClash": 0,
+              "skippedUnknownB": 0.419
+            }
+          }
+        ],
+        "this": "baseline"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-1vijddv",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.127,
+            "features": {
+              "method:beatmatch_blend": -0.206,
+              "bpm:beatmatch_blend:8-12": -0.056,
+              "key:beatmatch_blend:mid": -0.233,
+              "length:20+": -0.1,
+              "vocals:none": -0.2
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "bias": -0.127,
+            "features": {
+              "method:beatmatch_blend": -0.206,
+              "bpm:beatmatch_blend:8-12": -0.056,
+              "key:beatmatch_blend:mid": -0.233,
+              "length:20+": -0.1,
+              "vocals:none": -0.2
+            }
+          }
+        ],
+        "selected": "baseline",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "baseline",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 20.001,
+            "metrics": {
+              "dipLU": -1.19,
+              "bumpLU": 1.25,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.07
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 20.001,
+            "metrics": {
+              "dipLU": -1.06,
+              "bumpLU": 1.14,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.04
+            }
+          },
+          {
+            "name": "bass -0.624",
+            "method": "beatmatch_blend",
+            "duration": 20.001,
+            "metrics": {
+              "dipLU": -1.19,
+              "bumpLU": 1.08,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.02
+            }
+          },
+          {
+            "name": "bass 0.624",
+            "method": "beatmatch_blend",
+            "duration": 20.001,
+            "metrics": {
+              "dipLU": -1.19,
+              "bumpLU": 1.3,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.09
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": -1.19,
+        "bumpLU": 1.25,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.07
+      }
+    },
+    {
+      "id": 162,
+      "executedAt": "2026-10-25T20:22:19.864Z",
+      "rating": "bad",
+      "reason": "голоса наложились",
+      "from": {
+        "id": "acce3fe8-8074-418a-9993-44fc8d8f7e4a",
+        "artist": "LOVV66",
+        "title": "МАЙ МАЙ"
+      },
+      "to": {
+        "id": "12df4cf3-8a94-4d4c-b761-a8caf6115c6e",
+        "artist": "FORTUNA 812",
+        "title": "ParisLove"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 27.431,
+      "aExit": 69.867,
+      "bEntry": 1.679,
+      "bDelay": 0,
+      "nominalCutSeconds": 12.419,
+      "beatAlign": {
+        "bpmA": 140,
+        "bpmB": 139.98,
+        "relation": 1,
+        "ratio": 1.00014,
+        "stretchPercent": 0.01,
+        "overlapBeats": 64,
+        "phraseAligned": false,
+        "glide": true
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "baseline",
+        "reason": "альтернативы полного микса не дали заметного улучшения",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 27.431,
+            "bEntry": 1.679,
+            "cost": {
+              "total": 0.606,
+              "closureMiss": 0.85,
+              "cutA": 0.151,
+              "pickup": 0,
+              "holeDb": 4.903,
+              "unsupported": 0,
+              "jumpDb": 0.05,
+              "doubleBass": 0,
+              "leadRisk": 9,
+              "tonalClash": 2.5,
+              "skippedUnknownB": 0
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 27.431,
+            "bEntry": 1.679,
+            "cost": {
+              "total": 0.66,
+              "closureMiss": 0.987,
+              "cutA": 1,
+              "pickup": 0,
+              "holeDb": 3.618,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 0,
+              "tonalClash": 4.5,
+              "skippedUnknownB": 0
+            }
+          }
+        ],
+        "this": "neighbor-exit"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-1hzxz81",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.074,
+            "features": {
+              "method:beatmatch_blend": -0.132,
+              "bpm:beatmatch_blend:<2": 0,
+              "key:beatmatch_blend:mid": -0.147,
+              "length:20+": -0.045,
+              "vocals:none": -0.136
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "bias": -0.074,
+            "features": {
+              "method:beatmatch_blend": -0.132,
+              "bpm:beatmatch_blend:<2": 0,
+              "key:beatmatch_blend:mid": -0.147,
+              "length:20+": -0.045,
+              "vocals:none": -0.136
+            }
+          }
+        ],
+        "selected": "baseline",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "neighbor-exit",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 27.431,
+            "metrics": {
+              "dipLU": -2.92,
+              "bumpLU": 0.52,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.43
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 27.431,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.31,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.09
+            }
+          },
+          {
+            "name": "bass -0.429",
+            "method": "beatmatch_blend",
+            "duration": 27.431,
+            "metrics": {
+              "dipLU": -2.92,
+              "bumpLU": 0.37,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.43
+            }
+          },
+          {
+            "name": "bass 0.429",
+            "method": "beatmatch_blend",
+            "duration": 27.431,
+            "metrics": {
+              "dipLU": -2.92,
+              "bumpLU": 0.58,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.43
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": 0,
+        "bumpLU": 1.31,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.09
+      }
+    },
+    {
+      "id": 167,
+      "executedAt": "2026-10-25T20:24:03.836Z",
+      "rating": "bad",
+      "reason": "голоса наложились",
+      "from": {
+        "id": "5f6f5a78-4493-4a9b-be1c-becafc0171c3",
+        "artist": "тёмный принц",
+        "title": "вклубе"
+      },
+      "to": {
+        "id": "cea0365f-1887-4ddd-9855-ad36673983c1",
+        "artist": "TAKETAKE",
+        "title": "Правила"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 21.362,
+      "aExit": 57.459,
+      "bEntry": 0.012,
+      "bDelay": 0,
+      "nominalCutSeconds": 20.011,
+      "beatAlign": {
+        "bpmA": 87.75,
+        "bpmB": 92,
+        "relation": 1,
+        "ratio": 0.9538,
+        "stretchPercent": 4.84,
+        "overlapBeats": 32,
+        "phraseAligned": false,
+        "glide": true
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "neighbor-exit",
+        "reason": "полный микс: выход на соседней фразе, где текущий трек слышно заканчивает раздел",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 21.362,
+            "bEntry": 0.012,
+            "cost": {
+              "total": 0.304,
+              "closureMiss": 0.899,
+              "cutA": 0.045,
+              "pickup": 0,
+              "holeDb": 0,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 2,
+              "tonalClash": 4.5,
+              "skippedUnknownB": 0
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "variant": "echo-tail",
+            "duration": 21.362,
+            "bEntry": 0.012,
+            "cost": {
+              "total": 0.199,
+              "closureMiss": 0.212,
+              "cutA": 0.47,
+              "pickup": 0,
+              "holeDb": 0.196,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 3,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          }
+        ],
+        "this": "neighbor-exit"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-1lxvwnu",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.078,
+            "features": {
+              "method:beatmatch_blend": -0.15,
+              "bpm:beatmatch_blend:2-5": -0.1,
+              "key:beatmatch_blend:low": 0,
+              "length:20+": -0.083,
+              "vocals:none": -0.152
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "bias": -0.078,
+            "features": {
+              "method:beatmatch_blend": -0.15,
+              "bpm:beatmatch_blend:2-5": -0.1,
+              "key:beatmatch_blend:low": 0,
+              "length:20+": -0.083,
+              "vocals:none": -0.152
+            }
+          }
+        ],
+        "selected": "neighbor-exit",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "neighbor-exit",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 21.362,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 3.19,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.66
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 21.362,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 2.27,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.38
+            }
+          },
+          {
+            "name": "bass -0.667",
+            "method": "beatmatch_blend",
+            "duration": 21.362,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 3.19,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.66
+            }
+          },
+          {
+            "name": "bass 0.667",
+            "method": "beatmatch_blend",
+            "duration": 21.362,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 3.14,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.64
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": 0,
+        "bumpLU": 3.19,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.66
+      }
+    },
+    {
+      "id": 169,
+      "executedAt": "2026-10-25T20:25:18.017Z",
+      "rating": "bad",
+      "reason": null,
+      "from": {
+        "id": "3675dd16-6f41-418d-a42f-f12fa80b5538",
+        "artist": "PHARAOH",
+        "title": "Black Siemens"
+      },
+      "to": {
+        "id": "e3fe64c5-f631-4573-aa2d-26c70282bec0",
+        "artist": "SODA LUV",
+        "title": "Flatout"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 8.875,
+      "aExit": 129.768,
+      "bEntry": 2.515,
+      "bDelay": 0,
+      "nominalCutSeconds": 51.859,
+      "beatAlign": {
+        "bpmA": 111,
+        "bpmB": 105.34,
+        "relation": 1,
+        "ratio": 1.05373,
+        "stretchPercent": 5.37,
+        "overlapBeats": 16,
+        "phraseAligned": false,
+        "glide": true
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "baseline",
+        "reason": "альтернативы полного микса не дали заметного улучшения",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "variant": "echo-tail",
+            "duration": 8.875,
+            "bEntry": 2.515,
+            "cost": {
+              "total": 0.48,
+              "closureMiss": 0.85,
+              "cutA": 1,
+              "pickup": 0,
+              "holeDb": 0,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0.5,
+              "leadRisk": 1,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 8.875,
+            "bEntry": 1.945,
+            "cost": {
+              "total": 0.48,
+              "closureMiss": 0.85,
+              "cutA": 1,
+              "pickup": 0,
+              "holeDb": 0,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 1,
+              "leadRisk": 0.5,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          }
+        ],
+        "this": "baseline"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-1iyc67m",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.102,
+            "features": {
+              "method:beatmatch_blend": -0.167,
+              "bpm:beatmatch_blend:5-8": -0.136,
+              "key:beatmatch_blend:mid": -0.167,
+              "length:4-10": 0,
+              "vocals:none": -0.167
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "bias": -0.102,
+            "features": {
+              "method:beatmatch_blend": -0.167,
+              "bpm:beatmatch_blend:5-8": -0.136,
+              "key:beatmatch_blend:mid": -0.167,
+              "length:4-10": 0,
+              "vocals:none": -0.167
+            }
+          }
+        ],
+        "selected": "baseline",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "baseline",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 8.875,
+            "metrics": {
+              "dipLU": -0.12,
+              "bumpLU": 2.05,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 10,
+              "underruns": 0,
+              "cost": 0.81
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 8.875,
+            "metrics": {
+              "dipLU": -2.57,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 15,
+              "underruns": 0,
+              "cost": 1.07
+            }
+          },
+          {
+            "name": "bass 0.554",
+            "method": "beatmatch_blend",
+            "duration": 8.875,
+            "metrics": {
+              "dipLU": -0.12,
+              "bumpLU": 2.17,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 4,
+              "underruns": 0,
+              "cost": 0.55
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": -0.12,
+        "bumpLU": 2.05,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 10,
+        "underruns": 0,
+        "cost": 0.81
+      }
+    },
+    {
+      "id": 179,
+      "executedAt": "2026-10-25T20:49:43.724Z",
+      "rating": "bad",
+      "reason": null,
+      "from": {
+        "id": "40279569-81bb-4169-8e3c-6e66e283a39d",
+        "artist": "Kai Angel",
+        "title": "andy warhol"
+      },
+      "to": {
+        "id": "4baaa04a-24c2-4602-89c1-2683f3fb8aaa",
+        "artist": "August",
+        "title": "Спасатель (Bonus Track)"
+      },
+      "version": "am-planner-v13-length-1",
+      "method": "beatmatch_blend",
+      "duration": 31.351,
+      "aExit": 142.131,
+      "bEntry": 0.022,
+      "bDelay": 0,
+      "nominalCutSeconds": 3.799,
+      "beatAlign": {
+        "bpmA": 125,
+        "bpmB": 119.97,
+        "relation": 1,
+        "ratio": 1.04193,
+        "stretchPercent": 4.19,
+        "overlapBeats": 64,
+        "phraseAligned": true,
+        "glide": true
+      },
+      "outcome": {
+        "forced": false,
+        "late": false,
+        "limiterDb": 0,
+        "stems": {
+          "A": {
+            "status": "unavailable"
+          },
+          "B": {
+            "status": "unavailable"
+          },
+          "masks": {
+            "A": false,
+            "B": false
+          }
+        }
+      },
+      "fullMix": {
+        "policy": "full-mix-1",
+        "selected": "shorter",
+        "reason": "полный микс: короче общий участок, A уходит по окончании своего раздела",
+        "margin": 0.1,
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 31.351,
+            "bEntry": 0.022,
+            "cost": {
+              "total": 0.926,
+              "closureMiss": 0.984,
+              "cutA": 1,
+              "pickup": 0,
+              "holeDb": 6.673,
+              "unsupported": 0,
+              "jumpDb": 3.751,
+              "doubleBass": 1,
+              "leadRisk": 2.5,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          },
+          {
+            "name": "shorter",
+            "method": "beatmatch_blend",
+            "variant": "echo-tail",
+            "duration": 15.675,
+            "bEntry": 0.022,
+            "cost": {
+              "total": 0.624,
+              "closureMiss": 0.984,
+              "cutA": 0.443,
+              "pickup": 0,
+              "holeDb": 4.646,
+              "unsupported": 0,
+              "jumpDb": 0,
+              "doubleBass": 0,
+              "leadRisk": 3,
+              "tonalClash": 0,
+              "skippedUnknownB": 0
+            }
+          }
+        ],
+        "this": "baseline"
+      },
+      "ratingFeedback": {
+        "policy": "listener-ratings-1",
+        "version": "ratings-qtkxqd",
+        "candidates": [
+          {
+            "name": "baseline",
+            "bias": -0.128,
+            "features": {
+              "method:beatmatch_blend": -0.182,
+              "bpm:beatmatch_blend:2-5": -0.136,
+              "key:beatmatch_blend:mid": -0.184,
+              "length:20+": -0.115,
+              "vocals:none": -0.18
+            }
+          },
+          {
+            "name": "shorter",
+            "bias": -0.133,
+            "features": {
+              "method:beatmatch_blend": -0.182,
+              "bpm:beatmatch_blend:2-5": -0.136,
+              "key:beatmatch_blend:mid": -0.184,
+              "length:10-20": -0.147,
+              "vocals:none": -0.18
+            }
+          }
+        ],
+        "selected": "shorter",
+        "margin": 0.1
+      },
+      "renderCheck": {
+        "policy": "render-finalists-2",
+        "selected": "baseline",
+        "margin": 0.3,
+        "candidates": [
+          {
+            "name": "shorter",
+            "method": "beatmatch_blend",
+            "duration": 15.675,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0,
+              "limiterDb": 1.15,
+              "lowHoleSeconds": 0,
+              "flams": 27,
+              "underruns": 0,
+              "cost": 1.35
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 31.351,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 2.2,
+              "limiterDb": 2.25,
+              "lowHoleSeconds": 0,
+              "flams": 1,
+              "underruns": 0,
+              "cost": 0.46
+            }
+          },
+          {
+            "name": "bass -0.49",
+            "method": "beatmatch_blend",
+            "duration": 15.675,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0,
+              "limiterDb": 1.15,
+              "lowHoleSeconds": 0,
+              "flams": 27,
+              "underruns": 0,
+              "cost": 1.35
+            }
+          },
+          {
+            "name": "bass 0.49",
+            "method": "beatmatch_blend",
+            "duration": 15.675,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0,
+              "limiterDb": 1.15,
+              "lowHoleSeconds": 0,
+              "flams": 27,
+              "underruns": 0,
+              "cost": 1.35
+            }
+          }
+        ]
+      },
+      "selectedRenderMetrics": {
+        "dipLU": 0,
+        "bumpLU": 2.2,
+        "limiterDb": 2.25,
+        "lowHoleSeconds": 0,
+        "flams": 1,
+        "underruns": 0,
+        "cost": 0.46
+      }
+    }
+  ]
+}

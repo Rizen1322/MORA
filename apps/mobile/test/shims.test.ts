@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import initSqlJs from 'sql.js';
+import fs from '../src/worker/opfs-fs.ts';
 import Fastify, { type MiniFastify } from '../src/worker/shims/fastify.ts';
 import { DatabaseSync, provideSqlite } from '../src/worker/shims/sqlite.ts';
 import type { FromWorker } from '../src/shared/protocol.ts';
@@ -81,5 +82,84 @@ describe('node:sqlite on sql.js', () => {
     db.raw.export();
     db.generation++;
     expect(ins.run('c', '3').changes).toBe(1);
+  });
+
+  it('opens a preloaded image once and refuses to reopen it empty', async () => {
+    provideSqlite(await initSqlJs(), '/once.sqlite', null);
+    const db = new DatabaseSync('/once.sqlite');
+    expect(() => new DatabaseSync('/once.sqlite')).toThrow();
+    db.raw.close();
+  });
+
+  for (const step of ['writeFile', 'rename'] as const) {
+    it(`keeps the image dirty when ${step} fails and writes it on the next save`, async () => {
+      vi.useFakeTimers();
+      const writes = vi.spyOn(fs.promises, 'writeFile').mockResolvedValue(undefined as never);
+      const renames = vi.spyOn(fs.promises, 'rename').mockResolvedValue(undefined as never);
+      const failing = step === 'writeFile' ? writes : renames;
+      failing.mockRejectedValueOnce(new Error('I/O'));
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        provideSqlite(await initSqlJs(), `/fail-${step}.sqlite`, null);
+        const db = new DatabaseSync(`/fail-${step}.sqlite`);
+        db.exec('CREATE TABLE kv (k TEXT)');
+        await expect(db.save()).rejects.toThrow('I/O');
+        // no further mutation: the second save must still write
+        await db.save();
+        expect(failing).toHaveBeenCalledTimes(2);
+        expect(renames).toHaveBeenCalledTimes(step === 'rename' ? 2 : 1);
+        // already saved: the scheduled retry finds nothing to do
+        await vi.runAllTimersAsync();
+        expect(writes).toHaveBeenCalledTimes(2);
+        db.raw.close();
+      } finally {
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+      }
+    });
+  }
+
+  it('retries an early background flush in five seconds even with the normal save pending', async () => {
+    vi.useFakeTimers();
+    const writes = vi.spyOn(fs.promises, 'writeFile').mockResolvedValue(undefined as never);
+    vi.spyOn(fs.promises, 'rename').mockResolvedValue(undefined as never);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    writes.mockRejectedValueOnce(new Error('I/O'));
+    try {
+      provideSqlite(await initSqlJs(), '/early-retry.sqlite', null);
+      const db = new DatabaseSync('/early-retry.sqlite');
+      db.exec('CREATE TABLE kv (k TEXT)');
+      await vi.advanceTimersByTimeAsync(1000);
+      await expect(db.save()).rejects.toThrow('I/O');
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(writes).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(writes).toHaveBeenCalledTimes(2);
+      db.raw.close();
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries a failed save on its own', async () => {
+    vi.useFakeTimers();
+    const writes = vi.spyOn(fs.promises, 'writeFile').mockResolvedValue(undefined as never);
+    vi.spyOn(fs.promises, 'rename').mockResolvedValue(undefined as never);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    writes.mockRejectedValueOnce(new Error('I/O'));
+    try {
+      provideSqlite(await initSqlJs(), '/retry.sqlite', null);
+      const db = new DatabaseSync('/retry.sqlite');
+      db.exec('CREATE TABLE kv (k TEXT)');
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(writes).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(writes).toHaveBeenCalledTimes(2);
+      db.raw.close();
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
   });
 });

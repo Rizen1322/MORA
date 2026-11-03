@@ -1,0 +1,301 @@
+{
+  "notesFile": "C:/Users/aivaz/Downloads/MORA-listening-notes.json",
+  "pageSha256": "c67ad2aaa40230a3182cb93637c64d6b061aa03809917c4a5128109e43ac9b1b",
+  "summary": {
+    "upgrade": 4,
+    "historical": 5,
+    "tie": 1,
+    "bothBad": 5,
+    "identicalChoice": 1
+  },
+  "rows": [
+    {
+      "id": 112,
+      "from": "will.i.am, Jamie Foxx, Anne Hathaway — Hot Wings (I Wanna Party)",
+      "to": "Kendrick Lamar, Dody6 — hey now",
+      "vote": "Оба неудачные",
+      "note": null,
+      "order": [
+        "112-B-upgrade.wav",
+        "112-A-historical.wav"
+      ],
+      "hashes": [
+        "e69e34f63eb0331c04078b71e9bb10e014a490c8be1b50075ecd67c4848a2859",
+        "e69e34f63eb0331c04078b71e9bb10e014a490c8be1b50075ecd67c4848a2859"
+      ],
+      "identicalAudio": true,
+      "chosen": null,
+      "preference": "bothBad"
+    },
+    {
+      "id": 122,
+      "from": "PHARAOH, Noa — Порнозвезда (Bonus Track; Remix)",
+      "to": "ooes — night (sped up)",
+      "vote": "Вариант 2",
+      "note": null,
+      "order": [
+        "122-B-upgrade.wav",
+        "122-A-historical.wav"
+      ],
+      "hashes": [
+        "18213891965945acd806f26928a7db5367b10ce11d889e5d1c4ad0b07d286bc7",
+        "b85d533a5aed01e872afde2811c02387589570c6b5a26c77957198d781201689"
+      ],
+      "identicalAudio": false,
+      "chosen": "122-A-historical.wav",
+      "preference": "historical"
+    },
+    {
+      "id": 123,
+      "from": "ooes — night (sped up)",
+      "to": "ROCKET — Money",
+      "vote": "Вариант 2",
+      "note": null,
+      "order": [
+        "123-A-historical.wav",
+        "123-B-upgrade.wav"
+      ],
+      "hashes": [
+        "977f8d0f2c9d7a735a9062b3ec590acbdbd05d536d0008e6f71b4bce58b77370",
+        "3f8b9b7dc2d712a53f3a293be3d2983e9fc74b86a1ab1a5c06de8bf4cd084a5c"
+      ],
+      "identicalAudio": false,
+      "chosen": "123-B-upgrade.wav",
+      "preference": "upgrade"
+    },
+    {
+      "id": 124,
+      "from": "ROCKET — Money",
+      "to": "Øneheart — outside",
+      "vote": "Вариант 2",
+      "note": null,
+      "order": [
+        "124-B-upgrade.wav",
+        "124-A-historical.wav"
+      ],
+      "hashes": [
+        "ecc1d0eafe137d380a0f8046edf42455af8065e24fbd63e6b7dc787da68b6571",
+        "b0910100a1c18f9667deac38d69a7b26bbdef4d2f2242be6482a2a7a2eb81134"
+      ],
+      "identicalAudio": false,
+      "chosen": "124-A-historical.wav",
+      "preference": "historical"
+    },
+    {
+      "id": 125,
+      "from": "Øneheart — outside",
+      "to": "VILLIAN — Оторву Руки",
+      "vote": "Вариант 2",
+      "note": null,
+      "order": [
+        "125-B-upgrade.wav",
+        "125-A-historical.wav"
+      ],
+      "hashes": [
+        "a7f58cabade5cd816502cd3b7a4c6d52c37595ffa0016c236e032cdeb0a17625",
+        "58875b3f852097db16c87a20b425447e745206cff0931ef969780ca65a2da134"
+      ],
+      "identicalAudio": false,
+      "chosen": "125-A-historical.wav",
+      "preference": "historical"
+    },
+    {
+      "id": 139,
+      "from": "TAKETAKE — Tonight",
+      "to": "BUSHIDO ZHO — Heaven",
+      "vote": "Вариант 2",
+      "note": null,
+      "order": [
+        "139-A-historical.wav",
+        "139-B-upgrade.wav"
+      ],
+      "hashes": [
+        "befe7503185e3618d4fa1b5cd10bec4f6e69a3ea86b7db56a89d27f62de9cb7e",
+        "cf53a20d84399254b7f0346dc063a4b6e87ba68258020611effd18e5403e775a"
+      ],
+      "identicalAudio": false,
+      "chosen": "139-B-upgrade.wav",
+      "preference": "upgrade"
+    },
+    {
+      "id": 141,
+      "from": "Aarne, FEDUK, Scally Milano — Мечты",
+      "to": "nkeeei, Yanix — Поцелуи",
+      "vote": "Вариант 1",
+      "note": null,
+      "order": [
+        "141-A-historical.wav",
+        "141-B-upgrade.wav"
+      ],
+      "hashes": [
+        "bbbcf8ae04a9f2b6df890cda96744b63cdf96c4ddc66b6b96fa5e7bee02970c4",
+        "f2863a116beb7feff1054d75e100a7998b89683bb79e8eaeab2f8c4038305977"
+      ],
+      "identicalAudio": false,
+      "chosen": "141-A-historical.wav",
+      "preference": "historical"
+    },
+    {
+      "id": 150,
+      "from": "uglystephan, Scally Milano — Заберу",
+      "to": "TAKETAKE — baby my type",
+      "vote": "Вариант 2",
+      "note": null,
+      "order": [
+        "150-B-upgrade.wav",
+        "150-A-historical.wav"
+      ],
+      "hashes": [
+        "14c062648f61bdb9c9044bc9cb65b6fab8b8812e0f6d2c99b11e2256f3edc3d9",
+        "ea1043827395e4846fc471a8491d609532c2b65d332f62b8dd852cb6a2a30603"
+      ],
+      "identicalAudio": false,
+      "chosen": "150-A-historical.wav",
+      "preference": "historical"
+    },
+    {
+      "id": 151,
+      "from": "TAKETAKE — baby my type",
+      "to": "Пошлая Молли, HOFMANNITA — #HABIBATI",
+      "vote": "Оба неудачные",
+      "note": null,
+      "order": [
+        "151-B-upgrade.wav",
+        "151-A-historical.wav"
+      ],
+      "hashes": [
+        "ca0e27cfca3abeaa6f4b29dc384c158c76026666210d0a12aba251780ad57907",
+        "3d4b09cbefc84f9862476fffd0579fc391efada38e75178fa9f61a3b56a41165"
+      ],
+      "identicalAudio": false,
+      "chosen": null,
+      "preference": "bothBad"
+    },
+    {
+      "id": 153,
+      "from": "NEWLIGHTCHILD — roman",
+      "to": "Scally Milano, uglystephan — Дай Мне Шанс",
+      "vote": "Оба неудачные",
+      "note": null,
+      "order": [
+        "153-B-upgrade.wav",
+        "153-A-historical.wav"
+      ],
+      "hashes": [
+        "9b4ce011073de75b2229509ada7bfa7393538c8f913010b1dbf3f7e9a1fe666c",
+        "9b4ce011073de75b2229509ada7bfa7393538c8f913010b1dbf3f7e9a1fe666c"
+      ],
+      "identicalAudio": true,
+      "chosen": null,
+      "preference": "bothBad"
+    },
+    {
+      "id": 156,
+      "from": "madk1d, VILLIAN — 8 миля",
+      "to": "gotlibgotlibgotlib, SABU — агентство насилия™",
+      "vote": "Вариант 2",
+      "note": null,
+      "order": [
+        "156-A-historical.wav",
+        "156-B-upgrade.wav"
+      ],
+      "hashes": [
+        "d667d832d6005eb6c4f05c09fc2e0f5a012fb8c6e32ad062ce94c6e729bac9bd",
+        "d667d832d6005eb6c4f05c09fc2e0f5a012fb8c6e32ad062ce94c6e729bac9bd"
+      ],
+      "identicalAudio": true,
+      "chosen": "156-B-upgrade.wav",
+      "preference": "identicalChoice"
+    },
+    {
+      "id": 157,
+      "from": "gotlibgotlibgotlib, SABU — агентство насилия™",
+      "to": "GENER8ION, Yannis — Love & Tears",
+      "vote": "Примерно одинаково",
+      "note": null,
+      "order": [
+        "157-A-historical.wav",
+        "157-B-upgrade.wav"
+      ],
+      "hashes": [
+        "032ae98d5d3049d3ec4ed4a7b3ae18f271f2f52e56584e9a6d09b985c6f4af75",
+        "032ae98d5d3049d3ec4ed4a7b3ae18f271f2f52e56584e9a6d09b985c6f4af75"
+      ],
+      "identicalAudio": true,
+      "chosen": null,
+      "preference": "tie"
+    },
+    {
+      "id": 158,
+      "from": "GENER8ION, Yannis — Love & Tears",
+      "to": "Yung Lean — Agony",
+      "vote": "Вариант 2",
+      "note": null,
+      "order": [
+        "158-A-historical.wav",
+        "158-B-upgrade.wav"
+      ],
+      "hashes": [
+        "a0b39db2e87ebd1cfef8551de86acb71461cb3697673c7abd1063d8be1cca4a0",
+        "4f5cf91f0901d7ee7c19a59c5f94011a146457986b6cc7049cc02963ea6f88a1"
+      ],
+      "identicalAudio": false,
+      "chosen": "158-B-upgrade.wav",
+      "preference": "upgrade"
+    },
+    {
+      "id": 162,
+      "from": "LOVV66 — МАЙ МАЙ",
+      "to": "FORTUNA 812 — ParisLove",
+      "vote": "Оба неудачные",
+      "note": null,
+      "order": [
+        "162-B-upgrade.wav",
+        "162-A-historical.wav"
+      ],
+      "hashes": [
+        "83994d59c83e42db6c43f4007b9e539b3c6c5879778cc2aee65b488d9a4eff48",
+        "66eb7769e745d241ac3adba1883070d5957b819bd7e3e616bbe1c648cfbc1ae5"
+      ],
+      "identicalAudio": false,
+      "chosen": null,
+      "preference": "bothBad"
+    },
+    {
+      "id": 167,
+      "from": "тёмный принц — вклубе",
+      "to": "TAKETAKE — Правила",
+      "vote": "Оба неудачные",
+      "note": null,
+      "order": [
+        "167-A-historical.wav",
+        "167-B-upgrade.wav"
+      ],
+      "hashes": [
+        "b8a1ca50413fd6e09c392f3ec8f129e67c8ccf7f8c99d26515cd502f90ecd1bb",
+        "2e0d08221bc11d1ed3ff3b0534626fa82a221fb183a07bdfc98f49c609418b92"
+      ],
+      "identicalAudio": false,
+      "chosen": null,
+      "preference": "bothBad"
+    },
+    {
+      "id": 179,
+      "from": "Kai Angel — andy warhol",
+      "to": "August — Спасатель (Bonus Track)",
+      "vote": "Вариант 2",
+      "note": null,
+      "order": [
+        "179-A-historical.wav",
+        "179-B-upgrade.wav"
+      ],
+      "hashes": [
+        "d08180f8c0147530fc5bf5d7d07546a09edda69467066cda581b79e68317f781",
+        "2888d789517acfec0629f2903eeb2f2f6fb9f172b033e3c4e103158fe01a2167"
+      ],
+      "identicalAudio": false,
+      "chosen": "179-B-upgrade.wav",
+      "preference": "upgrade"
+    }
+  ]
+}

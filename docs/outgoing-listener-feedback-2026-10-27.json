@@ -1,0 +1,105 @@
+{
+  "reviewId": "review-outgoing-2026-10-27-v2",
+  "manifestSha256": "208d870d024403d5d1fdf9708d0c8d536ab91b4e7339b38361952f5f1482c620",
+  "notesSha256": "95a61fcfa6b237738954c76a245300f530f5a357c71e43a84fc1ed3783c5265f",
+  "exportedAt": "2026-10-27T00:12:21.313Z",
+  "summary": {
+    "allBad": 3,
+    "tie": 1,
+    "selectedVariant": 0
+  },
+  "rows": [
+    {
+      "id": 189,
+      "from": "ROCKET — Один",
+      "to": "Пошлая Молли — ПОРНХАБ КРИСМАС КЛАБ",
+      "preferredVariantId": "tie",
+      "note": "вот прям хорошо",
+      "variants": [
+        {
+          "variantId": "189-18754715fd21a2b9",
+          "title": "Записанный переход",
+          "auditionOnly": false,
+          "sha256": "775f55a8f6fa5b6da69c9be42baefc5c4730f442a26a4e8e4c8344c56487c14c",
+          "planSha256": "18754715fd21a2b993cd5bddee200a7cb87b5ac2fa83189b962540cb7749757d"
+        },
+        {
+          "variantId": "189-5d21e02cb3bd036b",
+          "title": "Пробный выход A после прихода B",
+          "auditionOnly": true,
+          "sha256": "0c321c92277fad0ddb0ae8ee291aef117dc05a5655ba0de2640613287fbf3873",
+          "planSha256": "5d21e02cb3bd036b5fc57464b7e484a20dfaaed89cbfca8e9e4612b927677a95"
+        }
+      ]
+    },
+    {
+      "id": 198,
+      "from": "GONE.Fludd — BOYS DON'T CRY",
+      "to": "TAKETAKE — Правила",
+      "preferredVariantId": "all_bad",
+      "note": "два голоса одновременно",
+      "variants": [
+        {
+          "variantId": "198-65177c05097378c5",
+          "title": "Записанный переход",
+          "auditionOnly": false,
+          "sha256": "3105df7de2dd508b808f2336c350382ea28eb99c66db37c08e063a73b279ddca",
+          "planSha256": "65177c05097378c5c3099d95d4ba5c98ff0cad552fad6f40e607a73211128c57"
+        },
+        {
+          "variantId": "198-0dd2f8c1ddc8d48a",
+          "title": "Пробный выход A после прихода B",
+          "auditionOnly": true,
+          "sha256": "fceffaf46115b45b6929891d120d35aad68c8cae3b09059971d564ac95611f1f",
+          "planSha256": "0dd2f8c1ddc8d48ae7acc55cbc7eb3b37fa5a2df41326735235b4f4cb99e7024"
+        }
+      ]
+    },
+    {
+      "id": 204,
+      "from": "LIL KRYSTALLL — Тик так",
+      "to": "GONE.Fludd — СЕТИ",
+      "preferredVariantId": "all_bad",
+      "note": "просто плох.",
+      "variants": [
+        {
+          "variantId": "204-0b670f78b6233d42",
+          "title": "Записанный переход",
+          "auditionOnly": false,
+          "sha256": "f0adf22e1838694a4f07beef749b88488552468d52d482f588e1b55fae3a98f9",
+          "planSha256": "0b670f78b6233d423c3c7423dffa78b3a633d0d98386b379497e4b7d2a3615d4"
+        },
+        {
+          "variantId": "204-8347c8d40e4fcc9c",
+          "title": "Пробный выход A после прихода B",
+          "auditionOnly": true,
+          "sha256": "34a119f4736008c1b80c367f60aa7b05ed9f8dd2c86e4d7fa1b57275bad19f9c",
+          "planSha256": "8347c8d40e4fcc9c0188068877d26ebff1bb0025db8388e4d04dae73ff729bc8"
+        }
+      ]
+    },
+    {
+      "id": 205,
+      "from": "GONE.Fludd — СЕТИ",
+      "to": "VILLIAN, madk1d — ДИНАСТИЯ",
+      "preferredVariantId": "all_bad",
+      "note": "голоса одновременно и по битам говно",
+      "variants": [
+        {
+          "variantId": "205-10cc99f2633b598c",
+          "title": "Записанный переход",
+          "auditionOnly": false,
+          "sha256": "166597dd8a012cd675505f3c5c44f02536dfc7d5f51023dfa7c58083283012fe",
+          "planSha256": "10cc99f2633b598cab27ea593291230f770bcebb539c9457e0194ecd1ba6cd35"
+        },
+        {
+          "variantId": "205-a979afb8145d44eb",
+          "title": "Пробный выход A после прихода B",
+          "auditionOnly": true,
+          "sha256": "00dffb60d14f71c6a14b7124a86c2e7584f3496a02f50a8126ef43f5b7f11b9d",
+          "planSha256": "a979afb8145d44ebe63ea05deb1bf0aebc76d90ea2a84e3a0d103c9a133cc399"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "version": "0.3.25",
+  "sourceCommit": "ba699ee",
+  "installerSha256": "bb013d3592cb0fc38c5251fe308ca59a8c55a69d981222b0c8139ac90955b7a0",
+  "tests": 1184,
+  "testFiles": 153,
+  "rustUnitTests": 14,
+  "rustIntegrationTests": 2,
+  "plannerComparisons": 266,
+  "newPlannerComparisons": 110,
+  "plannerTsSha256": "5D93DDADA9725EEAD8DFE74FD88AA08E22A5524FDB483B0BC9CE2A7F79D1C727",
+  "plannerRustUnlockedSha256": "56AC7EA76A79ED0D972CF83B7638B932EBB89FD7D3242C031ADAC2B9E93E872E",
+  "background": {
+    "frozenMs": 30000,
+    "fromIndex": 1,
+    "toIndex": 3
+  },
+  "pcmUnderruns": 0,
+  "maxDeviceUnderruns": 0.0,
+  "maxSlowBlocks": 0.0,
+  "maxRenderMs": 0.1996,
+  "releaseUrl": "https://github.com/Rizen1322/MORA/releases/tag/v0.3.25"
+}

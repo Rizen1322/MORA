@@ -1,0 +1,630 @@
+{
+  "date": "2026-10-31",
+  "platform": "Windows x64",
+  "version": "0.3.23",
+  "published": false,
+  "installedIntoUserProfile": false,
+  "desktopVocalSubtractionEnabled": false,
+  "iosChangedByThisMigration": false,
+  "tests": {
+    "javascript": 1071,
+    "javascriptFiles": 134,
+    "rust": 10,
+    "typecheck": [
+      "core",
+      "server",
+      "web",
+      "desktop"
+    ],
+    "analyzerCases": 14,
+    "plannerSynthetic": 170,
+    "plannerReal": 36,
+    "phraseCases": 36,
+    "levelDecoratorCases": 324,
+    "unlockedCases": 45,
+    "referenceVocalDecoratorCases": 267,
+    "referenceVocalDspCases": 38,
+    "offlineBitExactRenders": 14,
+    "integratedMetricCases": 13,
+    "directMetricCases": 27,
+    "dspRuns": 108,
+    "dspMaximumPcmError": 0.0
+  },
+  "benchmark": {
+    "cpu": "AMD Ryzen 5 9600X 6-Core Processor             ",
+    "node": "v26.13.0",
+    "rust": "1.99.1",
+    "dspScope": "Release DSP only, 128 frames, warm V8; excludes JSON, process startup, FFmpeg, disk I/O and Electron",
+    "dsp": [
+      {
+        "sampleRate": 44100,
+        "scenario": "solo",
+        "runs": 3,
+        "speedup": 1.8366185295359918,
+        "typescriptP99Ms": 0.017699999999990723,
+        "rustP99Ms": 0.0102
+      },
+      {
+        "sampleRate": 44100,
+        "scenario": "tone",
+        "runs": 3,
+        "speedup": 1.5021757047264779,
+        "typescriptP99Ms": 0.02869999999995798,
+        "rustP99Ms": 0.0157
+      },
+      {
+        "sampleRate": 44100,
+        "scenario": "transition",
+        "runs": 3,
+        "speedup": 1.7249107101148302,
+        "typescriptP99Ms": 0.14230000000020482,
+        "rustP99Ms": 0.1
+      },
+      {
+        "sampleRate": 44100,
+        "scenario": "loop",
+        "runs": 3,
+        "speedup": 1.996430517330893,
+        "typescriptP99Ms": 0.034799999999904685,
+        "rustP99Ms": 0.019
+      },
+      {
+        "sampleRate": 44100,
+        "scenario": "tape",
+        "runs": 3,
+        "speedup": 1.9664108634354152,
+        "typescriptP99Ms": 0.0464999999999236,
+        "rustP99Ms": 0.0247
+      },
+      {
+        "sampleRate": 44100,
+        "scenario": "playback",
+        "runs": 3,
+        "speedup": 1.1801573036486717,
+        "typescriptP99Ms": 0.2114000000001397,
+        "rustP99Ms": 0.1152
+      },
+      {
+        "sampleRate": 48000,
+        "scenario": "solo",
+        "runs": 3,
+        "speedup": 1.930207506005426,
+        "typescriptP99Ms": 0.02109999999993306,
+        "rustP99Ms": 0.0122
+      },
+      {
+        "sampleRate": 48000,
+        "scenario": "tone",
+        "runs": 3,
+        "speedup": 1.431692286570274,
+        "typescriptP99Ms": 0.02509999999892898,
+        "rustP99Ms": 0.0185
+      },
+      {
+        "sampleRate": 48000,
+        "scenario": "transition",
+        "runs": 3,
+        "speedup": 1.8647530718685275,
+        "typescriptP99Ms": 0.2334000000009837,
+        "rustP99Ms": 0.1265
+      },
+      {
+        "sampleRate": 48000,
+        "scenario": "loop",
+        "runs": 3,
+        "speedup": 1.9092114463635768,
+        "typescriptP99Ms": 0.028900000001158332,
+        "rustP99Ms": 0.015400000000000002
+      },
+      {
+        "sampleRate": 48000,
+        "scenario": "tape",
+        "runs": 3,
+        "speedup": 1.8697949076121647,
+        "typescriptP99Ms": 0.03269999999974971,
+        "rustP99Ms": 0.0259
+      },
+      {
+        "sampleRate": 48000,
+        "scenario": "playback",
+        "runs": 3,
+        "speedup": 1.0847193450988462,
+        "typescriptP99Ms": 0.13720000000103028,
+        "rustP99Ms": 0.11069999999999999
+      }
+    ],
+    "planner": {
+      "typescriptMedianMs": 5.437900000000013,
+      "nativeWallMedianMs": 34.03410000000008,
+      "realTypescriptMedianMs": 2.696100000000115,
+      "realNativeWallMedianMs": 30.07770000000005,
+      "scope": "Native includes process startup, JSON encoding, transport and parsing; TS is in-process",
+      "nativePlannerSpeedupClaimed": false
+    },
+    "analysis": [
+      {
+        "kind": "silence",
+        "seconds": 1,
+        "typescriptMs": 22.225300000000004,
+        "rustProcessMs": 19.436399999999992,
+        "typescriptComputeMs": 11,
+        "rustComputeMs": 5,
+        "differences": 0
+      },
+      {
+        "kind": "short",
+        "seconds": 3,
+        "typescriptMs": 46.47149999999999,
+        "rustProcessMs": 36.0145,
+        "typescriptComputeMs": 30,
+        "rustComputeMs": 18,
+        "differences": 0
+      },
+      {
+        "kind": "steady",
+        "seconds": 48,
+        "typescriptMs": 551.2955,
+        "rustProcessMs": 421.71029999999996,
+        "typescriptComputeMs": 415,
+        "rustComputeMs": 357,
+        "differences": 0
+      },
+      {
+        "kind": "drift",
+        "seconds": 48,
+        "typescriptMs": 588.1207999999999,
+        "rustProcessMs": 460.8221999999996,
+        "typescriptComputeMs": 456,
+        "rustComputeMs": 371,
+        "differences": 0
+      },
+      {
+        "kind": "antiphase",
+        "seconds": 24,
+        "typescriptMs": 262.2226999999998,
+        "rustProcessMs": 200.58120000000008,
+        "typescriptComputeMs": 189,
+        "rustComputeMs": 162,
+        "differences": 0
+      },
+      {
+        "kind": "noise",
+        "seconds": 22,
+        "typescriptMs": 260.8912,
+        "rustProcessMs": 182.14580000000024,
+        "typescriptComputeMs": 177,
+        "rustComputeMs": 142,
+        "differences": 0
+      },
+      {
+        "kind": "repetition",
+        "seconds": 72,
+        "typescriptMs": 769.0202999999992,
+        "rustProcessMs": 629.7960000000003,
+        "typescriptComputeMs": 590,
+        "rustComputeMs": 547,
+        "differences": 0
+      },
+      {
+        "kind": "synth-house",
+        "seconds": 49.85163265306122,
+        "typescriptMs": 484.1722,
+        "rustProcessMs": 377.02189999999973,
+        "typescriptComputeMs": 349,
+        "rustComputeMs": 314,
+        "differences": 0
+      },
+      {
+        "kind": "synth-techno",
+        "seconds": 48.40002267573696,
+        "typescriptMs": 487.4292999999998,
+        "rustProcessMs": 371.6369000000004,
+        "typescriptComputeMs": 353,
+        "rustComputeMs": 306,
+        "differences": 0
+      },
+      {
+        "kind": "synth-hiphop",
+        "seconds": 68.85455782312926,
+        "typescriptMs": 668.9062000000004,
+        "rustProcessMs": 527.0362999999998,
+        "typescriptComputeMs": 488,
+        "rustComputeMs": 436,
+        "differences": 0
+      },
+      {
+        "kind": "synth-pop",
+        "seconds": 52.21356009070295,
+        "typescriptMs": 508.76740000000063,
+        "rustProcessMs": 404.89220000000023,
+        "typescriptComputeMs": 367,
+        "rustComputeMs": 339,
+        "differences": 0
+      },
+      {
+        "kind": "synth-dnb",
+        "seconds": 36.5034693877551,
+        "typescriptMs": 347.4868999999999,
+        "rustProcessMs": 280.65700000000106,
+        "typescriptComputeMs": 248,
+        "rustComputeMs": 230,
+        "differences": 0
+      },
+      {
+        "kind": "synth-ambient",
+        "seconds": 85.68571428571428,
+        "typescriptMs": 859.8171999999995,
+        "rustProcessMs": 671.6354999999985,
+        "typescriptComputeMs": 619,
+        "rustComputeMs": 568,
+        "differences": 0
+      },
+      {
+        "kind": "synth-acoustic",
+        "seconds": 60.66226757369615,
+        "typescriptMs": 843.3800999999985,
+        "rustProcessMs": 570.796699999999,
+        "typescriptComputeMs": 692,
+        "rustComputeMs": 497,
+        "differences": 0
+      }
+    ]
+  },
+  "review": {
+    "independentAgents": true,
+    "confirmedFindingsFixed": [
+      "concurrent native startup",
+      "fatal before ready continuation",
+      "CARGO_TARGET_DIR packaging",
+      "long 96kHz render request cap"
+    ],
+    "finalRecheck": "No new material findings; long-render regression passed independently"
+  },
+  "packagedSmoke": {
+    "date": "2026-10-31T06:48:36.08Z",
+    "profile": "F:\\вин\\ПРОЕКТЫ\\music\\tools\\.cache\\rust-desktop-fJsbT9",
+    "sampleRate": 48000,
+    "muted": true,
+    "controller": "React → preload → Electron → Rust → WASAPI",
+    "pauseResume": true,
+    "manualTransition": true,
+    "processCrashRecovery": true,
+    "deviceSwitch": true,
+    "rejectedDeviceKeptOldOutput": true,
+    "pcmUnderruns": 0,
+    "health": [
+      {
+        "type": "audioHealth",
+        "maxRenderMs": 0.0418,
+        "slowBlocks": 0,
+        "p95Ms": 0.022,
+        "p99Ms": 0.030800000000000004,
+        "deviceUnderruns": 0,
+        "presentedFrames": 48576
+      },
+      {
+        "type": "audioHealth",
+        "maxRenderMs": 0.0598,
+        "slowBlocks": 0,
+        "p95Ms": 0.0191,
+        "p99Ms": 0.039,
+        "deviceUnderruns": 0,
+        "presentedFrames": 14496
+      },
+      {
+        "type": "audioHealth",
+        "maxRenderMs": 0.0392,
+        "slowBlocks": 0,
+        "p95Ms": 0.0214,
+        "p99Ms": 0.027800000000000002,
+        "deviceUnderruns": 0,
+        "presentedFrames": 62496
+      },
+      {
+        "type": "audioHealth",
+        "maxRenderMs": 0.1271,
+        "slowBlocks": 0,
+        "p95Ms": 0.0187,
+        "p99Ms": 0.0258,
+        "deviceUnderruns": 0,
+        "presentedFrames": 110496
+      },
+      {
+        "type": "audioHealth",
+        "maxRenderMs": 0.10450000000000001,
+        "slowBlocks": 0,
+        "p95Ms": 0.0198,
+        "p99Ms": 0.0268,
+        "deviceUnderruns": 0,
+        "presentedFrames": 158496
+      },
+      {
+        "type": "audioHealth",
+        "maxRenderMs": 0.1615,
+        "slowBlocks": 0,
+        "p95Ms": 0.0244,
+        "p99Ms": 0.0426,
+        "deviceUnderruns": 0,
+        "presentedFrames": 206496
+      },
+      {
+        "type": "audioHealth",
+        "maxRenderMs": 0.07830000000000001,
+        "slowBlocks": 0,
+        "p95Ms": 0.0252,
+        "p99Ms": 0.0388,
+        "deviceUnderruns": 0,
+        "presentedFrames": 254496
+      },
+      {
+        "type": "audioHealth",
+        "maxRenderMs": 0.0483,
+        "slowBlocks": 0,
+        "p95Ms": 0.0239,
+        "p99Ms": 0.0383,
+        "deviceUnderruns": 0,
+        "presentedFrames": 302496
+      },
+      {
+        "type": "audioHealth",
+        "maxRenderMs": 0.0803,
+        "slowBlocks": 0,
+        "p95Ms": 0.0236,
+        "p99Ms": 0.0294,
+        "deviceUnderruns": 0,
+        "presentedFrames": 350496
+      }
+    ],
+    "nativeProcess": {
+      "Id": 1720,
+      "WorkingSet64": 20865024,
+      "PrivateMemorySize64": 11952128,
+      "CPU": 0.234375
+    }
+  },
+  "installer": {
+    "path": "apps/desktop/dist/MORA-Setup-0.3.23.exe",
+    "bytes": 169925947,
+    "sha256": "ed7d781817f8f1cbfef01146e93a2821b99d38b0c0ee9b0b775eb4801dd74351",
+    "authenticodeStatus": "NotSigned",
+    "verification": "verify-release passed; version, SHA-512 metadata, blockmap, updater, native hash and licenses checked"
+  },
+  "nativeBinary": {
+    "bytes": 3012608,
+    "sha256": "630f69aab0d2301a78582a8c78c211b0d4b1f6fdbc11f9cd151ee9440aa162d4",
+    "buildAndPackagedHashesMatch": true
+  },
+  "sources": [
+    {
+      "path": "apps/desktop/electron-builder.json",
+      "sha256": "559b087e1685f46e18a817254c10ebef1e94bc445050216d653da98d58051540"
+    },
+    {
+      "path": "apps/desktop/scripts/build-rust.mjs",
+      "sha256": "e88c7565993ea126229184e1d35c0b621f0e59307940015cffe4185123612482"
+    },
+    {
+      "path": "apps/desktop/scripts/package.mjs",
+      "sha256": "b0ec9baee7f5a425dc68b7b636cacf1ebaebcdbd5a8f1b66ef6dc62a366e093b"
+    },
+    {
+      "path": "apps/desktop/scripts/verify-release.mjs",
+      "sha256": "97a405a0af4e65e174e48152804865f54c881dc942042da72d4fd0b229c09fbc"
+    },
+    {
+      "path": "apps/desktop/src/main.mjs",
+      "sha256": "1d42b60094019f4b3ac25869ab09cc06872f19ac1bc33243b191f47a5fb0ebc5"
+    },
+    {
+      "path": "apps/desktop/src/rust-audio.mjs",
+      "sha256": "15799b5d4da7a80d4903fc4ee2afce8cfe7f77e4779d37d33dce6210de0e6e95"
+    },
+    {
+      "path": "apps/server/src/analysisWorker.ts",
+      "sha256": "3cfd2e70c6064254b7073b529a4e28d6098781a56cb836a13a1e0743d3805d54"
+    },
+    {
+      "path": "apps/server/src/automix.ts",
+      "sha256": "5d8c0ba72702eae0ba9108415d87d77abd9d170b8d1e53dbf60d3ca3d417d7b1"
+    },
+    {
+      "path": "apps/server/src/phrase-recipes.ts",
+      "sha256": "c7181affb3231ecff826829dc161e062b054832cf35d4ff052fbcacf1655ed50"
+    },
+    {
+      "path": "apps/server/src/rust-core.ts",
+      "sha256": "82bf02f88d9f4d762e6c3c55dc626fc29e0216b75cc6953f6616748c500cc126"
+    },
+    {
+      "path": "apps/server/src/rust-render.ts",
+      "sha256": "dc0009d65dbd9b54d7e44facf4d9004b36f0220b571457ffa6c1f1f94df20070"
+    },
+    {
+      "path": "apps/web/src/audio/controller.ts",
+      "sha256": "d3d9f6f81a83ccfe92f4acaef1d81e5f1ecbad5de9905538c396d26bd2ebe198"
+    },
+    {
+      "path": "apps/web/src/audio/desktop-engine.ts",
+      "sha256": "8fc33fa9d123197d3ff195eac14a836437bc6c0e8961917bc63040cc57a19569"
+    },
+    {
+      "path": "packages/audio-rust/src/analysis/common.rs",
+      "sha256": "26880f1d8d08f70bc7c00e51bc67f3102e82438f6703de5e95aba3fed0f16562"
+    },
+    {
+      "path": "packages/audio-rust/src/analysis/loudness.rs",
+      "sha256": "ee6fbfd567bcb97bb9175b4758279325333f6978476a2703d92fb4fd2703b264"
+    },
+    {
+      "path": "packages/audio-rust/src/analysis/mod.rs",
+      "sha256": "31cf50e58c1ba94282fe9a1928dc3f5d685a1e80d4be5ae9a69b69d2efd520a7"
+    },
+    {
+      "path": "packages/audio-rust/src/analysis/regions.rs",
+      "sha256": "87093019faf2f3beb42ff90356e0aa4302da3c8dddb614d0a9b2f671243513a8"
+    },
+    {
+      "path": "packages/audio-rust/src/analysis/repetition.rs",
+      "sha256": "701320682c80343d7cd9aea401add807dc4de193beb8f680807e6f3da416a60c"
+    },
+    {
+      "path": "packages/audio-rust/src/analysis/spectral.rs",
+      "sha256": "01b137a52df83fc99e981afc4450281cbf900309ac503d6ebf83ed6dfe5a74fb"
+    },
+    {
+      "path": "packages/audio-rust/src/analysis/structure.rs",
+      "sha256": "dc730b8d7ce5015f3207f0d32cf679dbcb1bfbcac474771883ba8c73db795f14"
+    },
+    {
+      "path": "packages/audio-rust/src/analysis/tempo.rs",
+      "sha256": "2a67932f474efc3ebf950dde391a3020bf94157a1d5fc00b5b30ab88e4be98c1"
+    },
+    {
+      "path": "packages/audio-rust/src/dsp.rs",
+      "sha256": "2d82bc034a47bd6fc6094f1dd70ca1908355d7c50f288e31731cadb561621a04"
+    },
+    {
+      "path": "packages/audio-rust/src/js_json.rs",
+      "sha256": "c63889f1a914e37df0482df51e1db0821052f595e98d326a2de0a1d99c627328"
+    },
+    {
+      "path": "packages/audio-rust/src/lib.rs",
+      "sha256": "912bc5f0673ad4562b0a2b62687427cd8d48dd5e3fb1035e2004f0edd7ccca32"
+    },
+    {
+      "path": "packages/audio-rust/src/main.rs",
+      "sha256": "a3103f6c4f4e0c35a3484269bee368343fd1865919bcb7a7aa3809a1ba73f184"
+    },
+    {
+      "path": "packages/audio-rust/src/mixer.rs",
+      "sha256": "a79c49bea8f3102ef73b974dfb882c8356dae70a00fa5db9d582ac1c1d9d27d4"
+    },
+    {
+      "path": "packages/audio-rust/src/phrase_mix.rs",
+      "sha256": "45d00d4c2384e06b344cee0aa809ea5f63564b8f8b138a1be6a909d2d2546809"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/beatmatch.rs",
+      "sha256": "1fa65758b4363299a49407eb11157300f4a7c2e27308a448ace9561a86540b78"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/common.rs",
+      "sha256": "e9b5d286dd772235c75847df824e1a5847b4cc6241f713aeeac88c87daa52846"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/context.rs",
+      "sha256": "3c15b8c1ef45508eb771af39a16decad55cdab6887b02babc485ff800a6203df"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/entries.rs",
+      "sha256": "80c92facf1cff17777a2cc08fcb8e8d12626b9e11a1ad6f668c407ecbfed5751"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/feedback.rs",
+      "sha256": "5a43dbd346494838703e6d23b566911dcaf344ba62e1355a992ef3a2a2bdba1e"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/first_words.rs",
+      "sha256": "1130643b65b6730eba73a08e5461ce9bf9fda72bcf477f228ee66357aa459c88"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/fullmix.rs",
+      "sha256": "36ec6580e2c43e8bac0ce0c04f659e228cf477efaa225801c122dfc0fb0369eb"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/human.rs",
+      "sha256": "59ba3df10ce660826a8bfeeeb9eb937534b1bf7a646bf66ce8c7b04329e47b2a"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/level_decorators.rs",
+      "sha256": "4a56fd3df16a075f8dee75cc0f741e653d47db1458a3f6c13f0720e3f8537831"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/local_rhythm.rs",
+      "sha256": "1a43488d34901c4ef2d0aa3a290a7ea9957af69dd95a6aa8c75586f9ab85783e"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/mod.rs",
+      "sha256": "4926a76a16cf956d5a4dd0aa01dbe9c4a376e8d2397fd8c39d0778b69e40ae96"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/musical_decorators.rs",
+      "sha256": "b59504188eaa1f8f469aa62d33bbc404e71237987b5ee2c5fe7cff106cc778ef"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/planner.rs",
+      "sha256": "33f9f5fcc5fdd750c619c3282e868ac12c50e6fcb277e3a320e9b059126c4630"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/primitives.rs",
+      "sha256": "6b4b6ce5b2d273228e10944c0bfb0bec0b667cacbb5042103ede7ce3c4c6ccc1"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/rhythm_overlap.rs",
+      "sha256": "fa3e9afa953d8eba1c0261221691bd0611f294843cee58a2802f3debb75f1437"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/simple.rs",
+      "sha256": "778c7f450ad2d2d119243ef9d612f3b75c05281106364c7a985e1fa2dc21d47c"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/tempo_decorators.rs",
+      "sha256": "ca3d21cd7ce823a8ac49cb33003c11b4f2c9cdfc61a5c7fa98d9a96eec58bcb3"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/unlocked.rs",
+      "sha256": "2163136fa2b5147223e41b515497b37b019644b279f21c011784d8d4e43f7b5d"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/vocal_handoff.rs",
+      "sha256": "22f30a2f934e38113c09d43e3e9c48b2c495cd218d16b4d27e8bd171bc62cc1f"
+    },
+    {
+      "path": "packages/audio-rust/src/plan/voice_measure.rs",
+      "sha256": "d091daf5f9c56799452609fc34ca915b375367ad549a51c8e40b9f3fff83487f"
+    },
+    {
+      "path": "packages/audio-rust/src/playback.rs",
+      "sha256": "ad5cd3a8aeaa2d3f5f3f92c9e235ccaf7e76189b7022595a20b68072f4124d70"
+    },
+    {
+      "path": "packages/audio-rust/src/render_metrics.rs",
+      "sha256": "b1b8e68d779f39bc6a52a52595c4af0595629398da0a9180a459a596edf1ce68"
+    },
+    {
+      "path": "packages/audio-rust/src/render.rs",
+      "sha256": "4b44f45d7f468d0361dcfca667b8925be9ce8a54e5026492e2830626124ada4f"
+    },
+    {
+      "path": "packages/audio-rust/src/source.rs",
+      "sha256": "348c6c176c7d861988077b18fc3ba3c61dbec6c0649b1748bf733532c742b243"
+    },
+    {
+      "path": "packages/audio-rust/src/vocal.rs",
+      "sha256": "23a5d609ea71c5da16a43a59de777dc61f31d9f8953897cda6949e7cfc4cbdd3"
+    },
+    {
+      "path": "packages/audio-rust/src/wsola.rs",
+      "sha256": "5e40a66c3a5baaf9765b589a23c647a8720d5adbd8e0a722479d42c8a0335b2b"
+    },
+    {
+      "path": "packages/audio-rust/Cargo.lock",
+      "sha256": "52aedc69db27fba9202e62a91e0ee8ab83262aeeb43f1c3023d262e6663e3ec4"
+    },
+    {
+      "path": "packages/audio-rust/Cargo.toml",
+      "sha256": "993da7e502774c5e2bf6abc74480dccd6a43be097ad3b40bf6f0fffc4ac2362d"
+    },
+    {
+      "path": "packages/core/src/engine/render-check.ts",
+      "sha256": "237725d80b1818021972b732b3aa5a72869ff962929df88d9d60b652a677cb67"
+    }
+  ],
+  "limits": [
+    "Short muted smoke test, not a listening test",
+    "Long playback, Bluetooth/USB and Windows sleep/wake not validated",
+    "No application-wide CPU/RAM speedup claim",
+    "Installer built but not installed into the user profile",
+    "Current dirty working copy; no release or source-snapshot commit created"
+  ]
+}

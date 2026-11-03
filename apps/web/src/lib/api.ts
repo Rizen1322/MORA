@@ -1,4 +1,5 @@
-import type { SoundSettings } from '@automix/core';
+import type { SoundSettings, PhraseMixRecipe } from '@automix/core';
+export interface TransitionRecipeContext { playlistId: string; fromItemId: number; toItemId: number }
 import type { TrackAnalysis, TransitionPlan, AutoMixSettings, TransitionRating, TransitionRatingReason } from '@automix/core';
 import type { CatalogAlbumPage, CatalogArtistPage, CatalogSearchResult, CatalogSearchType } from '@automix/core';
 export interface ReactionSync { status: 'synced' | 'pending' | 'error' | 'local'; error?: string }
@@ -63,6 +64,8 @@ export interface ImportRow { position: number; title: string; artist: string; al
 export interface ImportJob { id: string; name: string; source: string; cover: string | null; total: number | null; complete: boolean; note?: string; state: 'matching' | 'ready' | 'creating' | 'done' | 'failed'; error: string | null; rows: ImportRow[]; playlistId: string | null; createdAt: number; counts?: { matched: number; uncertain: number; missing: number; pending: number } }
 export interface DownloadJob { id: string; key: string; title: string; state: 'queued' | 'downloading' | 'waiting' | 'paused' | 'done' | 'failed' | 'cancelled'; progress: number; error: string | null; trackId: string | null }
 export interface DownloadUsage { cacheBytes: number; pinnedBytes: number; limitBytes: number; freeBytes: number | null }
+export interface ListeningReadiness { trackId: string; state: 'loading' | 'ready' | 'unavailable'; analysis?: string; message: string; jobId?: string }
+export interface ListeningPreparation { total: number; ready: number; unavailable: number; cancelled: boolean; complete: boolean; tracks: ListeningReadiness[]; plansReady: number; plansTotal: number; plansFailed: number }
 export interface Lyrics {
   status: 'synced' | 'plain' | 'none';
   lines: { t: number; text: string }[];
@@ -286,6 +289,10 @@ export const api = {
   downloadAction: (id: string, action: 'pause' | 'resume' | 'cancel' | 'retry') => req<{ ok: true }>('POST', `/api/downloads/${id}/${action}`, {}),
   removeDownload: (trackId: string) => req<{ ok: true }>('DELETE', `/api/tracks/${trackId}/download`),
   downloadPlaylist: (id: string) => req<{ jobs: number }>('POST', `/api/playlists/${id}/download`, {}),
+  listeningReadiness: (trackIds: string[]) => req<{ tracks: ListeningReadiness[] }>('POST', '/api/listening/readiness', { trackIds }),
+  listeningPreparation: (id: string) => req<ListeningPreparation | null>('GET', `/api/playlists/${encodeURIComponent(id)}/prepare-listening`),
+  prepareListening: (id: string) => req<ListeningPreparation>('POST', `/api/playlists/${encodeURIComponent(id)}/prepare-listening`, {}),
+  cancelListeningPreparation: (id: string) => req<ListeningPreparation | null>('DELETE', `/api/playlists/${encodeURIComponent(id)}/prepare-listening`),
   setCacheLimit: (mb: number) => req<{ usage: DownloadUsage }>('PUT', '/api/downloads/settings', { cacheLimitMb: mb }),
   clearAudioCache: () => req<{ removed: number; usage: DownloadUsage }>('POST', '/api/downloads/clear-cache', {}),
   bindRecording: (id: string, assetId: string | null) => req<{ ok: true; mediaId: string }>('POST', `/api/tracks/${id}/binding`, { assetId }),
@@ -313,7 +320,15 @@ export const api = {
   rebuildVocals: (id: string) => req<{ status: string; quality?: { status: string; progress?: number; error?: string } }>('POST', `/api/tracks/${encodeURIComponent(id)}/stems/rebuild`),
   prepare: (id: string, sampleRate: number, role: 'current' | 'next' | 'candidate') =>
     req<{ totalFrames: number; complete: boolean; analysis: string }>('POST', `/api/tracks/${id}/prepare`, { sampleRate, role }),
-  plan: (from: string, to: string) => req<{ plan: TransitionPlan; cached: boolean; pending: string[] }>('GET', `/api/automix/plan?from=${from}&to=${to}`),
+  plan: (from: string, to: string, edge?: { playlistId: string; fromItemId: number; toItemId: number }) => {
+    const query = new URLSearchParams({ from, to });
+    if (edge) { query.set('playlistId', edge.playlistId); query.set('fromItemId', String(edge.fromItemId)); query.set('toItemId', String(edge.toItemId)); }
+    return req<{ plan: TransitionPlan; cached: boolean; pending: string[] }>('GET', `/api/automix/plan?${query}`);
+  },
+  phrasePlan: (from: string, to: string, recipe?: PhraseMixRecipe) => req<{ plan: TransitionPlan; cached: boolean; pending: string[] }>('POST', '/api/automix/phrase-plan', { from, to, recipe }),
+  phraseRecipe: (edge: TransitionRecipeContext) => req<{ recipe: PhraseMixRecipe | null; stale?: boolean; audioHashes: { a: string; b: string } }>('GET', `/api/automix/recipe?${new URLSearchParams({ playlistId: edge.playlistId, fromItemId: String(edge.fromItemId), toItemId: String(edge.toItemId) })}`),
+  savePhraseRecipe: (edge: TransitionRecipeContext, recipe: PhraseMixRecipe) => req<{ recipe: PhraseMixRecipe; plan: TransitionPlan }>('PUT', '/api/automix/recipe', { ...edge, recipe }),
+  resetPhraseRecipe: (edge: TransitionRecipeContext) => req<{ ok: boolean }>('DELETE', `/api/automix/recipe?${new URLSearchParams({ playlistId: edge.playlistId, fromItemId: String(edge.fromItemId), toItemId: String(edge.toItemId) })}`),
   logTransition: (plan: TransitionPlan, outcome: Record<string, unknown>) => req<{ id: number }>('POST', '/api/automix/log', { plan, outcome }),
   rateTransition: (id: number, rating: TransitionRating | null, reason: TransitionRatingReason | null = null) => req('POST', `/api/automix/log/${id}/rating`, { rating, reason }),
   mixNow: (from:string,to:string,position:number) => req<{plan:TransitionPlan}>('POST','/api/automix/mix-now',{from,to,position}),

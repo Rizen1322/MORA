@@ -13,7 +13,8 @@ export function registerSearchRoutes(app: FastifyInstance, s: Services): void {
   const { publicMusic, lib } = s;
 
   app.get<{ Params: { id: string } }>('/api/tracks/:id/cover', async (req, reply) => {
-    const file = await publicMusic.ensureCover(req.params.id);
+    const file = lib.get(req.params.id)?.provider === 'yandex'
+      ? await s.providers.yandex.ensureCover(req.params.id) : await publicMusic.ensureCover(req.params.id);
     if (!file) return reply.code(404).header('Cache-Control', 'no-store').send();
     reply.header('Cache-Control', 'private, max-age=3600');
     reply.type(file.endsWith('.png') ? 'image/png' : file.endsWith('.webp') ? 'image/webp' : 'image/jpeg');

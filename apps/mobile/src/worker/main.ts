@@ -5,6 +5,7 @@ import { provideSqlite, flushAll } from './shims/sqlite.ts';
 import type { MiniFastify } from './shims/fastify.ts';
 import { post, onRpcResult, outboundFetch } from './rpc.ts';
 import { process } from './globals.ts';
+import { registerNativeSources } from 'mora-server/native-sources';
 
 /**
  * The in-app server: apps/server's createApp() running in a dedicated worker on
@@ -100,6 +101,7 @@ async function boot(): Promise<void> {
   if (!saved.ui?.graphics || !saved.ui?.motion) kvSet(db, 'settings', { ...saved, ui: { ...saved.ui, graphics: saved.ui?.graphics ?? 'canvas', motion: saved.ui?.motion ?? 'reduced' } });
   app = a as unknown as MiniFastify;
   services = svc;
+  registerNativeSources(app, svc);
   post({ t: 'ready' });
   for (const m of early.splice(0)) void app.dispatch(m, post);
 }

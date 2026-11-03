@@ -5,6 +5,8 @@
   "directories": { "output": "dist", "buildResources": "assets" },
   "files": ["src/**", "assets/**", "package.json"],
   "extraResources": [
+    { "from": "build/audio", "to": "audio" },
+    { "from": "build/playback", "to": "playback" },
     { "from": "build/backend", "to": "backend" },
     { "from": "build/web", "to": "web" },
     { "from": "build/ffmpeg", "to": "ffmpeg" },

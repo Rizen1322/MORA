@@ -1,0 +1,61 @@
+{
+  "version": "1.0.19",
+  "build": 20,
+  "date": "2026-11-01",
+  "platform": "iOS",
+  "artifact": {
+    "path": "apps/mobile/MORA-iOS-1.0.19-native-first-source-unsigned.ipa",
+    "bytes": 2850228,
+    "sha256": "19e8f7c2468e9ffa0f13ddaf8ebbc981813f8298d175174c967c9f24768e3fb9",
+    "signed": false,
+    "released": false
+  },
+  "source": {
+    "branch": "codex/ios-native-first-source-2026-11-01",
+    "commit": "ad35ac8a8d7505ad1d73eedbae4eafb00f087180",
+    "base": "ddb8bf8abbe06e81ef157d22d2d58e6d31b64a20",
+    "note": "Stable iOS baseline plus first-source native playback; desktop and experimental editor changes excluded"
+  },
+  "ci": {
+    "url": "https://github.com/Rizen1322/MORA/actions/runs/41305261108",
+    "conclusion": "success",
+    "runtimeHost": [
+      "natural",
+      "skip",
+      "slow-analysis",
+      "slow-analysis-eof",
+      "retained-analysis",
+      "source-start"
+    ],
+    "swiftDsp": {
+      "fixtures": 8,
+      "samples": 1492992,
+      "absoluteTolerance": 0.00002,
+      "passed": true
+    },
+    "nativeFileQueue": {
+      "samples": 2821632,
+      "maxDifference": 0,
+      "maxProducerBlockMs": 40.95608333329892,
+      "measurementPlatform": "macOS CI"
+    }
+  },
+  "local": {
+    "rootTests": 1145,
+    "rootTestFiles": 145,
+    "rootTypecheck": true,
+    "isolatedProfileTests": 75,
+    "isolatedTypecheck": true,
+    "mobileBundle": true
+  },
+  "notChecked": [
+    "Physical iPhone playback",
+    "Long first download after screen lock",
+    "Physical Bluetooth/USB routes",
+    "Installation and signing"
+  ],
+  "limits": [
+    "Native first source waits for complete download and decode",
+    "Initial address/credentials lookup and compressed local file transfer still require WebContent"
+  ]
+}

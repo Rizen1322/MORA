@@ -1,10 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import fs from 'node:fs';
-import { TRANSITION_RATING_REASONS, type PcmSpan, type TransitionPlan, type TransitionRatingReason, type WaveDiversity, type WaveMood } from '@automix/core';
+import { timingSafeEqual } from 'node:crypto';
+import { normalizationGain, TRANSITION_RATING_REASONS, type PcmSpan, type TransitionPlan, type TransitionRatingReason, type WaveDiversity, type WaveMood } from '@automix/core';
 import type { Services } from '../app.ts';
 import { PRIORITY } from '../analysis.ts';
 import { getSettings } from '../automix.ts';
 import { kvGet, kvSet, q } from '../db.ts';
+import { applySavedRecipe, assertRecordingsUnchanged, recipeContext, recordingSnapshot, type RecipeContext } from '../phrase-recipes.ts';
 
 const ALLOWED_RATES = new Set([22050, 32000, 44100, 48000, 88200, 96000]);
 
@@ -22,6 +24,30 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
     const entry = pcm.open(key, sr, (signal) => s.publicMusic.playbackInput(t.id, signal), t.duration, caps.caching !== 'persistent');
     return { t, key, entry };
   };
+
+  app.post<{ Body: { trackId?: string; sampleRate?: number; role?: string; start?: number; frames?: number } }>('/internal/desktop/pcm-source', async (req, reply) => {
+    const secret = s.cfg.desktopPlaybackToken, supplied = req.headers['x-mora-desktop-token'];
+    if (!secret || typeof supplied !== 'string' || Buffer.byteLength(secret) !== Buffer.byteLength(supplied) ||
+      !timingSafeEqual(Buffer.from(secret), Buffer.from(supplied))) return reply.code(403).send({ error: 'Недоступно' });
+    const body = req.body, sr = body?.sampleRate, start = body?.start ?? 0, frames = body?.frames ?? 1;
+    if (!body || typeof body.trackId !== 'string' || body.trackId.length > 256 || !ALLOWED_RATES.has(sr!) ||
+      !Number.isSafeInteger(start) || start < 0 || start > Number.MAX_SAFE_INTEGER / 8 ||
+      !Number.isSafeInteger(frames) || frames < 1 || frames > 32768) return reply.code(400).send({ error: 'Некорректный источник' });
+    try {
+      const { t, key, entry } = pcmEntry(body.trackId, sr!);
+      pcm.pin(key, sr!, body.role === 'candidate' ? 30000 : 10 * 60000);
+      analysis.prioritize([t.id], body.role === 'current' ? PRIORITY.current : body.role === 'next' ? PRIORITY.next : PRIORITY.wave);
+      const source = await pcm.nativeSource(entry, start, frames);
+      const loudness = analysis.get(t.content_hash), target = getSettings(db).automix.loudnessTarget;
+      const gainDb = !s.lib.mixingPolicy.get(t.provider) || target === null ? 0 : loudness ? normalizationGain(loudness, target) : -6;
+      return { ...source, gainDb, track: { trackId: body.trackId, title: t.title, artist: t.artist,
+        duration: t.duration, binding: t.id !== body.trackId, coverUrl: t.provider !== 'yandex' && t.cover_id ? `/api/covers/${t.cover_id}` : `/api/tracks/${encodeURIComponent(t.id)}/cover`,
+        mixingAllowed: s.providers.caps(t.provider)?.mixing ?? false } };
+    } catch (error) {
+      const e = error as Error & { statusCode?: number };
+      return reply.code(e.statusCode ?? 502).send({ error: e.message });
+    }
+  });
 
   /** Plans are computed on the playing recordings but addressed to the queue's tracks. */
   const relabel = (plan: TransitionPlan, from: string, to: string): TransitionPlan =>
@@ -171,31 +197,36 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
     return { pcm: { L, R, sampleRate: sr }, start: start / sr };
   };
 
-  app.get<{ Querystring: { from: string; to: string } }>('/api/automix/plan', async (req, reply) => {
+  app.get<{ Querystring: { from: string; to: string } & Partial<RecipeContext> }>('/api/automix/plan', async (req, reply) => {
     try {
+      const context = recipeContext(req.query);
+      const recordings = recordingSnapshot(s, req.query.from, req.query.to);
       const r = await automix.planChecked(lib.mediaId(req.query.from), lib.mediaId(req.query.to), readSpan);
-      return { ...r, plan: relabel(r.plan, req.query.from, req.query.to) };
+      assertRecordingsUnchanged(s, req.query.from, req.query.to, recordings);
+      const base = relabel(r.plan, req.query.from, req.query.to);
+      const plan = applySavedRecipe(s, base, context);
+      return { ...r, cached: plan === base && r.cached, plan };
     } catch (e) {
-      return reply.code(404).send({ error: (e as Error).message });
+      return reply.code((e as Error & { statusCode?: number }).statusCode ?? 404).send({ error: (e as Error).message });
     }
   });
 
   app.post<{ Body: { from: string; to: string; position: number } }>('/api/automix/skip', async (req, reply) => {
     try {
-      return { plan: relabel(automix.skip(lib.mediaId(req.body.from), lib.mediaId(req.body.to), Number(req.body.position) || 0), req.body.from, req.body.to) };
+      return { plan: relabel(await automix.manualAsync(lib.mediaId(req.body.from), lib.mediaId(req.body.to), Number(req.body.position) || 0, 'skip'), req.body.from, req.body.to) };
     } catch (e) {
       return reply.code(404).send({ error: (e as Error).message });
     }
   });
 
-  app.post<{ Body: { from: string; to: string; position: number } }>('/api/automix/mix-now', async (req, reply) => {
+  app.post<{ Body: { from: string; to: string; position: number; catchUp?: boolean } }>('/api/automix/mix-now', async (req, reply) => {
     const body = req.body;
     if (!body || typeof body.from !== 'string' || !body.from.trim() || typeof body.to !== 'string' || !body.to.trim()
       || typeof body.position !== 'number' || !Number.isFinite(body.position) || body.position < 0) {
       return reply.code(400).send({ error: 'нужны ID двух треков и корректная позиция воспроизведения' });
     }
     try {
-      return { plan: relabel(automix.requested(lib.mediaId(body.from), lib.mediaId(body.to), body.position), body.from, body.to) };
+      return { plan: relabel(await automix.manualAsync(lib.mediaId(body.from), lib.mediaId(body.to), body.position, 'requested', body.catchUp === true), body.from, body.to) };
     } catch (e) {
       return reply.code(404).send({ error: (e as Error).message });
     }

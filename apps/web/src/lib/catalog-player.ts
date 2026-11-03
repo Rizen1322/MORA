@@ -116,9 +116,11 @@ export class CatalogPlayer {
       if (sequence[1]) void this.ensure(sequence[1]).catch(() => {});
       const first = await this.ensure(selected);
       if (request !== this.request || version !== transport.intentVersion) return;
-      await transport.playTracks([first], 0, context);
-      if (request !== this.request) return;
-      this.session = { request, items: sequence, next: 1, queued: [first], version: transport.intentVersion, queueVersion: transport.queueVersion };
+      const playing = transport.playTracks([first], 0, context);
+      const queueVersion = transport.queueVersion, startedVersion = transport.intentVersion;
+      await playing;
+      if (request !== this.request || queueVersion !== transport.queueVersion || (queueVersion === undefined && startedVersion !== transport.intentVersion)) return;
+      this.session = { request, items: sequence, next: 1, queued: [first], version: startedVersion, queueVersion };
       this.set({ phase: 'idle', externalId: null });
       void this.pump();
     } catch (e) {

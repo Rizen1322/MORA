@@ -36,11 +36,25 @@ export interface SpectralData {
 const db = (p: number) => 10 * Math.log10(p + 1e-12);
 
 export function computeSpectral(x: Float32Array, sr = ANALYSIS_RATE): SpectralData {
+  const frames = Math.max(1, Math.floor((x.length - FRAME) / HOP) + 1);
+  // iOS preparation: the whole stage runs in Swift/vDSP (NativeSpectral.swift); this code stays the reference.
+  const native = (globalThis as typeof globalThis & { moraPreparationSpectral?: (x: Float32Array, sr: number) => Float32Array | null })
+    .moraPreparationSpectral?.(x, sr);
+  if (native) {
+    const chromaFrames = Math.ceil(frames / CHROMA_EVERY), nCurve = Math.ceil((x.length * CURVE_RATE) / sr);
+    // A cancelled or malformed native result must not fall back to the slow JS path.
+    if (native.length !== frames * (8 + MEL_BANDS) + chromaFrames * 12 + nCurve * 2) throw Error('native_spectral');
+    let at = 0;
+    const take = (n: number) => native.slice(at, (at += n));
+    return { fps: sr / HOP, frames, fluxLow: take(frames), fluxMid: take(frames), fluxHigh: take(frames),
+      powLow: take(frames), powMid: take(frames), powHigh: take(frames), centroid: take(frames), midDensity: take(frames),
+      chroma: take(chromaFrames * 12), chromaFps: sr / HOP / CHROMA_EVERY, chromaFrames, mel: take(frames * MEL_BANDS),
+      rmsDb: take(nCurve), peaks: take(nCurve) };
+  }
   const fft = getFFT(FRAME);
   const win = hann(FRAME);
   const winSum = FRAME / 2;
   const nBins = FRAME / 2 + 1;
-  const frames = Math.max(1, Math.floor((x.length - FRAME) / HOP) + 1);
   const re = new Float64Array(FRAME);
   const im = new Float64Array(FRAME);
   const prev = new Float64Array(nBins);

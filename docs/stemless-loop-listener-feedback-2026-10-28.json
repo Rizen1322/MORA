@@ -1,0 +1,138 @@
+{
+  "schema": "mora-verified-absolute-feedback-1",
+  "importedAt": "2026-10-28T13:00:51.647Z",
+  "inputSha256": "76798dc7d2f617726bcdf89fd593b6db7d4ebb8e7b616b4392702016c4ae19bf",
+  "manifestSha256": "3159b03c165613ba7b46e9e8bfc794c82dd41376aafe929ed77e9a6c0945845b",
+  "databaseModified": false,
+  "assetHashesVerified": true,
+  "counts": {
+    "good": 1,
+    "acceptable": 1,
+    "bad": 3,
+    "unrated": 0
+  },
+  "feedback": {
+    "schema": "mora-listening-absolute-1",
+    "version": 1,
+    "reviewId": "review-stemless-loop-2026-10-28-v4",
+    "manifestSha256": "3159b03c165613ba7b46e9e8bfc794c82dd41376aafe929ed77e9a6c0945845b",
+    "exportedAt": "2026-10-28T13:00:12.334Z",
+    "variantVotes": [
+      {
+        "groupId": 204,
+        "variantId": "204-2f4eaf19e8ae1db1",
+        "rating": "acceptable",
+        "defects": [],
+        "comment": "ну норм"
+      },
+      {
+        "groupId": 204,
+        "variantId": "204-0b670f78b6233d42",
+        "rating": "bad",
+        "defects": [],
+        "comment": ""
+      },
+      {
+        "groupId": 205,
+        "variantId": "205-10cc99f2633b598c",
+        "rating": "bad",
+        "defects": [
+          "two-voices"
+        ],
+        "comment": ""
+      },
+      {
+        "groupId": 205,
+        "variantId": "205-4b7e384af93b0d96",
+        "rating": "bad",
+        "defects": [
+          "two-voices"
+        ],
+        "comment": ""
+      },
+      {
+        "groupId": 189,
+        "variantId": "189-18754715fd21a2b9",
+        "rating": "good",
+        "defects": [],
+        "comment": "ахуенно прям"
+      }
+    ]
+  },
+  "resolvedVotes": [
+    {
+      "groupId": 204,
+      "variantId": "204-2f4eaf19e8ae1db1",
+      "rating": "acceptable",
+      "defects": [],
+      "comment": "ну норм",
+      "title": "Петля полного микса A с выходом на такте",
+      "displayOrder": 1,
+      "from": "LIL KRYSTALLL — Тик так",
+      "to": "GONE.Fludd — СЕТИ",
+      "audioSha256": "8787b163ebc5fa2fb6313fed6986777cea93efa34cf0ca63344a3054d5a918d7",
+      "planSha256": "2f4eaf19e8ae1db181e0ae7ba1f47b0c1181e5561e32501037132473c55677b2",
+      "auditionOnly": true
+    },
+    {
+      "groupId": 204,
+      "variantId": "204-0b670f78b6233d42",
+      "rating": "bad",
+      "defects": [],
+      "comment": "",
+      "title": "Записанный переход v15",
+      "displayOrder": 2,
+      "from": "LIL KRYSTALLL — Тик так",
+      "to": "GONE.Fludd — СЕТИ",
+      "audioSha256": "f0adf22e1838694a4f07beef749b88488552468d52d482f588e1b55fae3a98f9",
+      "planSha256": "0b670f78b6233d423c3c7423dffa78b3a633d0d98386b379497e4b7d2a3615d4",
+      "auditionOnly": false
+    },
+    {
+      "groupId": 205,
+      "variantId": "205-10cc99f2633b598c",
+      "rating": "bad",
+      "defects": [
+        "two-voices"
+      ],
+      "comment": "",
+      "title": "Записанный переход v15",
+      "displayOrder": 1,
+      "from": "GONE.Fludd — СЕТИ",
+      "to": "VILLIAN, madk1d — ДИНАСТИЯ",
+      "audioSha256": "166597dd8a012cd675505f3c5c44f02536dfc7d5f51023dfa7c58083283012fe",
+      "planSha256": "10cc99f2633b598cab27ea593291230f770bcebb539c9457e0194ecd1ba6cd35",
+      "auditionOnly": false
+    },
+    {
+      "groupId": 205,
+      "variantId": "205-4b7e384af93b0d96",
+      "rating": "bad",
+      "defects": [
+        "two-voices"
+      ],
+      "comment": "",
+      "title": "Петля полного микса A с выходом на такте",
+      "displayOrder": 2,
+      "from": "GONE.Fludd — СЕТИ",
+      "to": "VILLIAN, madk1d — ДИНАСТИЯ",
+      "audioSha256": "c70d987d314852cd20913bddb0535fad29ae984da83e30848e7fcaf13c702363",
+      "planSha256": "4b7e384af93b0d965ce9a604eb8b402967da2d86af7a7452ee56ee5c52e77fe4",
+      "auditionOnly": true
+    },
+    {
+      "groupId": 189,
+      "variantId": "189-18754715fd21a2b9",
+      "rating": "good",
+      "defects": [],
+      "comment": "ахуенно прям",
+      "title": "Записанный переход v15",
+      "displayOrder": 1,
+      "from": "ROCKET — Один",
+      "to": "Пошлая Молли — ПОРНХАБ КРИСМАС КЛАБ",
+      "audioSha256": "775f55a8f6fa5b6da69c9be42baefc5c4730f442a26a4e8e4c8344c56487c14c",
+      "planSha256": "18754715fd21a2b993cd5bddee200a7cb87b5ac2fa83189b962540cb7749757d",
+      "auditionOnly": false
+    }
+  ]
+}

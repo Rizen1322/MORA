@@ -27,6 +27,7 @@ const run = (args) => {
 };
 
 fs.mkdirSync(out, { recursive: true });
+run([path.join(desktop, 'scripts/build-rust.mjs')]);
 if (!skipWeb) {
   // Own outDir: apps/web/dist may be served by a running browser-mode server.
   run([path.join(root, 'node_modules/vite/bin/vite.js'), 'build', '--config', 'apps/web/vite.config.ts', '--outDir', path.join(out, 'web'), '--logLevel', 'warn', 'apps/web']);
@@ -35,6 +36,11 @@ if (!skipWeb) {
 // CommonJS dependencies (fastify) still call require(); give the ESM bundle one.
 const banner = "import { createRequire as __cr } from 'node:module'; import { fileURLToPath as __fu } from 'node:url'; import { dirname as __dn } from 'node:path'; const require = __cr(import.meta.url); const __filename = __fu(import.meta.url); const __dirname = __dn(__filename);";
 fs.rmSync(path.join(out, 'backend'), { recursive: true, force: true });
+await build({
+  entryPoints: { 'desktop-playback': path.join(desktop, 'src/desktop-playback.ts') },
+  outdir: path.join(out, 'playback'), outExtension: { '.js': '.mjs' }, bundle: true,
+  platform: 'node', target: 'node22', format: 'esm', banner: { js: banner },
+});
 await build({
   entryPoints: { backend: path.join(desktop, 'src/backend.ts'), analysisWorker: path.join(root, 'apps/server/src/analysisWorker.ts') },
   outdir: path.join(out, 'backend'),

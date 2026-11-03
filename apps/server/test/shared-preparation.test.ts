@@ -22,6 +22,17 @@ describe('shared audio preparation ownership', () => {
     expect(work).toHaveBeenCalledOnce();
   });
 
+  it('exposes the same worker signal to each subscriber for priority promotion', async () => {
+    const shared = new SharedPreparation<string>(), ready = deferred<string>();
+    const signals: AbortSignal[] = [];
+    const first = shared.run('same', { onJoin: signal => signals.push(signal) }, () => ready.promise);
+    const second = shared.run('same', { onJoin: signal => signals.push(signal) }, () => ready.promise);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).toBe(signals[1]);
+    ready.resolve('audio');
+    await Promise.all([first, second]);
+  });
+
   it('aborts a worker with no consumers, and an old completion cannot erase its replacement', async () => {
     const shared = new SharedPreparation<string>(), cancel = new AbortController();
     const old = deferred<string>(), next = deferred<string>();

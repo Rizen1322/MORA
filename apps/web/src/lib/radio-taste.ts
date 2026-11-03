@@ -1,14 +1,14 @@
-import type { PublicTrack, Track, AppSettings } from './api.ts';
-
-export type RadioTuning = AppSettings['wave'];
+type Track = { id: string; title: string; artist: string; status: string; reaction: number; playCount: number; addedAt: number; likedAt?: number; lastPlayedAt: number | null; analysis?: { bpm?: number | null; camelot?: string | null; energy?: number } };
+type PublicTrack = { title: string; artist: string; audioProvider: string; externalId: string; playable: boolean; libraryTrackId?: string | null };
+export type RadioTuning = { mood: string; diversity: string; mode?: string };
 type Song = Pick<Track, 'title' | 'artist'>;
 export const normalizeMusic = (s: string) => s.toLowerCase().replace(/ё/g, 'е').replace(/\b(feat|ft)\.?/g, ' ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 export const radioIdentity = (t: Song) => `${normalizeMusic(t.artist)}|${normalizeMusic(t.title)}`;
 export const artistsOf = (s: string) => s.split(/,|&| feat\.? | ft\.? | featuring /i).map(normalizeMusic).filter(Boolean);
-export function tasteSeeds(tracks: Track[], cursor = 0): Track[] {
+export function tasteSeeds<T extends Track>(tracks: T[], cursor = 0): T[] {
   const likes = tracks.filter(t => t.reaction > 0 && t.status === 'ok').sort((a, b) => (b.likedAt ?? b.addedAt) - (a.likedAt ?? a.addedAt));
   const source = likes.length ? likes : tracks.filter(t => t.reaction >= 0 && t.playCount > 0 && t.status === 'ok').sort((a, b) => (b.lastPlayedAt ?? 0) - (a.lastPlayedAt ?? 0));
-  const out: Track[] = [], seen = new Set<string>();
+  const out: T[] = [], seen = new Set<string>();
   for (let i = 0; i < source.length && out.length < 8; i++) {
     const t = source[(i + cursor) % source.length], artist = artistsOf(t.artist)[0] || t.id;
     if (!seen.has(artist)) { seen.add(artist); out.push(t); }
@@ -17,7 +17,7 @@ export function tasteSeeds(tracks: Track[], cursor = 0): Track[] {
 }
 
 /** Service-related candidates ranked by explicit taste, recency and measured mix compatibility. */
-export function rankRadio(items: PublicTrack[], library: Track[], seen: Set<string>, recentArtists: string[], tuning: RadioTuning, anchor?: Song, now = Date.now()): PublicTrack[] {
+export function rankRadio<T extends PublicTrack>(items: T[], library: Track[], seen: Set<string>, recentArtists: string[], tuning: RadioTuning, anchor?: Song, now = Date.now()): T[] {
   const byKey = new Map<string, Track>();
   for (const t of library) {
     const key=radioIdentity(t), old=byKey.get(key);
@@ -41,8 +41,9 @@ export function rankRadio(items: PublicTrack[], library: Track[], seen: Set<stri
     if (!t.playable || seen.has(key) || seen.has(id) || unique.has(key) || blocked(t)) return false;
     unique.add(key); return true;
   });
-  const out: PublicTrack[] = [], recent = recentArtists.map(a => artistsOf(a)[0] ?? '');
+  const out: T[] = [], recent = recentArtists.map(a => artistsOf(a)[0] ?? '');
   while (pool.length && out.length < 18) {
+    const familiarOpening = out.filter(t => { const k = known(t); return k && (k.reaction > 0 || k.playCount > 0); }).length;
     let best = -1, bestScore = -Infinity;
     for (let i = 0; i < pool.length; i++) {
       const t = pool[i], k = known(t), artists = artistsOf(t.artist), artist = artists[0] || '';
@@ -54,6 +55,8 @@ export function rankRadio(items: PublicTrack[], library: Track[], seen: Set<stri
       score += familiarity * (tuning.diversity === 'discover' ? .35 : 1.5);
       if ((k?.reaction ?? 0) > 0) score += tuning.diversity === 'familiar' ? 2 : tuning.diversity === 'discover' ? -.5 : .8;
       if (!k || !k.playCount) score += tuning.diversity === 'discover' ? 1 : .15;
+      // Balanced starts with a discovery and avoids a wall of favourites when alternatives exist.
+      if (tuning.diversity === 'balanced' && out.length < 5 && (out.length === 0 || familiarOpening >= 2) && k && (k.reaction > 0 || k.playCount > 0)) score -= 4;
       score -= recent.slice(-5).filter(a => a === artist).length * .7;
       const energy = k?.analysis?.energy;
       if (typeof energy === 'number' && tuning.mood !== 'normal') score += tuning.mood === 'calm' ? (1 - energy) * 1.2 : energy * 1.2;

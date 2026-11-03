@@ -1,0 +1,5516 @@
+{
+  "generatedAt": "2026-10-26T17:39:50.279Z",
+  "plannerVersion": "am-planner-v14-phrase-1",
+  "analyzerVersion": "am-analyzer-14",
+  "fixedEvidenceCount": 18,
+  "databaseReadOnly": true,
+  "networkUsed": false,
+  "listeningPerformed": false,
+  "settings": {
+    "enabled": true,
+    "maxStretchPercent": 12,
+    "maxBlendSeconds": 32,
+    "eqHandoff": true,
+    "respectAlbums": true,
+    "loudnessTarget": -16,
+    "style": "auto",
+    "fallbackSeconds": 6,
+    "entryMode": "smart",
+    "maxEntrySkipSeconds": 45,
+    "mixOnNext": false,
+    "stemMixing": true,
+    "loopBridges": true,
+    "masterTempo": true,
+    "djPhrasing": true
+  },
+  "sampleRate": 48000,
+  "snippetContextSeconds": 6,
+  "audioDirectory": "data-bench-results/review-2026-10-26",
+  "limitations": [
+    "Musical risk measures are heuristics, not singing detection or listening judgments.",
+    "Historical logs are preserved; historical/current costs above are recomputed with the same new cost function.",
+    "These selected listener examples are not a random quality sample.",
+    "Blind listening to voice complaints and IDs 169/179 plus four liked controls is still required."
+  ],
+  "summary": {
+    "evaluated": 18,
+    "rendered": 17,
+    "unavailable": 1
+  },
+  "transitions": [
+    {
+      "logId": 112,
+      "rating": "bad",
+      "reason": null,
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "crossfade",
+        "duration": 17.25,
+        "aExit": 116.9,
+        "bEntry": 0.3,
+        "bDelay": 0,
+        "selected": "preserve-start",
+        "effectiveCutSeconds": 5.900000000000006,
+        "cost": {
+          "total": 0.857,
+          "closureMiss": 0.85,
+          "cutA": 0.421,
+          "pickup": 0,
+          "holeDb": 5.549,
+          "unsupported": 0,
+          "jumpDb": 1.094,
+          "doubleBass": 0,
+          "leadRisk": 4.524,
+          "leadRun": 4.211,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "crossfade",
+        "duration": 17.25,
+        "aExit": 116.9,
+        "bEntry": 0.3,
+        "bDelay": 0,
+        "selected": "preserve-start",
+        "effectiveCutSeconds": 5.900000000000006,
+        "cost": {
+          "total": 0.857,
+          "closureMiss": 0.85,
+          "cutA": 0.421,
+          "pickup": 0,
+          "holeDb": 5.549,
+          "unsupported": 0,
+          "jumpDb": 1.094,
+          "doubleBass": 0,
+          "leadRisk": 4.524,
+          "leadRun": 4.211,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "crossfade",
+          "duration": 17.25,
+          "aExit": 116.9,
+          "bEntry": 0.3,
+          "bDelay": 0,
+          "selected": "preserve-start",
+          "effectiveCutSeconds": 5.900000000000006,
+          "cost": {
+            "total": 0.857,
+            "closureMiss": 0.85,
+            "cutA": 0.421,
+            "pickup": 0,
+            "holeDb": 5.549,
+            "unsupported": 0,
+            "jumpDb": 1.094,
+            "doubleBass": 0,
+            "leadRisk": 4.524,
+            "leadRun": 4.211,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "crossfade",
+          "duration": 9.059,
+          "aExit": 120.653,
+          "bEntry": 2.659,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 6.938000000000002,
+          "cost": {
+            "total": 1.257,
+            "closureMiss": 0.85,
+            "cutA": 0.496,
+            "pickup": 0,
+            "holeDb": 12.451,
+            "unsupported": 0,
+            "jumpDb": 9.921,
+            "doubleBass": 0,
+            "leadRisk": 0.181,
+            "leadRun": 0.146,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "crossfade",
+          "duration": 9.059,
+          "aExit": 120.653,
+          "bEntry": 2.659,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 6.7379999999999995,
+          "cost": {
+            "total": 1.316,
+            "closureMiss": 0.85,
+            "cutA": 0.481,
+            "pickup": 0,
+            "holeDb": 9.522,
+            "unsupported": 0,
+            "jumpDb": 7.106,
+            "doubleBass": 0,
+            "leadRisk": 4.526,
+            "leadRun": 4.518,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "crossfade",
+          "duration": 17.25,
+          "aExit": 116.9,
+          "bEntry": 0.3,
+          "bDelay": 0,
+          "selected": "preserve-start",
+          "effectiveCutSeconds": 6.099999999999994,
+          "cost": {
+            "total": 0.704,
+            "closureMiss": 0.85,
+            "cutA": 0.436,
+            "pickup": 0,
+            "holeDb": 3.095,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 4.524,
+            "leadRun": 4.211,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "crossfade",
+          "duration": 17.25,
+          "aExit": 116.9,
+          "bEntry": 0.3,
+          "bDelay": 0,
+          "selected": "preserve-start",
+          "effectiveCutSeconds": 5.800000000000011,
+          "cost": {
+            "total": 1.081,
+            "closureMiss": 0.85,
+            "cutA": 0.414,
+            "pickup": 0,
+            "holeDb": 9.607,
+            "unsupported": 0,
+            "jumpDb": 1.865,
+            "doubleBass": 0,
+            "leadRisk": 4.524,
+            "leadRun": 4.211,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "crossfade",
+        "duration": 17.25,
+        "aExit": 116.9,
+        "bEntry": 0.3,
+        "bDelay": 0,
+        "selected": "preserve-start",
+        "effectiveCutSeconds": 5.900000000000006,
+        "cost": {
+          "total": 0.857,
+          "closureMiss": 0.85,
+          "cutA": 0.421,
+          "pickup": 0,
+          "holeDb": 5.549,
+          "unsupported": 0,
+          "jumpDb": 1.094,
+          "doubleBass": 0,
+          "leadRisk": 4.524,
+          "leadRun": 4.211,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "preserve-start",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "preserve-start",
+            "method": "crossfade",
+            "duration": 17.25,
+            "musicalCost": 0.912,
+            "metrics": {
+              "dipLU": -2.12,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.18
+            }
+          },
+          {
+            "name": "lead-handoff",
+            "method": "crossfade",
+            "duration": 9.059,
+            "musicalCost": 1.301,
+            "metrics": {
+              "dipLU": -0.77,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.8,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.24
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "crossfade",
+            "duration": 9.059,
+            "musicalCost": 1.362,
+            "metrics": {
+              "dipLU": -0.42,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.8,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.24
+            }
+          },
+          {
+            "name": "bass -0.588",
+            "method": "crossfade",
+            "duration": 17.25,
+            "musicalCost": 0.912,
+            "metrics": {
+              "dipLU": -1.66,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.05
+            }
+          },
+          {
+            "name": "bass 0.588",
+            "method": "crossfade",
+            "duration": 17.25,
+            "musicalCost": 0.912,
+            "metrics": {
+              "dipLU": -2.98,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.44
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": -2.12,
+        "bumpLU": 0,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.18
+      },
+      "snippets": [
+        {
+          "file": "112-A-historical.wav",
+          "planFile": "112-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 29.25,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "112-B-upgrade.wav",
+          "planFile": "112-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 29.25,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 122,
+      "rating": "bad",
+      "reason": null,
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 17.654,
+        "aExit": 226.938,
+        "bEntry": 1.704,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 25.92100000000002,
+        "cost": {
+          "total": 0.977,
+          "closureMiss": 0.85,
+          "cutA": 2.054,
+          "pickup": 0,
+          "holeDb": 2.733,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 3.445,
+          "leadRun": 2.909,
+          "tonalClash": 3,
+          "skippedUnknownB": 0
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 17.654,
+        "aExit": 244.392,
+        "bEntry": 0.03,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 9.058999999999997,
+        "cost": {
+          "total": 0.833,
+          "closureMiss": 0.916,
+          "cutA": 0.647,
+          "pickup": 0,
+          "holeDb": 9.029,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 0.412,
+          "leadRun": 0.412,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 17.654,
+          "aExit": 244.392,
+          "bEntry": 0.03,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 9.058999999999997,
+          "cost": {
+            "total": 0.833,
+            "closureMiss": 0.916,
+            "cutA": 0.647,
+            "pickup": 0,
+            "holeDb": 9.029,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.412,
+            "leadRun": 0.412,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 17.654,
+          "aExit": 226.938,
+          "bEntry": 0.03,
+          "bDelay": 0,
+          "selected": "neighbor-exit",
+          "effectiveCutSeconds": 25.724000000000018,
+          "cost": {
+            "total": 0.953,
+            "closureMiss": 0.85,
+            "cutA": 2.036,
+            "pickup": 0,
+            "holeDb": 2.726,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 3.524,
+            "leadRun": 2.901,
+            "tonalClash": 1,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 8.827,
+          "aExit": 244.392,
+          "bEntry": 0.03,
+          "bDelay": 0,
+          "selected": "shorter",
+          "effectiveCutSeconds": 12.388000000000005,
+          "cost": {
+            "total": 1.179,
+            "closureMiss": 0.916,
+            "cutA": 0.885,
+            "pickup": 0,
+            "holeDb": 8.558,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 4.858,
+            "leadRun": 4.817,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 17.654,
+          "aExit": 244.392,
+          "bEntry": 0.03,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 7.187999999999988,
+          "cost": {
+            "total": 1.316,
+            "closureMiss": 0.916,
+            "cutA": 0.513,
+            "pickup": 0,
+            "holeDb": 8.997,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 9.408,
+            "leadRun": 9.322,
+            "tonalClash": 0.5,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 17.654,
+          "aExit": 244.392,
+          "bEntry": 0.03,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 9.65100000000001,
+          "cost": {
+            "total": 0.842,
+            "closureMiss": 0.916,
+            "cutA": 0.689,
+            "pickup": 0,
+            "holeDb": 9.029,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.412,
+            "leadRun": 0.412,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 17.654,
+          "aExit": 244.392,
+          "bEntry": 0.03,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 8.467000000000013,
+          "cost": {
+            "total": 0.825,
+            "closureMiss": 0.916,
+            "cutA": 0.605,
+            "pickup": 0,
+            "holeDb": 9.029,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.412,
+            "leadRun": 0.412,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 17.654,
+        "aExit": 244.392,
+        "bEntry": 0.03,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 9.058999999999997,
+        "cost": {
+          "total": 0.833,
+          "closureMiss": 0.916,
+          "cutA": 0.647,
+          "pickup": 0,
+          "holeDb": 9.029,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 0.412,
+          "leadRun": 0.412,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "lead-handoff",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "lead-handoff",
+            "method": "beatmatch_blend",
+            "duration": 17.654,
+            "musicalCost": 0.9139999999999999,
+            "metrics": {
+              "dipLU": -4.45,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 6,
+              "underruns": 0,
+              "cost": 1.12
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 17.654,
+            "musicalCost": 1.046,
+            "metrics": {
+              "dipLU": -0.39,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 19,
+              "underruns": 0,
+              "cost": 0.74
+            }
+          },
+          {
+            "name": "shorter",
+            "method": "beatmatch_blend",
+            "duration": 8.827,
+            "musicalCost": 1.2550000000000001,
+            "metrics": {
+              "dipLU": -2.63,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.34
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 17.654,
+            "musicalCost": 1.409,
+            "metrics": {
+              "dipLU": -4.25,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 11,
+              "underruns": 0,
+              "cost": 1.26
+            }
+          },
+          {
+            "name": "bass -0.552",
+            "method": "beatmatch_blend",
+            "duration": 17.654,
+            "musicalCost": 0.9139999999999999,
+            "metrics": {
+              "dipLU": -4.45,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 6,
+              "underruns": 0,
+              "cost": 1.12
+            }
+          },
+          {
+            "name": "bass 0.552",
+            "method": "beatmatch_blend",
+            "duration": 17.654,
+            "musicalCost": 0.9139999999999999,
+            "metrics": {
+              "dipLU": -4.45,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 5,
+              "underruns": 0,
+              "cost": 1.08
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": -0.69,
+        "bumpLU": 0,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0
+      },
+      "snippets": [
+        {
+          "file": "122-A-historical.wav",
+          "planFile": "122-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 29.654,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "122-B-upgrade.wav",
+          "planFile": "122-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 29.654,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 123,
+      "rating": "bad",
+      "reason": null,
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 9.253,
+        "aExit": 116.113,
+        "bEntry": 5.635,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 1.310163265306116,
+        "cost": {
+          "total": 0.547,
+          "closureMiss": 0,
+          "cutA": 0,
+          "pickup": 0,
+          "holeDb": 4.677,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 4.532,
+          "leadRun": 4.479,
+          "tonalClash": 0,
+          "skippedUnknownB": 0.285
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 9.253,
+        "aExit": 116.113,
+        "bEntry": 5.635,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 1.4971632653061135,
+        "cost": {
+          "total": 0.337,
+          "closureMiss": 0,
+          "cutA": 0,
+          "pickup": 0,
+          "holeDb": 6.068,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 0.319,
+          "leadRun": 0.313,
+          "tonalClash": 0,
+          "skippedUnknownB": 0.285
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 9.253,
+          "aExit": 116.113,
+          "bEntry": 5.635,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 1.4971632653061135,
+          "cost": {
+            "total": 0.337,
+            "closureMiss": 0,
+            "cutA": 0,
+            "pickup": 0,
+            "holeDb": 6.068,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.319,
+            "leadRun": 0.313,
+            "tonalClash": 0,
+            "skippedUnknownB": 0.285
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 9.253,
+          "aExit": 116.113,
+          "bEntry": 5.635,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 1.310163265306116,
+          "cost": {
+            "total": 0.547,
+            "closureMiss": 0,
+            "cutA": 0,
+            "pickup": 0,
+            "holeDb": 4.677,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 4.532,
+            "leadRun": 4.479,
+            "tonalClash": 0,
+            "skippedUnknownB": 0.285
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 9.253,
+          "aExit": 107.184,
+          "bEntry": 5.635,
+          "bDelay": 0,
+          "selected": "neighbor-exit",
+          "effectiveCutSeconds": 10.239163265306118,
+          "cost": {
+            "total": 0.933,
+            "closureMiss": 0.947,
+            "cutA": 0.731,
+            "pickup": 0,
+            "holeDb": 4.228,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 4.916,
+            "leadRun": 4.857,
+            "tonalClash": 0,
+            "skippedUnknownB": 0.285
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 9.253,
+          "aExit": 116.113,
+          "bEntry": 5.635,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 1.9661632653061218,
+          "cost": {
+            "total": 0.559,
+            "closureMiss": 0.93,
+            "cutA": 0,
+            "pickup": 0,
+            "holeDb": 5.86,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.319,
+            "leadRun": 0.313,
+            "tonalClash": 0,
+            "skippedUnknownB": 0.285
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 9.253,
+        "aExit": 116.113,
+        "bEntry": 5.635,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 1.4971632653061135,
+        "cost": {
+          "total": 0.337,
+          "closureMiss": 0,
+          "cutA": 0,
+          "pickup": 0,
+          "holeDb": 6.068,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 0.319,
+          "leadRun": 0.313,
+          "tonalClash": 0,
+          "skippedUnknownB": 0.285
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "lead-handoff",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "lead-handoff",
+            "method": "beatmatch_blend",
+            "duration": 9.253,
+            "musicalCost": 0.41000000000000003,
+            "metrics": {
+              "dipLU": -2.09,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.18
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 9.253,
+            "musicalCost": 0.623,
+            "metrics": {
+              "dipLU": -0.49,
+              "bumpLU": 0.89,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 9.253,
+            "musicalCost": 1.0090000000000001,
+            "metrics": {
+              "dipLU": -1.28,
+              "bumpLU": 0.51,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "bass -0.578",
+            "method": "beatmatch_blend",
+            "duration": 9.253,
+            "musicalCost": 0.41000000000000003,
+            "metrics": {
+              "dipLU": -2.03,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.16
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": -0.49,
+        "bumpLU": 0.89,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0
+      },
+      "snippets": [
+        {
+          "file": "123-A-historical.wav",
+          "planFile": "123-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 21.253,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "123-B-upgrade.wav",
+          "planFile": "123-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 21.253,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 124,
+      "rating": "bad",
+      "reason": null,
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 19.2,
+        "aExit": 154.432,
+        "bEntry": 9.029,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 9.21799999999999,
+        "cost": {
+          "total": 0.67,
+          "closureMiss": 0.85,
+          "cutA": 0.205,
+          "pickup": 0,
+          "holeDb": 2.93,
+          "unsupported": 0,
+          "jumpDb": 1.213,
+          "doubleBass": 0,
+          "leadRisk": 4.098,
+          "leadRun": 3.986,
+          "tonalClash": 0,
+          "skippedUnknownB": 1.829
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 19.2,
+        "aExit": 154.432,
+        "bEntry": 9.029,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 9.317999999999984,
+        "cost": {
+          "total": 0.505,
+          "closureMiss": 0.85,
+          "cutA": 0.207,
+          "pickup": 0,
+          "holeDb": 3.716,
+          "unsupported": 0,
+          "jumpDb": 1.615,
+          "doubleBass": 0,
+          "leadRisk": 0.164,
+          "leadRun": 0.11,
+          "tonalClash": 0,
+          "skippedUnknownB": 1.829
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 19.2,
+          "aExit": 154.432,
+          "bEntry": 9.029,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 9.317999999999984,
+          "cost": {
+            "total": 0.505,
+            "closureMiss": 0.85,
+            "cutA": 0.207,
+            "pickup": 0,
+            "holeDb": 3.716,
+            "unsupported": 0,
+            "jumpDb": 1.615,
+            "doubleBass": 0,
+            "leadRisk": 0.164,
+            "leadRun": 0.11,
+            "tonalClash": 0,
+            "skippedUnknownB": 1.829
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 9.6,
+          "aExit": 154.432,
+          "bEntry": 9.029,
+          "bDelay": 0,
+          "selected": "shorter",
+          "effectiveCutSeconds": 11.71799999999999,
+          "cost": {
+            "total": 0.565,
+            "closureMiss": 0.85,
+            "cutA": 0.26,
+            "pickup": 0,
+            "holeDb": 3.402,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 1.768,
+            "leadRun": 1.688,
+            "tonalClash": 0,
+            "skippedUnknownB": 1.829
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 19.2,
+          "aExit": 154.432,
+          "bEntry": 9.029,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 9.21799999999999,
+          "cost": {
+            "total": 0.67,
+            "closureMiss": 0.85,
+            "cutA": 0.205,
+            "pickup": 0,
+            "holeDb": 2.93,
+            "unsupported": 0,
+            "jumpDb": 1.213,
+            "doubleBass": 0,
+            "leadRisk": 4.098,
+            "leadRun": 3.986,
+            "tonalClash": 0,
+            "skippedUnknownB": 1.829
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 19.2,
+          "aExit": 154.432,
+          "bEntry": 9.029,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 9.917999999999978,
+          "cost": {
+            "total": 0.698,
+            "closureMiss": 0.85,
+            "cutA": 0.22,
+            "pickup": 0,
+            "holeDb": 5.633,
+            "unsupported": 0,
+            "jumpDb": 4.742,
+            "doubleBass": 0,
+            "leadRisk": 0.164,
+            "leadRun": 0.11,
+            "tonalClash": 0,
+            "skippedUnknownB": 1.829
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 19.2,
+          "aExit": 154.432,
+          "bEntry": 9.029,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 8.71799999999999,
+          "cost": {
+            "total": 0.407,
+            "closureMiss": 0.85,
+            "cutA": 0.194,
+            "pickup": 0,
+            "holeDb": 2.765,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.164,
+            "leadRun": 0.11,
+            "tonalClash": 0,
+            "skippedUnknownB": 1.829
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 19.2,
+        "aExit": 154.432,
+        "bEntry": 9.029,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 9.317999999999984,
+        "cost": {
+          "total": 0.505,
+          "closureMiss": 0.85,
+          "cutA": 0.207,
+          "pickup": 0,
+          "holeDb": 3.716,
+          "unsupported": 0,
+          "jumpDb": 1.615,
+          "doubleBass": 0,
+          "leadRisk": 0.164,
+          "leadRun": 0.11,
+          "tonalClash": 0,
+          "skippedUnknownB": 1.829
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "lead-handoff",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "lead-handoff",
+            "method": "beatmatch_blend",
+            "duration": 19.2,
+            "musicalCost": 0.576,
+            "metrics": {
+              "dipLU": -1.35,
+              "bumpLU": 0.3,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "shorter",
+            "method": "beatmatch_blend",
+            "duration": 9.6,
+            "musicalCost": 0.6339999999999999,
+            "metrics": {
+              "dipLU": -3.65,
+              "bumpLU": 0.6,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.64
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 19.2,
+            "musicalCost": 0.753,
+            "metrics": {
+              "dipLU": -0.72,
+              "bumpLU": 0.39,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "bass -0.6",
+            "method": "beatmatch_blend",
+            "duration": 19.2,
+            "musicalCost": 0.576,
+            "metrics": {
+              "dipLU": -2.13,
+              "bumpLU": 0.3,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.4,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.31
+            }
+          },
+          {
+            "name": "bass 0.6",
+            "method": "beatmatch_blend",
+            "duration": 19.2,
+            "musicalCost": 0.576,
+            "metrics": {
+              "dipLU": -0.62,
+              "bumpLU": 0.3,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": -0.72,
+        "bumpLU": 0.39,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0
+      },
+      "snippets": [
+        {
+          "file": "124-A-historical.wav",
+          "planFile": "124-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 31.2,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "124-B-upgrade.wav",
+          "planFile": "124-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 31.2,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 125,
+      "rating": "bad",
+      "reason": null,
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 18.752,
+        "aExit": 76.829,
+        "bEntry": 1.173,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 9.463999999999999,
+        "cost": {
+          "total": 0.799,
+          "closureMiss": 0.992,
+          "cutA": 0.676,
+          "pickup": 0,
+          "holeDb": 0,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0.5,
+          "leadRisk": 7.359,
+          "leadRun": 7.247,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 18.752,
+        "aExit": 76.829,
+        "bEntry": 1.173,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 12.766999999999996,
+        "cost": {
+          "total": 0.355,
+          "closureMiss": 0.596,
+          "cutA": 0.912,
+          "pickup": 0,
+          "holeDb": 0,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0.5,
+          "leadRisk": 0.28,
+          "leadRun": 0.277,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 18.752,
+          "aExit": 76.829,
+          "bEntry": 1.173,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 12.766999999999996,
+          "cost": {
+            "total": 0.355,
+            "closureMiss": 0.596,
+            "cutA": 0.912,
+            "pickup": 0,
+            "holeDb": 0,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0.5,
+            "leadRisk": 0.28,
+            "leadRun": 0.277,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 18.752,
+          "aExit": 76.829,
+          "bEntry": 1.173,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 9.463999999999999,
+          "cost": {
+            "total": 0.799,
+            "closureMiss": 0.992,
+            "cutA": 0.676,
+            "pickup": 0,
+            "holeDb": 0,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0.5,
+            "leadRisk": 7.359,
+            "leadRun": 7.247,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 18.752,
+          "aExit": 76.829,
+          "bEntry": 1.173,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 13.177999999999997,
+          "cost": {
+            "total": 0.361,
+            "closureMiss": 0.596,
+            "cutA": 0.941,
+            "pickup": 0,
+            "holeDb": 0,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0.5,
+            "leadRisk": 0.28,
+            "leadRun": 0.277,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 18.752,
+          "aExit": 76.829,
+          "bEntry": 1.173,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 12.150999999999996,
+          "cost": {
+            "total": 0.354,
+            "closureMiss": 0.596,
+            "cutA": 0.868,
+            "pickup": 0,
+            "holeDb": 0,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 1,
+            "leadRisk": 0.28,
+            "leadRun": 0.277,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 18.752,
+        "aExit": 76.829,
+        "bEntry": 1.173,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 12.766999999999996,
+        "cost": {
+          "total": 0.355,
+          "closureMiss": 0.596,
+          "cutA": 0.912,
+          "pickup": 0,
+          "holeDb": 0,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0.5,
+          "leadRisk": 0.28,
+          "leadRun": 0.277,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "lead-handoff",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "lead-handoff",
+            "method": "beatmatch_blend",
+            "duration": 18.752,
+            "musicalCost": 0.436,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.63,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.19
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 18.752,
+            "musicalCost": 0.892,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.68,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.21
+            }
+          },
+          {
+            "name": "bass -0.587",
+            "method": "beatmatch_blend",
+            "duration": 18.752,
+            "musicalCost": 0.436,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.64,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.19
+            }
+          },
+          {
+            "name": "bass 0.587",
+            "method": "beatmatch_blend",
+            "duration": 18.752,
+            "musicalCost": 0.436,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.62,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.19
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": 0,
+        "bumpLU": 1.68,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.21
+      },
+      "snippets": [
+        {
+          "file": "125-A-historical.wav",
+          "planFile": "125-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 30.752,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "125-B-upgrade.wav",
+          "planFile": "125-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 30.752,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 127,
+      "rating": "good",
+      "reason": null,
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 14.769,
+        "aExit": 155.081,
+        "bEntry": 7.623,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 10.25,
+        "cost": {
+          "total": 0.768,
+          "closureMiss": 0.85,
+          "cutA": 0.732,
+          "pickup": 0,
+          "holeDb": 2.554,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 3.988,
+          "leadRun": 3.771,
+          "tonalClash": 3,
+          "skippedUnknownB": 2.423
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 14.769,
+        "aExit": 155.081,
+        "bEntry": 7.623,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 13.25,
+        "cost": {
+          "total": 0.477,
+          "closureMiss": 0.506,
+          "cutA": 0.946,
+          "pickup": 0,
+          "holeDb": 2.561,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 0.372,
+          "leadRun": 0.333,
+          "tonalClash": 0,
+          "skippedUnknownB": 2.423
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 14.769,
+          "aExit": 155.081,
+          "bEntry": 7.623,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 13.25,
+          "cost": {
+            "total": 0.477,
+            "closureMiss": 0.506,
+            "cutA": 0.946,
+            "pickup": 0,
+            "holeDb": 2.561,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.372,
+            "leadRun": 0.333,
+            "tonalClash": 0,
+            "skippedUnknownB": 2.423
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 14.769,
+          "aExit": 155.081,
+          "bEntry": 7.623,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 10.25,
+          "cost": {
+            "total": 0.768,
+            "closureMiss": 0.85,
+            "cutA": 0.732,
+            "pickup": 0,
+            "holeDb": 2.554,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 3.988,
+            "leadRun": 3.771,
+            "tonalClash": 3,
+            "skippedUnknownB": 2.423
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 14.769,
+          "aExit": 147.696,
+          "bEntry": 8.085,
+          "bDelay": 0,
+          "selected": "neighbor-exit",
+          "effectiveCutSeconds": 18.235000000000014,
+          "cost": {
+            "total": 0.883,
+            "closureMiss": 0.955,
+            "cutA": 1.355,
+            "pickup": 0,
+            "holeDb": 2.657,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 3.254,
+            "leadRun": 2.986,
+            "tonalClash": 3,
+            "skippedUnknownB": 2.885
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 14.769,
+          "aExit": 155.081,
+          "bEntry": 7.623,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 13.25,
+          "cost": {
+            "total": 0.477,
+            "closureMiss": 0.506,
+            "cutA": 0.946,
+            "pickup": 0,
+            "holeDb": 2.561,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.372,
+            "leadRun": 0.333,
+            "tonalClash": 0,
+            "skippedUnknownB": 2.423
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 14.769,
+          "aExit": 155.081,
+          "bEntry": 7.623,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 12.950000000000017,
+          "cost": {
+            "total": 0.511,
+            "closureMiss": 0.506,
+            "cutA": 0.925,
+            "pickup": 0,
+            "holeDb": 3.325,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.372,
+            "leadRun": 0.333,
+            "tonalClash": 0,
+            "skippedUnknownB": 2.423
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "unavailable"
+      },
+      "renderUnavailable": "PCM/local encoded source unavailable; no provider requests made"
+    },
+    {
+      "logId": 139,
+      "rating": "bad",
+      "reason": "голоса наложились",
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 31.866,
+        "aExit": 84.835,
+        "bEntry": 0.005,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 21.146,
+        "cost": {
+          "total": 0.83,
+          "closureMiss": 0.976,
+          "cutA": 0.47,
+          "pickup": 0,
+          "holeDb": 0,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 1,
+          "leadRisk": 10.059,
+          "leadRun": 8.397,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 31.866,
+        "aExit": 84.835,
+        "bEntry": 0.005,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 23.027,
+        "cost": {
+          "total": 0.434,
+          "closureMiss": 0.202,
+          "cutA": 1.786,
+          "pickup": 0,
+          "holeDb": 0,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 1,
+          "leadRisk": 0.345,
+          "leadRun": 0.296,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 31.866,
+          "aExit": 84.835,
+          "bEntry": 0.005,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 23.027,
+          "cost": {
+            "total": 0.434,
+            "closureMiss": 0.202,
+            "cutA": 1.786,
+            "pickup": 0,
+            "holeDb": 0,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 1,
+            "leadRisk": 0.345,
+            "leadRun": 0.296,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 31.866,
+          "aExit": 84.835,
+          "bEntry": 0.005,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 21.146,
+          "cost": {
+            "total": 0.83,
+            "closureMiss": 0.976,
+            "cutA": 0.47,
+            "pickup": 0,
+            "holeDb": 0,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 1,
+            "leadRisk": 10.059,
+            "leadRun": 8.397,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 15.933,
+          "aExit": 84.835,
+          "bEntry": 0.005,
+          "bDelay": 0,
+          "selected": "shorter",
+          "effectiveCutSeconds": 24.476,
+          "cost": {
+            "total": 0.853,
+            "closureMiss": 0.202,
+            "cutA": 0.544,
+            "pickup": 0,
+            "holeDb": 6.339,
+            "unsupported": 0,
+            "jumpDb": 0.895,
+            "doubleBass": 0,
+            "leadRisk": 6.136,
+            "leadRun": 5.993,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 31.866,
+          "aExit": 84.835,
+          "bEntry": 0.005,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 23.444000000000003,
+          "cost": {
+            "total": 0.432,
+            "closureMiss": 0.202,
+            "cutA": 1.824,
+            "pickup": 0,
+            "holeDb": 0,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.345,
+            "leadRun": 0.296,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 31.866,
+          "aExit": 84.835,
+          "bEntry": 0.005,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 22.506,
+          "cost": {
+            "total": 0.42,
+            "closureMiss": 0.202,
+            "cutA": 1.738,
+            "pickup": 0,
+            "holeDb": 0,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0.5,
+            "leadRisk": 0.345,
+            "leadRun": 0.296,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 31.866,
+        "aExit": 84.835,
+        "bEntry": 0.005,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 23.027,
+        "cost": {
+          "total": 0.434,
+          "closureMiss": 0.202,
+          "cutA": 1.786,
+          "pickup": 0,
+          "holeDb": 0,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 1,
+          "leadRisk": 0.345,
+          "leadRun": 0.296,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "lead-handoff",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "lead-handoff",
+            "method": "beatmatch_blend",
+            "duration": 31.866,
+            "musicalCost": 0.504,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0.67,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 31.866,
+            "musicalCost": 0.9119999999999999,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.5,
+              "limiterDb": 0.8,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.15
+            }
+          },
+          {
+            "name": "shorter",
+            "method": "beatmatch_blend",
+            "duration": 15.933,
+            "musicalCost": 0.942,
+            "metrics": {
+              "dipLU": -0.06,
+              "bumpLU": 0.62,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "bass -0.497",
+            "method": "beatmatch_blend",
+            "duration": 31.866,
+            "musicalCost": 0.504,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0.67,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "bass 0.497",
+            "method": "beatmatch_blend",
+            "duration": 31.866,
+            "musicalCost": 0.504,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0.78,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": 0,
+        "bumpLU": 1.5,
+        "limiterDb": 0.8,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.15
+      },
+      "snippets": [
+        {
+          "file": "139-A-historical.wav",
+          "planFile": "139-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 43.866,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "139-B-upgrade.wav",
+          "planFile": "139-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 43.866,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 141,
+      "rating": "bad",
+      "reason": null,
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 15.421,
+        "aExit": 92.907,
+        "bEntry": 1.474,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 5.449000000000012,
+        "cost": {
+          "total": 0.736,
+          "closureMiss": 0.85,
+          "cutA": 0.389,
+          "pickup": 0,
+          "holeDb": 0.676,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0.5,
+          "leadRisk": 6.974,
+          "leadRun": 6.891,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 15.421,
+        "aExit": 92.907,
+        "bEntry": 1.474,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 7.25800000000001,
+        "cost": {
+          "total": 0.315,
+          "closureMiss": 0.599,
+          "cutA": 0.518,
+          "pickup": 0,
+          "holeDb": 0.744,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0.5,
+          "leadRisk": 0.27,
+          "leadRun": 0.228,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 15.421,
+          "aExit": 92.907,
+          "bEntry": 1.474,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 7.25800000000001,
+          "cost": {
+            "total": 0.315,
+            "closureMiss": 0.599,
+            "cutA": 0.518,
+            "pickup": 0,
+            "holeDb": 0.744,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0.5,
+            "leadRisk": 0.27,
+            "leadRun": 0.228,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 7.71,
+          "aExit": 92.907,
+          "bEntry": 1.474,
+          "bDelay": 0,
+          "selected": "shorter",
+          "effectiveCutSeconds": 9.364000000000004,
+          "cost": {
+            "total": 0.73,
+            "closureMiss": 0.85,
+            "cutA": 0.669,
+            "pickup": 0,
+            "holeDb": 1.887,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 3.613,
+            "leadRun": 3.542,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 15.421,
+          "aExit": 92.907,
+          "bEntry": 1.474,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 5.449000000000012,
+          "cost": {
+            "total": 0.736,
+            "closureMiss": 0.85,
+            "cutA": 0.389,
+            "pickup": 0,
+            "holeDb": 0.676,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0.5,
+            "leadRisk": 6.974,
+            "leadRun": 6.891,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 15.421,
+          "aExit": 92.907,
+          "bEntry": 1.474,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 7.559000000000012,
+          "cost": {
+            "total": 0.319,
+            "closureMiss": 0.599,
+            "cutA": 0.54,
+            "pickup": 0,
+            "holeDb": 0.743,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0.5,
+            "leadRisk": 0.27,
+            "leadRun": 0.228,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 15.421,
+          "aExit": 92.907,
+          "bEntry": 1.474,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 6.756,
+          "cost": {
+            "total": 0.308,
+            "closureMiss": 0.599,
+            "cutA": 0.483,
+            "pickup": 0,
+            "holeDb": 0.745,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0.5,
+            "leadRisk": 0.27,
+            "leadRun": 0.228,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 15.421,
+        "aExit": 92.907,
+        "bEntry": 1.474,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 7.25800000000001,
+        "cost": {
+          "total": 0.315,
+          "closureMiss": 0.599,
+          "cutA": 0.518,
+          "pickup": 0,
+          "holeDb": 0.744,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0.5,
+          "leadRisk": 0.27,
+          "leadRun": 0.228,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "lead-handoff",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "lead-handoff",
+            "method": "beatmatch_blend",
+            "duration": 15.421,
+            "musicalCost": 0.386,
+            "metrics": {
+              "dipLU": -0.81,
+              "bumpLU": 0.58,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "shorter",
+            "method": "beatmatch_blend",
+            "duration": 7.71,
+            "musicalCost": 0.7949999999999999,
+            "metrics": {
+              "dipLU": -0.83,
+              "bumpLU": 0.67,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 15.421,
+            "musicalCost": 0.818,
+            "metrics": {
+              "dipLU": -0.74,
+              "bumpLU": 1.3,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.09
+            }
+          },
+          {
+            "name": "bass -0.482",
+            "method": "beatmatch_blend",
+            "duration": 15.421,
+            "musicalCost": 0.386,
+            "metrics": {
+              "dipLU": -0.8,
+              "bumpLU": 0.58,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "bass 0.482",
+            "method": "beatmatch_blend",
+            "duration": 15.421,
+            "musicalCost": 0.386,
+            "metrics": {
+              "dipLU": -0.82,
+              "bumpLU": 0.58,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": -0.74,
+        "bumpLU": 1.3,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.09
+      },
+      "snippets": [
+        {
+          "file": "141-A-historical.wav",
+          "planFile": "141-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 27.421,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "141-B-upgrade.wav",
+          "planFile": "141-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 27.421,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 150,
+      "rating": "bad",
+      "reason": "голоса наложились",
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 20.681,
+        "aExit": 100.152,
+        "bEntry": 0.692,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 8.180999999999997,
+        "cost": {
+          "total": 0.848,
+          "closureMiss": 0.946,
+          "cutA": 0.584,
+          "pickup": 0,
+          "holeDb": 1.37,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 7.549,
+          "leadRun": 7.006,
+          "tonalClash": 2.5,
+          "skippedUnknownB": 0
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 20.681,
+        "aExit": 100.152,
+        "bEntry": 0.692,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 9.512,
+        "cost": {
+          "total": 0.37,
+          "closureMiss": 0.946,
+          "cutA": 0.211,
+          "pickup": 0,
+          "holeDb": 1.514,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 0.29,
+          "leadRun": 0.272,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 20.681,
+          "aExit": 100.152,
+          "bEntry": 0.692,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 9.512,
+          "cost": {
+            "total": 0.37,
+            "closureMiss": 0.946,
+            "cutA": 0.211,
+            "pickup": 0,
+            "holeDb": 1.514,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.29,
+            "leadRun": 0.272,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 20.681,
+          "aExit": 100.152,
+          "bEntry": 0.692,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 8.180999999999997,
+          "cost": {
+            "total": 0.848,
+            "closureMiss": 0.946,
+            "cutA": 0.584,
+            "pickup": 0,
+            "holeDb": 1.37,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 7.549,
+            "leadRun": 7.006,
+            "tonalClash": 2.5,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 20.681,
+          "aExit": 90.222,
+          "bEntry": 0.018,
+          "bDelay": 0,
+          "selected": "neighbor-exit",
+          "effectiveCutSeconds": 15.105999999999995,
+          "cost": {
+            "total": 0.923,
+            "closureMiss": 0.641,
+            "cutA": 1.088,
+            "pickup": 0,
+            "holeDb": 2.358,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 7.869,
+            "leadRun": 7.706,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 20.681,
+          "aExit": 100.152,
+          "bEntry": 0.692,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 10.182000000000002,
+          "cost": {
+            "total": 0.555,
+            "closureMiss": 0.946,
+            "cutA": 0.727,
+            "pickup": 0,
+            "holeDb": 2.76,
+            "unsupported": 0,
+            "jumpDb": 0.635,
+            "doubleBass": 0,
+            "leadRisk": 0.29,
+            "leadRun": 0.272,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 20.681,
+          "aExit": 100.152,
+          "bEntry": 0.692,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 8.939999999999998,
+          "cost": {
+            "total": 0.455,
+            "closureMiss": 0.946,
+            "cutA": 0.639,
+            "pickup": 0,
+            "holeDb": 1.514,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.29,
+            "leadRun": 0.272,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 20.681,
+        "aExit": 100.152,
+        "bEntry": 0.692,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 9.512,
+        "cost": {
+          "total": 0.37,
+          "closureMiss": 0.946,
+          "cutA": 0.211,
+          "pickup": 0,
+          "holeDb": 1.514,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 0.29,
+          "leadRun": 0.272,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "lead-handoff",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "lead-handoff",
+            "method": "beatmatch_blend",
+            "duration": 20.681,
+            "musicalCost": 0.424,
+            "metrics": {
+              "dipLU": -0.9,
+              "bumpLU": 0.4,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.3,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.09
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 20.681,
+            "musicalCost": 0.9139999999999999,
+            "metrics": {
+              "dipLU": -0.9,
+              "bumpLU": 1.49,
+              "limiterDb": 0.14,
+              "lowHoleSeconds": 0.3,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.24
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 20.681,
+            "musicalCost": 0.9890000000000001,
+            "metrics": {
+              "dipLU": -0.54,
+              "bumpLU": 1.63,
+              "limiterDb": 0,
+              "lowHoleSeconds": 2,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.79
+            }
+          },
+          {
+            "name": "bass -0.645",
+            "method": "beatmatch_blend",
+            "duration": 20.681,
+            "musicalCost": 0.424,
+            "metrics": {
+              "dipLU": -0.9,
+              "bumpLU": 0.4,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.3,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.09
+            }
+          },
+          {
+            "name": "bass 0.645",
+            "method": "beatmatch_blend",
+            "duration": 20.681,
+            "musicalCost": 0.424,
+            "metrics": {
+              "dipLU": -0.9,
+              "bumpLU": 0.4,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.3,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.09
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": -0.9,
+        "bumpLU": 1.49,
+        "limiterDb": 0.14,
+        "lowHoleSeconds": 0.3,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.24
+      },
+      "snippets": [
+        {
+          "file": "150-A-historical.wav",
+          "planFile": "150-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 32.681,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "150-B-upgrade.wav",
+          "planFile": "150-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 32.681,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 151,
+      "rating": "bad",
+      "reason": null,
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "crossfade",
+        "duration": 13.623,
+        "aExit": 91.546,
+        "bEntry": 0.2,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 4.599548752834465,
+        "cost": {
+          "total": 0.661,
+          "closureMiss": 0.85,
+          "cutA": 0.329,
+          "pickup": 0,
+          "holeDb": 2.117,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 4.304,
+          "leadRun": 4.206,
+          "tonalClash": 1.5,
+          "skippedUnknownB": 0
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "crossfade",
+        "duration": 13.623,
+        "aExit": 91.546,
+        "bEntry": 0.2,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 9.899548752834463,
+        "cost": {
+          "total": 0.533,
+          "closureMiss": 0.457,
+          "cutA": 0.707,
+          "pickup": 0,
+          "holeDb": 4.707,
+          "unsupported": 0,
+          "jumpDb": 0.764,
+          "doubleBass": 0,
+          "leadRisk": 0.324,
+          "leadRun": 0.324,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "crossfade",
+          "duration": 13.623,
+          "aExit": 91.546,
+          "bEntry": 0.2,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 9.899548752834463,
+          "cost": {
+            "total": 0.533,
+            "closureMiss": 0.457,
+            "cutA": 0.707,
+            "pickup": 0,
+            "holeDb": 4.707,
+            "unsupported": 0,
+            "jumpDb": 0.764,
+            "doubleBass": 0,
+            "leadRisk": 0.324,
+            "leadRun": 0.324,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "crossfade",
+          "duration": 13.623,
+          "aExit": 91.546,
+          "bEntry": 0.2,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 4.599548752834465,
+          "cost": {
+            "total": 0.661,
+            "closureMiss": 0.85,
+            "cutA": 0.329,
+            "pickup": 0,
+            "holeDb": 2.117,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 4.304,
+            "leadRun": 4.206,
+            "tonalClash": 1.5,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "crossfade",
+          "duration": 13.623,
+          "aExit": 91.546,
+          "bEntry": 0.2,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 9.899548752834463,
+          "cost": {
+            "total": 0.429,
+            "closureMiss": 0.457,
+            "cutA": 0.707,
+            "pickup": 0,
+            "holeDb": 3.077,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.324,
+            "leadRun": 0.324,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "crossfade",
+          "duration": 13.623,
+          "aExit": 91.546,
+          "bEntry": 0.2,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 9.799548752834468,
+          "cost": {
+            "total": 0.591,
+            "closureMiss": 0.457,
+            "cutA": 0.7,
+            "pickup": 0,
+            "holeDb": 5.997,
+            "unsupported": 0,
+            "jumpDb": 0.589,
+            "doubleBass": 0,
+            "leadRisk": 0.324,
+            "leadRun": 0.324,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "crossfade",
+        "duration": 13.623,
+        "aExit": 91.546,
+        "bEntry": 0.2,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 9.899548752834463,
+        "cost": {
+          "total": 0.429,
+          "closureMiss": 0.457,
+          "cutA": 0.707,
+          "pickup": 0,
+          "holeDb": 3.077,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 0.324,
+          "leadRun": 0.324,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "bass -0.522",
+        "margin": 0.15,
+        "reason": "lower combined musical, rating and render cost within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "lead-handoff",
+            "method": "crossfade",
+            "duration": 13.623,
+            "musicalCost": 0.5900000000000001,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 12,
+              "underruns": 0,
+              "cost": 0.52
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "crossfade",
+            "duration": 13.623,
+            "musicalCost": 0.724,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 12,
+              "underruns": 0,
+              "cost": 0.52
+            }
+          },
+          {
+            "name": "bass -0.522",
+            "method": "crossfade",
+            "duration": 13.623,
+            "musicalCost": 0.5900000000000001,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "bass 0.522",
+            "method": "crossfade",
+            "duration": 13.623,
+            "musicalCost": 0.5900000000000001,
+            "metrics": {
+              "dipLU": -0.21,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.1,
+              "flams": 13,
+              "underruns": 0,
+              "cost": 0.59
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": 0,
+        "bumpLU": 0,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 12,
+        "underruns": 0,
+        "cost": 0.52
+      },
+      "snippets": [
+        {
+          "file": "151-A-historical.wav",
+          "planFile": "151-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 25.623,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "151-B-upgrade.wav",
+          "planFile": "151-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 25.623,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 153,
+      "rating": "bad",
+      "reason": null,
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 13.196,
+        "aExit": 74.895,
+        "bEntry": 8.785,
+        "bDelay": 0,
+        "selected": "neighbor-exit",
+        "effectiveCutSeconds": 18.57799999999999,
+        "cost": {
+          "total": 0.503,
+          "closureMiss": 0.943,
+          "cutA": 0.413,
+          "pickup": 0,
+          "holeDb": 0,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 2.815,
+          "leadRun": 2.269,
+          "tonalClash": 0.5,
+          "skippedUnknownB": 3.785
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 13.196,
+        "aExit": 74.895,
+        "bEntry": 8.785,
+        "bDelay": 0,
+        "selected": "neighbor-exit",
+        "effectiveCutSeconds": 18.57799999999999,
+        "cost": {
+          "total": 0.503,
+          "closureMiss": 0.943,
+          "cutA": 0.413,
+          "pickup": 0,
+          "holeDb": 0,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 2.815,
+          "leadRun": 2.269,
+          "tonalClash": 0.5,
+          "skippedUnknownB": 3.785
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 13.196,
+          "aExit": 74.895,
+          "bEntry": 8.785,
+          "bDelay": 0,
+          "selected": "neighbor-exit",
+          "effectiveCutSeconds": 18.57799999999999,
+          "cost": {
+            "total": 0.503,
+            "closureMiss": 0.943,
+            "cutA": 0.413,
+            "pickup": 0,
+            "holeDb": 0,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 2.815,
+            "leadRun": 2.269,
+            "tonalClash": 0.5,
+            "skippedUnknownB": 3.785
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 13.196,
+          "aExit": 86.81,
+          "bEntry": 8.785,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 7.908000000000001,
+          "cost": {
+            "total": 0.721,
+            "closureMiss": 0.85,
+            "cutA": 0.176,
+            "pickup": 0,
+            "holeDb": 7.859,
+            "unsupported": 0,
+            "jumpDb": 1.525,
+            "doubleBass": 0,
+            "leadRisk": 0.27,
+            "leadRun": 0.222,
+            "tonalClash": 0,
+            "skippedUnknownB": 3.785
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 13.196,
+          "aExit": 86.81,
+          "bEntry": 8.785,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 6.766999999999996,
+          "cost": {
+            "total": 0.804,
+            "closureMiss": 0.85,
+            "cutA": 0.15,
+            "pickup": 0,
+            "holeDb": 7.858,
+            "unsupported": 0,
+            "jumpDb": 1.524,
+            "doubleBass": 0,
+            "leadRisk": 1.945,
+            "leadRun": 1.306,
+            "tonalClash": 0,
+            "skippedUnknownB": 3.785
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 13.196,
+          "aExit": 74.895,
+          "bEntry": 8.785,
+          "bDelay": 0,
+          "selected": "neighbor-exit",
+          "effectiveCutSeconds": 18.57799999999999,
+          "cost": {
+            "total": 0.51,
+            "closureMiss": 0.943,
+            "cutA": 0.413,
+            "pickup": 0,
+            "holeDb": 0.142,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 2.815,
+            "leadRun": 2.269,
+            "tonalClash": 0.5,
+            "skippedUnknownB": 3.785
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 13.196,
+          "aExit": 74.895,
+          "bEntry": 8.785,
+          "bDelay": 0,
+          "selected": "neighbor-exit",
+          "effectiveCutSeconds": 18.57799999999999,
+          "cost": {
+            "total": 0.503,
+            "closureMiss": 0.943,
+            "cutA": 0.413,
+            "pickup": 0,
+            "holeDb": 0,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 2.815,
+            "leadRun": 2.269,
+            "tonalClash": 0.5,
+            "skippedUnknownB": 3.785
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 13.196,
+        "aExit": 74.895,
+        "bEntry": 8.785,
+        "bDelay": 0,
+        "selected": "neighbor-exit",
+        "effectiveCutSeconds": 18.57799999999999,
+        "cost": {
+          "total": 0.503,
+          "closureMiss": 0.943,
+          "cutA": 0.413,
+          "pickup": 0,
+          "holeDb": 0,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 2.815,
+          "leadRun": 2.269,
+          "tonalClash": 0.5,
+          "skippedUnknownB": 3.785
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "neighbor-exit",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 13.196,
+            "musicalCost": 0.575,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0.71,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "lead-handoff",
+            "method": "beatmatch_blend",
+            "duration": 13.196,
+            "musicalCost": 0.7909999999999999,
+            "metrics": {
+              "dipLU": -2.4,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 1.3,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.66
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 13.196,
+            "musicalCost": 0.875,
+            "metrics": {
+              "dipLU": -2.39,
+              "bumpLU": 0,
+              "limiterDb": 0,
+              "lowHoleSeconds": 1.3,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.66
+            }
+          },
+          {
+            "name": "bass -0.824",
+            "method": "beatmatch_blend",
+            "duration": 13.196,
+            "musicalCost": 0.575,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0.87,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "bass 0.824",
+            "method": "beatmatch_blend",
+            "duration": 13.196,
+            "musicalCost": 0.575,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0.67,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": 0,
+        "bumpLU": 0.71,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0
+      },
+      "snippets": [
+        {
+          "file": "153-A-historical.wav",
+          "planFile": "153-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 25.196,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "153-B-upgrade.wav",
+          "planFile": "153-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 25.196,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 156,
+      "rating": "good",
+      "reason": null,
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "crossfade",
+        "duration": 9,
+        "aExit": 106.2,
+        "bEntry": 4.87,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 5.400000000000006,
+        "cost": {
+          "total": 0.61,
+          "closureMiss": 0.85,
+          "cutA": 0.12,
+          "pickup": 0,
+          "holeDb": 5.08,
+          "unsupported": 0,
+          "jumpDb": 0.343,
+          "doubleBass": 0,
+          "leadRisk": 1.573,
+          "leadRun": 0.995,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "crossfade",
+        "duration": 9,
+        "aExit": 106.2,
+        "bEntry": 4.87,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 5.400000000000006,
+        "cost": {
+          "total": 0.61,
+          "closureMiss": 0.85,
+          "cutA": 0.12,
+          "pickup": 0,
+          "holeDb": 5.08,
+          "unsupported": 0,
+          "jumpDb": 0.343,
+          "doubleBass": 0,
+          "leadRisk": 1.573,
+          "leadRun": 0.995,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "crossfade",
+          "duration": 9,
+          "aExit": 106.2,
+          "bEntry": 4.87,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 5.400000000000006,
+          "cost": {
+            "total": 0.61,
+            "closureMiss": 0.85,
+            "cutA": 0.12,
+            "pickup": 0,
+            "holeDb": 5.08,
+            "unsupported": 0,
+            "jumpDb": 0.343,
+            "doubleBass": 0,
+            "leadRisk": 1.573,
+            "leadRun": 0.995,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "crossfade",
+          "duration": 9,
+          "aExit": 106.2,
+          "bEntry": 4.87,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 5.400000000000006,
+          "cost": {
+            "total": 0.836,
+            "closureMiss": 0.85,
+            "cutA": 0.12,
+            "pickup": 0,
+            "holeDb": 9.128,
+            "unsupported": 0,
+            "jumpDb": 3.775,
+            "doubleBass": 0,
+            "leadRisk": 0.225,
+            "leadRun": 0.225,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "crossfade",
+          "duration": 10.55,
+          "aExit": 104.65,
+          "bEntry": 0.1,
+          "bDelay": 0,
+          "selected": "preserve-start",
+          "effectiveCutSeconds": 4.5,
+          "cost": {
+            "total": 1.393,
+            "closureMiss": 0.85,
+            "cutA": 0.1,
+            "pickup": 0,
+            "holeDb": 15.841,
+            "unsupported": 0,
+            "jumpDb": 7.647,
+            "doubleBass": 0,
+            "leadRisk": 2.592,
+            "leadRun": 1.259,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "crossfade",
+          "duration": 9,
+          "aExit": 106.2,
+          "bEntry": 4.87,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 6,
+          "cost": {
+            "total": 0.703,
+            "closureMiss": 0.85,
+            "cutA": 0.133,
+            "pickup": 0,
+            "holeDb": 7.039,
+            "unsupported": 0,
+            "jumpDb": 0.1,
+            "doubleBass": 0,
+            "leadRisk": 1.573,
+            "leadRun": 0.995,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "crossfade",
+          "duration": 9,
+          "aExit": 106.2,
+          "bEntry": 4.87,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 4.700000000000003,
+          "cost": {
+            "total": 0.543,
+            "closureMiss": 0.85,
+            "cutA": 0.104,
+            "pickup": 0,
+            "holeDb": 4.002,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 1.573,
+            "leadRun": 0.995,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "crossfade",
+        "duration": 9,
+        "aExit": 106.2,
+        "bEntry": 4.87,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 5.400000000000006,
+        "cost": {
+          "total": 0.61,
+          "closureMiss": 0.85,
+          "cutA": 0.12,
+          "pickup": 0,
+          "holeDb": 5.08,
+          "unsupported": 0,
+          "jumpDb": 0.343,
+          "doubleBass": 0,
+          "leadRisk": 1.573,
+          "leadRun": 0.995,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "baseline",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "crossfade",
+            "duration": 9,
+            "musicalCost": 0.661,
+            "metrics": {
+              "dipLU": -1.44,
+              "bumpLU": 0.62,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "lead-handoff",
+            "method": "crossfade",
+            "duration": 9,
+            "musicalCost": 0.88,
+            "metrics": {
+              "dipLU": -2.76,
+              "bumpLU": 0.62,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.38
+            }
+          },
+          {
+            "name": "preserve-start",
+            "method": "crossfade",
+            "duration": 10.55,
+            "musicalCost": 1.448,
+            "metrics": {
+              "dipLU": -5.46,
+              "bumpLU": 1.18,
+              "limiterDb": 0,
+              "lowHoleSeconds": 1,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 1.54
+            }
+          },
+          {
+            "name": "bass -0.65",
+            "method": "crossfade",
+            "duration": 9,
+            "musicalCost": 0.661,
+            "metrics": {
+              "dipLU": -1.58,
+              "bumpLU": 0.44,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.02
+            }
+          },
+          {
+            "name": "bass 0.65",
+            "method": "crossfade",
+            "duration": 9,
+            "musicalCost": 0.661,
+            "metrics": {
+              "dipLU": -1.36,
+              "bumpLU": 0.63,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0.3,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.09
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": -1.44,
+        "bumpLU": 0.62,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0
+      },
+      "snippets": [
+        {
+          "file": "156-A-historical.wav",
+          "planFile": "156-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 21,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "156-B-upgrade.wav",
+          "planFile": "156-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 21,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 157,
+      "rating": "good",
+      "reason": null,
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 10.356,
+        "aExit": 119.774,
+        "bEntry": 13.126,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 6.004000000000005,
+        "cost": {
+          "total": 0.262,
+          "closureMiss": 0.733,
+          "cutA": 0.133,
+          "pickup": 0,
+          "holeDb": 0.242,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0.5,
+          "leadRisk": 0.554,
+          "leadRun": 0.063,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 10.356,
+        "aExit": 119.774,
+        "bEntry": 13.126,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 6.004000000000005,
+        "cost": {
+          "total": 0.262,
+          "closureMiss": 0.733,
+          "cutA": 0.133,
+          "pickup": 0,
+          "holeDb": 0.242,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0.5,
+          "leadRisk": 0.554,
+          "leadRun": 0.063,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 10.356,
+          "aExit": 119.774,
+          "bEntry": 13.126,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 6.004000000000005,
+          "cost": {
+            "total": 0.262,
+            "closureMiss": 0.733,
+            "cutA": 0.133,
+            "pickup": 0,
+            "holeDb": 0.242,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0.5,
+            "leadRisk": 0.554,
+            "leadRun": 0.063,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 10.356,
+          "aExit": 119.774,
+          "bEntry": 13.126,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 7.588000000000008,
+          "cost": {
+            "total": 0.301,
+            "closureMiss": 0.733,
+            "cutA": 0.169,
+            "pickup": 0,
+            "holeDb": 1.333,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0.5,
+            "leadRisk": 0.06,
+            "leadRun": 0,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 10.356,
+          "aExit": 119.774,
+          "bEntry": 13.126,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 6.004000000000005,
+          "cost": {
+            "total": 0.248,
+            "closureMiss": 0.733,
+            "cutA": 0.133,
+            "pickup": 0,
+            "holeDb": 0.242,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.554,
+            "leadRun": 0.063,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 10.356,
+          "aExit": 119.774,
+          "bEntry": 13.126,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 6.004000000000005,
+          "cost": {
+            "total": 0.248,
+            "closureMiss": 0.733,
+            "cutA": 0.133,
+            "pickup": 0,
+            "holeDb": 0.242,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.554,
+            "leadRun": 0.063,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 10.356,
+        "aExit": 119.774,
+        "bEntry": 13.126,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 6.004000000000005,
+        "cost": {
+          "total": 0.262,
+          "closureMiss": 0.733,
+          "cutA": 0.133,
+          "pickup": 0,
+          "holeDb": 0.242,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0.5,
+          "leadRisk": 0.554,
+          "leadRun": 0.063,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "baseline",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 10.356,
+            "musicalCost": 0.339,
+            "metrics": {
+              "dipLU": -0.04,
+              "bumpLU": 1.51,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.15
+            }
+          },
+          {
+            "name": "lead-handoff",
+            "method": "beatmatch_blend",
+            "duration": 10.356,
+            "musicalCost": 0.372,
+            "metrics": {
+              "dipLU": -0.44,
+              "bumpLU": 1.45,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.13
+            }
+          },
+          {
+            "name": "bass -0.324",
+            "method": "beatmatch_blend",
+            "duration": 10.356,
+            "musicalCost": 0.339,
+            "metrics": {
+              "dipLU": -0.04,
+              "bumpLU": 1.53,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.16
+            }
+          },
+          {
+            "name": "bass 0.324",
+            "method": "beatmatch_blend",
+            "duration": 10.356,
+            "musicalCost": 0.339,
+            "metrics": {
+              "dipLU": -0.04,
+              "bumpLU": 1.51,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.15
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": -0.04,
+        "bumpLU": 1.51,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.15
+      },
+      "snippets": [
+        {
+          "file": "157-A-historical.wav",
+          "planFile": "157-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 22.356,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "157-B-upgrade.wav",
+          "planFile": "157-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 22.356,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 158,
+      "rating": "good",
+      "reason": null,
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 20.001,
+        "aExit": 195.746,
+        "bEntry": 6.119,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 10.265999999999991,
+        "cost": {
+          "total": 1.02,
+          "closureMiss": 0.852,
+          "cutA": 0.733,
+          "pickup": 0,
+          "holeDb": 5.78,
+          "unsupported": 0,
+          "jumpDb": 0.412,
+          "doubleBass": 0,
+          "leadRisk": 6.54,
+          "leadRun": 6.395,
+          "tonalClash": 0,
+          "skippedUnknownB": 0.419
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 20.001,
+        "aExit": 195.746,
+        "bEntry": 6.119,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 11.525000000000006,
+        "cost": {
+          "total": 0.698,
+          "closureMiss": 0.852,
+          "cutA": 0.823,
+          "pickup": 0,
+          "holeDb": 5.794,
+          "unsupported": 0,
+          "jumpDb": 0.426,
+          "doubleBass": 0,
+          "leadRisk": 0.281,
+          "leadRun": 0.281,
+          "tonalClash": 0,
+          "skippedUnknownB": 0.419
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 20.001,
+          "aExit": 195.746,
+          "bEntry": 6.119,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 11.525000000000006,
+          "cost": {
+            "total": 0.698,
+            "closureMiss": 0.852,
+            "cutA": 0.823,
+            "pickup": 0,
+            "holeDb": 5.794,
+            "unsupported": 0,
+            "jumpDb": 0.426,
+            "doubleBass": 0,
+            "leadRisk": 0.281,
+            "leadRun": 0.281,
+            "tonalClash": 0,
+            "skippedUnknownB": 0.419
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 20.001,
+          "aExit": 195.746,
+          "bEntry": 6.119,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 10.265999999999991,
+          "cost": {
+            "total": 1.02,
+            "closureMiss": 0.852,
+            "cutA": 0.733,
+            "pickup": 0,
+            "holeDb": 5.78,
+            "unsupported": 0,
+            "jumpDb": 0.412,
+            "doubleBass": 0,
+            "leadRisk": 6.54,
+            "leadRun": 6.395,
+            "tonalClash": 0,
+            "skippedUnknownB": 0.419
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 20.001,
+          "aExit": 190.528,
+          "bEntry": 6.119,
+          "bDelay": 0,
+          "selected": "neighbor-exit",
+          "effectiveCutSeconds": 15.484000000000009,
+          "cost": {
+            "total": 1.063,
+            "closureMiss": 0.852,
+            "cutA": 1.12,
+            "pickup": 0,
+            "holeDb": 5.564,
+            "unsupported": 0,
+            "jumpDb": 0.191,
+            "doubleBass": 0,
+            "leadRisk": 6.223,
+            "leadRun": 6.119,
+            "tonalClash": 0,
+            "skippedUnknownB": 0.419
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 20.001,
+          "aExit": 195.746,
+          "bEntry": 6.119,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 11.734000000000009,
+          "cost": {
+            "total": 0.783,
+            "closureMiss": 0.852,
+            "cutA": 0.838,
+            "pickup": 0,
+            "holeDb": 5.794,
+            "unsupported": 0,
+            "jumpDb": 3.18,
+            "doubleBass": 0,
+            "leadRisk": 0.281,
+            "leadRun": 0.281,
+            "tonalClash": 0,
+            "skippedUnknownB": 0.419
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 20.001,
+          "aExit": 195.746,
+          "bEntry": 6.119,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 10.896999999999991,
+          "cost": {
+            "total": 0.689,
+            "closureMiss": 0.852,
+            "cutA": 0.778,
+            "pickup": 0,
+            "holeDb": 5.794,
+            "unsupported": 0,
+            "jumpDb": 0.426,
+            "doubleBass": 0,
+            "leadRisk": 0.281,
+            "leadRun": 0.281,
+            "tonalClash": 0,
+            "skippedUnknownB": 0.419
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 20.001,
+        "aExit": 195.746,
+        "bEntry": 6.119,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 11.525000000000006,
+        "cost": {
+          "total": 0.698,
+          "closureMiss": 0.852,
+          "cutA": 0.823,
+          "pickup": 0,
+          "holeDb": 5.794,
+          "unsupported": 0,
+          "jumpDb": 0.426,
+          "doubleBass": 0,
+          "leadRisk": 0.281,
+          "leadRun": 0.281,
+          "tonalClash": 0,
+          "skippedUnknownB": 0.419
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "lead-handoff",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "lead-handoff",
+            "method": "beatmatch_blend",
+            "duration": 20.001,
+            "musicalCost": 0.752,
+            "metrics": {
+              "dipLU": -1.21,
+              "bumpLU": 0.36,
+              "limiterDb": 0.37,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 20.001,
+            "musicalCost": 1.082,
+            "metrics": {
+              "dipLU": -1.21,
+              "bumpLU": 1.32,
+              "limiterDb": 0.25,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.1
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 20.001,
+            "musicalCost": 1.125,
+            "metrics": {
+              "dipLU": -1.04,
+              "bumpLU": 1.15,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.04
+            }
+          },
+          {
+            "name": "bass -0.624",
+            "method": "beatmatch_blend",
+            "duration": 20.001,
+            "musicalCost": 0.752,
+            "metrics": {
+              "dipLU": -1.21,
+              "bumpLU": 0.36,
+              "limiterDb": 0.37,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "bass 0.624",
+            "method": "beatmatch_blend",
+            "duration": 20.001,
+            "musicalCost": 0.752,
+            "metrics": {
+              "dipLU": -1.21,
+              "bumpLU": 0.36,
+              "limiterDb": 0.37,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": -1.21,
+        "bumpLU": 1.32,
+        "limiterDb": 0.25,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.1
+      },
+      "snippets": [
+        {
+          "file": "158-A-historical.wav",
+          "planFile": "158-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 32.001,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "158-B-upgrade.wav",
+          "planFile": "158-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 32.001,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 162,
+      "rating": "bad",
+      "reason": "голоса наложились",
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 27.431,
+        "aExit": 69.867,
+        "bEntry": 1.679,
+        "bDelay": 0,
+        "selected": "neighbor-exit",
+        "effectiveCutSeconds": 16.117285714285714,
+        "cost": {
+          "total": 1.117,
+          "closureMiss": 0.987,
+          "cutA": 1.173,
+          "pickup": 0,
+          "holeDb": 3.618,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 8.113,
+          "leadRun": 7.994,
+          "tonalClash": 4.5,
+          "skippedUnknownB": 0
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 27.431,
+        "aExit": 81.867,
+        "bEntry": 1.679,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 8.917285714285711,
+        "cost": {
+          "total": 0.519,
+          "closureMiss": 0.85,
+          "cutA": 0.198,
+          "pickup": 0,
+          "holeDb": 4.993,
+          "unsupported": 0,
+          "jumpDb": 0.102,
+          "doubleBass": 0,
+          "leadRisk": 0.269,
+          "leadRun": 0.269,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 27.431,
+          "aExit": 81.867,
+          "bEntry": 1.679,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 8.917285714285711,
+          "cost": {
+            "total": 0.519,
+            "closureMiss": 0.85,
+            "cutA": 0.198,
+            "pickup": 0,
+            "holeDb": 4.993,
+            "unsupported": 0,
+            "jumpDb": 0.102,
+            "doubleBass": 0,
+            "leadRisk": 0.269,
+            "leadRun": 0.269,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 13.715,
+          "aExit": 81.867,
+          "bEntry": 1.679,
+          "bDelay": 0,
+          "selected": "shorter",
+          "effectiveCutSeconds": 18.832285714285703,
+          "cost": {
+            "total": 0.808,
+            "closureMiss": 0.987,
+            "cutA": 1.408,
+            "pickup": 0,
+            "holeDb": 1.748,
+            "unsupported": 0,
+            "jumpDb": 0.696,
+            "doubleBass": 1,
+            "leadRisk": 2.126,
+            "leadRun": 1.801,
+            "tonalClash": 2,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 27.431,
+          "aExit": 69.867,
+          "bEntry": 1.679,
+          "bDelay": 0,
+          "selected": "neighbor-exit",
+          "effectiveCutSeconds": 16.117285714285714,
+          "cost": {
+            "total": 1.117,
+            "closureMiss": 0.987,
+            "cutA": 1.173,
+            "pickup": 0,
+            "holeDb": 3.618,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 8.113,
+            "leadRun": 7.994,
+            "tonalClash": 4.5,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 27.431,
+          "aExit": 81.867,
+          "bEntry": 1.679,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 2.1182857142857046,
+          "cost": {
+            "total": 1.135,
+            "closureMiss": 0.85,
+            "cutA": 0.151,
+            "pickup": 0,
+            "holeDb": 4.903,
+            "unsupported": 0,
+            "jumpDb": 0.05,
+            "doubleBass": 0,
+            "leadRisk": 12.057,
+            "leadRun": 11.909,
+            "tonalClash": 2.5,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 27.431,
+          "aExit": 81.867,
+          "bEntry": 1.679,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 8.917285714285711,
+          "cost": {
+            "total": 0.518,
+            "closureMiss": 0.85,
+            "cutA": 0.198,
+            "pickup": 0,
+            "holeDb": 4.993,
+            "unsupported": 0,
+            "jumpDb": 0.062,
+            "doubleBass": 0,
+            "leadRisk": 0.269,
+            "leadRun": 0.269,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 27.431,
+          "aExit": 81.867,
+          "bEntry": 1.679,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 8.917285714285711,
+          "cost": {
+            "total": 0.523,
+            "closureMiss": 0.85,
+            "cutA": 0.198,
+            "pickup": 0,
+            "holeDb": 4.993,
+            "unsupported": 0,
+            "jumpDb": 0.248,
+            "doubleBass": 0,
+            "leadRisk": 0.269,
+            "leadRun": 0.269,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 27.431,
+        "aExit": 81.867,
+        "bEntry": 1.679,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 8.917285714285711,
+        "cost": {
+          "total": 0.519,
+          "closureMiss": 0.85,
+          "cutA": 0.198,
+          "pickup": 0,
+          "holeDb": 4.993,
+          "unsupported": 0,
+          "jumpDb": 0.102,
+          "doubleBass": 0,
+          "leadRisk": 0.269,
+          "leadRun": 0.269,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "lead-handoff",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "lead-handoff",
+            "method": "beatmatch_blend",
+            "duration": 27.431,
+            "musicalCost": 0.5780000000000001,
+            "metrics": {
+              "dipLU": -3.07,
+              "bumpLU": 0.24,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.47
+            }
+          },
+          {
+            "name": "shorter",
+            "method": "beatmatch_blend",
+            "duration": 13.715,
+            "musicalCost": 0.881,
+            "metrics": {
+              "dipLU": -0.46,
+              "bumpLU": 0.47,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 27.431,
+            "musicalCost": 1.188,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.31,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.09
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 27.431,
+            "musicalCost": 1.206,
+            "metrics": {
+              "dipLU": -2.92,
+              "bumpLU": 0.52,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.43
+            }
+          },
+          {
+            "name": "bass -0.429",
+            "method": "beatmatch_blend",
+            "duration": 27.431,
+            "musicalCost": 0.5780000000000001,
+            "metrics": {
+              "dipLU": -3.07,
+              "bumpLU": 0.24,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.47
+            }
+          },
+          {
+            "name": "bass 0.429",
+            "method": "beatmatch_blend",
+            "duration": 27.431,
+            "musicalCost": 0.5780000000000001,
+            "metrics": {
+              "dipLU": -3.07,
+              "bumpLU": 0.24,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.47
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": 0,
+        "bumpLU": 1.31,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.09
+      },
+      "snippets": [
+        {
+          "file": "162-A-historical.wav",
+          "planFile": "162-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 39.431,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "162-B-upgrade.wav",
+          "planFile": "162-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 39.431,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 167,
+      "rating": "bad",
+      "reason": "голоса наложились",
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 21.362,
+        "aExit": 57.459,
+        "bEntry": 0.012,
+        "bDelay": 0,
+        "selected": "neighbor-exit",
+        "effectiveCutSeconds": 21.164999999999992,
+        "cost": {
+          "total": 0.458,
+          "closureMiss": 0.212,
+          "cutA": 0.47,
+          "pickup": 0,
+          "holeDb": 0.196,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 5.651,
+          "leadRun": 5.346,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 21.362,
+        "aExit": 76.604,
+        "bEntry": 0.012,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 2.019999999999996,
+        "cost": {
+          "total": 0.255,
+          "closureMiss": 0.899,
+          "cutA": 0.045,
+          "pickup": 0,
+          "holeDb": 0,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 0.386,
+          "leadRun": 0.386,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 21.362,
+          "aExit": 76.604,
+          "bEntry": 0.012,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 2.019999999999996,
+          "cost": {
+            "total": 0.255,
+            "closureMiss": 0.899,
+            "cutA": 0.045,
+            "pickup": 0,
+            "holeDb": 0,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.386,
+            "leadRun": 0.386,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 21.362,
+          "aExit": 57.459,
+          "bEntry": 0.012,
+          "bDelay": 0,
+          "selected": "neighbor-exit",
+          "effectiveCutSeconds": 21.164999999999992,
+          "cost": {
+            "total": 0.458,
+            "closureMiss": 0.212,
+            "cutA": 0.47,
+            "pickup": 0,
+            "holeDb": 0.196,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 5.651,
+            "leadRun": 5.346,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 10.681,
+          "aExit": 76.604,
+          "bEntry": 0.012,
+          "bDelay": 0,
+          "selected": "shorter",
+          "effectiveCutSeconds": 12.854,
+          "cost": {
+            "total": 0.523,
+            "closureMiss": 0.899,
+            "cutA": 0.286,
+            "pickup": 0,
+            "holeDb": 0.08,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 3.178,
+            "leadRun": 3.059,
+            "tonalClash": 2,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 21.362,
+          "aExit": 76.604,
+          "bEntry": 0.012,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 2.019999999999996,
+          "cost": {
+            "total": 0.578,
+            "closureMiss": 0.899,
+            "cutA": 0.045,
+            "pickup": 0,
+            "holeDb": 0,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 5.743,
+            "leadRun": 5.255,
+            "tonalClash": 4.5,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 21.362,
+          "aExit": 76.604,
+          "bEntry": 0.012,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 2.019999999999996,
+          "cost": {
+            "total": 0.255,
+            "closureMiss": 0.899,
+            "cutA": 0.045,
+            "pickup": 0,
+            "holeDb": 0,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.386,
+            "leadRun": 0.386,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 21.362,
+          "aExit": 76.604,
+          "bEntry": 0.012,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 2.019999999999996,
+          "cost": {
+            "total": 0.255,
+            "closureMiss": 0.899,
+            "cutA": 0.045,
+            "pickup": 0,
+            "holeDb": 0,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.386,
+            "leadRun": 0.386,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 21.362,
+        "aExit": 76.604,
+        "bEntry": 0.012,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 2.019999999999996,
+        "cost": {
+          "total": 0.255,
+          "closureMiss": 0.899,
+          "cutA": 0.045,
+          "pickup": 0,
+          "holeDb": 0,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 0.386,
+          "leadRun": 0.386,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "lead-handoff",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "lead-handoff",
+            "method": "beatmatch_blend",
+            "duration": 21.362,
+            "musicalCost": 0.313,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 2.03,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.31
+            }
+          },
+          {
+            "name": "neighbor-exit",
+            "method": "beatmatch_blend",
+            "duration": 21.362,
+            "musicalCost": 0.523,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 3.19,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.66
+            }
+          },
+          {
+            "name": "shorter",
+            "method": "beatmatch_blend",
+            "duration": 10.681,
+            "musicalCost": 0.595,
+            "metrics": {
+              "dipLU": -0.07,
+              "bumpLU": 1.63,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.19
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 21.362,
+            "musicalCost": 0.643,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 2.28,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.39
+            }
+          },
+          {
+            "name": "bass -0.667",
+            "method": "beatmatch_blend",
+            "duration": 21.362,
+            "musicalCost": 0.313,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 2.03,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.31
+            }
+          },
+          {
+            "name": "bass 0.667",
+            "method": "beatmatch_blend",
+            "duration": 21.362,
+            "musicalCost": 0.313,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 2.03,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.31
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": 0,
+        "bumpLU": 3.19,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 0,
+        "underruns": 0,
+        "cost": 0.66
+      },
+      "snippets": [
+        {
+          "file": "167-A-historical.wav",
+          "planFile": "167-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 33.362,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "167-B-upgrade.wav",
+          "planFile": "167-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 33.362,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 169,
+      "rating": "bad",
+      "reason": null,
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 8.875,
+        "aExit": 129.768,
+        "bEntry": 2.515,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 55.106918367346935,
+        "cost": {
+          "total": 0.736,
+          "closureMiss": 0.85,
+          "cutA": 1.26,
+          "pickup": 0,
+          "holeDb": 0,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0.5,
+          "leadRisk": 3.524,
+          "leadRun": 3.498,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 8.875,
+        "aExit": 179.499,
+        "bEntry": 2.515,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 5.956918367346958,
+        "cost": {
+          "total": 0.78,
+          "closureMiss": 0.85,
+          "cutA": 0.425,
+          "pickup": 0,
+          "holeDb": 8.827,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 0.378,
+          "leadRun": 0.333,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 8.875,
+          "aExit": 179.499,
+          "bEntry": 2.515,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 5.956918367346958,
+          "cost": {
+            "total": 0.78,
+            "closureMiss": 0.85,
+            "cutA": 0.425,
+            "pickup": 0,
+            "holeDb": 8.827,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.378,
+            "leadRun": 0.333,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 8.875,
+          "aExit": 179.499,
+          "bEntry": 2.515,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 4.030918367346942,
+          "cost": {
+            "total": 1.026,
+            "closureMiss": 0.85,
+            "cutA": 0.288,
+            "pickup": 0,
+            "holeDb": 8.77,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 4.459,
+            "leadRun": 4.415,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 8.875,
+          "aExit": 179.499,
+          "bEntry": 2.515,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 5.956918367346958,
+          "cost": {
+            "total": 0.78,
+            "closureMiss": 0.85,
+            "cutA": 0.425,
+            "pickup": 0,
+            "holeDb": 8.828,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 0.378,
+            "leadRun": 0.333,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "encoded",
+        "B": "encoded"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 8.875,
+        "aExit": 179.499,
+        "bEntry": 2.515,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 5.956918367346958,
+        "cost": {
+          "total": 0.78,
+          "closureMiss": 0.85,
+          "cutA": 0.425,
+          "pickup": 0,
+          "holeDb": 8.827,
+          "unsupported": 0,
+          "jumpDb": 0,
+          "doubleBass": 0,
+          "leadRisk": 0.378,
+          "leadRun": 0.333,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "lead-handoff",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "lead-handoff",
+            "method": "beatmatch_blend",
+            "duration": 8.875,
+            "musicalCost": 0.853,
+            "metrics": {
+              "dipLU": -0.65,
+              "bumpLU": 0.22,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 8.875,
+            "musicalCost": 1.102,
+            "metrics": {
+              "dipLU": -0.56,
+              "bumpLU": 0.53,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          },
+          {
+            "name": "bass 0.554",
+            "method": "beatmatch_blend",
+            "duration": 8.875,
+            "musicalCost": 0.853,
+            "metrics": {
+              "dipLU": -0.65,
+              "bumpLU": 0.2,
+              "limiterDb": 0,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": -0.12,
+        "bumpLU": 2.05,
+        "limiterDb": 0,
+        "lowHoleSeconds": 0,
+        "flams": 10,
+        "underruns": 0,
+        "cost": 0.85
+      },
+      "snippets": [
+        {
+          "file": "169-A-historical.wav",
+          "planFile": "169-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 20.875,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "169-B-upgrade.wav",
+          "planFile": "169-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 20.875,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    },
+    {
+      "logId": 179,
+      "rating": "bad",
+      "reason": null,
+      "analysis": {
+        "A": "am-analyzer-14",
+        "B": "am-analyzer-14",
+        "currentAnalyzer": true
+      },
+      "historical": {
+        "version": "am-planner-v13-length-1",
+        "method": "beatmatch_blend",
+        "duration": 31.351,
+        "aExit": 142.131,
+        "bEntry": 0.022,
+        "bDelay": 0,
+        "selected": "baseline",
+        "effectiveCutSeconds": 16.836000000000013,
+        "cost": {
+          "total": 1.412,
+          "closureMiss": 0.984,
+          "cutA": 1.234,
+          "pickup": 0,
+          "holeDb": 6.673,
+          "unsupported": 0,
+          "jumpDb": 3.751,
+          "doubleBass": 1,
+          "leadRisk": 9.465,
+          "leadRun": 8.344,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "planned": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 31.351,
+        "aExit": 142.131,
+        "bEntry": 0.022,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 18.595,
+        "cost": {
+          "total": 0.798,
+          "closureMiss": 0.984,
+          "cutA": 0.413,
+          "pickup": 0,
+          "holeDb": 6.676,
+          "unsupported": 0,
+          "jumpDb": 3.753,
+          "doubleBass": 1,
+          "leadRisk": 0.264,
+          "leadRun": 0.255,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "candidates": [
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 31.351,
+          "aExit": 142.131,
+          "bEntry": 0.022,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 18.595,
+          "cost": {
+            "total": 0.798,
+            "closureMiss": 0.984,
+            "cutA": 0.413,
+            "pickup": 0,
+            "holeDb": 6.676,
+            "unsupported": 0,
+            "jumpDb": 3.753,
+            "doubleBass": 1,
+            "leadRisk": 0.264,
+            "leadRun": 0.255,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 15.675,
+          "aExit": 142.131,
+          "bEntry": 0.022,
+          "bDelay": 0,
+          "selected": "shorter",
+          "effectiveCutSeconds": 19.926999999999992,
+          "cost": {
+            "total": 0.962,
+            "closureMiss": 0.984,
+            "cutA": 0.443,
+            "pickup": 0,
+            "holeDb": 4.646,
+            "unsupported": 0,
+            "jumpDb": 0,
+            "doubleBass": 0,
+            "leadRisk": 6.868,
+            "leadRun": 6.793,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 31.351,
+          "aExit": 142.131,
+          "bEntry": 0.022,
+          "bDelay": 0,
+          "selected": "baseline",
+          "effectiveCutSeconds": 16.836000000000013,
+          "cost": {
+            "total": 1.412,
+            "closureMiss": 0.984,
+            "cutA": 1.234,
+            "pickup": 0,
+            "holeDb": 6.673,
+            "unsupported": 0,
+            "jumpDb": 3.751,
+            "doubleBass": 1,
+            "leadRisk": 9.465,
+            "leadRun": 8.344,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 31.351,
+          "aExit": 142.131,
+          "bEntry": 0.022,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 18.986999999999995,
+          "cost": {
+            "total": 0.795,
+            "closureMiss": 0.984,
+            "cutA": 0.422,
+            "pickup": 0,
+            "holeDb": 6.676,
+            "unsupported": 0,
+            "jumpDb": 3.753,
+            "doubleBass": 0.5,
+            "leadRisk": 0.264,
+            "leadRun": 0.255,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        },
+        {
+          "version": "am-planner-v14-phrase-1",
+          "method": "beatmatch_blend",
+          "duration": 31.351,
+          "aExit": 142.131,
+          "bEntry": 0.022,
+          "bDelay": 0,
+          "selected": "lead-handoff",
+          "effectiveCutSeconds": 18.105999999999995,
+          "cost": {
+            "total": 0.791,
+            "closureMiss": 0.984,
+            "cutA": 0.402,
+            "pickup": 0,
+            "holeDb": 6.676,
+            "unsupported": 0,
+            "jumpDb": 3.753,
+            "doubleBass": 0.5,
+            "leadRisk": 0.264,
+            "leadRun": 0.255,
+            "tonalClash": 0,
+            "skippedUnknownB": 0
+          }
+        }
+      ],
+      "localAudio": {
+        "A": "f32",
+        "B": "f32"
+      },
+      "final": {
+        "version": "am-planner-v14-phrase-1",
+        "method": "beatmatch_blend",
+        "duration": 31.351,
+        "aExit": 142.131,
+        "bEntry": 0.022,
+        "bDelay": 0,
+        "selected": "lead-handoff",
+        "effectiveCutSeconds": 18.595,
+        "cost": {
+          "total": 0.798,
+          "closureMiss": 0.984,
+          "cutA": 0.413,
+          "pickup": 0,
+          "holeDb": 6.676,
+          "unsupported": 0,
+          "jumpDb": 3.753,
+          "doubleBass": 1,
+          "leadRisk": 0.264,
+          "leadRun": 0.255,
+          "tonalClash": 0,
+          "skippedUnknownB": 0
+        }
+      },
+      "renderCheck": {
+        "policy": "render-finalists-3",
+        "selected": "lead-handoff",
+        "margin": 0.15,
+        "reason": "planner preference retained within geometry and technical limits",
+        "candidates": [
+          {
+            "name": "lead-handoff",
+            "method": "beatmatch_blend",
+            "duration": 31.351,
+            "musicalCost": 0.8680000000000001,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.96,
+              "limiterDb": 2.21,
+              "lowHoleSeconds": 0,
+              "flams": 1,
+              "underruns": 0,
+              "cost": 0.36
+            }
+          },
+          {
+            "name": "shorter",
+            "method": "beatmatch_blend",
+            "duration": 15.675,
+            "musicalCost": 1.051,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 0,
+              "limiterDb": 1.15,
+              "lowHoleSeconds": 0,
+              "flams": 27,
+              "underruns": 0,
+              "cost": 1.11
+            }
+          },
+          {
+            "name": "baseline",
+            "method": "beatmatch_blend",
+            "duration": 31.351,
+            "musicalCost": 1.494,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 2.2,
+              "limiterDb": 2.25,
+              "lowHoleSeconds": 0,
+              "flams": 1,
+              "underruns": 0,
+              "cost": 0.44
+            }
+          },
+          {
+            "name": "bass -0.49",
+            "method": "beatmatch_blend",
+            "duration": 31.351,
+            "musicalCost": 0.8680000000000001,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.96,
+              "limiterDb": 2.21,
+              "lowHoleSeconds": 0,
+              "flams": 0,
+              "underruns": 0,
+              "cost": 0.33
+            }
+          },
+          {
+            "name": "bass 0.49",
+            "method": "beatmatch_blend",
+            "duration": 31.351,
+            "musicalCost": 0.8680000000000001,
+            "metrics": {
+              "dipLU": 0,
+              "bumpLU": 1.96,
+              "limiterDb": 2.21,
+              "lowHoleSeconds": 0,
+              "flams": 1,
+              "underruns": 0,
+              "cost": 0.36
+            }
+          }
+        ]
+      },
+      "historicalRenderMetrics": {
+        "dipLU": 0,
+        "bumpLU": 2.2,
+        "limiterDb": 2.25,
+        "lowHoleSeconds": 0,
+        "flams": 1,
+        "underruns": 0,
+        "cost": 0.44
+      },
+      "snippets": [
+        {
+          "file": "179-A-historical.wav",
+          "planFile": "179-A-historical.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 43.351,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        },
+        {
+          "file": "179-B-upgrade.wav",
+          "planFile": "179-B-upgrade.plan.json",
+          "transitionStartsAtSeconds": 6,
+          "seconds": 43.351,
+          "nonFiniteFrames": 0,
+          "underruns": 0
+        }
+      ]
+    }
+  ]
+}

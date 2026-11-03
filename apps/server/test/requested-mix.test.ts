@@ -108,6 +108,15 @@ describe('manual AutoMix API and settings', () => {
     expect(response.json().plan.duration).toBeLessThan(1);
   });
 
+  it('keeps automatic catch-up musical when the Next button is configured as an instant skip', async () => {
+    kvSet(a.services.db, 'settings', { version: 2, automix: { ...DEFAULT_AUTOMIX_SETTINGS, mixOnNext: false } });
+    const response = await request({ from: 'a', to: 'b', position: 55.25, catchUp: true });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().plan.method).toBe('fallback_crossfade');
+    expect(response.json().plan.duration).toBeGreaterThan(1);
+    expect((await a.app.inject('/api/settings')).json().automix.mixOnNext).toBe(false);
+  });
+
   it.each([['restricted', 'b'], ['a', 'restricted']])('does not overlap, stretch or equalize a restricted provider: %s → %s', async (from, to) => {
     const response = await request({ from, to, position: 55.25 });
     expect(response.statusCode, response.body).toBe(200);

@@ -125,13 +125,18 @@ describe('direct onset-grid recovery', () => {
 });
 
 describe('v2: no forced rhythm lock across a wide tempo gap', () => {
-  it.each([[118, 140], [140, 118], [110, 140], [140, 110], [70, 118], [118, 70]])('%i → %i plays an unlocked blend at native tempi', (bpmA, bpmB) => {
+  // v19: steady grooves swap on a downbeat (drop swap): A's dry signal is gone before B starts
+  it.each([[118, 140], [140, 118], [110, 140], [140, 110], [70, 118], [118, 70]])('%i → %i swaps at native tempi without overlapping grooves', (bpmA, bpmB) => {
     const a = measured('a', bpmA), b = measured('b', bpmB, 24);
     const p = planTransition(a, b, S);
-    expect(['tempo_bridge', 'drop_mix', 'echo_out']).not.toContain(p.method);
+    expect(['tempo_bridge', 'drop_mix']).not.toContain(p.method);
+    expect(['drop-swap', 'loop-roll']).toContain(p.debug.variant);
+    expect(p.bDelay).toBe(p.swapAt);
+    expect(p.automation.find(l => l.deck === 'A' && l.lane === 'gain')!.points.find(([t]) => t >= p.swapAt)![1]).toBe(0);
     for (const [, rate] of [...(p.tempoA ?? [[0, 1]]), ...p.tempoB]) expect(rate).toBe(1);
-    // not a cut: listeners rated sub-second and 3 s joins "резко"
+    // not a cut: listeners rated sub-second and 3 s joins "резко"; A's filter sweep announces the swap
     expect(p.duration).toBeGreaterThanOrEqual(6);
+    expect(p.swapAt).toBeGreaterThanOrEqual(3);
     expect(p.duration).toBeLessThanOrEqual(S.maxBlendSeconds + 0.001);
     expect(p.bEntry).toBeLessThanOrEqual(S.maxEntrySkipSeconds! + 0.001);
   });
@@ -184,7 +189,9 @@ describe('musical Next request', () => {
     expect(requested.aExit).toBeLessThan(55.57);
     // B's audible part starts at its loud section, not inside its quiet intro
     expect(requested.bEntry + requested.swapAt).toBeGreaterThanOrEqual(23.5);
-    expect(requested.entrySelection!.kind).toBe('section');
+    // v19.2: an unlockable Next drops B on its own downbeat at that arrival (it has no blend middle)
+    if (requested.method === 'echo_out') expect(Math.abs(requested.bEntry - 24)).toBeLessThan(1);
+    else expect(requested.entrySelection!.kind).toBe('section');
   });
 
   it('retains the scored local exit instead of moving the chosen mix to an earlier downbeat', () => {

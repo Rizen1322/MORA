@@ -7,7 +7,9 @@ import { createApp } from '../../server/src/app.ts';
 
 const parent = process.parentPort;
 const token = process.env.AUTOMIX_LAUNCH_TOKEN ?? '';
+const desktopPlaybackToken = process.env.AUTOMIX_DESKTOP_PCM_TOKEN;
 delete process.env.AUTOMIX_LAUNCH_TOKEN;
+delete process.env.AUTOMIX_DESKTOP_PCM_TOKEN;
 const wanted = Number(process.env.AUTOMIX_PORT || 0);
 
 let close: (() => Promise<void>) | null = null;
@@ -27,7 +29,7 @@ try {
   if (token.length < 32) throw new Error('launch token missing');
   setYtmTransport((input, init) => net.fetch(input instanceof URL ? input.href : input, init));
   setSoundCloudTransport((input, init) => net.fetch(input instanceof URL ? input.href : input, init));
-  const created = await createApp({ host: '127.0.0.1', port: wanted, accessToken: token });
+  const created = await createApp({ host: '127.0.0.1', port: wanted, accessToken: token, desktopPlaybackToken });
   close = created.close;
   analysis = created.services.analysis;
   try {

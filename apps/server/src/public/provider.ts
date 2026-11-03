@@ -245,7 +245,7 @@ export class PublicMusic {
     const existing = this.known(p, [externalId]).get(externalId);
     if (existing) return Promise.resolve(existing);
     const key = `${p}:${externalId}`;
-    return this.preparations.run(key, opts, (signal, onProgress) => this.download(p, externalId, priority, { signal, onProgress }).then(async ({ hash, size, probe, info, ext }) => {
+    return this.preparations.run(key, { ...opts, onJoin: signal => this.ytdlp.prioritize(signal, priority) }, (signal, onProgress) => this.download(p, externalId, priority, { signal, onProgress }).then(async ({ hash, size, probe, info, ext }) => {
       const hint = this.seen.get(key);
       const cover = await this.fetchCover(hint?.coverUrl ?? (typeof info.thumbnail === 'string' ? info.thumbnail : null));
       const coverId = cover ? await this.lib.saveCover(cover.data, cover.type) : null;
@@ -266,7 +266,7 @@ export class PublicMusic {
     }));
   }
 
-  private async download(p: AudioProvider, externalId: string, priority: Priority, opts: { onProgress?: (f: number) => void; signal?: AbortSignal } = {}, staging = path.join(this.cfg.dataDir, 'remote', '.staging', crypto.randomUUID())) {
+  private async download(p: AudioProvider, externalId: string, priority: Priority, opts: { onProgress?: (f: number) => void; signal?: AbortSignal; preserveContainer?: boolean } = {}, staging = path.join(this.cfg.dataDir, 'remote', '.staging', crypto.randomUUID())) {
     try {
       const { file, info } = await this.ytdlp.download(canonicalUrl(p, externalId), staging, { priority, ...opts });
       const probe = await this.ff.probe(file);
@@ -288,7 +288,7 @@ export class PublicMusic {
    * A caller with a signal may leave; the transfer stops only when every caller has left
    * (callers without a signal, such as the player, keep it running).
    */
-  async fetchAudio(src: SourceRow, signal?: AbortSignal): Promise<string> {
+  async fetchAudio(src: SourceRow, signal?: AbortSignal, priority: Priority = 0): Promise<string> {
     if (this.stopped) throw new ResolverError('Приложение завершает работу', 'cancelled');
     const p = src.provider as AudioProvider;
     const id = String(src.external_id ?? '');
@@ -298,13 +298,13 @@ export class PublicMusic {
     const ready = this.cachedAudio(src);
     if (ready) return ready;
     const running = this.transfers.get(src.track_id);
-    if (running && !running.done) return this.listen(src.track_id, running, signal);
+    if (running && !running.done) { this.ytdlp.prioritize(running.abort.signal, priority); return this.listen(src.track_id, running, signal); }
     const staging = path.join(this.cfg.dataDir, 'remote', '.staging', crypto.randomUUID());
     const transfer: GrowingAudio & { pcmKey: string; finalHash?: string; abort: AbortController } = { staging, done: false, error: null, result: Promise.resolve(''), abort: new AbortController(), pcmKey: (track?.content_hash ?? `${p}_${id}`).replace(/[^a-zA-Z0-9]/g, '_') };
     this.transfers.set(src.track_id, transfer);
     // Completed aliases are bounded; active transfers cannot be evicted.
     if (this.transfers.size > 256) for (const [key, value] of this.transfers) { if (this.transfers.size <= 256) break; if (value.done && key !== src.track_id) this.transfers.delete(key); }
-    transfer.result = this.download(p, id, 0, { signal: transfer.abort.signal }, staging).then((fresh) => {
+    transfer.result = this.download(p, id, priority, { signal: transfer.abort.signal, preserveContainer: true }, staging).then((fresh) => {
     transfer.finalHash = fresh.hash;
     if (track && fresh.hash !== track.content_hash) {
       // A different file: the old analysis and stems belong to the old hash and stay unused.
@@ -401,7 +401,7 @@ export class PublicProvider implements Provider {
   }
   async search(query: string): Promise<ExternalTrack[]> { return this.music.search(this.id === 'youtube' ? 'ytmusic' : 'soundcloud', query); }
   importTrack(t: ExternalTrack): Promise<string> { return this.music.prepare(this.id, String(t.externalId), 2); }
-  fetchAudio(src: SourceRow, signal?: AbortSignal): Promise<string> { return this.music.fetchAudio(src, signal); }
+  fetchAudio(src: SourceRow, signal?: AbortSignal, priority?: Priority): Promise<string> { return this.music.fetchAudio(src, signal, priority); }
 }
 
 export { SOURCE_NAMES };

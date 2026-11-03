@@ -7,6 +7,7 @@
 import { MixerCore, type ArmedTransition } from '@automix/core/engine/mixer.ts';
 import type { ToneSettings } from '@automix/core/dsp/tone.ts';
 import type { PlaybackSettings } from '@automix/core/dsp/playback.ts';
+import type { MixerEvent } from '@automix/core';
 
 declare const sampleRate: number;
 declare function registerProcessor(name: string, ctor: unknown): void;
@@ -15,7 +16,7 @@ declare class AudioWorkletProcessor {
 }
 const audioNow = typeof performance !== 'undefined' ? performance.now.bind(performance) : Date.now;
 
-export type EngineCommand =
+export type EngineCommand = (
   | { cmd: 'load'; deck: number; token: string; totalFrames: number; gainDb: number; cueFrame: number }
   | { cmd: 'length'; deck: number; token: string; totalFrames: number }
   | { cmd: 'unload'; deck: number }
@@ -36,13 +37,19 @@ export type EngineCommand =
   | { cmd: 'disarm' }
   | { cmd: 'finish'; fade: number }
   | { cmd: 'tickRate'; seconds: number }
-  | { cmd: 'stop' };
+  | { cmd: 'stop' }) & { diagnostic?: { id: string; seq: number } };
+
+export type EngineEvent = MixerEvent | {
+  type: 'diagnostic'; stage: 'engine.ack' | 'engine.render'; id: string; seq: number;
+  command: string; paused: boolean; clock: number; peak?: number;
+};
 
 class AutoMixProcessor extends AudioWorkletProcessor {
   private maxRenderMs = 0;
   private slowBlocks = 0;
   private healthFrames = 0;
   private core: MixerCore;
+  private observations: { id: string; seq: number; command: string; waitPaused: boolean; frames: number }[] = [];
   constructor() {
     super();
     this.core = new MixerCore(sampleRate, (e) => this.port.postMessage(e));
@@ -116,6 +123,11 @@ class AutoMixProcessor extends AudioWorkletProcessor {
         c.setTickSeconds(m.seconds);
         break;
     }
+    if (m.diagnostic) {
+      this.port.postMessage({ type: 'diagnostic', stage: 'engine.ack', ...m.diagnostic, command: m.cmd, paused: c.paused, clock: c.clock });
+      if (this.observations.length >= 16) this.observations.shift();
+      this.observations.push({ ...m.diagnostic, command: m.cmd, waitPaused: m.cmd === 'pause' && m.paused, frames: 0 });
+    }
   }
 
   process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
@@ -123,7 +135,21 @@ class AutoMixProcessor extends AudioWorkletProcessor {
     const out = outputs[0];
     const L = out[0];
     const R = out[1] ?? out[0];
+    const wasPaused = this.core.paused;
     this.core.process(L, R, L.length);
+    if (this.observations.length) {
+      // Pause uses a short fade. Observe rendered output after it settles, or after 0.5 s.
+      // This is a render snapshot, not a promise that a seek/transition has finished.
+      for (let i = this.observations.length - 1; i >= 0; i--) {
+        const o = this.observations[i];
+        o.frames += L.length;
+        if (o.waitPaused && !(wasPaused && this.core.paused) && o.frames < sampleRate / 2) continue;
+        let peak = 0;
+        for (let j = 0; j < L.length; j++) peak = Math.max(peak, Math.abs(L[j]), Math.abs(R[j]));
+        this.port.postMessage({ type: 'diagnostic', stage: 'engine.render', id: o.id, seq: o.seq, command: o.command, paused: this.core.paused, clock: this.core.clock, peak });
+        this.observations.splice(i, 1);
+      }
+    }
     const elapsed = Math.max(0, audioNow() - began);
     this.maxRenderMs = Math.max(this.maxRenderMs, elapsed);
     if (elapsed > L.length / sampleRate * 1000) this.slowBlocks++;

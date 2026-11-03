@@ -2,77 +2,31 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "automix-test",
-      "runtimeExecutable": "npx",
+      "name": "mobile-dev",
+      "runtimeExecutable": "npm",
       "runtimeArgs": [
-        "tsx",
-        "apps/server/src/index.ts"
+        "run",
+        "mobile:dev"
       ],
-      "port": 4731,
-      "env": {
-        "PORT": "4731",
-        "AUTOMIX_DATA_DIR": "data-dev"
-      }
+      "port": 4741
     },
     {
-      "name": "automix-design",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": [
-        "tsx",
-        "apps/server/src/index.ts"
-      ],
-      "port": 4732,
-      "env": {
-        "PORT": "4732",
-        "AUTOMIX_DATA_DIR": "data-dev"
-      }
-    },
-    {
-      "name": "automix-algo",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": [
-        "tsx",
-        "apps/server/src/index.ts"
-      ],
-      "port": 4733,
-      "env": {
-        "PORT": "4733",
-        "AUTOMIX_DATA_DIR": "data-dev"
-      }
-    },
-    {
-      "name": "automix-planner-check",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": [
-        "tsx",
-        "apps/server/src/index.ts"
-      ],
-      "port": 4734,
-      "env": {
-        "PORT": "4734",
-        "AUTOMIX_DATA_DIR": "data-dev",
-        "STEMS_PYTHON": "",
-        "ANALYSIS_WORKERS": "1"
-      }
-    },
-    {
-      "name": "mora-web-dev",
+      "name": "mobile-redesign",
       "runtimeExecutable": "node",
       "runtimeArgs": [
-        "tools/dev.mjs"
+        "-e",
+        "require('http').createServer((q,s)=>{s.setHeader('content-type','text/html; charset=utf-8');s.end(require('fs').readFileSync('F:/вин/ПРОЕКТЫ/music/docs/mobile-redesign/index.html'))}).listen(4750,'127.0.0.1')"
       ],
-      "port": 5173
+      "port": 4750
     },
     {
-      "name": "mora-ios-harness",
+      "name": "mobile-1022",
       "runtimeExecutable": "node",
       "runtimeArgs": [
-        "apps/mobile/dev/serve.mjs"
+        "-e",
+        "process.env.PORT=\"4752\";import(require(\"url\").pathToFileURL(\"F:/вин/ПРОЕКТЫ/music/tools/.cache/ios-native-first-source-2026-11-01/apps/mobile/dev/serve.mjs\").href)"
       ],
-      "port": 4741,
-      "env": {
-        "PORT": "4741"
-      }
+      "port": 4752
     }
   ]
 }

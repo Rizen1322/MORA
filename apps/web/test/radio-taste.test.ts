@@ -5,6 +5,14 @@ const tune = { mood: 'normal', diversity: 'balanced', mode: 'normal' } as const;
 const track = (title: string, artist: string, patch: Partial<Track> = {}) => ({ id: title, title, artist, reaction: 0, status: 'ok', addedAt: 1, playCount: 0, skipCount: 0, analysis: {}, ...patch }) as Track;
 const candidate = (title: string, artist: string, patch: Partial<PublicTrack> = {}) => ({ externalId: title, title, artist, playable: true, audioProvider: 'youtube', ...patch }) as PublicTrack;
 describe('personal online radio ranking', () => {
+  it('opens balanced radio with discoveries instead of the same block of liked songs', () => {
+    const lib = Array.from({length:8}, (_,i) => track(`liked-${i}`,`artist-${i}`,{reaction:1,playCount:4}));
+    const items = [...lib.map(t=>candidate(t.title,t.artist)),...Array.from({length:5},(_,i)=>candidate(`fresh-${i}`,`new-${i}`))];
+    const opening = rankRadio(items,lib,new Set(),[],tune).slice(0,5);
+    expect(opening[0].title).toMatch(/^fresh-/);
+    expect(opening.filter(t=>t.title.startsWith('liked-')).length).toBeLessThanOrEqual(2);
+    expect(rankRadio(items.slice(0,8),lib,new Set(),[],tune)).toHaveLength(8);
+  });
   it('takes several liked artists and rotates the seed rather than always using the last playback', () => {
     const tracks = [track('a','one',{reaction:1,likedAt:4}),track('b','one',{reaction:1,likedAt:3}),track('c','two',{reaction:1,likedAt:2}),track('d','three',{reaction:-1}),track('e','four',{playCount:50,lastPlayedAt:99})];
     expect(tasteSeeds(tracks).map(t=>t.artist)).toEqual(['one','two']);

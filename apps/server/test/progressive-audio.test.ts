@@ -24,12 +24,12 @@ describe('progressive audio through the single PCM engine', () => {
     const finish = deferred();
     cleanup.push(async () => { finish.resolve(); await a.close(); fs.rmSync(dir, { recursive: true, force: true }); });
     let downloads = 0;
-    a.services.publicMusic.ytdlp.download = async (_url, staging) => {
+    const download = vi.spyOn(a.services.publicMusic.ytdlp, 'download').mockImplementation(async (_url, staging) => {
       downloads++; await fsp.mkdir(staging, { recursive: true }); const file = path.join(staging, `track.${extension}`);
       await fsp.writeFile(file, bytes.subarray(0, half)); await finish.promise;
       await fsp.appendFile(file, bytes.subarray(half));
       return { file, info: { title: 'Fixture', ext: 'wav' } };
-    };
+    });
     const hint: PublicTrack = { externalId: 'Progressiv1', audioProvider: 'youtube', source: 'ytmusic', kind: 'song', explicit: false, uploader: 'Fixture', labels: [], artistId: null, albumId: null, title: 'Fixture', artist: 'Fixture', album: '', duration: 8, coverUrl: null, pageUrl: null, license: null, playable: true };
     // A real search stores this exact server-side hint before the playback request.
     (a.services.publicMusic as any).seen.set('youtube:Progressiv1', hint);
@@ -46,6 +46,7 @@ describe('progressive audio through the single PCM engine', () => {
     const readers = [a.services.lib.resolveMediaPath(id), a.services.lib.resolveMediaPath(id)];
     finish.resolve(); await Promise.all(readers);
     expect(downloads).toBe(1);
+    expect(download.mock.calls[0][2]).toMatchObject({ preserveContainer: true });
     expect(a.services.lib.get(id)!.content_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(a.services.publicMusic.pcmKey(id, a.services.lib.get(id)!.content_hash)).toBe(keyBefore);
     const repeated = await a.app.inject(`/api/tracks/${id}/pcm?sr=48000&start=0&frames=4096&format=f32le`);
@@ -53,6 +54,8 @@ describe('progressive audio through the single PCM engine', () => {
     const tail = await a.app.inject(`/api/tracks/${id}/pcm?sr=48000&start=380000&frames=4000&format=f32le`);
     expect(tail.statusCode, tail.body).toBe(200);
     expect(tail.rawPayload.length).toBeGreaterThan(0);
+    const full = await a.app.inject(`/api/tracks/${id}/pcm?sr=48000&start=0&frames=400000&format=f32le`);
+    expect(full.rawPayload.equals(reference)).toBe(true);
   });
 
   it('keeps reading after the finished download is moved out of staging (ADTS .aac streams too)', async () => {
@@ -75,6 +78,41 @@ describe('progressive audio through the single PCM engine', () => {
     state.done = true; finish.resolve();
     await reading;
     expect(Buffer.concat(got).equals(bytes)).toBe(true);
+  });
+
+  it('drains the published file when the transfer finishes during an EOF read', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mora-final-eof-'));
+    cleanup.push(async () => { fs.rmSync(dir, { recursive: true, force: true }); });
+    const staging = path.join(dir, 'staging'), staged = path.join(staging, 'track.aac'), published = path.join(dir, 'published.aac');
+    await fsp.mkdir(staging);
+    const bytes = Buffer.from(Array.from({ length: 600_000 }, (_, i) => i % 251));
+    await fsp.writeFile(staged, bytes.subarray(0, 300_000));
+    const finish = deferred();
+    const state = { staging, done: false, error: null as Error | null, result: finish.promise.then(() => published) };
+    const originalOpen = fsp.open;
+    const open = vi.spyOn(fsp, 'open').mockImplementation(async (...args) => {
+      const handle = await originalOpen(...args);
+      if (String(args[0]) !== staged) return handle;
+      return new Proxy(handle, { get(target, property) {
+        if (property === 'read') return async (...readArgs: unknown[]) => {
+          const result = await Reflect.apply(target.read, target, readArgs);
+          if (!result.bytesRead && !state.done) {
+            await fsp.writeFile(published, bytes);
+            state.done = true; finish.resolve();
+          }
+          return result;
+        };
+        const value = Reflect.get(target, property);
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
+    });
+    try {
+      const input = await growingAudioInput(state);
+      if (typeof input === 'string') throw new Error('expected stream');
+      const got: Buffer[] = [];
+      for await (const chunk of input) got.push(chunk as Buffer);
+      expect(Buffer.concat(got).equals(bytes)).toBe(true);
+    } finally { open.mockRestore(); }
   });
 
   it('does not treat a broken transfer as a completed stream', async () => {

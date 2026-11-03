@@ -5,7 +5,7 @@
  */
 
 export const ANALYZER_VERSION = 'am-analyzer-14';
-export const PLANNER_VERSION = 'am-planner-v13-length-1';
+export const PLANNER_VERSION = 'am-planner-v18-drum-window-1';
 
 /** Frame rate of the per-track feature curves (energy, bands, waveform). */
 export const CURVE_RATE = 20;
@@ -275,7 +275,7 @@ export type TransitionMethod =
 
 /** Listener verdict on an executed transition; reasons are fixed tags so ratings can be aggregated. */
 export type TransitionRating = 'good' | 'bad';
-export const TRANSITION_RATING_REASONS = ['голоса наложились', 'провал громкости', 'резко', 'сбился ритм'] as const;
+export const TRANSITION_RATING_REASONS = ['голоса наложились', 'провал громкости', 'резко', 'сбился ритм', 'обрезало начало'] as const;
 export type TransitionRatingReason = (typeof TRANSITION_RATING_REASONS)[number];
 
 /** 'filter' is bipolar (-1 low-pass, 0 bypass, +1 high-pass).
@@ -288,6 +288,26 @@ export interface AutomationLane {
   deck: 'A' | 'B';
   lane: Lane;
   points: [number, number][];
+}
+
+/** Editable intent for one ordered pair of playlist occurrences. Source times are seconds;
+ * handoff and bDelay are output seconds from the transition start. */
+export interface PhraseMixRecipe {
+  version: 1;
+  preset: 'bass_swap' | 'drop_in' | 'tail_to_start';
+  timing: { unit: 'seconds'; seconds: number } | { unit: 'bars'; bars: 4 | 8 | 16; resolvedDuration?: number };
+  aExit: number;
+  bEntry: number;
+  bDelay: number;
+  handoff: number;
+  /** Frozen source-time maps: later automatic reranking must not change a saved transition. */
+  tempo?: { a?: [number, number][]; b: [number, number][] };
+  /** Per-deck normalized time, 0..1 of its playing window. B's clock starts after bDelay.
+   * Gains are 0..1; filter is -1 (low pass)..1 (high pass). No hidden vocal processing. */
+  curves?: { deck: 'A' | 'B'; lane: 'gain' | 'low' | 'mid' | 'high' | 'filter'; points: [number, number][] }[];
+  locks?: { aExit: boolean; bEntry: boolean; handoff: boolean };
+  /** Filled by the server using the recordings that actually play. */
+  audioHashes?: { a: string; b: string };
 }
 
 export interface TransitionPlan {
@@ -320,7 +340,8 @@ export interface TransitionPlan {
    * common tempo glides from A's BPM to B's BPM.
    */
   tempoA?: [number, number][];
-  /** Finite instrumental A loop; source seconds, preroll included in vocal safety checks. */
+  /** Finite A loop in source seconds. Automatic instrumental loops check vocals
+   * including preroll; manual full-mix auditions may contain unknown vocals. */
   loopA?: { start: number; end: number; until: number; crossfade: number; roll?: { at: number; length: number }[] };
   /** Intentional finite rate/pitch slowdown, absolute A source seconds. */
   tapeStopA?: { start: number; end: number; crossfade: number };

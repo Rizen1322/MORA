@@ -20,6 +20,18 @@ function setup(prepare?: (t: CatalogTrack) => Promise<string>, allow?: (t: Catal
   return { player, transport, load, notify, emit: () => listeners.forEach((f) => f()) };
 }
 describe('catalog listening queue', () => {
+  it('does not adopt a playlist that replaced radio while native startup was pending', async () => {
+    const x = setup(), confirmed = deferred<void>();
+    const start = x.transport.playTracks.getMockImplementation()!;
+    x.transport.playTracks.mockImplementationOnce(async ids => { await start(ids); await confirmed.promise; });
+    const radio = x.player.play('abc'.split('').map(song), 0, { type: 'online-radio' });
+    await vi.waitFor(() => expect(x.transport.playTracks).toHaveBeenCalledOnce());
+    await x.transport.playTracks(['playlist-song']);
+    confirmed.resolve(); await radio; await tick();
+    expect(x.player.sessionVersion).toBeNull();
+    expect(x.transport.state.queue.map(t => t.trackId)).toEqual(['playlist-song']);
+    expect(x.transport.addToQueue).not.toHaveBeenCalled();
+  });
   it('does not notify listeners on transport ticks that change nothing', async () => {
     const x = setup(); await x.player.play('ab'.split('').map(song), 0, { type: 'online-radio' }); await tick();
     const seen = vi.fn(); x.player.subscribe(seen);

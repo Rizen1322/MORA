@@ -59,6 +59,7 @@ export interface ExternalTrack {
 }
 
 export interface Provider {
+  nativeSource?(src: SourceRow): Promise<import('@automix/core/native-preparation.ts').NativeMediaSource>;
   readonly id: string;
   info(force?: boolean): Promise<ProviderInfo>;
   capabilities(): Capabilities;
@@ -67,7 +68,7 @@ export interface Provider {
   search?(query: string): Promise<ExternalTrack[]>;
   featured?(): Promise<ExternalTrack[]>;
   importTrack?(t: ExternalTrack): Promise<string>;
-  fetchAudio?(src: SourceRow, signal?: AbortSignal): Promise<string>;
+  fetchAudio?(src: SourceRow, signal?: AbortSignal, priority?: 0 | 1 | 2 | 3): Promise<string>;
 }
 
 export const NO_CAPS: Capabilities = {

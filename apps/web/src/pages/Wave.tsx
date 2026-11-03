@@ -39,15 +39,15 @@ export function WavePage() {
   const providers = useApp((s) => s.providers);
   const count = useApp((s) => s.order.length);
   const tracks = useApp((s) => s.tracks);
-  const [source, setSource] = useState<'own' | 'yandex' | 'online'>(radio.active || p.context?.type === 'online-radio' ? 'online' : p.context?.type === 'yandex-wave' ? 'yandex' : 'own');
+  const [source, setSource] = useState<'own' | 'yandex' | 'online'>(p.context?.type === 'online-radio' ? 'online' : p.context?.type === 'yandex-wave' ? 'yandex' : 'own');
   const [saving, setSaving] = useState(false);
   useEffect(() => {
-    if (radio.active) setSource('online');
+    if (p.context?.type === 'online-radio') setSource('online');
     else if (p.context?.type === 'wave' || p.context?.type === 'yandex-wave') setSource(p.context.type === 'yandex-wave' ? 'yandex' : 'own');
-  }, [p.context?.type, radio.active]);
+  }, [p.context?.type]);
   const yandexConnected = providers.some((x) => x.id === 'yandex' && x.status === 'connected');
-  const waveOn = radio.active || p.context?.type === 'wave' || p.context?.type === 'yandex-wave';
-  const activeSource = radio.active ? 'online' : p.context?.type === 'yandex-wave' ? 'yandex' : 'own';
+  const activeSource = p.context?.type === 'online-radio' ? 'online' : p.context?.type === 'yandex-wave' ? 'yandex' : p.context?.type === 'wave' ? 'own' : null;
+  const waveOn = activeSource !== null;
   const selectedActive = waveOn && activeSource === source;
   const playing = selectedActive && (p.status === 'playing' || p.status === 'buffering');
   const cur = waveOn ? trackOf(p.queue[p.index]?.trackId) : undefined;

@@ -7,6 +7,7 @@ export type ServerEvent =
   | { type: 'import'; jobId: string; done: number; total: number; current?: string; errors: number; finished?: boolean }
   | { type: 'providers' }
   | { type: 'playlists' }
+  | { type: 'transition-recipe'; playlistId: string }
   | { type: 'download'; job: { id: string; key: string; title: string; state: string; progress: number; error: string | null; trackId: string | null } };
 
 /** Server-sent events hub. */

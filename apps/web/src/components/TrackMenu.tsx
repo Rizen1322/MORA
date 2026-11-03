@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowBendDownRight, Heart, HeartBreak, ListPlus, MusicNotesPlus, PencilSimple, Play, Trash, User, VinylRecord, ChartLine, ArrowSquareOut, Waveform, Swap, DownloadSimple, Radio } from '@phosphor-icons/react';
+import { ArrowBendDownRight, Heart, HeartBreak, ListPlus, MusicNotesPlus, PencilSimple, Play, Trash, User, VinylRecord, ChartLine, ArrowSquareOut, Waveform, Swap, DownloadSimple, Radio, CaretRight, ArrowLeft } from '@phosphor-icons/react';
 import { startArtistRadio, startSimilar } from '../lib/radio.ts';
 import { openVersionPanel } from './VersionPanel.tsx';
 import { api, type Track } from '../lib/api.ts';
@@ -8,19 +8,25 @@ import { trackAlbumHref, trackArtistLinks, go } from '../lib/router.ts';
 import { controller, useApp } from '../store/app.ts';
 import { ConfirmModal, Menu, Modal, PromptModal } from './common.tsx';
 import { react } from './TrackList.tsx';
+import { desktop } from '../lib/desktop.ts';
 
 export function TrackMenu({ track, x, y, onClose, onPlay, extra }: { track: Track; x: number; y: number; onClose: () => void; onPlay: () => void; extra?: ReactNode }) {
   const [modal, setModal] = useState<'playlist' | 'edit' | 'delete' | null>(null);
+  const [section, setSection] = useState<'discover' | 'info' | 'manage' | null>(null);
+  const returnFocus = useRef(document.activeElement as HTMLElement | null);
   const toast = useApp((s) => s.toast);
+  const finish = () => { onClose(); returnFocus.current?.focus(); };
   const close = () => {
     setModal(null);
-    onClose();
+    finish();
   };
   return createPortal(
     <>
       {!modal && (
-        <Menu x={x} y={y} onClose={onClose}>
-          <button role="menuitem" onClick={onPlay} disabled={track.status !== 'ok'}>
+        <Menu x={x} y={y} onClose={finish}>
+          {section && <button role="menuitem" autoFocus onClick={(e) => { e.stopPropagation(); setSection(null); }}><ArrowLeft size={18} /> Назад</button>}
+          {!section && <>
+          <button role="menuitem" autoFocus onClick={onPlay} disabled={track.status !== 'ok'}>
             <Play size={18} /> Слушать
           </button>
           <button
@@ -50,11 +56,12 @@ export function TrackMenu({ track, x, y, onClose, onPlay, extra }: { track: Trac
           >
             <MusicNotesPlus size={18} /> Добавить в плейлист
           </button>
-          {track.sourceKind === 'remote' && (
-            <button role="menuitem" onClick={() => { onClose(); void (track.pinned ? api.removeDownload(track.id).then(() => toast('Загрузка удалена')) : api.download({ trackId: track.id }).then(() => toast('Скачиваем — прогресс в «Загрузках»'))).catch((e) => toast((e as Error).message, 'error')); }}>
-              <DownloadSimple size={18} /> {track.pinned ? 'Удалить загрузку' : 'Скачать'}
-            </button>
-          )}
+          <hr />
+          <button role="menuitem" onClick={(e) => { e.stopPropagation(); setSection('discover'); }}><Radio size={18} /> Найти похожее <CaretRight size={16} style={{ marginLeft: 'auto' }} /></button>
+          <button role="menuitem" onClick={(e) => { e.stopPropagation(); setSection('info'); }}><VinylRecord size={18} /> Сведения о треке <CaretRight size={16} style={{ marginLeft: 'auto' }} /></button>
+          <button role="menuitem" onClick={(e) => { e.stopPropagation(); setSection('manage'); }}><PencilSimple size={18} /> Ещё действия <CaretRight size={16} style={{ marginLeft: 'auto' }} /></button>
+          </>}
+          {section === 'discover' && <>
           <button role="menuitem" onClick={() => { onClose(); void startSimilar(track); }} disabled={track.reaction < 0}>
             <Radio size={18} /> Похожее на этот трек
           </button>
@@ -64,14 +71,16 @@ export function TrackMenu({ track, x, y, onClose, onPlay, extra }: { track: Trac
           <button role="menuitem" onClick={() => { onClose(); openVersionPanel({ trackId: track.id, title: track.title, artist: track.artist, duration: track.duration }); }}>
             <Swap size={18} /> Найти другую версию
           </button>
-          <hr />
+          </>}
+          {!section && <>
           <button role="menuitem" onClick={() => void react(track, track.reaction > 0 ? 0 : 1)}>
             <Heart size={18} weight={track.reaction > 0 ? 'fill' : 'regular'} /> {track.reaction > 0 ? 'Убрать из любимого' : 'Нравится'}
           </button>
           <button role="menuitem" onClick={() => void react(track, track.reaction < 0 ? 0 : -1)}>
             <HeartBreak size={18} weight={track.reaction < 0 ? 'fill' : 'regular'} /> {track.reaction < 0 ? 'Отменить «Не нравится»' : 'Не нравится'}
           </button>
-          <hr />
+          </>}
+          {section === 'info' && <>
           {track.album && (
             <a role="menuitem" href={trackAlbumHref(track)}>
               <VinylRecord size={18} /> К альбому
@@ -85,7 +94,7 @@ export function TrackMenu({ track, x, y, onClose, onPlay, extra }: { track: Trac
           <button role="menuitem" onClick={() => go(`/diagnostics?track=${track.id}`)}>
             <ChartLine size={18} /> Анализ звука
           </button>
-          {track.mixingAllowed && (track.provider === 'local' || track.provider === 'yandex') && <button role="menuitem" onClick={async () => {
+          {!desktop && track.mixingAllowed && (track.provider === 'local' || track.provider === 'yandex') && <button role="menuitem" onClick={async () => {
             try {
               const result = await api.rebuildVocals(track.id);
               toast(result.quality?.status === 'ready' ? 'Для этого трека уже готова новая обработка голоса' : 'Голос поставлен в очередь. Можно продолжать слушать.', 'success');
@@ -96,6 +105,13 @@ export function TrackMenu({ track, x, y, onClose, onPlay, extra }: { track: Trac
             <a role="menuitem" href={track.sourceUrl} target="_blank" rel="noreferrer noopener">
               <ArrowSquareOut size={18} /> Страница у источника
             </a>
+          )}
+          </>}
+          {section === 'manage' && <>
+          {track.sourceKind === 'remote' && (
+            <button role="menuitem" onClick={() => { onClose(); void (track.pinned ? api.removeDownload(track.id).then(() => toast('Загрузка удалена')) : api.download({ trackId: track.id }).then(() => toast('Скачиваем — прогресс в «Загрузках»'))).catch((e) => toast((e as Error).message, 'error')); }}>
+              <DownloadSimple size={18} /> {track.pinned ? 'Удалить загрузку' : 'Скачать'}
+            </button>
           )}
           <button
             role="menuitem"
@@ -117,6 +133,7 @@ export function TrackMenu({ track, x, y, onClose, onPlay, extra }: { track: Trac
           >
             <Trash size={18} /> Удалить из медиатеки
           </button>
+          </>}
         </Menu>
       )}
       {modal === 'playlist' && <PlaylistPicker trackIds={[track.id]} onClose={close} />}

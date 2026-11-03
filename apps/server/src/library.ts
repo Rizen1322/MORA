@@ -138,7 +138,7 @@ function parseFilename(name: string): { title: string; artist: string } {
 export class Library {
   /** provider id -> is mixing allowed (set by the provider registry). */
   mixingPolicy = new Map<string, boolean>([['local', true]]);
-  remoteFetcher: ((src: SourceRow, signal?: AbortSignal) => Promise<string>) | null = null;
+  remoteFetcher: ((src: SourceRow, signal?: AbortSignal, priority?: 0 | 1 | 2 | 3) => Promise<string>) | null = null;
   onTrackAdded: ((t: TrackRow) => void) | null = null;
   reactionSyncFor: ((trackId: string) => ReactionSync) | null = null;
   displayReactionFor: ((trackId: string, local: number) => number) | null = null;
@@ -337,7 +337,9 @@ export class Library {
   }
 
   setCover(id: string, coverId: string): void {
-    q(this.db, 'UPDATE tracks SET cover_id = ?, updated_at = ? WHERE id = ? AND cover_id IS NULL').run(coverId, Date.now(), id);
+    const current = this.get(id);
+    if (!current || current.cover_id && this.coverPath(current.cover_id)) return;
+    q(this.db, 'UPDATE tracks SET cover_id = ?, updated_at = ? WHERE id = ? AND cover_id IS ?').run(coverId, Date.now(), id, current.cover_id);
     this.events.emit({ type: 'library', reason: 'cover', trackId: id });
     this.events.emit({ type: 'playlists' });
   }
@@ -395,7 +397,7 @@ export class Library {
   }
 
   /** Path of a decodable local file for the track; fetches remote audio if needed. */
-  async resolveMediaPath(trackId: string, signal?: AbortSignal): Promise<string> {
+  async resolveMediaPath(trackId: string, signal?: AbortSignal, priority?: 0 | 1 | 2 | 3): Promise<string> {
     const srcs = this.sources(trackId);
     for (const s of srcs) {
       if ((s.kind === 'managed' || s.kind === 'linked') && s.path && fs.existsSync(s.path)) return s.path;
@@ -403,7 +405,7 @@ export class Library {
     const remote = srcs.find((s) => s.kind === 'remote');
     if (remote) {
       if (!this.remoteFetcher) throw new Error('Источник недоступен');
-      const file = await this.remoteFetcher(remote, signal);
+      const file = await this.remoteFetcher(remote, signal, priority);
       // Last use for cache eviction (least recently played goes first).
       const now = new Date();
       fs.utimes(file, now, now, () => {});
@@ -505,7 +507,7 @@ export class Library {
       codec: t.codec,
       sampleRate: t.sample_rate,
       bitrate: t.bitrate,
-      coverUrl: t.cover_id ? `/api/covers/${t.cover_id}` : src?.kind === 'remote' && ['youtube', 'soundcloud'].includes(src.provider) ? `/api/tracks/${t.id}/cover` : null,
+      coverUrl: t.provider === 'yandex' ? `/api/tracks/${t.id}/cover` : t.cover_id ? `/api/covers/${t.cover_id}` : src?.kind === 'remote' && ['youtube', 'soundcloud'].includes(src.provider) ? `/api/tracks/${t.id}/cover` : null,
       provider: t.provider,
       sourceKind: src?.kind ?? 'none',
       sourceUrl,

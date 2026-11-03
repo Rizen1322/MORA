@@ -25,6 +25,9 @@ import {
 import { PRIORITY, type AnalysisService } from './analysis.ts';
 import { kvGet, q, type Db } from './db.ts';
 import type { Library, TrackRow } from './library.ts';
+import { reviewedGeometryHash, type ReviewedPlanResolver } from './reviewed-transitions.ts';
+import { rustCompute, rustComputeAsync, rustCorePath } from './rust-core.ts';
+import { measureRust } from './rust-render.ts';
 
 export interface AppSettings {
   automix: AutoMixSettings;
@@ -95,9 +98,11 @@ export class AutoMixService {
     private readonly db: Db,
     private readonly lib: Library,
     private readonly analysis: AnalysisService,
+    private readonly reviewed?: ReviewedPlanResolver,
   ) {}
 
   private plannerTrack(t: TrackRow): PlannerTrack {
+    const analysis = this.analysis.get(t.content_hash);
     return {
       id: t.id,
       duration: t.duration,
@@ -106,16 +111,26 @@ export class AutoMixService {
       trackNo: t.track_no,
       discNo: t.disc_no,
       mixingAllowed: this.lib.mixingPolicy.get(t.provider) ?? false,
-      analysis: this.analysis.get(t.content_hash),
+      // Desktop mixes original recordings; old separation metadata must not reactivate vocal cuts.
+      analysis: process.env.AUTOMIX_DESKTOP === '1' && analysis ? { ...analysis, vocalActivity: undefined } : analysis,
     };
   }
 
   plan(fromId: string, toId: string): { plan: TransitionPlan; cached: boolean; pending: string[] } {
     const r = this.prepare(fromId, toId);
     if ('plan' in r) return r;
-    const plan = planTransition(r.pa, r.pb, r.settings, undefined, r.feedback);
+    const plan = rustCorePath() ? rustCompute<TransitionPlan>('plan', { from: r.pa, to: r.pb, settings: r.settings, feedback: r.feedback }) : planTransition(r.pa, r.pb, r.settings, undefined, r.feedback);
     if (!r.pending.length) this.store(r.key, plan, r.a.content_hash, r.b.content_hash);
     return { plan, cached: false, pending: r.pending };
+  }
+
+  /** Prepares the musical choice without decoding a playlist; playback still verifies it on PCM. */
+  async preplan(fromId: string, toId: string): Promise<void> {
+    const r = this.prepare(fromId, toId);
+    if ('plan' in r || r.pending.length) return;
+    const plan = rustCorePath() ? await rustComputeAsync<TransitionPlan>('plan', { from: r.pa, to: r.pb, settings: r.settings, feedback: r.feedback })
+      : planTransition(r.pa, r.pb, r.settings, undefined, r.feedback);
+    this.store(r.key, { ...plan, debug: { ...plan.debug, renderCheck: { policy: 'render-finalists-2', skipped: 'pcm-not-ready' } } }, r.a.content_hash, r.b.content_hash);
   }
 
   /** P10: a full-mix pair (a voice unknown) renders its finalists on PCM that is already decoding and
@@ -128,7 +143,10 @@ export class AutoMixService {
     const r = unchecked ? this.prepare(fromId, toId, true) : cached;
     if ('plan' in r) return r;
     // stepped: the iPhone app's in-process server keeps answering PCM reads while this plans
-    const finalists = r.pending.length ? [planTransition(r.pa, r.pb, r.settings, undefined, r.feedback)] : await stepAsync(planFinalistsSteps(r.pa, r.pb, r.settings, r.feedback));
+    const finalists = rustCorePath()
+      ? r.pending.length ? [await rustComputeAsync<TransitionPlan>('plan', { from: r.pa, to: r.pb, settings: r.settings, feedback: r.feedback })]
+        : await rustComputeAsync<TransitionPlan[]>('plan', { from: r.pa, to: r.pb, settings: r.settings, feedback: r.feedback, mode: 'finalists' })
+      : r.pending.length ? [planTransition(r.pa, r.pb, r.settings, undefined, r.feedback)] : await stepAsync(planFinalistsSteps(r.pa, r.pb, r.settings, r.feedback));
     if (finalists.length < 2) {
       if (!r.pending.length) this.store(r.key, finalists[0], r.a.content_hash, r.b.content_hash);
       return { plan: finalists[0], cached: false, pending: r.pending };
@@ -144,7 +162,7 @@ export class AutoMixService {
       return { plan: skipped, cached: false, pending: r.pending };
     }
     let plan = finalists[0];
-    try { plan = await chooseByRender(finalists, sa, sb); } catch { /* a failed check keeps the planner's choice */ }
+    try { plan = await chooseByRender(finalists, sa, sb, rustCorePath() ? measureRust : undefined); } catch { /* a failed check keeps the planner's choice */ }
     this.store(r.key, plan, r.a.content_hash, r.b.content_hash);
     return { plan, cached: false, pending: r.pending };
   }
@@ -161,9 +179,15 @@ export class AutoMixService {
     if (!pa.analysis && pa.mixingAllowed) pending.push(a.id);
     if (!pb.analysis && pb.mixingAllowed) pending.push(b.id);
     if (pending.length) this.analysis.prioritize(pending, PRIORITY.next);
+    // Exact local approvals are resolved before the general cache. Removing or
+    // changing the catalog must not leave a reviewed plan stuck in that cache.
+    const reviewed = this.reviewed?.resolve(pa, pb, a.content_hash, b.content_hash, settings);
+    if (reviewed && !this.reviewedRejected(reviewed)) return { plan: reviewed, cached: true, pending: [] };
     const feedback = this.ratingStats();
     const key = fnv1a(
-      [a.id, b.id, a.content_hash, b.content_hash, ANALYZER_VERSION, PLANNER_VERSION, JSON.stringify(settings), pa.mixingAllowed, pb.mixingAllowed,
+      // Invalidate automatic choices while preserving the exact IDs of listener-approved plans.
+      [a.id, b.id, a.content_hash, b.content_hash, ANALYZER_VERSION, PLANNER_VERSION, 'transition-styles-6-echo-soft', JSON.stringify(settings), pa.mixingAllowed, pb.mixingAllowed,
+        ...(process.env.AUTOMIX_DESKTOP === '1' ? ['desktop-full-mix-1'] : []),
         a.album, b.album, pa.albumArtist, pb.albumArtist, a.track_no, b.track_no, a.disc_no, b.disc_no, !!pa.analysis, !!pb.analysis,
         // new ratings make new plans; without any the key stays as before
         vocalKey(pa.analysis?.vocalActivity),vocalKey(pb.analysis?.vocalActivity), ...(feedback ? [feedback.version] : [])].join('|'),
@@ -178,26 +202,49 @@ export class AutoMixService {
 
   private feedback: { sig: string; stats: RatingStats | null } | null = null;
 
-  /** Smoothed listener-rating statistics of executed transitions, recomputed only when a rating changes. */
+  /** A new dislike of this exact reviewed recording/plan takes precedence. */
+  private reviewedRejected(plan: TransitionPlan): boolean {
+    const identity = plan.debug.reviewedTransition as { sourcePlanSha256: string; fromHash: string; toHash: string; geometrySha256: string };
+    const rows = q(this.db, 'SELECT plan,rating,outcome FROM transition_log WHERE rating IS NOT NULL ORDER BY id DESC').all() as { plan: string; rating: string; outcome: string }[];
+    for (const row of rows) {
+      try {
+        const executed = JSON.parse(row.plan) as TransitionPlan, outcome = JSON.parse(row.outcome), previous = executed.debug?.reviewedTransition as typeof identity;
+        if (outcome?.forced === true || outcome?.late === true) continue;
+        if (previous?.sourcePlanSha256 === identity.sourcePlanSha256 && previous.fromHash === identity.fromHash && previous.toHash === identity.toHash
+          && reviewedGeometryHash(executed) === identity.geometrySha256)
+          return row.rating === 'bad';
+      } catch { /* Damaged history cannot activate or reject a preference. */ }
+    }
+    return false;
+  }
+
+  /** Fingerprint the evidence itself: reason/rating edits can share the same millisecond. */
   ratingStats(): RatingStats | null {
-    const s = q(this.db, 'SELECT COUNT(*) AS n, COALESCE(MAX(rated_at), 0) AS t, COALESCE(SUM(id), 0) AS ids FROM transition_log WHERE rating IS NOT NULL').get() as { n: number; t: number; ids: number };
-    const sig = `${s.n}|${s.t}|${s.ids}`;
+    const rows = q(this.db, 'SELECT from_track, to_track, plan, outcome, rating, rating_reason FROM transition_log WHERE rating IS NOT NULL ORDER BY id').all() as
+      { from_track: string | null; to_track: string | null; plan: string; outcome: string; rating: TransitionRating; rating_reason: TransitionRatingReason | null }[];
+    const sig = fnv1a(JSON.stringify(rows));
     if (this.feedback?.sig === sig) return this.feedback.stats;
-    const rows = q(this.db, 'SELECT from_track, to_track, plan, rating FROM transition_log WHERE rating IS NOT NULL ORDER BY id').all() as
-      { from_track: string | null; to_track: string | null; plan: string; rating: TransitionRating }[];
     // the tempo of an unlocked pair comes from the small analysis summary, not the whole analysis
     const tempoOf = (id: string | null) => {
       const t = id ? this.lib.get(id) : undefined;
       const row = t && q(this.db, "SELECT summary FROM analysis WHERE content_hash = ? AND status = 'done' AND summary IS NOT NULL ORDER BY version = ? DESC, updated_at DESC LIMIT 1")
         .get(t.content_hash, ANALYZER_VERSION) as { summary: string } | undefined;
-      const bpm = row ? (JSON.parse(row.summary) as { bpm?: number | null }).bpm : null;
-      return { beat: typeof bpm === 'number' ? { bpm } : null };
+      let bpm: unknown = null;
+      try { bpm = row ? (JSON.parse(row.summary) as { bpm?: number | null }).bpm : null; } catch { /* damaged historical summary stays unknown */ }
+      return { beat: typeof bpm === 'number' && Number.isFinite(bpm) && bpm > 0 ? { bpm } : null };
     };
     const rated = rows.flatMap((r) => {
       let plan: TransitionPlan;
       try { plan = JSON.parse(r.plan) as TransitionPlan; } catch { return []; }
       if (!plan?.method) return [];
-      return [{ rating: r.rating, features: ratingFeatures(plan, plan.beatAlign ? null : tempoOf(r.from_track), plan.beatAlign ? null : tempoOf(r.to_track)) }];
+      if (r.rating !== 'good' && r.rating !== 'bad') return [];
+      let outcome: Record<string, unknown> = {};
+      try { outcome = JSON.parse(r.outcome) ?? {}; } catch { /* older logs need no execution context */ }
+      const snapshot = outcome.listenerFeatures as { version?: number; features?: unknown } | undefined;
+      const features = snapshot?.version === 4 && Array.isArray(snapshot.features) && snapshot.features.every(f => typeof f === 'string')
+        ? snapshot.features as string[]
+        : ratingFeatures(plan, plan.beatAlign ? null : tempoOf(r.from_track), plan.beatAlign ? null : tempoOf(r.to_track), { outcome });
+      return [{ rating: r.rating, reason: r.rating_reason, features }];
     });
     const stats = ratingStats(rated);
     this.feedback = { sig, stats };
@@ -215,23 +262,42 @@ export class AutoMixService {
     const a = this.lib.get(fromId);
     const b = this.lib.get(toId);
     if (!a || !b) throw new Error('трек не найден');
-    return planSkip(this.plannerTrack(a), this.plannerTrack(b), position, getSettings(this.db).automix);
+    const from = this.plannerTrack(a), to = this.plannerTrack(b), settings = getSettings(this.db).automix;
+    return rustCorePath() ? rustCompute<TransitionPlan>('plan', { from, to, position, settings, mode: 'skip' }) : planSkip(from, to, position, settings);
   }
 
-  requested(fromId:string,toId:string,position:number):TransitionPlan {
+  /** catchUp: the prepared AutoMix point is already behind the playhead (a seek): plan the same musical
+   * moves from here even when Next itself is set to skip (mixOnNext off). */
+  requested(fromId:string,toId:string,position:number,catchUp=false):TransitionPlan {
     const a=this.lib.get(fromId),b=this.lib.get(toId);
     if(!a||!b)throw new Error('трек не найден');
-    return planRequestedTransition(this.plannerTrack(a),this.plannerTrack(b),position,getSettings(this.db).automix);
+    const from = this.plannerTrack(a), to = this.plannerTrack(b), saved = getSettings(this.db).automix, settings = catchUp ? { ...saved, mixOnNext: true } : saved;
+    return rustCorePath() ? rustCompute<TransitionPlan>('plan', { from, to, position, settings, mode: 'requested' }) : planRequestedTransition(from,to,position,settings);
+  }
+
+  async manualAsync(fromId: string, toId: string, position: number, mode: 'skip' | 'requested', catchUp = false): Promise<TransitionPlan> {
+    if (!rustCorePath()) return mode === 'skip' ? this.skip(fromId, toId, position) : this.requested(fromId, toId, position, catchUp);
+    const a = this.lib.get(fromId), b = this.lib.get(toId);
+    if (!a || !b) throw new Error('трек не найден');
+    const saved = getSettings(this.db).automix;
+    return rustComputeAsync<TransitionPlan>('plan', { from: this.plannerTrack(a), to: this.plannerTrack(b),
+      position, settings: catchUp && mode === 'requested' ? { ...saved, mixOnNext: true } : saved, mode });
   }
 
   log(entry: { plan: TransitionPlan; outcome: Record<string, unknown> }): number {
+    const analysisOf = (id: string) => {
+      const track = this.lib.get(id);
+      return track ? this.analysis.get(track.content_hash) : null;
+    };
+    const outcome = { ...entry.outcome, listenerFeatures: { version: 4, features: ratingFeatures(entry.plan,
+      analysisOf(entry.plan.fromTrackId), analysisOf(entry.plan.toTrackId), { outcome: entry.outcome }) } };
     const { lastInsertRowid } = q(this.db, 'INSERT INTO transition_log(plan_id, from_track, to_track, method, executed_at, outcome, plan) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
       entry.plan.id,
       entry.plan.fromTrackId,
       entry.plan.toTrackId,
       entry.plan.method,
       Date.now(),
-      JSON.stringify(entry.outcome ?? {}),
+      JSON.stringify(outcome),
       JSON.stringify(entry.plan),
     );
     // Listener ratings are scarce feedback: never prune rated rows.

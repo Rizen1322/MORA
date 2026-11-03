@@ -11,8 +11,8 @@ import { AudibleMotion, audibleDelay } from '../lib/audible-motion.ts';
  * flash, mids stir the flow. During an AutoMix blend it melts from A's cover
  * into B's at the blend's own pace; a plain skip crossfades in about a second.
  * Writes `--beat` (0..1) on the parent for the CSS cover pulse. Lazy three.js,
- * 30 fps, low internal resolution, stops while hidden; one still frame with
- * reduced motion. Without WebGL the CSS gradient of the player stays.
+ * 30 fps, low internal resolution, stops while hidden. Reduced motion uses
+ * the player's artwork-coloured CSS gradient without creating a renderer.
  */
 export function PlayerBackdrop({ cover, next = null, k = 0 }: { cover: string | null; next?: string | null; k?: number }) {
   const host = useRef<HTMLDivElement>(null);
@@ -23,7 +23,7 @@ export function PlayerBackdrop({ cover, next = null, k = 0 }: { cover: string | 
   useEffect(() => {
     const el = host.current;
     const player = el?.parentElement;
-    if (!el || !player) return;
+    if (!el || !player || reduced) return;
     let disposed = false;
     let cleanup = () => {};
     let fallbackCleanup:(()=>void)|null=null;

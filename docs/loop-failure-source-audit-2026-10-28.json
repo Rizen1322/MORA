@@ -1,0 +1,866 @@
+{
+  "schema": "mora-loop-source-rhythm-audit-1",
+  "createdAt": "2026-10-28T13:23:32.651Z",
+  "databaseReadOnly": true,
+  "rendered": false,
+  "limitations": [
+    "per-beat measured accents are not drum transcription",
+    "correlation is not musical quality",
+    "does not identify voice",
+    "fixed100ms pairing is descriptive, not a selector"
+  ],
+  "results": [
+    {
+      "id": 185,
+      "sourceReviewId": "review-similar-loops-2026-10-28",
+      "sourceManifestSha256": "3586c1f43a82f49e4752197c563505b69f4277147e9c86cf7871c804e0872c33",
+      "variantId": "185-5ca27a98545ec5d4",
+      "analysisHashes": {
+        "a": "3491542a42e368377d6e3715833e6e0e9e2b17da96c97b7baca059721a55f141",
+        "b": "457d3274fca7dee630eed19918cdb47286f2161f24c556c37e5d5b8efcb90451"
+      },
+      "loop": {
+        "start": 129.6622,
+        "end": 131.414,
+        "until": 136.6693,
+        "crossfade": 0.006
+      },
+      "outputLoopStart": 1.7514246826193993,
+      "outputLoopStop": 8.775541272957923,
+      "originalSameWindow": {
+        "eventsA": 20,
+        "eventsB": 20,
+        "pairs": 20,
+        "unmatchedA": 0,
+        "meanBeatDistanceMs": 1.1905107806088806,
+        "kickCorrelation": 0.046999242787754886,
+        "snareCorrelation": 0.08017877815029076
+      },
+      "loopSameWindow": {
+        "eventsA": 20,
+        "eventsB": 20,
+        "pairs": 20,
+        "unmatchedA": 0,
+        "meanBeatDistanceMs": 1.1503808523411179,
+        "kickCorrelation": 0.190167642265542,
+        "snareCorrelation": 0.039219208091991066
+      },
+      "originalAfterLoopStart": {
+        "eventsA": 16,
+        "eventsB": 16,
+        "pairs": 16,
+        "unmatchedA": 0,
+        "meanBeatDistanceMs": 1.2715237507656685,
+        "kickCorrelation": 0.09895959211882523,
+        "snareCorrelation": 0.11951411222754725
+      },
+      "repeatedAfterLoopStart": {
+        "eventsA": 16,
+        "eventsB": 16,
+        "pairs": 16,
+        "unmatchedA": 0,
+        "meanBeatDistanceMs": 1.2213613404309653,
+        "kickCorrelation": 0.2713013427891089,
+        "snareCorrelation": 0.08633644147684574
+      },
+      "loopSourceAccents": [
+        {
+          "out": 1.7514246826193993,
+          "source": 129.6622,
+          "kick": 11.24,
+          "snare": 1.75
+        },
+        {
+          "out": 2.189606304542976,
+          "source": 130.1002,
+          "kick": 0.13,
+          "snare": 0.86
+        },
+        {
+          "out": 2.6277599174185884,
+          "source": 130.5381,
+          "kick": 1.59,
+          "snare": 2.89
+        },
+        {
+          "out": 3.0660098377993568,
+          "source": 130.976,
+          "kick": 1.63,
+          "snare": 2.24
+        }
+      ],
+      "laneAtStart": {
+        "A": {
+          "gain": 1,
+          "low": 1,
+          "mid": 1,
+          "high": 1
+        },
+        "B": {
+          "gain": 0.40943490178619957,
+          "low": 0.15095659962528105,
+          "mid": 0.5278469525670958,
+          "high": 0.39177337207050716
+        }
+      },
+      "laneBeforeExit": {
+        "A": {
+          "gain": 0.9998772133630984,
+          "low": 0.7105691979012698,
+          "mid": 1,
+          "high": 1
+        },
+        "B": {
+          "gain": 1,
+          "low": 0.8072907195921281,
+          "mid": 1,
+          "high": 1
+        }
+      },
+      "voiceEvidence": {
+        "a": false,
+        "b": false,
+        "conclusion": "unknown-without-listener-or-vocal-measurements"
+      },
+      "structureA": [
+        {
+          "start": 119.152,
+          "end": 143.4,
+          "group": 1,
+          "occurrence": 2,
+          "repeatSimilarity": 0.692,
+          "chorusLikelihood": 0.866,
+          "rmsDb": -11.6,
+          "relDb": -0.9,
+          "slopeDb": -4.8,
+          "novelty": 0.624,
+          "endClosure": 1
+        }
+      ],
+      "structureB": [
+        {
+          "start": 0.05,
+          "end": 15.55,
+          "group": -1,
+          "occurrence": -1,
+          "repeatSimilarity": 0,
+          "chorusLikelihood": 0,
+          "rmsDb": -16.1,
+          "relDb": -2.7,
+          "slopeDb": 2,
+          "novelty": 0,
+          "endClosure": 0.283
+        },
+        {
+          "start": 15.55,
+          "end": 41.55,
+          "group": -1,
+          "occurrence": -1,
+          "repeatSimilarity": 0,
+          "chorusLikelihood": 0,
+          "rmsDb": -13.3,
+          "relDb": 0,
+          "slopeDb": -0.2,
+          "novelty": 0.451,
+          "endClosure": 0.46
+        }
+      ]
+    },
+    {
+      "id": 204,
+      "sourceReviewId": "review-stemless-loop-2026-10-28-v4",
+      "sourceManifestSha256": "3159b03c165613ba7b46e9e8bfc794c82dd41376aafe929ed77e9a6c0945845b",
+      "variantId": "204-2f4eaf19e8ae1db1",
+      "analysisHashes": {
+        "a": "9e28582cfc62ae028f1aa85a1bb8145b42dec5a11f001666ada9a6a1882d5f6b",
+        "b": "26bf08fb540e5ff9f62b7094fa07223d920fac2331da2c821af79cb00717069a"
+      },
+      "loop": {
+        "start": 82.4147,
+        "end": 83.8604,
+        "until": 86.7519,
+        "crossfade": 0.006
+      },
+      "outputLoopStart": 1.4465928082487078,
+      "outputLoopStop": 5.821782215938205,
+      "originalSameWindow": {
+        "eventsA": 16,
+        "eventsB": 16,
+        "pairs": 16,
+        "unmatchedA": 0,
+        "meanBeatDistanceMs": 0.2608454376168697,
+        "kickCorrelation": 0.5543987912023797,
+        "snareCorrelation": 0.029427092647121254
+      },
+      "loopSameWindow": {
+        "eventsA": 17,
+        "eventsB": 16,
+        "pairs": 16,
+        "unmatchedA": 1,
+        "meanBeatDistanceMs": 0.28614107903543534,
+        "kickCorrelation": 0.22608912792355285,
+        "snareCorrelation": -0.08377668911430584
+      },
+      "originalAfterLoopStart": {
+        "eventsA": 12,
+        "eventsB": 12,
+        "pairs": 12,
+        "unmatchedA": 0,
+        "meanBeatDistanceMs": 0.2667725887150659,
+        "kickCorrelation": 0.7411921085627605,
+        "snareCorrelation": -0.2658150171483876
+      },
+      "repeatedAfterLoopStart": {
+        "eventsA": 13,
+        "eventsB": 12,
+        "pairs": 12,
+        "unmatchedA": 1,
+        "meanBeatDistanceMs": 0.3005001106064868,
+        "kickCorrelation": 0.23298680184983278,
+        "snareCorrelation": -0.3273317002008149
+      },
+      "loopSourceAccents": [
+        {
+          "out": 1.4465928082487078,
+          "source": 82.4147,
+          "kick": 2.83,
+          "snare": 0.45
+        },
+        {
+          "out": 1.8087156189924567,
+          "source": 82.7761,
+          "kick": 1.17,
+          "snare": 2.12
+        },
+        {
+          "out": 2.1712229329466357,
+          "source": 83.1376,
+          "kick": 0,
+          "snare": 2.95
+        },
+        {
+          "out": 2.5340151916604956,
+          "source": 83.499,
+          "kick": 0.26,
+          "snare": 0.07
+        }
+      ],
+      "laneAtStart": {
+        "A": {
+          "gain": 1,
+          "low": 1,
+          "mid": 1,
+          "high": 1
+        },
+        "B": {
+          "gain": 0.4470416974783353,
+          "low": 0,
+          "mid": 0.21089533948907424,
+          "high": 0.42926945148930284
+        }
+      },
+      "laneBeforeExit": {
+        "A": {
+          "gain": 0.9982274424948725,
+          "low": 0.9974168782901349,
+          "mid": 1,
+          "high": 1
+        },
+        "B": {
+          "gain": 0.9247882037449647,
+          "low": 0,
+          "mid": 0.18,
+          "high": 0.8841823056174469
+        }
+      },
+      "voiceEvidence": {
+        "a": false,
+        "b": false,
+        "conclusion": "unknown-without-listener-or-vocal-measurements"
+      },
+      "structureA": [
+        {
+          "start": 69.403,
+          "end": 92.535,
+          "group": 0,
+          "occurrence": 1,
+          "repeatSimilarity": 0.453,
+          "chorusLikelihood": 0.63,
+          "rmsDb": -9.3,
+          "relDb": 0.7,
+          "slopeDb": 0.7,
+          "novelty": 0.767,
+          "endClosure": 0.867
+        }
+      ],
+      "structureB": [
+        {
+          "start": 0,
+          "end": 23.628,
+          "group": 0,
+          "occurrence": 0,
+          "repeatSimilarity": 0.812,
+          "chorusLikelihood": 0.586,
+          "rmsDb": -15.5,
+          "relDb": -7.1,
+          "slopeDb": 9.6,
+          "novelty": 0,
+          "endClosure": 0.793
+        }
+      ]
+    },
+    {
+      "id": 205,
+      "sourceReviewId": "review-stemless-loop-2026-10-28-v4",
+      "sourceManifestSha256": "3159b03c165613ba7b46e9e8bfc794c82dd41376aafe929ed77e9a6c0945845b",
+      "variantId": "205-4b7e384af93b0d96",
+      "analysisHashes": {
+        "a": "26bf08fb540e5ff9f62b7094fa07223d920fac2331da2c821af79cb00717069a",
+        "b": "531c2684b3a4d3ec8cb835bba9483fb7eeea5bf619b767795f7a600edaeb3469"
+      },
+      "loop": {
+        "start": 116.608,
+        "end": 119.6073,
+        "until": 125.606,
+        "crossfade": 0.006
+      },
+      "outputLoopStart": 3.0006194851502075,
+      "outputLoopStop": 12.06746167431364,
+      "originalSameWindow": {
+        "eventsA": 32,
+        "eventsB": 33,
+        "pairs": 32,
+        "unmatchedA": 0,
+        "meanBeatDistanceMs": 0.3357054525916815,
+        "kickCorrelation": -0.13165785113615508,
+        "snareCorrelation": 0.0371841591590612
+      },
+      "loopSameWindow": {
+        "eventsA": 33,
+        "eventsB": 33,
+        "pairs": 33,
+        "unmatchedA": 0,
+        "meanBeatDistanceMs": 0.3004779007756302,
+        "kickCorrelation": -0.12124633818805014,
+        "snareCorrelation": 0.09115092994605654
+      },
+      "originalAfterLoopStart": {
+        "eventsA": 24,
+        "eventsB": 24,
+        "pairs": 23,
+        "unmatchedA": 1,
+        "meanBeatDistanceMs": 0.3791778252322918,
+        "kickCorrelation": -0.09957325015874033,
+        "snareCorrelation": -0.006705207101415032
+      },
+      "repeatedAfterLoopStart": {
+        "eventsA": 25,
+        "eventsB": 24,
+        "pairs": 24,
+        "unmatchedA": 1,
+        "meanBeatDistanceMs": 0.32892859262519575,
+        "kickCorrelation": -0.08979519614657655,
+        "snareCorrelation": 0.08995781303363669
+      },
+      "loopSourceAccents": [
+        {
+          "out": 3.0006194851502075,
+          "source": 116.608,
+          "kick": 5.68,
+          "snare": 0.97
+        },
+        {
+          "out": 3.3761160320847994,
+          "source": 116.9829,
+          "kick": 3.93,
+          "snare": 1.18
+        },
+        {
+          "out": 3.7517311957370243,
+          "source": 117.3578,
+          "kick": 0.86,
+          "snare": 1.41
+        },
+        {
+          "out": 4.127465997735154,
+          "source": 117.7327,
+          "kick": 0.71,
+          "snare": 2.6
+        },
+        {
+          "out": 4.50345991871634,
+          "source": 118.1077,
+          "kick": 7.43,
+          "snare": 0.84
+        },
+        {
+          "out": 4.879533555080997,
+          "source": 118.4826,
+          "kick": 0.5,
+          "snare": 1.52
+        },
+        {
+          "out": 5.255787412347855,
+          "source": 118.8575,
+          "kick": 5.14,
+          "snare": 0.89
+        },
+        {
+          "out": 5.632221734572552,
+          "source": 119.2324,
+          "kick": 0,
+          "snare": 3.76
+        }
+      ],
+      "laneAtStart": {
+        "A": {
+          "gain": 1,
+          "low": 1,
+          "mid": 1,
+          "high": 1
+        },
+        "B": {
+          "gain": 0.3809592928586327,
+          "low": 0.14123137653677376,
+          "mid": 0.49326490656735694,
+          "high": 0.36607839032325346
+        }
+      },
+      "laneBeforeExit": {
+        "A": {
+          "gain": 0.9974847959847878,
+          "low": 0.9974847959847878,
+          "mid": 1,
+          "high": 1
+        },
+        "B": {
+          "gain": 0.9810829262388541,
+          "low": 0.3470158718429535,
+          "mid": 0.974165852477708,
+          "high": 0.968165852477708
+        }
+      },
+      "voiceEvidence": {
+        "a": false,
+        "b": false,
+        "conclusion": "unknown-without-listener-or-vocal-measurements"
+      },
+      "structureA": [
+        {
+          "start": 71.618,
+          "end": 131.605,
+          "group": -1,
+          "occurrence": -1,
+          "repeatSimilarity": 0,
+          "chorusLikelihood": 0,
+          "rmsDb": -9.1,
+          "relDb": -0.7,
+          "slopeDb": 0,
+          "novelty": 0.689,
+          "endClosure": 0.869
+        }
+      ],
+      "structureB": [
+        {
+          "start": 0,
+          "end": 16.5,
+          "group": -1,
+          "occurrence": -1,
+          "repeatSimilarity": 0,
+          "chorusLikelihood": 0,
+          "rmsDb": -8.2,
+          "relDb": -2.5,
+          "slopeDb": 0.2,
+          "novelty": 0,
+          "endClosure": 0.4
+        }
+      ]
+    },
+    {
+      "id": 208,
+      "sourceReviewId": "review-similar-loops-2026-10-28",
+      "sourceManifestSha256": "3586c1f43a82f49e4752197c563505b69f4277147e9c86cf7871c804e0872c33",
+      "variantId": "208-069eacc07d0e5742",
+      "analysisHashes": {
+        "a": "d5927fb8302ab55ee0267c4633ae3eff77bf85e1ab900d7548feb4044ed8b36f",
+        "b": "8cba39f207ac495787b316cc4db7cc242d6dfcb8fbd203c68f70caeb78ed07e1"
+      },
+      "loop": {
+        "start": 153.2344,
+        "end": 156.9268,
+        "until": 162.4653,
+        "crossfade": 0.006
+      },
+      "outputLoopStart": 7.367652064065567,
+      "outputLoopStop": 16.46765327753977,
+      "originalSameWindow": {
+        "eventsA": 36,
+        "eventsB": 36,
+        "pairs": 36,
+        "unmatchedA": 0,
+        "meanBeatDistanceMs": 0.4793734191591329,
+        "kickCorrelation": 0.13578554457854222,
+        "snareCorrelation": 0.24590496911174406
+      },
+      "loopSameWindow": {
+        "eventsA": 36,
+        "eventsB": 36,
+        "pairs": 36,
+        "unmatchedA": 0,
+        "meanBeatDistanceMs": 0.4630125810375122,
+        "kickCorrelation": 0.08718934136507256,
+        "snareCorrelation": 0.23960501250301963
+      },
+      "originalAfterLoopStart": {
+        "eventsA": 20,
+        "eventsB": 20,
+        "pairs": 20,
+        "unmatchedA": 0,
+        "meanBeatDistanceMs": 0.39243508028992125,
+        "kickCorrelation": 0.20106167977472988,
+        "snareCorrelation": 0.500131396101655
+      },
+      "repeatedAfterLoopStart": {
+        "eventsA": 20,
+        "eventsB": 20,
+        "pairs": 20,
+        "unmatchedA": 0,
+        "meanBeatDistanceMs": 0.362985571671004,
+        "kickCorrelation": 0.14478769552431323,
+        "snareCorrelation": 0.43471721600652324
+      },
+      "loopSourceAccents": [
+        {
+          "out": 7.367652064065567,
+          "source": 153.2344,
+          "kick": 2.22,
+          "snare": 0.47
+        },
+        {
+          "out": 7.826225299396205,
+          "source": 153.696,
+          "kick": 1.4,
+          "snare": 1.06
+        },
+        {
+          "out": 8.284356340004015,
+          "source": 154.1575,
+          "kick": 1.31,
+          "snare": 2.61
+        },
+        {
+          "out": 8.742244505162004,
+          "source": 154.6191,
+          "kick": 0.75,
+          "snare": 0.8
+        },
+        {
+          "out": 9.199692162513385,
+          "source": 155.0806,
+          "kick": 4.25,
+          "snare": 0.33
+        },
+        {
+          "out": 9.656799312451739,
+          "source": 155.5421,
+          "kick": 0.9,
+          "snare": 0.29
+        },
+        {
+          "out": 10.113643006562372,
+          "source": 156.0037,
+          "kick": 0,
+          "snare": 1.79
+        },
+        {
+          "out": 10.57000294708216,
+          "source": 156.4652,
+          "kick": 6.04,
+          "snare": 0.14
+        }
+      ],
+      "laneAtStart": {
+        "A": {
+          "gain": 1,
+          "low": 1,
+          "mid": 1,
+          "high": 1
+        },
+        "B": {
+          "gain": 0.7122489952503079,
+          "low": 0.2601439102386,
+          "mid": 0.594716171037934,
+          "high": 0.6294613478810471
+        }
+      },
+      "laneBeforeExit": {
+        "A": {
+          "gain": 1,
+          "low": 0.7346398876737826,
+          "mid": 1,
+          "high": 1
+        },
+        "B": {
+          "gain": 0.9995349352888179,
+          "low": 0.7894307812660223,
+          "mid": 0.9993024029332268,
+          "high": 0.9993024029332268
+        }
+      },
+      "voiceEvidence": {
+        "a": false,
+        "b": false,
+        "conclusion": "unknown-without-listener-or-vocal-measurements"
+      },
+      "structureA": [
+        {
+          "start": 149.542,
+          "end": 162.465,
+          "group": 1,
+          "occurrence": 1,
+          "repeatSimilarity": 0.748,
+          "chorusLikelihood": 0.7,
+          "rmsDb": -11,
+          "relDb": 1.5,
+          "slopeDb": -1.2,
+          "novelty": 0.332,
+          "endClosure": 0.494
+        },
+        {
+          "start": 162.465,
+          "end": 175.9,
+          "group": -1,
+          "occurrence": -1,
+          "repeatSimilarity": 0,
+          "chorusLikelihood": 0,
+          "rmsDb": -26.9,
+          "relDb": -14.5,
+          "slopeDb": -13.9,
+          "novelty": 0.508,
+          "endClosure": 1
+        }
+      ],
+      "structureB": [
+        {
+          "start": 0.05,
+          "end": 16.065,
+          "group": -1,
+          "occurrence": -1,
+          "repeatSimilarity": 0,
+          "chorusLikelihood": 0,
+          "rmsDb": -21.7,
+          "relDb": -11.6,
+          "slopeDb": 5.4,
+          "novelty": 0,
+          "endClosure": 0.488
+        },
+        {
+          "start": 16.065,
+          "end": 40.952,
+          "group": 0,
+          "occurrence": 0,
+          "repeatSimilarity": 0.699,
+          "chorusLikelihood": 0.621,
+          "rmsDb": -8.3,
+          "relDb": 1.9,
+          "slopeDb": 1,
+          "novelty": 0.598,
+          "endClosure": 0.506
+        }
+      ]
+    },
+    {
+      "id": 212,
+      "sourceReviewId": "review-similar-loops-2026-10-28",
+      "sourceManifestSha256": "3586c1f43a82f49e4752197c563505b69f4277147e9c86cf7871c804e0872c33",
+      "variantId": "212-de4f7e3f9f8cb052",
+      "analysisHashes": {
+        "a": "4e618374dd012c30998a4d6afb1adab102cee2b30601a4a7517797c70752d1d1",
+        "b": "7a4f2f6a9ec5781ea405510aad85168cc85553b2551f6243ae85db748cd0cfb2"
+      },
+      "loop": {
+        "start": 98.9962,
+        "end": 101.996,
+        "until": 107.9954,
+        "crossfade": 0.006
+      },
+      "outputLoopStart": 3.0020493620726043,
+      "outputLoopStop": 12.123769269415995,
+      "originalSameWindow": {
+        "eventsA": 32,
+        "eventsB": 33,
+        "pairs": 32,
+        "unmatchedA": 0,
+        "meanBeatDistanceMs": 0.08153081979981464,
+        "kickCorrelation": -0.2432232520335159,
+        "snareCorrelation": 0.7710620413292345
+      },
+      "loopSameWindow": {
+        "eventsA": 32,
+        "eventsB": 33,
+        "pairs": 32,
+        "unmatchedA": 0,
+        "meanBeatDistanceMs": 0.12864676644664536,
+        "kickCorrelation": -0.1714360024410932,
+        "snareCorrelation": 0.7992737965497588
+      },
+      "originalAfterLoopStart": {
+        "eventsA": 24,
+        "eventsB": 24,
+        "pairs": 23,
+        "unmatchedA": 1,
+        "meanBeatDistanceMs": 0.07991734018518376,
+        "kickCorrelation": -0.29243169356679355,
+        "snareCorrelation": 0.9113303968147731
+      },
+      "repeatedAfterLoopStart": {
+        "eventsA": 24,
+        "eventsB": 24,
+        "pairs": 23,
+        "unmatchedA": 1,
+        "meanBeatDistanceMs": 0.1454699616068613,
+        "kickCorrelation": -0.19189002089743756,
+        "snareCorrelation": 0.9527485237480167
+      },
+      "loopSourceAccents": [
+        {
+          "out": 3.0020493620726043,
+          "source": 98.9962,
+          "kick": 0.68,
+          "snare": 1.46
+        },
+        {
+          "out": 3.3780996400335574,
+          "source": 99.3712,
+          "kick": 0,
+          "snare": 0.83
+        },
+        {
+          "out": 3.7543611525512537,
+          "source": 99.7462,
+          "kick": 1.13,
+          "snare": 5.14
+        },
+        {
+          "out": 4.130733919523308,
+          "source": 100.1211,
+          "kick": 1.05,
+          "snare": 0.89
+        },
+        {
+          "out": 4.50747744077153,
+          "source": 100.4961,
+          "kick": 8.17,
+          "snare": 1.85
+        },
+        {
+          "out": 4.88454212294554,
+          "source": 100.8711,
+          "kick": 0.94,
+          "snare": 0.53
+        },
+        {
+          "out": 5.261828112427261,
+          "source": 101.246,
+          "kick": 0.76,
+          "snare": 4.68
+        },
+        {
+          "out": 5.63953750240698,
+          "source": 101.621,
+          "kick": 27.77,
+          "snare": 2.02
+        }
+      ],
+      "laneAtStart": {
+        "A": {
+          "gain": 1,
+          "low": 1,
+          "mid": 1,
+          "high": 1
+        },
+        "B": {
+          "gain": 0.38942008240682746,
+          "low": 0.1408341639572054,
+          "mid": 0.31428786549891746,
+          "high": 0.3744824262376768
+        }
+      },
+      "laneBeforeExit": {
+        "A": {
+          "gain": 0.9955451727731778,
+          "low": 0.9955451727731778,
+          "mid": 1,
+          "high": 1
+        },
+        "B": {
+          "gain": 1,
+          "low": 0.3470875585562653,
+          "mid": 0.9825707613190231,
+          "high": 0.9854892239877341
+        }
+      },
+      "voiceEvidence": {
+        "a": false,
+        "b": false,
+        "conclusion": "unknown-without-listener-or-vocal-measurements"
+      },
+      "structureA": [
+        {
+          "start": 91.497,
+          "end": 106.496,
+          "group": 0,
+          "occurrence": 2,
+          "repeatSimilarity": 0.815,
+          "chorusLikelihood": 0.971,
+          "rmsDb": -9.5,
+          "relDb": 3,
+          "slopeDb": 1.2,
+          "novelty": 0.389,
+          "endClosure": 0.879
+        },
+        {
+          "start": 106.496,
+          "end": 124.45,
+          "group": -1,
+          "occurrence": -1,
+          "repeatSimilarity": 0,
+          "chorusLikelihood": 0,
+          "rmsDb": -21.5,
+          "relDb": -9.1,
+          "slopeDb": -3.9,
+          "novelty": 0.87,
+          "endClosure": 1
+        }
+      ],
+      "structureB": [
+        {
+          "start": 0,
+          "end": 12.5,
+          "group": 0,
+          "occurrence": 0,
+          "repeatSimilarity": 0.628,
+          "chorusLikelihood": 0.531,
+          "rmsDb": -15.7,
+          "relDb": -3.3,
+          "slopeDb": 10.4,
+          "novelty": 0,
+          "endClosure": 0.5
+        },
+        {
+          "start": 12.5,
+          "end": 21,
+          "group": 1,
+          "occurrence": 0,
+          "repeatSimilarity": 0.365,
+          "chorusLikelihood": 0.451,
+          "rmsDb": -12.7,
+          "relDb": -0.3,
+          "slopeDb": -3,
+          "novelty": 0.503,
+          "endClosure": 0.37
+        }
+      ]
+    }
+  ]
+}

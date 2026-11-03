@@ -1,9 +1,11 @@
 import fs from 'node:fs';
+import { stopRustCompute } from './rust-core.ts';
 import path from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { AnalysisService } from './analysis.ts';
 import { AutoMixService, getSettings } from './automix.ts';
+import { ReviewedTransitions } from './reviewed-transitions.ts';
 import { ensureDirs, loadConfig, type AppConfig } from './config.ts';
 import { kvGet, kvSet, openDb, type Db } from './db.ts';
 import { EventHub } from './events.ts';
@@ -13,7 +15,9 @@ import { PcmCache } from './pcmCache.ts';
 import { ProviderRegistry } from './providers/index.ts';
 import { registerLibraryRoutes } from './routes/library.ts';
 import { registerPlaybackRoutes } from './routes/playback.ts';
+import { registerNativeStationRoutes } from './routes/native-station.ts';
 import { registerPreviewRoutes } from './routes/preview.ts';
+import { registerPhraseRecipeRoutes } from './routes/phrase-recipes.ts';
 import { registerMiscRoutes } from './routes/misc.ts';
 import { registerCatalogRoutes } from './routes/catalog.ts';
 import { registerPublicCatalogRoutes } from './routes/public-catalog.ts';
@@ -27,6 +31,7 @@ import { YtDlp } from './public/ytdlp.ts';
 import { registerSearchRoutes } from './routes/search.ts';
 import { registerLyricsRoutes } from './routes/lyrics.ts';
 import { registerDownloadRoutes } from './routes/downloads.ts';
+import { registerListeningPreparationRoutes } from './routes/listening-preparation.ts';
 import { Downloads } from './public/downloads.ts';
 import { Imports } from './public/imports.ts';
 import { registerImportRoutes } from './routes/imports.ts';
@@ -84,10 +89,10 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
   providers.yandex.catalog.localReactionFor = providers.yandex.localReactionFor;
   lib.reactionSyncFor = (trackId) => yandexReactions.status(trackId);
   lib.displayReactionFor = (trackId, local) => yandexReactions.displayReaction(trackId, local);
-  analysis.vocalActivityFor=(hash)=>stems.activity(hash);
+  analysis.vocalActivityFor=(hash)=>process.env.AUTOMIX_DESKTOP === '1' ? undefined : stems.activity(hash);
   analysis.setPower({ onlyWhenIdle: getSettings(db).analysis.onlyWhenIdle });
   lib.onTrackAdded = (t) => {analysis.ensure(t, 5);yandexReactions.attachTrack(t.id);};
-  const automix = new AutoMixService(db, lib, analysis);
+  const automix = new AutoMixService(db, lib, analysis, new ReviewedTransitions(path.join(cfg.dataDir, 'reviewed-transitions.json')));
   const wave = new WaveService(db, lib, analysis);
   // Without a vocal model the switch has nothing to prepare; "off" would only disable phrasing, loops
   // and master tempo, which work without stems, and the switch is hidden then.
@@ -148,7 +153,9 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
 
   registerLibraryRoutes(app, services);
   registerPlaybackRoutes(app, services);
+  registerNativeStationRoutes(app, services);
   registerPreviewRoutes(app, services);
+  registerPhraseRecipeRoutes(app, services);
   registerMiscRoutes(app, services);
   registerCatalogRoutes(app, services);
   registerPublicCatalogRoutes(app, services);
@@ -157,6 +164,7 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
   registerSearchRoutes(app, services);
   registerLyricsRoutes(app, services);
   registerDownloadRoutes(app, services);
+  registerListeningPreparationRoutes(app, services);
   registerImportRoutes(app, services);
   registerYandexLikesImportRoutes(app, services);
 
@@ -178,6 +186,7 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
   ];
 
   const close = async () => {
+    stopRustCompute();
     for (const t of timers) clearInterval(t);
     await yandexLikesImport.stop();
     const stoppedDownloads = downloads.stop();

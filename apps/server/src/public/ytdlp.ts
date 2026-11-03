@@ -58,11 +58,13 @@ export function classifyError(stderr: string): ResolverError {
   return new ResolverError('Источник не отдал аудио', 'failed');
 }
 
-interface Job { priority: Priority; seq: number; start: () => void }
+interface Job { priority: Priority; seq: number; signal?: AbortSignal; start: () => void }
 
 export class YtDlp {
   private queue: Job[] = [];
   private running = 0;
+  private backgroundRunning = 0;
+  private priorities = new WeakMap<AbortSignal, Priority>();
   private seq = 0;
   private warm = new Map<string, { at: number; info: Record<string, unknown> }>();
   private warmingCount = 0;
@@ -86,10 +88,12 @@ export class YtDlp {
     return new Promise<T>((resolve, reject) => {
       if (signal?.aborted) return reject(new ResolverError('Отменено', 'cancelled'));
       const job: Job = {
-        priority, seq: this.seq++,
+        priority: Math.min(priority, signal ? this.priorities.get(signal) ?? priority : priority) as Priority, seq: this.seq++, signal,
         start: () => {
           this.running++;
-          work().then(resolve, reject).finally(() => { this.running--; this.pump(); });
+          const background = job.priority === 3;
+          if (background) this.backgroundRunning++;
+          work().then(resolve, reject).finally(() => { this.running--; if (background) this.backgroundRunning--; this.pump(); });
         },
       };
       signal?.addEventListener('abort', () => {
@@ -101,10 +105,19 @@ export class YtDlp {
     });
   }
 
+  /** Promote a shared transfer even if its asynchronous setup has not queued it yet. */
+  prioritize(signal: AbortSignal, priority: Priority): void {
+    this.priorities.set(signal, Math.min(this.priorities.get(signal) ?? priority, priority) as Priority);
+    for (const job of this.queue) if (job.signal === signal) job.priority = Math.min(job.priority, priority) as Priority;
+    this.pump();
+  }
+
   private pump(): void {
     while (this.running < Math.max(1, this.cfg.concurrency) && this.queue.length) {
       this.queue.sort((a, b) => a.priority - b.priority || a.seq - b.seq);
-      this.queue.shift()!.start();
+      const index = this.queue.findIndex(job => job.priority !== 3 || this.backgroundRunning < Math.max(1, this.cfg.concurrency - 1));
+      if (index < 0) return;
+      this.queue.splice(index, 1)[0].start();
     }
   }
 
@@ -224,7 +237,7 @@ export class YtDlp {
    * Downloads the best audio-only format as published (no re-encoding) into a
    * fresh staging folder and returns the file with yt-dlp's metadata.
    */
-  async download(url: string, stagingDir: string, opts: { priority: Priority; signal?: AbortSignal; maxMb?: number; onProgress?: (fraction: number) => void; skipWarm?: boolean }): Promise<{ file: string; info: Record<string, unknown> }> {
+  async download(url: string, stagingDir: string, opts: { priority: Priority; signal?: AbortSignal; maxMb?: number; onProgress?: (fraction: number) => void; skipWarm?: boolean; preserveContainer?: boolean }): Promise<{ file: string; info: Record<string, unknown> }> {
     const target = checkedMediaUrl(url);
     await fsp.mkdir(stagingDir, { recursive: true });
     const warmed = opts.skipWarm ? null : this.warmInfo(target);
@@ -233,7 +246,8 @@ export class YtDlp {
     const fields = 'id,title,track,artist,artists,album,uploader,channel,channel_is_verified,duration,ext,acodec,abr,asr,webpage_url,thumbnail,extractor_key,availability,age_limit';
     let raw: string;
     try { raw = await this.run([
-      '-f', 'bestaudio/best', '-x', '--no-part', '--no-mtime', '--max-filesize', `${opts.maxMb ?? 200}M`,
+      // A growing reader cannot switch byte offsets from WebM into extracted Opus.
+      '-f', 'bestaudio/best', ...(opts.preserveContainer ? ['--fixup', 'never'] : ['-x']), '--no-part', '--no-mtime', '--max-filesize', `${opts.maxMb ?? 200}M`,
       '-P', stagingDir, '-o', '%(id)s.%(ext)s', '--print', `after_move:%(.{${fields}})j`, '--print', 'after_move:filepath', '--no-simulate',
       ...(opts.onProgress ? ['--progress', '--newline', '--progress-template', 'download:MORAPROG %(progress._percent_str)s'] : []),
       ...(warmed ? ['--load-info-json', infoFile] : ['--', target]),
