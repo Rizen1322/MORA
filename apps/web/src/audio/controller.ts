@@ -1035,6 +1035,29 @@ export class PlayerController {
     await this.startAt(i, 0);
   }
 
+  /**
+   * The track now plays another recording (VersionPanel binding; the server resolves it by track id).
+   * Its other queue entries get new ids, so both engines prepare them again in place; the audible one
+   * restarts on the new recording at the same position. shortcut: the restart is a short gap, not a
+   * sample-accurate splice; native has no hot replacement of the audible PCM.
+   */
+  async recordingChanged(trackId: string): Promise<void> {
+    const { queue, index, position, status, transition } = this.state;
+    this.nativeFiles.delete(trackId);
+    // The entry already blending in cannot be replaced.
+    const renewed = new Map(queue.filter((e, i) => e.trackId === trackId && i !== index && !(transition?.active && i === index + 1))
+      .map((e) => [e.entryId, { ...e, entryId: uid() }]));
+    if (renewed.size) {
+      if (this.originalOrder) this.originalOrder = this.originalOrder.map((e) => renewed.get(e.entryId) ?? e);
+      this.set({ queue: queue.map((e) => renewed.get(e.entryId) ?? e) });
+      this.onQueueChanged();
+    }
+    if (queue[index]?.trackId !== trackId) return;
+    // Page position lags native by up to one poll.
+    const at = this.native && this.nativeAt >= 0 ? (await this.nativeMix.state().catch(() => null))?.position ?? position : position;
+    if (this.state.index === index && this.state.queue[index]?.entryId === queue[index].entryId) await this.startAt(index, at, 'version', status === 'paused');
+  }
+
   /** User-requested listening check using today's plan and the normal audio path. */
   /** Saves a listener rating (null clears it) for a logged transition; mirrors it on lastTransition. */
   async rateTransition(logId: number, rating: TransitionRating | null, reason: TransitionRatingReason | null = null): Promise<void> {

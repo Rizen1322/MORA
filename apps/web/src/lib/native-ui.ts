@@ -6,7 +6,7 @@ import { controller, phone, trackOf, useApp } from '../store/app.ts';
 import { publicPlayer, usePublicPlayback } from '../store/catalog.ts';
 import { react } from '../components/TrackList.tsx';
 import { asCatalog, SOURCE_LABEL } from '../pages/Search.tsx';
-import { useVersionPanel } from '../components/VersionPanel.tsx';
+import { openVersionPanel, useVersionPanel } from '../components/VersionPanel.tsx';
 import { actions, describe, type ActResult } from './native-pages.ts';
 
 /**
@@ -112,6 +112,12 @@ export const commands: Record<string, (a: Args) => unknown> = {
   queueMove: (a) => {
     const from = upcoming(a.entryId), to = upcoming(a.to);
     if (from >= 0 && to >= 0) controller.move(from, to);
+  },
+  /** Long press «Выбрать версию» (native player and queue): the web version picker covers native until closed. */
+  version: (a) => {
+    const t = trackOf(controller.state.queue.find((e) => e.entryId === a.entryId)?.trackId);
+    if (!t) throw new Error('Трек не найден в очереди');
+    openVersionPanel({ trackId: t.id, title: t.title, artist: t.artist, duration: t.duration });
   },
   swap: () => {
     if (!controller.swapNext()) throw new Error('Заменить следующий трек сейчас нельзя');

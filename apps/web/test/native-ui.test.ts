@@ -72,6 +72,17 @@ describe('native shell bridge (page side)', () => {
     expect(() => commands.swap({})).toThrow('нельзя');
   });
 
+  it('opens the version picker for a queue entry; native steps aside while it is open', async () => {
+    const { commands, uiState } = await import('../src/lib/native-ui.ts');
+    const { useVersionPanel } = await import('../src/components/VersionPanel.tsx');
+    (h.queue.queue[2] as any).trackId = 'a';
+    commands.version({ entryId: 'x' });
+    expect(useVersionPanel.getState().target).toMatchObject({ trackId: 'a', title: 'A', artist: 'X', duration: 100 });
+    expect(uiState().overlay).toBe(true);
+    expect(() => commands.version({ entryId: 'gone' })).toThrow('не найден');
+    delete (h.queue.queue[2] as any).trackId;
+  });
+
   it('pushes the library only when it changed, and follows the shell on the page', async () => {
     vi.useFakeTimers();
     const classes = new Set<string>();

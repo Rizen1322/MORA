@@ -278,3 +278,31 @@ it('adopts native progress beyond a restored partial queue before refreshing its
   }
   expect(prepareQueue).toHaveBeenCalledTimes(2);
 });
+
+it('a new recording for a queued track: upcoming copies are prepared again in place, the audible one restarts at its position', async () => {
+  const prepareQueue = vi.fn<NonNullable<NativeMix['prepareQueue']>>(async () => state());
+  const mix = { upload: vi.fn(async () => {}), start: vi.fn(async () => state()), update: vi.fn(async () => state()),
+    prepareQueue, settings: vi.fn(async () => {}), stop: vi.fn(), state: vi.fn(async () => state({ position: 42 })), command: vi.fn(async () => state()) } satisfies NativeMix;
+  vi.stubGlobal('window', { moraNativePlayback: { route: 'webkit', mix } });
+  const controller = new PlayerController(id => ({ id, title: id, duration: seconds, status: 'ok', analysis: {} } as Track), vi.fn());
+  const h = controller as unknown as { nativeSyncing: Promise<void> | null; nativeTimer: ReturnType<typeof setInterval>; saveTimer: ReturnType<typeof setTimeout> | null };
+  timer = () => { clearInterval(h.nativeTimer); if (h.saveTimer) clearTimeout(h.saveTimer); };
+  await controller.playTracks(['a', 'b', 'a'], 0, { type: 'album', label: 'album' });
+  await h.nativeSyncing;
+  const before = controller.state.queue;
+  await controller.recordingChanged('b');
+  await h.nativeSyncing;
+  expect(controller.state.queue.map(e => e.trackId)).toEqual(['a', 'b', 'a']);
+  expect(controller.state.queue[1].entryId).not.toBe(before[1].entryId);
+  expect(controller.state.queue[2].entryId).toBe(before[2].entryId);
+  expect(prepareQueue.mock.calls.at(-1)?.[1].map(e => e.entryId)).toEqual(controller.state.queue.slice(1).map(e => e.entryId));
+  expect(mix.start).toHaveBeenCalledTimes(1); // the audible track was not touched
+
+  vi.mocked(api.prepare).mockClear();
+  await controller.recordingChanged('a');
+  expect(controller.state.queue[0].entryId).toBe(before[0].entryId);
+  expect(controller.state.queue[2].entryId).not.toBe(before[2].entryId);
+  expect(mix.start).toHaveBeenCalledTimes(2);
+  expect(mix.start.mock.calls[1][0]).toMatchObject({ position: 42 });
+  expect(api.prepare).toHaveBeenCalledWith('a', expect.anything(), 'current'); // its PCM is fetched again
+});

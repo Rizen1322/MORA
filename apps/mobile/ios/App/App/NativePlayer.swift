@@ -90,6 +90,12 @@ final class NativePlayerModel: ObservableObject {
     }
 
     func jump(_ row: NativePlayerRow) { shell?.run("queueJump", ["entryId": row.id]) }
+    /// «Выбрать версию»: the page's version picker (VersionPanel) opens over the WebView, so this sheet steps aside.
+    func pickVersion(_ entryId: String) {
+        guard let shell, !entryId.isEmpty else { return }
+        shell.run("version", ["entryId": entryId])
+        close("close")
+    }
     func remove(_ offsets: IndexSet) {
         var rows = upcoming
         let gone = offsets.map { rows[$0].id }
@@ -219,6 +225,7 @@ struct NativePlayerView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityElement(children: .combine)
+                .contextMenu { versionAction(s.entryId) }
                 if let shell = model.shell { RatingButtons(shell: shell, trackId: s.trackId) }
             }
             NativeScrubber(state: s, receivedAt: model.receivedAt, pending: model.scrub) { model.seek(to: $0) }
@@ -259,6 +266,12 @@ struct NativePlayerView: View {
         .sheet(isPresented: $queueOpen) { NativeQueueView(model: model) }
     }
 
+    @ViewBuilder private func versionAction(_ entryId: String) -> some View {
+        if model.shell != nil {
+            Button { model.pickVersion(entryId) } label: { Label("Выбрать версию", systemImage: "waveform") }
+        }
+    }
+
     private var backdrop: some View {
         ZStack {
             LinearGradient(colors: [Color(red: 0.10, green: 0.24, blue: 0.17), .moraBackground], startPoint: .top, endPoint: .bottom)
@@ -286,6 +299,7 @@ struct NativePlayerView: View {
             .shadow(color: .black.opacity(0.6), radius: playing ? 30 : 14, y: playing ? 20 : 10)
             .scaleEffect(playing || reduceMotion ? 1 : 0.84)
             .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.75), value: playing)
+            .contextMenu { versionAction(model.state.entryId) }
             .layoutPriority(-1)
             .accessibilityHidden(true)
     }
@@ -348,6 +362,11 @@ private struct NativeQueueView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(!editable)
+                    .contextMenu {
+                        if editable {
+                            Button { model.pickVersion(row.id) } label: { Label("Выбрать версию", systemImage: "waveform") }
+                        }
+                    }
                     .accessibilityElement(children: .combine)
                     .accessibilityHint("Играть сейчас")
                     // Drag reordering is not reachable with VoiceOver.

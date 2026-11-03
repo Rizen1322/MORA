@@ -148,6 +148,14 @@ describe('public recordings in the library', () => {
     const audio = await a.app.inject({ method: 'GET', url: `/api/tracks/${original}/audio`, headers: { range: 'bytes=0-15' } });
     expect(audio.statusCode).toBe(206);
     expect(audio.rawPayload.subarray(0, 4).toString()).toBe('RIFF');
+    // Title and artist stay the track's own; only the recording behind it changes.
+    a.services.db.prepare('UPDATE tracks SET title = ? WHERE id = ?').run('Other upload', other);
+    expect(a.services.lib.trackDTO(original)).toMatchObject({ title: 'Upload title', binding: { assetId: other, title: 'Other upload' } });
+    // The choice survives a restart.
+    await a.close();
+    a = await createApp({ dataDir: path.join(dir, 'data'), analysisWorkers: 1, stemsPython: null, port: 0 }, { startWorkers: false });
+    (a.services.publicMusic.ytdlp as unknown as { download: typeof download }).download = download;
+    expect(a.services.lib.mediaId(original)).toBe(other);
     await post(`/api/tracks/${original}/binding`, { assetId: null });
     expect(a.services.lib.mediaId(original)).toBe(original);
   });
