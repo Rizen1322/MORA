@@ -6,7 +6,8 @@ struct NativePlayerRow: Equatable, Identifiable {
     let title: String
     let artist: String
     let automix: Bool
-    let cover: URL?
+    /// HTTPS, or a library cover (/api/...) that the page serves.
+    let cover: String?
 }
 
 struct NativePlayerState: Equatable {
@@ -14,6 +15,8 @@ struct NativePlayerState: Equatable {
     var title = "", artist = "", entryId = ""
     var position = 0.0, duration = 0.0
     var upcoming: [NativePlayerRow] = []
+    /// Where the AutoMix transition into the next track starts and how long it lasts (seconds), if planned.
+    var mixStart: Double?, mixLength = 0.0
 
     init() {}
     init(_ value: [String: Any]) {
@@ -27,7 +30,14 @@ struct NativePlayerState: Equatable {
         entryId = value["entryId"] as? String ?? current["entryId"] as? String ?? ""
         duration = max(0, value["duration"] as? Double ?? 0)
         position = min(duration, max(0, value["position"] as? Double ?? 0))
-        upcoming = Self.queue(current: entryId, prepared: value["upcoming"] as? [[String: Any]] ?? [],
+        let prepared = value["upcoming"] as? [[String: Any]] ?? []
+        if let start = (value["transitionStart"] as? NSNumber)?.doubleValue, start.isFinite, start >= 0, start < duration {
+            mixStart = start
+            // The native mixer runs at 48 kHz (NativeMixHost refuses other rates).
+            let frames = ((prepared.first?["transition"] as? [String: Any])?["durationFrames"] as? NSNumber)?.doubleValue ?? 0
+            mixLength = min(duration - start, max(0, frames.isFinite ? frames / 48000 : 0))
+        }
+        upcoming = Self.queue(current: entryId, prepared: prepared,
                               manifest: value["manifestItems"] as? [[String: Any]] ?? [])
     }
 
@@ -41,10 +51,10 @@ struct NativePlayerState: Equatable {
 
     /// Prepared tracks after the audible one, then the manifest items not prepared yet.
     static func queue(current: String, prepared: [[String: Any]], manifest: [[String: Any]]) -> [NativePlayerRow] {
-        var covers: [String: URL] = [:]
+        var covers: [String: String] = [:]
         for item in manifest {
             if let id = item["entryId"] as? String, let text = item["coverUrl"] as? String,
-               let url = URL(string: text), url.scheme == "https" { covers[id] = url }
+               text.hasPrefix("https://") || text.hasPrefix("/api/") { covers[id] = text }
         }
         var rows: [NativePlayerRow] = [], seen: Set<String> = [current]
         func add(_ item: [String: Any], automix: Bool) {

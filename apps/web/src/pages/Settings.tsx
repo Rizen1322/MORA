@@ -4,6 +4,7 @@ import { desktop } from '../lib/desktop.ts';
 import { api, type StemGpu, type StemHealth } from '../lib/api.ts';
 import { plural } from '../lib/format.ts';
 import { useApp } from '../store/app.ts';
+import { enableNativeUi, nativeUiDisabled } from '../lib/native-ui.ts';
 import { ConfirmModal, Switch } from '../components/common.tsx';
 import { TransitionSummary } from '../components/TransitionSummary.tsx';
 import { PlaylistBackup } from '../components/PlaylistBackup.tsx';
@@ -424,6 +425,7 @@ export function MorePage() {
   return (
     <div className="main-inner">
       <h1 className="page-title">Ещё</h1>
+      {nativeUiDisabled() && <button className="btn btn-secondary" style={{ marginBottom: 16 }} onClick={enableNativeUi}>Включить нативный интерфейс</button>}
       <div className="more-grid">
         {items.map(({ href, label, hint, Icon }) => (
           <a key={href} href={href} className="more-tile">

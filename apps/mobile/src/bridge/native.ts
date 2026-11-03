@@ -20,6 +20,7 @@ interface MoraAudio extends NativeDiagnostics, NativeProbePort, NativeMixPort {
   power(): Promise<Power>;
   secretKey(): Promise<{ key: string }>;
   nativePlayerPresent(): Promise<{ action: 'close' | 'more' }>;
+  nativeUiState(state: Record<string, unknown>): Promise<{ shown: boolean }>;
 }
 /** ProcessInfo.thermalState (0 nominal … 3 critical) and Low Power Mode. */
 interface Power { thermal: number; lowPower: boolean }
@@ -143,6 +144,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
   const controls: NativePlaybackControls = {
     route: 'webkit',
     presentPlayer: () => MoraAudio.nativePlayerPresent(),
+    uiState: (state) => MoraAudio.nativeUiState(state),
     setRoute(route) {
       const change = routeQueue.then(async () => {
         if (controls.probeActive) throw new Error('Stop native audio probe before changing routes');

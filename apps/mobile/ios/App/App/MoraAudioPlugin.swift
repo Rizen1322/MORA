@@ -65,6 +65,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativePrepareQueue", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativePlayerPresent", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeLevels", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeUiState", returnType: CAPPluginReturnPromise),
     ]
 
     private var playing = false
@@ -423,6 +424,15 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
                 call.reject("Native player unavailable"); return
             }
             NativePlayerSheet.present(host: self.nativeMix, from: vc) { call.resolve(["action": $0]) }
+        }
+    }
+    /// iPhone native shell (NativeShell.swift): the page's snapshot; resolves with whether the shell is on screen.
+    @objc func nativeUiState(_ call: CAPPluginCall) {
+        let state = call.options as? [String: Any] ?? [:]
+        DispatchQueue.main.async {
+            guard let root = self.bridge?.viewController?.parent as? MoraRootViewController else { call.resolve(["shown": false]); return }
+            root.installShell(host: self.nativeMix, webView: self.bridge?.webView)
+            call.resolve(["shown": root.shell.receive(state)])
         }
     }
 }

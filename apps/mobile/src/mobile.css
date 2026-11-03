@@ -739,3 +739,7 @@ html.mora-mobile :is(main, .queue-panel, .lyrics-panel, .fp-body) { -webkit-over
   max-height: 40vh;
   overflow: auto;
 }
+
+/* Native SwiftUI shell (ios/App/App/NativeShell.swift) draws the tab bar and the mini player over the
+   web pages that are not ported yet; the web ones would sit under them. */
+html.mora-native-shell :is(.tabbar, .mini-player) { display: none !important; }

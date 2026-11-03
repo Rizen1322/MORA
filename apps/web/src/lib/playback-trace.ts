@@ -21,6 +21,8 @@ export interface NativePlaybackControls {
   setRoute(route: NavigationRoute): Promise<void>;
   /** iPhone: SwiftUI full player; resolves when it closes. */
   presentPlayer?: () => Promise<{ action: 'close' | 'more' }>;
+  /** iPhone: state for the native SwiftUI shell (lib/native-ui.ts); shown = the shell covers the web tab bar. */
+  uiState?: (state: Record<string, unknown>) => Promise<{ shown: boolean }>;
 }
 export interface PlaybackDiagnostics {
   currentId?: string;
