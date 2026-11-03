@@ -61,6 +61,10 @@ pub struct Transition {
     echo_delay_frames: Option<f64>,
     echo_feedback: Option<f64>,
     #[serde(default)]
+    echo_lowpass_hz: Option<f64>,
+    #[serde(default)]
+    echo_width: Option<f64>,
+    #[serde(default)]
     vocal_a: Option<Points>,
     #[serde(default)]
     vocal_b: Option<Points>,
@@ -129,6 +133,9 @@ impl Transition {
             .any(|p| !(0.25..=4.).contains(&p[1]))
         {
             return Err("Invalid tempo".into());
+        }
+        if self.echo_lowpass_hz.into_iter().chain(self.echo_width).any(|x| !x.is_finite() || x < 0.) {
+            return Err("Invalid echo".into());
         }
         Ok(())
     }
@@ -630,7 +637,12 @@ impl Musical {
             });
         }
         if let Some(delay) = tr.echo_delay_frames.filter(|d| *d != 0.) {
-            self.echo.configure(delay, tr.echo_feedback.unwrap_or(0.5));
+            self.echo.configure_with(
+                delay,
+                tr.echo_feedback.unwrap_or(0.5),
+                tr.echo_lowpass_hz.unwrap_or(6000.),
+                tr.echo_width.unwrap_or(0.),
+            );
         }
         let throw = tr
             .lanes

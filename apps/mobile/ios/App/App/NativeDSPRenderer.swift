@@ -991,17 +991,24 @@ final class Echo {
     private let L: FBuf, R: FBuf
     private var pos = 0, delay = 1, feedback = 0.5
     private var hpL = 0.0, hpR = 0.0, hpXL = 0.0, hpXR = 0.0, lpL = 0.0, lpR = 0.0
-    private let hpA: Double, lpA: Double
+    private let hpA: Double, sampleRate: Double
+    private var lpA: Double
+    /// L<->R cross-feed of the repeats, 0..1 (1 = ping-pong)
+    private var width = 0.0
     private var zeros: Int
     private var out = 1.0, outStep = 0.0
     init(_ sampleRate: Double) {
         let n = Int((sampleRate * 2.5).rounded(.up))
         L = FBuf(n, 0); R = FBuf(n, 0); zeros = n
+        self.sampleRate = sampleRate
         hpA = exp((-2 * Double.pi * 250) / sampleRate)
         lpA = 1 - exp((-2 * Double.pi * 6000) / sampleRate)
     }
-    func configure(_ delayFrames: Double, _ feedback: Double) {
+    /// lowpassHz damps the repeats in the feedback loop (default 6 kHz); width cross-feeds them L<->R.
+    func configure(_ delayFrames: Double, _ feedback: Double, _ lowpassHz: Double = 6000, _ width: Double = 0) {
         reset()
+        lpA = 1 - exp((-2 * Double.pi * max(200, min(16000, lowpassHz))) / sampleRate)
+        self.width = max(0, min(1, width))
         delay = max(1, min(L.count - 1, jsRoundInt(delayFrames)))
         self.feedback = max(0, min(0.85, feedback))
     }
@@ -1024,8 +1031,15 @@ final class Echo {
             let hL = hpA * (hpL + yL - hpXL), hR = hpA * (hpR + yR - hpXR)
             hpXL = yL; hpXR = yR; hpL = hL; hpR = hR
             lpL += lpA * (hL - lpL); lpR += lpA * (hR - lpR)
-            L[pos] = Float(Double(inL[i]) + lpL * feedback)
-            R[pos] = Float(Double(inR[i]) + lpR * feedback)
+            if width == 0 {
+                L[pos] = Float(Double(inL[i]) + lpL * feedback)
+                R[pos] = Float(Double(inR[i]) + lpR * feedback)
+            } else {
+                // ping-pong: the send leans into the left ring and each pass swaps sides by width
+                let w = width, xl = Double(inL[i]), xr = Double(inR[i]), m = (xl + xr) * 0.5
+                L[pos] = Float(xl * (1 - w) + m * w + (lpL * (1 - w) + lpR * w) * feedback)
+                R[pos] = Float(xr * (1 - w) + (lpR * (1 - w) + lpL * w) * feedback)
+            }
             zeros = L[pos] == 0 && R[pos] == 0 ? zeros + 1 : 0
             pos = pos + 1 == N ? 0 : pos + 1
         }
@@ -1063,7 +1077,7 @@ struct ArmedTransition {
     var tempoB: [LanePoint], tempoA: [LanePoint]?
     var loopA: SourceLoop?, tapeStopA: SourceTapeStop?
     var lanes: [Lane]
-    var echoDelayFrames: Double?, echoFeedback: Double?
+    var echoDelayFrames: Double?, echoFeedback: Double?, echoLowpassHz: Double?, echoWidth: Double?
     /** Vocal stems or a vocal throw: not playable natively. */
     var usesVocals = false
 
@@ -1093,6 +1107,7 @@ struct ArmedTransition {
         }
         self.lanes = parsed
         echoDelayFrames = num("echoDelayFrames"); echoFeedback = num("echoFeedback")
+        echoLowpassHz = num("echoLowpassHz"); echoWidth = num("echoWidth")
         if let l = raw["loopA"] as? [String: Any], let s = l["start"] as? Int, let e = l["end"] as? Int,
            let u = l["until"] as? Int, let f = l["fade"] as? Int {
             let roll = (l["roll"] as? [[String: Any]])?.compactMap { r -> (at: Int, length: Int)? in
@@ -1571,7 +1586,7 @@ final class MixerCore {
         b.stopWhenSilent = false
         b.pendingSeek = nil
         b.endedNotified = false
-        if let delay = tr.echoDelayFrames, delay != 0 { echo.configure(delay, tr.echoFeedback ?? 0.5) }
+        if let delay = tr.echoDelayFrames, delay != 0 { echo.configure(delay, tr.echoFeedback ?? 0.5, tr.echoLowpassHz ?? 6000, tr.echoWidth ?? 0) }
         b.tempo = (origin: clock + (tr.gapFrames > 0 ? tr.durationFrames + tr.gapFrames : tr.bDelayFrames ?? 0), points: tr.tempoB)
         if let tempoA = tr.tempoA, !tempoA.isEmpty { a.tempo = (origin: clock, points: tempoA) }
         b.lanes = evalLanes(tr, false, 0)

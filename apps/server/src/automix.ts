@@ -163,7 +163,7 @@ export class AutoMixService {
     if (pending.length) this.analysis.prioritize(pending, PRIORITY.next);
     const feedback = this.ratingStats();
     const key = fnv1a(
-      [a.id, b.id, a.content_hash, b.content_hash, ANALYZER_VERSION, PLANNER_VERSION, 'transition-styles-6-echo-soft', JSON.stringify(settings), pa.mixingAllowed, pb.mixingAllowed,
+      [a.id, b.id, a.content_hash, b.content_hash, ANALYZER_VERSION, PLANNER_VERSION, 'transition-styles-7-echo-flavors', JSON.stringify(settings), pa.mixingAllowed, pb.mixingAllowed,
         a.album, b.album, pa.albumArtist, pb.albumArtist, a.track_no, b.track_no, a.disc_no, b.disc_no, !!pa.analysis, !!pb.analysis,
         // new ratings make new plans; without any the key stays as before
         vocalKey(pa.analysis?.vocalActivity),vocalKey(pb.analysis?.vocalActivity), ...(feedback ? [feedback.version] : [])].join('|'),

@@ -333,8 +333,11 @@ export interface TransitionPlan {
   vocalA?: [number, number][];
   vocalB?: [number, number][];
   automation: AutomationLane[];
-  /** Tempo-synced echo used by the 'echo' send lane (echo-out of A). */
-  echo?: { delay: number; feedback: number };
+  /** Tempo-synced echo used by the 'echo' send lane (echo-out of A). `lowpass` (Hz, default 6000) damps
+   * the repeats inside the feedback loop; `width` (0..1, default 0) cross-feeds them L<->R (1 = ping-pong). */
+  echo?: { delay: number; feedback: number; lowpass?: number; width?: number };
+  /** Character of an automatic drop-swap echo out: damped freeze wash, dub ping-pong, or tape brake. */
+  echoFlavor?: 'washout' | 'dub' | 'brake';
   /** Echo used by the 'voiceEcho' lane: repeats A's last sung word and dies out before B's voice opens. */
   voiceEcho?: { delay: number; feedback: number; clearAt?: number };
   /** Static loudness normalization gains, dB. */

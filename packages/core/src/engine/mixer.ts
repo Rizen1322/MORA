@@ -46,6 +46,9 @@ export interface ArmedTransition {
   /** Echo delay (frames) and feedback for the echo send lane. */
   echoDelayFrames?: number;
   echoFeedback?: number;
+  /** Damping low-pass (Hz) inside the echo feedback loop and L<->R cross-feed (0..1). */
+  echoLowpassHz?: number;
+  echoWidth?: number;
   /** Delay/feedback of the separate echo fed only by A's audible voice (lane 5). */
   voiceEchoDelayFrames?: number;
   voiceEchoFeedback?: number;
@@ -138,7 +141,10 @@ export class Echo {
   private lpL = 0;
   private lpR = 0;
   private readonly hpA: number;
-  private readonly lpA: number;
+  private lpA: number;
+  /** L<->R cross-feed of the repeats, 0..1 (1 = ping-pong: input enters left, repeats alternate). */
+  private width = 0;
+  private readonly sampleRate: number;
   /** Consecutive ring writes that were exact zeros on both channels; at the ring length it is empty. */
   private zeros: number;
 
@@ -147,6 +153,7 @@ export class Echo {
     this.L = new Float32Array(n);
     this.R = new Float32Array(n);
     this.zeros = n;
+    this.sampleRate = sampleRate;
     this.hpA = Math.exp((-2 * Math.PI * 250) / sampleRate);
     this.lpA = 1 - Math.exp((-2 * Math.PI * 6000) / sampleRate);
   }
@@ -168,8 +175,11 @@ export class Echo {
     this.outStep = 1 / Math.max(1, frames);
   }
 
-  configure(delayFrames: number, feedback: number): void {
+  /** lowpassHz damps the repeats in the feedback loop (default 6 kHz); width cross-feeds them. */
+  configure(delayFrames: number, feedback: number, lowpassHz = 6000, width = 0): void {
     this.reset();
+    this.lpA = 1 - Math.exp((-2 * Math.PI * Math.max(200, Math.min(16000, lowpassHz))) / this.sampleRate);
+    this.width = Math.max(0, Math.min(1, width));
     this.delay = Math.max(1, Math.min(this.L.length - 1, Math.round(delayFrames)));
     // 0.85 keeps runaway away: the ring is high-passed (250 Hz) and low-passed (6 kHz) on every pass
     this.feedback = Math.max(0, Math.min(0.85, feedback));
@@ -212,8 +222,16 @@ export class Echo {
       this.hpR = hR;
       this.lpL += this.lpA * (hL - this.lpL);
       this.lpR += this.lpA * (hR - this.lpR);
-      this.L[this.pos] = inL[i] + this.lpL * this.feedback;
-      this.R[this.pos] = inR[i] + this.lpR * this.feedback;
+      const w = this.width;
+      if (w === 0) {
+        this.L[this.pos] = inL[i] + this.lpL * this.feedback;
+        this.R[this.pos] = inR[i] + this.lpR * this.feedback;
+      } else {
+        // ping-pong: the send leans into the left ring and each pass swaps sides by width
+        const m = (inL[i] + inR[i]) * 0.5;
+        this.L[this.pos] = inL[i] * (1 - w) + m * w + (this.lpL * (1 - w) + this.lpR * w) * this.feedback;
+        this.R[this.pos] = inR[i] * (1 - w) + (this.lpR * (1 - w) + this.lpL * w) * this.feedback;
+      }
       this.zeros = this.L[this.pos] === 0 && this.R[this.pos] === 0 ? this.zeros + 1 : 0;
       this.pos = this.pos + 1 === N ? 0 : this.pos + 1;
     }
@@ -1182,7 +1200,7 @@ export class MixerCore {
     b.stopWhenSilent = false;
     b.pendingSeek = null;
     b.endedNotified = false;
-    if (tr.echoDelayFrames) this.echo.configure(tr.echoDelayFrames, tr.echoFeedback ?? 0.5);
+    if (tr.echoDelayFrames) this.echo.configure(tr.echoDelayFrames, tr.echoFeedback ?? 0.5, tr.echoLowpassHz ?? 6000, tr.echoWidth ?? 0);
     const throwLane = tr.lanes.some((l) => l.deck === 'A' && l.lane === 5 && l.points.some(([, v]) => v > 0));
     if (throwLane && tr.voiceEchoDelayFrames && a.vocalSource.getMap()) {
       this.voiceEcho.configure(tr.voiceEchoDelayFrames, tr.voiceEchoFeedback ?? 0.4);

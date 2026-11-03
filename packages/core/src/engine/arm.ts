@@ -27,6 +27,8 @@ export function planToArmed(plan: TransitionPlan, sampleRate: number, fromToken:
     vocalB: plan.vocalB?.map(([t, gain]) => [f(t), gain] as [number, number]),
     echoDelayFrames: plan.echo ? f(plan.echo.delay) : undefined,
     echoFeedback: plan.echo?.feedback,
+    echoLowpassHz: plan.echo?.lowpass,
+    echoWidth: plan.echo?.width,
     voiceEchoDelayFrames: plan.voiceEcho ? f(plan.voiceEcho.delay) : undefined,
     voiceEchoFeedback: plan.voiceEcho?.feedback,
     voiceEchoClearFrame: Number.isFinite(plan.voiceEcho?.clearAt) && plan.voiceEcho!.clearAt! >= 0 && plan.voiceEcho!.clearAt! <= plan.duration ? f(plan.voiceEcho!.clearAt!) : undefined,

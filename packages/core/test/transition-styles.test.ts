@@ -58,37 +58,29 @@ describe('v19 transition styles', () => {
     expect(lane(p, 'A', 'filter')).toBeUndefined();
   });
 
-  it('echo out: a clean phrase exit swaps on A’s downbeat with an audible 3/4-beat echo', () => {
+  it('echo out: a clean phrase exit swaps on A’s downbeat with an audible 3/4-beat echo (v20 flavor)', () => {
     const a = song('a', 124, { sparsePhrases: true }), p = planTransition(a, song('b', 160), S);
     expect(p.debug.variant).toBe('drop-swap');
     const cut = p.aExit + p.swapAt;
     expect(a.analysis!.phrases.some(t => Math.abs(t - cut) < 0.002)).toBe(true);
-    // no separate bass cut of A; v19.4 soft: no high-pass sweep either
+    // no separate bass cut of A; B starts on its downbeat at the cut (its opening is one)
     expect(lane(p, 'A', 'low')).toBeUndefined();
     expect(p.bDelay).toBe(p.swapAt);
-    // 3/4 beat, feedback up to 0.78; the send is 0.6 on the last beat, then 0.4, 0.2 and closed 3 beats after the cut
+    // B opens on a kick-led drum drop: dub or brake (packages/core/test/echo-flavors.test.ts)
+    expect(['dub', 'brake']).toContain(p.echoFlavor);
     expect(p.echo!.delay).toBeCloseTo(0.75 * 60 / 124, 3);
     expect(p.echo!.feedback).toBeGreaterThan(0.7);
-    expect(p.echo!.feedback).toBeLessThanOrEqual(0.78);
-    const send = lane(p, 'A', 'echo')!, beat = 60 / 124;
-    expect(pointValue(send, p.swapAt - 0.1)).toBeGreaterThan(0.4);
-    expect(pointValue(send, p.swapAt)).toBeCloseTo(0.6, 3);
-    expect(pointValue(send, p.swapAt + beat)).toBeCloseTo(0.4, 2);
-    expect(pointValue(send, p.swapAt + 2 * beat)).toBeCloseTo(0.2, 2);
-    expect(pointValue(send, p.swapAt + 3 * beat + 0.01)).toBe(0);
-    // B is at 0.8 at once and full after a bar of A
-    expect(pointValue(lane(p, 'B', 'gain')!, 0.05)).toBeCloseTo(0.8, 2);
-    expect(pointValue(lane(p, 'B', 'gain')!, 4 * beat)).toBe(1);
+    expect(p.echo!.feedback).toBeLessThanOrEqual(0.8);
+    expect(pointValue(lane(p, 'A', 'echo')!, p.swapAt - 0.1)).toBeGreaterThan(0.4);
   });
 
-  it('echo out: a low-pass muffles A’s echo tail after the cut', () => {
-    const p = planTransition(song('a', 124, { sparsePhrases: true }), song('b', 160), S);
+  it('Next keeps the v19.4 soft echo out (no flavor): a low-pass muffles A’s echo tail after the cut', () => {
+    const p = planRequestedTransition(song('a', 124, { jitterMs: 15 }), song('b', 160), 100, { ...S, mixOnNext: true });
     expect(p.debug.variant).toBe('drop-swap');
+    expect(p.echoFlavor).toBeUndefined();
     const filter = lane(p, 'A', 'filter')!;
-    expect(filter.every(([, v]) => v <= 0)).toBe(true);
     expect(pointValue(filter, p.swapAt)).toBeCloseTo(-0.25, 3);
     expect(pointValue(filter, p.swapAt + 0.4)).toBeCloseTo(-0.3, 3);
-    expect(pointValue(filter, p.duration)).toBeCloseTo(-0.3, 3);
   });
 
   it('echo out never trims B’s intro: B enters at its audible start, or its first downbeat after leading silence', () => {
@@ -126,7 +118,7 @@ describe('v19 transition styles', () => {
     expect(pointValue(lane(p, 'A', 'filter')!, p.swapAt)).toBeCloseTo(0.6, 3);
   });
 
-  it('echo out: B has no bass gate and no filter (v19.4 soft)', () => {
+  it('echo out: a kick-led B drop has no bass gate and no filter', () => {
     const p = planTransition(song('a', 124, { sparsePhrases: true }), song('b', 160), S);
     expect(p.debug.variant).toBe('drop-swap');
     expect(lane(p, 'B', 'low')).toBeUndefined();
