@@ -7,7 +7,7 @@ it('protects and validates station requests and carries Yandex attribution', asy
   const app = Fastify();
   const wave = vi.fn(async () => ({ sessionId: 'session', batchId: 'batch', items: [{ trackId: 'new', yandexId: '42:1' }, { trackId: 'queued', yandexId: '10:2' }] }));
   const services = { cfg: { desktopPlaybackToken: 'secret' }, db: { prepare: () => ({ get: () => undefined }) },
-    lib: { sources: (id: string) => id === 'queued' ? [{ provider: 'yandex', kind: 'remote', external_id: '10:2' }] : [] },
+    lib: { listDTO: () => [], sources: (id: string) => id === 'queued' ? [{ provider: 'yandex', kind: 'remote', external_id: '10:2' }] : [] },
     providers: { yandex: { wave } } } as unknown as Services;
   registerNativeStationRoutes(app, services);
   const payload = { kind: 'yandex', exclude: ['queued'], yandexSessionId: 'previous', count: 2 };
@@ -34,5 +34,22 @@ it('starts an explicit online seed and prepares only the requested selections', 
     expect(response.statusCode).toBe(200);
     expect(response.json().entries[0].trackId).toBe('local-seed');
     expect(prepareProgressive).toHaveBeenCalledTimes(2);
+  } finally { await app.close(); }
+});
+
+it('rechecks committed local dislikes after a Yandex station request completes', async () => {
+  const app = Fastify();
+  let reaction = 0;
+  const services = { cfg: { desktopPlaybackToken: 'secret' }, db: { prepare: () => ({ get: () => undefined }) },
+    lib: { listDTO: () => [{ id: 'blocked', reaction }], sources: () => [] },
+    providers: { yandex: { wave: async () => {
+      reaction = -1;
+      return { sessionId: 'session', batchId: 'batch', items: [{ trackId: 'blocked', yandexId: '42:1' }, { trackId: 'safe', yandexId: '43:1' }] };
+    } } } } as unknown as Services;
+  registerNativeStationRoutes(app, services);
+  try {
+    const response = await app.inject({ method: 'POST', url: '/internal/desktop/station-next', headers: { 'x-mora-desktop-token': 'secret' }, payload: { kind: 'yandex', exclude: [] } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().entries.map((e: { trackId: string }) => e.trackId)).toEqual(['safe']);
   } finally { await app.close(); }
 });

@@ -45,6 +45,14 @@ try {
   const created = await createApp({ host: '127.0.0.1', port: wanted, accessToken: token, desktopPlaybackToken });
   close = created.close;
   analysis = created.services.analysis;
+  const syncDislikes = () => parent.postMessage({ type: 'reactions', dislikedTrackIds: created.services.lib.listDTO().filter(t => t.reaction < 0).map(t => t.id) });
+  // Library events arrive per track during imports; one full scan per burst is enough.
+  let reactionTimer: NodeJS.Timeout | undefined;
+  const unsubscribeReactions = created.services.events.on(event => {
+    if (event.type === 'library' && !reactionTimer) reactionTimer = setTimeout(() => { reactionTimer = undefined; syncDislikes(); }, 100);
+  });
+  created.app.addHook('onClose', async () => { unsubscribeReactions(); clearTimeout(reactionTimer); });
+  syncDislikes();
   try {
     await created.app.listen({ host: '127.0.0.1', port: wanted });
   } catch (e) {

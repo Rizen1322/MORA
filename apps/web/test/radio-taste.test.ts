@@ -28,6 +28,10 @@ describe('personal online radio ranking', () => {
     const seen = new Set([radioIdentity(a)]);
     expect(rankRadio([{...a,audioProvider:'soundcloud'},b], [track('b','two',{lastPlayedAt:Date.now(),reaction:1})], seen, [], tune)).toEqual([]);
   });
+  it('keeps an explicit library dislike blocked when provider metadata differs', () => {
+    const lib = [track('original title', 'original artist', { id: 'recording', reaction: -1 })];
+    expect(rankRadio([candidate('alternate title', 'other spelling', { libraryTrackId: 'recording' })], lib, new Set(), [], tune)).toEqual([]);
+  });
   it('balances familiar favourites and discoveries', () => {
     const lib = [track('like','one',{reaction:1})], items=[candidate('new','new artist'),candidate('like','one')];
     expect(rankRadio(items,lib,new Set(),[],{...tune,diversity:'familiar'})[0].title).toBe('like');

@@ -1429,6 +1429,15 @@ export class PlayerController {
   /** Settings: "Next" switches at once (no musical blend) when true. */
   instantNext = false;
 
+  /** Drop future copies and cut the current recording after a saved dislike. */
+  async applyDislike(trackId: string): Promise<void> {
+    // Desktop hosts receive the committed reaction directly from the backend.
+    if (this.autonomousRadio) return;
+    const queue = this.state.queue.filter((entry, i) => i <= this.state.index || entry.trackId !== trackId);
+    if (queue.length !== this.state.queue.length) { this.set({ queue }); this.onQueueChanged(); }
+    if (this.currentEntry?.trackId === trackId) await this.nextTrack('dislike');
+  }
+
   /** User pressed "next". */
   async nextTrack(reason: 'skip' | 'dislike' = 'skip'): Promise<void> {
     this.traceAction('nexttrack');

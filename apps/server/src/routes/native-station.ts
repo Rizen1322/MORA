@@ -35,7 +35,8 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
         const queue = [...excluded].flatMap(id => s.lib.sources(id).filter(src => src.provider === 'yandex' && src.kind === 'remote' && isYandexTrackId(src.external_id ?? '')).map(src => src.external_id!)).slice(-200);
         const result = await s.providers.yandex.wave(b.yandexSessionId, queue, { count: Math.min(count, 4), exclude: queue, seeds: settings.yandexSeeds });
         abort.signal.throwIfAborted();
-        const entries = result.items.filter(item => item.trackId && !excluded.has(item.trackId)).slice(0, count).map(item => ({ trackId: item.trackId!, entryId: randomUUID(), origin: 'yandex', yandexId: item.yandexId, yandexSessionId: result.sessionId, yandexBatchId: result.batchId }));
+        const disliked = new Set(s.lib.listDTO().filter(t => t.reaction < 0).map(t => t.id));
+        const entries = result.items.filter(item => item.trackId && !excluded.has(item.trackId) && !disliked.has(item.trackId)).slice(0, count).map(item => ({ trackId: item.trackId!, entryId: randomUUID(), origin: 'yandex', yandexId: item.yandexId, yandexSessionId: result.sessionId, yandexBatchId: result.batchId }));
         if (!entries.length) throw new Error('Пока нет рекомендаций Яндекса');
         return { entries, context: { type: 'yandex-wave', label: 'Моя волна Яндекса' }, yandexSessionId: result.sessionId };
       }

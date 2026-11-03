@@ -71,7 +71,7 @@ try {
   let port = 0;
   playback = await createPlaybackHost(created.app, profile, resources, () => ({
     origin: `http://127.0.0.1:${port}`, accessToken: token, pcmToken: desktopPlaybackToken,
-  }));
+  }), created.services);
   close = async (preserve = false) => { await playback?.close(preserve); await created.close(); };
   try { await created.app.listen({ host: '127.0.0.1', port: wanted }); }
   catch (e) {

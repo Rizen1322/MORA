@@ -22,6 +22,7 @@ const resources = app.isPackaged ? process.resourcesPath : path.join(here, '..',
 const assets = path.join(here, '..', 'assets');
 let desktopPlayback = null;
 let desktopPlaybackLoading = null;
+let dislikedTrackIds = [];
 let hiddenTelemetryAt = 0;
 const rustAudio = new RustAudio(path.join(resources, 'audio', 'mora-audio.exe'), event => {
   desktopPlayback?.onEvent(event);
@@ -96,6 +97,7 @@ function playbackHost() {
         return { origin, accessToken: launchToken, pcmToken: desktopPlaybackToken };
       }, ready: rate => { windowsMedia.reset(); windowsMedia.start(rate); }, track: track => windowsMedia.track(track),
     });
+    await desktopPlayback.applyDislikes(dislikedTrackIds);
     await desktopPlayback.setDevice(settings.audio.outputDevice);
     await desktopPlayback.settings(audioOutputSettings(settings.audio));
     return desktopPlayback;
@@ -274,6 +276,10 @@ async function startBackend(port = 0) {
     proc.on('message', (m) => {
       if (m?.type === 'ready') { clearTimeout(timer); b.port = m.port; resolve(m.port); powerWatch?.resend(); }
       else if (m?.type === 'error') { clearTimeout(timer); reject(new Error(m.message)); }
+      else if (m?.type === 'reactions' && backend === b) {
+        dislikedTrackIds = m.dislikedTrackIds;
+        void desktopPlayback?.applyDislikes(dislikedTrackIds).catch(e => log(`reactions: ${e.message}`));
+      }
     });
     proc.once('exit', (code) => { clearTimeout(timer); reject(new Error(`backend exited with ${code}`)); });
   });

@@ -34,7 +34,7 @@ export function rankRadio<T extends PublicTrack>(items: T[], library: Track[], s
   const known = (t: Song & { libraryTrackId?: string | null }) => byKey.get(radioIdentity(t)) ?? (t.libraryTrackId ? byId.get(t.libraryTrackId) : undefined)
     ?? byTitle.get(normalizeMusic(t.title))?.find(x => artistsOf(x.artist).some(a => artistsOf(t.artist).includes(a)));
   let previous = anchor ? known(anchor) : undefined;
-  const blocked = (t: PublicTrack) => byTitle.get(normalizeMusic(t.title))?.some(x => x.reaction < 0 && artistsOf(x.artist).some(a => artistsOf(t.artist).includes(a)));
+  const blocked = (t: PublicTrack) => (t.libraryTrackId && (byId.get(t.libraryTrackId)?.reaction ?? 0) < 0) || byTitle.get(normalizeMusic(t.title))?.some(x => x.reaction < 0 && artistsOf(x.artist).some(a => artistsOf(t.artist).includes(a)));
   const unique = new Set<string>();
   const pool = items.filter(t => {
     const key = radioIdentity(t), id = `${t.audioProvider}:${t.externalId}`;

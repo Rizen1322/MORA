@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
+import type { Services } from '../server/src/app.ts';
 import { DesktopPlayback } from '../desktop/src/desktop-playback.ts';
 import { RustAudio } from '../desktop/src/rust-audio.mjs';
 import { WindowsMedia } from '../desktop/src/windows-media.mjs';
@@ -9,11 +10,15 @@ import { PlaybackRecovery, audioPreferences, audioOutputSettings } from '../desk
 
 /** The renderer can invoke only these playback operations; PCM credentials stay here. */
 export async function createPlaybackHost(app: FastifyInstance, profile: string, resources: string,
-  backend: () => { origin: string; accessToken: string; pcmToken: string }) {
+  backend: () => { origin: string; accessToken: string; pcmToken: string }, services: Pick<Services, 'events' | 'lib'>) {
   const clients = new Set<import('node:http').ServerResponse>();
-  const emit = (event: object) => {
+  const emit = (event: { type?: string }) => {
     const line = `data: ${JSON.stringify(event)}\n\n`;
-    for (const client of clients) if (!client.write(line)) { client.destroy(); clients.delete(client); }
+    for (const client of clients) {
+      if (client.destroyed || client.writableLength > 256 * 1024) { client.destroy(); clients.delete(client); continue; }
+      // Waveforms are disposable telemetry; backpressure is not a lost connection.
+      if (event.type !== 'waveform' || !client.writableNeedDrain) client.write(line);
+    }
   };
   const file = path.join(profile, 'desktop.json');
   let settings: any;
@@ -76,6 +81,13 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
   });
   const playback = new DesktopPlayback(audio, { backend,
     ready: rate => { media.reset(); media.start(rate); }, track: track => media.track(track) });
+  const syncDislikes = () => playback.applyDislikes(services.lib.listDTO().filter(t => t.reaction < 0).map(t => t.id));
+  // Library events arrive per track during imports; one full scan per burst is enough.
+  let reactionTimer: NodeJS.Timeout | undefined;
+  const unsubscribeReactions = services.events.on(event => {
+    if (event.type === 'library' && !reactionTimer) reactionTimer = setTimeout(() => { reactionTimer = undefined; void syncDislikes().catch(console.error); }, 100);
+  });
+  await syncDislikes();
   await playback.setDevice(settings.audio.outputDevice);
   await playback.settings(audioOutputSettings(settings.audio));
   const timer = setInterval(() => { try { checkpoint(); } catch (e) { console.error('playback checkpoint', e); } }, 2000);
@@ -86,7 +98,7 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
     reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
     reply.raw.write(': connected\n\n');
     clients.add(reply.raw);
-    request.raw.on('close', () => clients.delete(reply.raw));
+    reply.raw.on('close', () => clients.delete(reply.raw));
   });
   app.get('/api/desktop/audio-devices', async () => audio.devices());
   app.post<{ Body: { device?: unknown } }>('/api/desktop/audio-start', async request => {
@@ -113,7 +125,7 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
   app.post('/api/desktop/audio-stop', async () => { media.reset(); await playback.stop(); return null; });
   app.post<{ Body: unknown }>('/api/desktop/media-track', async request => { media.track(request.body); return null; });
   app.get('/api/desktop/settings', async () => ({ closeToTray: settings.closeToTray !== false,
-    dataDir: process.env.AUTOMIX_DATA_DIR, version: process.env.AUTOMIX_VERSION ?? '0.3.32-preview.1', backend: 'ready',
+    dataDir: process.env.AUTOMIX_DATA_DIR, version: process.env.AUTOMIX_VERSION ?? '0.3.33-preview.1', backend: 'ready',
     compact: false, compactOnTop: settings.compactOnTop !== false, audio: settings.audio }));
   const operations: Record<string, (...args: any[]) => Promise<unknown> | unknown> = {
     startStation: (station, config) => playback.startStation(station, config),
@@ -162,6 +174,7 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
       else if (audio.process) void audio.command({ cmd: 'pause', paused: true }).catch(console.error);
     },
     close: async (preserve = false) => {
+      unsubscribeReactions(); clearTimeout(reactionTimer);
       clearInterval(timer);
       artworkAbort?.abort();
       for (const client of clients) client.end();

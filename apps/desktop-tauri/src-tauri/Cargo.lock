@@ -2110,7 +2110,7 @@ dependencies = [
 
 [[package]]
 name = "mora-desktop-native"
-version = "0.3.32-preview.1"
+version = "0.3.33-preview.1"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",

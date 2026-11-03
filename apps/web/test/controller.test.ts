@@ -70,6 +70,17 @@ beforeEach(() => {
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); vi.unstubAllGlobals(); });
 
 describe('playlist transition recipes', () => {
+  it('prunes every future copy of a disliked recording and skips it in ordinary queues', async () => {
+    const { controller, h } = setup();
+    cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
+    const skip = vi.spyOn(controller, 'nextTrack').mockResolvedValue(undefined);
+    controller.state.queue.push({ trackId: 'b', entryId: 'duplicate', origin: 'user' });
+    await controller.applyDislike('b');
+    expect(controller.state.queue.map(e => e.trackId)).toEqual(['a', 'c']);
+    expect(skip).not.toHaveBeenCalled();
+    await controller.applyDislike('a');
+    expect(skip).toHaveBeenCalledWith('dislike');
+  });
   it('undoes future queue edits without restarting playback or writing listening history', () => {
     const { controller, h } = setup();
     cleanups.push(() => { if (h.saveTimer) clearTimeout(h.saveTimer); });
