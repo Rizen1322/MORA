@@ -1,7 +1,8 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use mora_audio::mixer::Mixer;
+use mora_audio::{analysis::Fft, levels::{BLOCK, band_levels}, mixer::Mixer};
 use serde_json::{Value, json};
 use std::{
+    collections::VecDeque,
     fs::File,
     io::{self, BufRead, BufReader, BufWriter, Read, Write},
     sync::{
@@ -168,6 +169,20 @@ fn offline(input: &str, pcm: &str, report: &str) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())
 }
+/// Sends queued acks/errors/events in order without ever blocking the render loop.
+fn flush(wire: &mpsc::SyncSender<Value>, backlog: &mut VecDeque<Value>) -> Result<(), String> {
+    while let Some(v) = backlog.pop_front() {
+        match wire.try_send(v) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(v)) => {
+                backlog.push_front(v);
+                break;
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => return Err("stdout closed".into()),
+        }
+    }
+    Ok(())
+}
 fn realtime(id: &str) -> Result<(), String> {
     let device = select(id)?;
     let c = config(&device, None)?;
@@ -213,10 +228,13 @@ fn realtime(id: &str) -> Result<(), String> {
     let mut last = Instant::now();
     let mut times = Vec::with_capacity(sr as usize / 128 + 32);
     let mut rendered = 0u64;
-    let mut waveform = Vec::with_capacity(2048);
+    let mut block = Vec::with_capacity(BLOCK);
+    let fft = Fft::new(BLOCK);
+    let mut backlog = VecDeque::<Value>::new();
     let mut quitting = false;
     let mut suspended = false;
     while !quitting {
+        flush(&wire, &mut backlog)?;
         for _ in 0..64 {
             let v = match receive.try_recv() {
                 Ok(v) => v,
@@ -252,11 +270,10 @@ fn realtime(id: &str) -> Result<(), String> {
                 }
                 _ => mixer.command(&v),
             };
-            wire.send(match result {
+            backlog.push_back(match result {
                 Ok(()) => json!({"type":"ack","request":v["request"]}),
                 Err(e) => json!({"type":"error","request":v["request"],"error":e}),
-            })
-            .map_err(|e| e.to_string())?;
+            });
         }
         if quitting {
             break;
@@ -277,18 +294,24 @@ fn realtime(id: &str) -> Result<(), String> {
             }
         }
         for event in mixer.take_events() {
-            wire.send(event).map_err(|e| e.to_string())?;
-        }
-        while let Ok(frame) = sink.capture.pop() {
-            if waveform.len() == 2048 {
-                let _ = wire.try_send(json!({"type":"waveform","samples":waveform}));
-                waveform.clear();
+            if event["type"] == "tick" {
+                let _ = wire.try_send(event); // telemetry: dropped when the pipe is full
+            } else {
+                backlog.push_back(event);
             }
-            waveform.push((frame[0] as f64 + frame[1] as f64) * 0.5);
+        }
+        flush(&wire, &mut backlog)?;
+        while let Ok(frame) = sink.capture.pop() {
+            block.push((frame[0] as f64 + frame[1] as f64) * 0.5);
+            if block.len() == BLOCK {
+                let (rms, bands) = band_levels(&fft, &block, sr);
+                let _ = wire.try_send(json!({"type":"levels","rms":rms,"bands":bands}));
+                block.clear();
+            }
         }
         if last.elapsed() >= Duration::from_secs(1) {
             let metrics = stats(&mut times, rendered, sr);
-            wire.send(json!({"type":"audioHealth","maxRenderMs":metrics["maxMs"],"slowBlocks":times.iter().filter(|t|**t>128000./sr as f64).count(),"p95Ms":metrics["p95Ms"],"p99Ms":metrics["p99Ms"],"deviceUnderruns":sink.underruns.load(Ordering::Relaxed),"presentedFrames":sink.presented.load(Ordering::Relaxed)})).map_err(|e|e.to_string())?;
+            let _ = wire.try_send(json!({"type":"audioHealth","maxRenderMs":metrics["maxMs"],"slowBlocks":times.iter().filter(|t|**t>128000./sr as f64).count(),"p95Ms":metrics["p95Ms"],"p99Ms":metrics["p99Ms"],"deviceUnderruns":sink.underruns.load(Ordering::Relaxed),"presentedFrames":sink.presented.load(Ordering::Relaxed)})); // telemetry: dropped when the pipe is full
             times.clear();
             rendered = 0;
             last = Instant::now();
@@ -372,6 +395,7 @@ fn compute() -> Result<(), String> {
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
+    std::panic::set_hook(Box::new(|info| eprintln!("mora-audio panic: {info}")));
     let result=match args.get(1).map(String::as_str) {
         Some("--offline") if args.len()==5=>offline(&args[2],&args[3],&args[4]),
         Some("--devices")=>devices().and_then(|ds| { let list:Vec<_>=ds.iter().map(|(id,name,_)|json!({"deviceId":id,"label":name})).collect();serde_json::to_writer(io::stdout(),&list).map_err(|e|e.to_string()) }),

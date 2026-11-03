@@ -6,6 +6,7 @@ mod spectral;
 mod structure;
 mod tempo;
 use common::*;
+pub use common::Fft;
 pub use loudness::AnalysisAccumulator;
 use serde_json::{Value, json};
 use spectral::*;

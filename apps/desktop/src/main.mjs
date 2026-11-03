@@ -28,7 +28,7 @@ const rustAudio = new RustAudio(path.join(resources, 'audio', 'mora-audio.exe'),
   windowsMedia.audioEvent(event);
   if (!win || win.isDestroyed()) return;
   const visible = win.isVisible() && !win.isMinimized();
-  if (!visible && event.type === 'waveform') return;
+  if (!visible && event.type === 'levels') return;
   if (!visible && event.type === 'tick') {
     if (Date.now() - hiddenTelemetryAt < 1000) return;
     hiddenTelemetryAt = Date.now();

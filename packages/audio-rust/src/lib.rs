@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod compute;
 pub mod dsp;
+pub mod levels;
 pub(crate) mod js_json;
 pub mod mixer;
 pub mod phrase_mix;
