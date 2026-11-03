@@ -94,7 +94,7 @@ jobs:
 
   ui:
     if: inputs.ui_only == true
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 25
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
