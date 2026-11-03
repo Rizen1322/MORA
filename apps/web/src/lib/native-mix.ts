@@ -57,6 +57,8 @@ export interface NativeMixState extends NativeProbeState {
   ended?: boolean;
 }
 export interface NativeMix {
+  /** iOS: ~20 Hz band levels of the audible output (same contract as `LevelsAnalyser.levels`). */
+  onLevels?(cb: (event: { rms: number; bands: number[] }) => void): () => void;
   /** Native download/decode and playback of the first recording, without page-side PCM. */
   startSource?(entry: NativeQueueEntry, config: NativeSourceConfig, signal?: AbortSignal): Promise<NativeMixState>;
   prepareQueue?(from: number, entries: NativeQueueEntry[], previousId: string,

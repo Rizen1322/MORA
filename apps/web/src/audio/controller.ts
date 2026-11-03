@@ -7,6 +7,7 @@ import { api, ApiError, type AnalysisSummary, type Track } from '../lib/api.ts';
 import { uploadNativePcm } from '../lib/native-pcm-preparation.ts';
 import type { ArmedTransition } from '@automix/core/engine/mixer.ts';
 import type { NativeMixConfig, NativeMixState, NativeMixTrack } from '../lib/native-mix.ts';
+import { LevelsAnalyser } from './levels-analyser.ts';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 export type Origin = 'user' | 'wave' | 'context' | 'yandex';
@@ -163,7 +164,7 @@ export function gainFromSummary(a: AnalysisSummary | undefined, target: number |
 export class PlayerController {
   private ctx: AudioContext | null = null;
   private node: AudioWorkletNode | null = null;
-  analyser: AnalyserNode | null = null;
+  analyser: AnalyserNode | LevelsAnalyser | null = null;
   private slots: (Slot | null)[] = [null, null];
   private retirements: (Promise<void> | null)[] = [null, null];
   private current: Slot | null = null;
@@ -289,6 +290,7 @@ export class PlayerController {
   private nativeSyncAgain = false;
   private nativeTimer: ReturnType<typeof setInterval> | null = null;
   private nativePolledAt = 0;
+  private levelsUnsubscribe: (() => void) | null = null;
   private nativeManifestKey = '';
   private nativeQueueRevision = 0;
   private nativeQueueEditRevision = 0;
@@ -500,10 +502,17 @@ export class PlayerController {
 
   private nativePoll(): void {
     if (this.nativeTimer) return;
+    if (this.nativeMix.onLevels && !this.levelsUnsubscribe) {
+      // iOS mixes natively: band levels of the audible output come from Swift.
+      const analyser = new LevelsAnalyser({ sampleRate: NATIVE_SR, currentTime: 0, baseLatency: 0 });
+      this.analyser = analyser;
+      this.levelsUnsubscribe = this.nativeMix.onLevels(event => analyser.levels(event.rms, event.bands));
+    }
     let polling = false;
     this.nativeTimer = setInterval(() => {
-      // A hidden page (if iOS keeps it running) checks less often.
-      if (polling || (document.hidden && performance.now() - this.nativePolledAt < 2000)) return;
+      // A hidden page (if iOS keeps it running) or a paused player checks less often.
+      const idle = document.hidden || !['playing', 'buffering', 'loading'].includes(this.state.status);
+      if (polling || (idle && performance.now() - this.nativePolledAt < 2000)) return;
       polling = true; this.nativePolledAt = performance.now();
       void this.nativeMix.state().then(s => this.onNativeState(s), () => {}).finally(() => { polling = false; });
     }, 500);
@@ -513,6 +522,8 @@ export class PlayerController {
     if (this.nativeAt < 0) return;
     if (!s.active || s.failed) {
       this.nativeRevision++; this.nativeAbort.abort(); this.nativeManifestKey = '';
+      // Every native start calls nativePoll() again.
+      if (this.nativeTimer) { clearInterval(this.nativeTimer); this.nativeTimer = null; }
       this.nativeAt = -1;
       this.nativeFiles.clear();
       this.nativeTracks = [];
@@ -561,21 +572,15 @@ export class PlayerController {
       const plan = item?.plan ?? (item && this.nativePlans.get(item));
       return plan ? { planId: plan.id, plan, active: startsIn === null, late: false, startsIn, progress: Math.max(0, Math.min(1, progress)), fallback: null } : null;
     };
-    const incoming = this.nativeTracks[s.index], next = this.nativeTracks[s.index + 1];
+    const next = this.nativeTracks[s.index + 1];
+    // The iOS host always reports the audible blend; null means none is playing.
     if (s.blend) {
       const active = view(this.nativeTracks[s.blend.index], s.blend.progress, null);
       if (active) return { transition: active, nextPlan: active.plan };
     }
-    const into = incoming?.transition;
-    // After the swap the incoming track is audible while the blend finishes.
-    if (s.blend === undefined && into && frame < into.entryFrame + into.durationFrames - into.swapFrame) {
-      const active = view(incoming, (frame - into.entryFrame + into.swapFrame) / into.durationFrames, null);
-      if (active) return { transition: active, nextPlan: active.plan };
-    }
     const out = next?.transition;
     if (!out) return { transition: null, nextPlan: null };
-    const pending = view(next, (frame - out.triggerFrame) / out.durationFrames,
-      s.blend === undefined && frame >= out.triggerFrame ? null : Math.max(0, (out.triggerFrame - frame) / NATIVE_SR));
+    const pending = view(next, (frame - out.triggerFrame) / out.durationFrames, Math.max(0, (out.triggerFrame - frame) / NATIVE_SR));
     return { transition: pending, nextPlan: pending?.plan ?? null };
   }
 

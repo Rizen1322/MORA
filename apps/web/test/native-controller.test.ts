@@ -12,7 +12,7 @@ vi.mock('../src/lib/api.ts', async (original) => {
 });
 
 const seconds = 20, frames = seconds * 48000;
-const state = (patch: Partial<NativeMixState> = {}): NativeMixState => ({ active: true, playing: true, index: 0, position: 0, duration: seconds, ...patch });
+const state = (patch: Partial<NativeMixState> = {}): NativeMixState => ({ active: true, playing: true, index: 0, position: 0, duration: seconds, blend: null, ...patch });
 let timer: (() => void) | undefined;
 
 beforeEach(() => {
@@ -164,7 +164,7 @@ it('plays the queue natively: uploads tracks with their blends ahead and follows
   h.onNativeState(state({ index: 0, position: blend.triggerFrame / 48000 - 2, entryId: controller.state.queue[0].entryId }));
   expect(controller.state.nextPlan?.toTrackId).toBe('b');
   expect(controller.state.transition).toMatchObject({ active: false, startsIn: expect.closeTo(2, 3) });
-  h.onNativeState(state({ index: 0, position: blend.triggerFrame / 48000 + .1, entryId: controller.state.queue[0].entryId }));
+  h.onNativeState(state({ index: 0, position: blend.triggerFrame / 48000 + .1, blend: { index: 1, progress: .01 }, entryId: controller.state.queue[0].entryId }));
   expect(controller.state.transition?.active).toBe(true);
   // Analysis finishing later plans the blend again.
   controller.onAnalysisDone('b');
