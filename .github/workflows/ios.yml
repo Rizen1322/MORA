@@ -16,6 +16,10 @@ on:
         description: Run only the complete app UI startup check
         type: boolean
         default: false
+      intel:
+        description: Build on macos-15-intel (when no arm64 runner is available; the simulator timing checks may fail there)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -23,7 +27,7 @@ permissions:
 jobs:
   build:
     if: inputs.ui_only != true
-    runs-on: macos-15
+    runs-on: ${{ inputs.intel && 'macos-15-intel' || 'macos-15' }}
     timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
@@ -55,6 +59,13 @@ jobs:
           "$RUNNER_TEMP/mora-shell-check"
       - name: Build unsigned device IPA
         run: sh apps/mobile/scripts/ios-mac.sh --ipa
+      # Uploaded before the simulator checks: a slow or unavailable runner must not lose a built IPA.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MORA-unsigned-ipa
+          path: apps/mobile/MORA-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
       - name: Compare compiled Rust MIR with the bundled analyzer
         run: node apps/mobile/scripts/check-native-rust-analysis.mjs
       - name: Test native media preparation
@@ -69,12 +80,6 @@ jobs:
         run: node apps/mobile/scripts/check-native-host.mjs
       - name: Test the native queue on PCM files
         run: node apps/mobile/scripts/check-native-mix.mjs
-      - uses: actions/upload-artifact@v4
-        with:
-          name: MORA-unsigned-ipa
-          path: apps/mobile/MORA-unsigned.ipa
-          if-no-files-found: error
-          retention-days: 14
       - name: Launch the complete native app in the simulator
         run: |
           sh apps/mobile/scripts/build-rust-ios.sh iphonesimulator
