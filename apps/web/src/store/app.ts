@@ -195,7 +195,12 @@ export const useApp = create<AppState>((set, get) => ({
 export const controller = new PlayerController(
   (id) => useApp.getState().tracks.get(id),
   (msg, kind) => useApp.getState().toast(msg, kind === 'error' ? 'error' : 'info'),
-  () => useApp.getState().loadLibrary(),
+  // A wave batch adds a few rows: fetch those, not the whole library (slow and hot on a phone).
+  async (ids) => {
+    if (!ids) return useApp.getState().loadLibrary();
+    const s = useApp.getState();
+    for (const t of await Promise.all(ids.filter((id) => !s.tracks.has(id)).map((id) => api.track(id)))) useApp.getState().upsertTrack(t);
+  },
 );
 useApp.setState({ player: controller.state });
 // Phone: the engine's ~20 clock ticks a second re-rendered the whole player; 5 a second is enough there.

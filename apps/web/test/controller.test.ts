@@ -1254,6 +1254,19 @@ describe('continuous wave reservoir', () => {
   const batch = (ids: string[], tag = 'new') => ({ sessionId: 'session-old', batchId: tag,
     items: ids.map((id, i) => ({ trackId: id, yandexId: `${200 + i}:10`, title: id, artist: 'Artist' })) });
 
+  it('starts on one playable track and loads only the new rows', async () => {
+    const { controller, h } = waveSetup();
+    h.ensureEngine = vi.fn().mockResolvedValue(undefined);
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    (controller as unknown as { refreshLibrary: typeof refresh }).refreshLibrary = refresh;
+    (controller as unknown as { startAt: () => Promise<void> }).startAt = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(api.yandexWave).mockResolvedValueOnce(batch(['d']));
+    await controller.startWave('yandex');
+    expect(vi.mocked(api.yandexWave).mock.calls[0][1]).toMatchObject({ count: 1 });
+    expect(refresh.mock.calls[0]).toEqual([['d']]);
+    expect(controller.state.queue.map((e) => e.trackId)[0]).toBe('d');
+  });
+
   it('fills ahead immediately and sends received IDs without waiting for batch completion', async () => {
     const { controller, w } = waveSetup();
     vi.mocked(api.yandexWave).mockResolvedValueOnce(batch(['d','e','f','g']));

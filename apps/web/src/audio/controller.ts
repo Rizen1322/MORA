@@ -240,7 +240,8 @@ export class PlayerController {
   constructor(
     private readonly track: TrackLookup,
     private readonly notify: (msg: string, kind?: 'error' | 'info') => void,
-    private readonly refreshLibrary: () => Promise<void> = async () => {},
+    /** Loads the given tracks into the store (the whole library when called without ids). */
+    private readonly refreshLibrary: (ids?: string[]) => Promise<void> = async () => {},
   ) {}
 
   subscribe(fn: (s: PlayerSnapshot) => void): () => void {
@@ -1094,8 +1095,9 @@ export class PlayerController {
     try {
       let entries: QueueEntry[] = [];
       if (kind === 'yandex') {
-        const w = await withDeadline(api.yandexWave(null, { analyze: this.pageAnalysis }), WAVE_START_MS, 'Яндекс слишком долго отвечает. Попробуйте ещё раз.');
-        await withDeadline(this.refreshLibrary(), WAVE_START_MS, 'Медиатека не отвечает. Попробуйте ещё раз.');
+        const w = await withDeadline(api.yandexWave(null, { analyze: this.pageAnalysis, count: 1 }), WAVE_START_MS, 'Яндекс слишком долго отвечает. Попробуйте ещё раз.');
+        // One playable track starts the wave; the refill right after brings the reserve. Only the new rows are fetched.
+        await withDeadline(this.refreshLibrary(w.items.flatMap((i) => i.trackId ? [i.trackId] : [])), WAVE_START_MS, 'Медиатека не отвечает. Попробуйте ещё раз.');
         if (revision !== this.previewRevision) return;
         this.yandexSession = { sessionId: w.sessionId, batchId: w.batchId };
         const known = new Set<string>();
@@ -1615,7 +1617,7 @@ export class PlayerController {
           const excluded = [...new Set(this.state.queue.flatMap((e) => e.yandexId ? [e.yandexId] : []))].slice(-200);
           const w = await api.yandexWave(session ?? null, { queue: excluded, count, analyze: this.pageAnalysis });
           if (!relevant()) return;
-          await this.refreshLibrary();
+          await this.refreshLibrary(w.items.flatMap((i) => i.trackId ? [i.trackId] : []));
           if (!relevant()) return;
           this.yandexSession = { sessionId: w.sessionId, batchId: w.batchId };
           this.yandexSessionReset = false;
