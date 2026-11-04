@@ -6,8 +6,11 @@ import { fmtDate, fmtTime, fmtTotal, methodShort, plural, tracksWord } from './f
 import { importFiles } from './importer.ts';
 import { likeAllSummary, likeEach, toLike } from './like-all.ts';
 import { startArtistRadio, startRadio, useRadio } from './radio.ts';
-import { albumHref, artistHref, searchHref } from './router.ts';
+import { albumHref, artistHref, catalogAlbumHref, searchHref } from './router.ts';
 import { controller, trackOf, useApp } from '../store/app.ts';
+import { catalogPlayer, publicPlayer } from '../store/catalog.ts';
+import type { CatalogTrack } from '@automix/core';
+import { asCatalog } from '../pages/Search.tsx';
 import { useDownloads } from '../store/downloads.ts';
 import { likeLibraryTrack } from '../components/LikeAll.tsx';
 import { react as reactTrack } from '../components/TrackList.tsx';
@@ -561,6 +564,58 @@ async function trackAnalysis(id: string): Promise<Screen> {
 // MARK: routes and actions
 
 /** The native page for a hash route, or null when it stays web (NativeRoute in NativeShellState.swift lists the same routes). */
+// MARK: Online catalog (Yandex, YouTube Music, SoundCloud): rows play through the same players as the web pages.
+
+interface Online { player: typeof catalogPlayer; tracks: CatalogTrack[]; ctx: { type: 'artist' | 'album'; id: string; label: string } }
+/** The tracks behind each open catalog screen, keyed by its route: row actions address them by index. */
+const online = new Map<string, Online>();
+
+function onlineScreen(key: string, o: Online, title: string, sub: string, more: Section[] = []): Screen {
+  online.set(key, o);
+  if (online.size > 20) online.delete(online.keys().next().value!);
+  const at = (index: number) => ({ key, index });
+  return { title, sections: [
+    { footer: sub, rows: [button('Слушать', 'onlinePlay', at(0), { symbol: 'play.fill', style: 'primary', disabled: !o.tracks.some((t) => t.playable) })] },
+    { title: 'Треки', rows: o.tracks.length ? o.tracks.map((t, i): Row => ({ kind: 'item', title: t.title, cover: t.coverUrl, tag: t.explicit ? 'E' : undefined,
+      subtitle: t.playable ? `${t.artist} · ${fmtTime(t.duration)}` : `${t.artist} · недоступно`, act: t.playable ? { name: 'onlinePlay', args: at(i) } : undefined,
+      actions: t.playable ? [{ title: 'Добавить в очередь', symbol: 'text.append', act: { name: 'onlineQueue', args: at(i) } },
+        { title: 'Добавить в медиатеку', symbol: 'plus', act: { name: 'onlineSave', args: at(i) } }] : [] })) : [text('Список треков пока недоступен.')] },
+    ...more,
+  ] };
+}
+
+async function yandexArtist(id: string): Promise<Screen> {
+  const d = await api.catalogArtist(id);
+  const albums: Section = { title: 'Альбомы', rows: d.albums.map((a) => ({ kind: 'item', title: a.title, subtitle: [a.year, a.trackCount && `${a.trackCount} ${tracksWord(a.trackCount)}`].filter(Boolean).join(' · '),
+    cover: a.imageUrl, path: go(catalogAlbumHref(a.id)) })) };
+  return onlineScreen(`yandex:artist:${id}`, { player: catalogPlayer, tracks: d.popularTracks, ctx: { type: 'artist', id, label: d.artist.name } },
+    d.artist.name, 'Яндекс Музыка', d.albums.length ? [albums] : []);
+}
+
+async function yandexAlbum(id: string): Promise<Screen> {
+  const d = await api.catalogAlbum(id);
+  return onlineScreen(`yandex:album:${id}`, { player: catalogPlayer, tracks: d.tracks, ctx: { type: 'album', id, label: d.album.title } },
+    d.album.title, ['Яндекс Музыка', d.album.artists.map((a) => a.name).join(', '), d.album.year].filter(Boolean).join(' · '));
+}
+
+async function publicPage(kind: 'artist' | 'album', id: string): Promise<Screen> {
+  const d = await api.publicCatalog(kind, id);
+  return onlineScreen(`ytmusic:${kind}:${id}`, { player: publicPlayer, tracks: d.tracks.map(asCatalog), ctx: { type: kind, id: d.id, label: `${d.title} · YouTube Music` } },
+    d.title, 'YouTube Music');
+}
+
+async function soundCloudArtist(id: string): Promise<Screen> {
+  const d = await api.soundCloudArtist(id);
+  return onlineScreen(`soundcloud:artist:${id}`, { player: publicPlayer, tracks: d.tracks.map(asCatalog), ctx: { type: 'artist', id: d.id, label: `${d.title} · SoundCloud` } },
+    d.title, 'SoundCloud');
+}
+
+const onlineTrack = (a: Args) => {
+  const o = online.get(str(a.key)), index = Number(a.index);
+  if (!o || !o.tracks[index]) throw new Error('Страница устарела, откройте её снова');
+  return { o, index, track: o.tracks[index] };
+};
+
 export function describe(): Promise<Screen> | Screen | null {
   const { parts } = route();
   const [a, b, c] = parts;
@@ -568,6 +623,11 @@ export function describe(): Promise<Screen> | Screen | null {
   if (a === 'album' && parts.length === 3) return album(b, c);
   if (a === 'artist' && parts.length === 2) return artist(b);
   if (a === 'playlist' && parts.length === 2) return playlist(b);
+  if (parts.length === 3 && (b === 'artist' || b === 'album')) {
+    if (a === 'catalog') return b === 'artist' ? yandexArtist(c) : yandexAlbum(c);
+    if (a === 'public') return publicPage(b, c);
+    if (a === 'soundcloud' && b === 'artist') return soundCloudArtist(c);
+  }
   if (parts.length === 1) {
     switch (a) {
       case 'history': return history();
@@ -592,6 +652,9 @@ const SETTING_GROUPS = ['automix', 'wave', 'ui', 'downloads', 'yandex'] as const
 async function importBody(body: Parameters<typeof api.startImport>[0]) { importJob = await api.startImport(body); }
 
 export const actions: Record<string, (a: Args) => unknown> = {
+  onlinePlay: (a) => { const { o, index } = onlineTrack(a); return o.player.play(o.tracks, index, o.ctx); },
+  onlineQueue: async (a) => { const { o, track } = onlineTrack(a); await o.player.enqueue(track); st().toast('Добавлено в очередь'); },
+  onlineSave: async (a) => { const { o, track } = onlineTrack(a); await o.player.save(track); st().toast(`«${track.title}» в медиатеке`, 'success'); },
   playAll: (a) => {
     const list = ids(a.ids).filter((id) => trackOf(id)?.status === 'ok');
     if (!list.length) return;
