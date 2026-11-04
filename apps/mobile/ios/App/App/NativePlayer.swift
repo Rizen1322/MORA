@@ -90,12 +90,6 @@ final class NativePlayerModel: ObservableObject {
     }
 
     func jump(_ row: NativePlayerRow) { shell?.run("queueJump", ["entryId": row.id]) }
-    /// «Выбрать версию»: the page's version picker (VersionPanel) opens over the WebView, so this sheet steps aside.
-    func pickVersion(_ entryId: String) {
-        guard let shell, !entryId.isEmpty else { return }
-        shell.run("version", ["entryId": entryId])
-        close("close")
-    }
     func remove(_ offsets: IndexSet) {
         var rows = upcoming
         let gone = offsets.map { rows[$0].id }
@@ -203,6 +197,7 @@ struct NativePlayerView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var queueOpen = false
     @State private var lyricsOpen = false
+    @State private var versionTarget: NativeVersionTarget?
 
     var body: some View {
         let s = model.state
@@ -276,11 +271,14 @@ struct NativePlayerView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in model.start() }
         .sheet(isPresented: $queueOpen) { NativeQueueView(model: model) }
         .sheet(isPresented: $lyricsOpen) { NativeLyricsView(model: model) }
+        .sheet(item: $versionTarget) { target in if let shell = model.shell { NativeVersionPicker(target: target, shell: shell) } }
     }
 
     @ViewBuilder private func versionAction(_ entryId: String) -> some View {
         if model.shell != nil {
-            Button { model.pickVersion(entryId) } label: { Label("Выбрать версию", systemImage: "waveform") }
+            Button {
+                versionTarget = NativeVersionTarget(args: ["entryId": entryId], title: model.state.title, artist: model.state.artist)
+            } label: { Label("Выбрать версию", systemImage: "waveform") }
         }
     }
 
@@ -345,6 +343,7 @@ struct NativePlayerView: View {
 private struct NativeQueueView: View {
     @ObservedObject var model: NativePlayerModel
     @Environment(\.dismiss) private var dismiss
+    @State private var versionTarget: NativeVersionTarget?
 
     var body: some View {
         NavigationStack {
@@ -376,7 +375,9 @@ private struct NativeQueueView: View {
                     .disabled(!editable)
                     .contextMenu {
                         if editable {
-                            Button { model.pickVersion(row.id) } label: { Label("Выбрать версию", systemImage: "waveform") }
+                            Button {
+                                versionTarget = NativeVersionTarget(args: ["entryId": row.id], title: row.title, artist: row.artist)
+                            } label: { Label("Выбрать версию", systemImage: "waveform") }
                         }
                     }
                     .accessibilityElement(children: .combine)
@@ -404,6 +405,7 @@ private struct NativeQueueView: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationBackground(.ultraThinMaterial)
+        .sheet(item: $versionTarget) { target in if let shell = model.shell { NativeVersionPicker(target: target, shell: shell) } }
     }
 }
 
@@ -547,6 +549,166 @@ private struct NativeLyricsView: View {
             if lines.isEmpty && plain.isEmpty { status = "Текст не найден" }
         } catch {
             status = "Не удалось загрузить текст"
+        }
+    }
+}
+
+/// What «Выбрать версию» was opened for: a library track (`id`) or a queue entry (`entryId`).
+struct NativeVersionTarget: Identifiable {
+    let id = UUID()
+    let args: [String: Any]
+    let title: String
+    let artist: String
+}
+
+/// «Выбрать версию»: one source at a time; search, preview audio and the permanent binding run in the page
+/// (lib/native-ui.ts `versions` / `versionPreview` / `versionApply`, the same logic as the web VersionPanel).
+struct NativeVersionPicker: View {
+    let target: NativeVersionTarget
+    @ObservedObject var shell: NativeShellStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var source = "youtube"
+    @State private var items: [Item] = []
+    @State private var bound = false
+    @State private var status: String? = "Ищу версии…"
+    @State private var chosen: String?
+    @State private var playing: String?
+    @State private var formats: [String: String] = [:]
+    @State private var busy = false
+
+    struct Item: Identifiable {
+        let id: String, title: String, artist: String
+        let duration: Double
+        let cover: String?
+        let explicit: Bool
+        let labels: [String]
+    }
+
+    private var sources: [(id: String, name: String)] {
+        [("youtube", "YouTube"), ("ytmusic", "YT Music"), ("soundcloud", "SoundCloud")] + (shell.ui.wave.yandex ? [("yandex", "Яндекс")] : [])
+    }
+    private var sourceName: String { sources.first { $0.id == source }?.name ?? "" }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("\(target.artist) — \(target.title)").font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                    Picker("Источник", selection: $source) {
+                        ForEach(sources, id: \.id) { Text($0.name).tag($0.id) }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                .listRowBackground(Color.clear)
+                if let status { Text(status).foregroundStyle(.secondary).listRowBackground(Color.clear) }
+                ForEach(items) { row($0) }
+                if !items.isEmpty {
+                    Text("«E» отмечает источник, остальные метки — по названию. Название и обложка трека не меняются.")
+                        .font(.caption).foregroundStyle(.secondary).listRowBackground(Color.clear)
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .navigationTitle("Выбрать версию")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    if busy { ProgressView() } else { Button("Выбрать") { apply(chosen) }.disabled(chosen == nil) }
+                }
+                if bound {
+                    ToolbarItem(placement: .bottomBar) { Button("Вернуть исходную запись") { apply(nil) }.disabled(busy) }
+                }
+            }
+        }
+        .task(id: source) { await search() }
+        .onDisappear { Task { @MainActor in _ = try? await shell.call("versionPreview", ["key": ""]) } }
+        .presentationDetents([.large])
+        .presentationBackground(.ultraThinMaterial)
+        .preferredColorScheme(.dark)
+    }
+
+    private func row(_ item: Item) -> some View {
+        HStack(spacing: 8) {
+            Button { chosen = item.id } label: {
+                HStack(spacing: 12) {
+                    NativeCover(url: item.cover, size: 48, radius: 6)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(item.title).font(.body.weight(.medium)).lineLimit(1)
+                        if item.explicit || !item.labels.isEmpty {
+                            HStack(spacing: 4) {
+                                if item.explicit { badge("E") }
+                                ForEach(item.labels, id: \.self) { badge($0) }
+                            }
+                        }
+                        Text(details(item)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if chosen == item.id { Image(systemName: "checkmark").foregroundStyle(Color.moraMint) }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(chosen == item.id ? .isSelected : [])
+            Button { preview(item.id) } label: {
+                Image(systemName: playing == item.id ? "stop.fill" : "play.fill").frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(playing == item.id ? "Остановить прослушивание" : "Прослушать: \(item.title)")
+        }
+        .listRowBackground(Color.clear)
+    }
+
+    private func badge(_ text: String) -> some View {
+        Text(text).font(.caption2.weight(.bold)).padding(.horizontal, 5).padding(.vertical, 1)
+            .background(Color.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 4))
+    }
+
+    private func details(_ item: Item) -> String {
+        let seconds = Int(item.duration.rounded())
+        return ([item.artist, sourceName, String(format: "%d:%02d", seconds / 60, seconds % 60), formats[item.id]] as [String?])
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    @MainActor private func search() async {
+        let wanted = source
+        items = []; chosen = nil; status = "Ищу версии…"
+        if playing != nil { playing = nil; _ = try? await shell.call("versionPreview", ["key": ""]) }
+        do {
+            let value = try await shell.call("versions", target.args.merging(["source": wanted]) { $1 }, timeout: 40) as? [String: Any] ?? [:]
+            guard wanted == source else { return }
+            bound = value["bound"] as? Bool == true
+            items = (value["items"] as? [[String: Any]] ?? []).compactMap { v in
+                guard let key = v["key"] as? String else { return nil }
+                return Item(id: key, title: v["title"] as? String ?? "", artist: v["artist"] as? String ?? "", duration: v["duration"] as? Double ?? 0,
+                            cover: v["cover"] as? String, explicit: v["explicit"] as? Bool == true, labels: v["labels"] as? [String] ?? [])
+            }
+            status = items.isEmpty ? "Ничего не нашлось" : nil
+        } catch {
+            if wanted == source { status = wanted == "yandex" ? "Яндекс Музыка не ответила. Аккаунт подключён?" : "Поиск не удался. Попробуйте ещё раз." }
+        }
+    }
+
+    private func preview(_ key: String) {
+        let next = playing == key ? "" : key
+        playing = next.isEmpty ? nil : next
+        Task { @MainActor in
+            do {
+                let value = try await shell.call("versionPreview", ["key": next], timeout: 60) as? [String: Any]
+                if let format = value?["format"] as? String, !format.isEmpty { formats[key] = format }
+            } catch {
+                if playing == key { playing = nil }
+            }
+        }
+    }
+
+    private func apply(_ key: String?) {
+        busy = true
+        var args = target.args
+        if let key { args["key"] = key }
+        Task { @MainActor in
+            do { _ = try await shell.call("versionApply", args, timeout: 90); dismiss() }
+            catch { busy = false; status = "Не удалось применить версию. Попробуйте ещё раз." }
         }
     }
 }

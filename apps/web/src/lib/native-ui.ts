@@ -5,8 +5,8 @@ import { trackAlbumHref, trackArtistHref } from './router.ts';
 import { controller, phone, trackOf, useApp } from '../store/app.ts';
 import { publicPlayer, usePublicPlayback } from '../store/catalog.ts';
 import { react } from '../components/TrackList.tsx';
-import { asCatalog, SOURCE_LABEL } from '../pages/Search.tsx';
-import { openVersionPanel, useVersionPanel } from '../components/VersionPanel.tsx';
+import { asCatalog, SOURCE_LABEL, TAG_TEXT } from '../pages/Search.tsx';
+import { resolveVersion, searchVersions, useVersionPanel, VERSION_SOURCES, versionFormat, type Candidate, type VersionSource } from '../components/VersionPanel.tsx';
 import { actions, describe, type ActResult } from './native-pages.ts';
 
 /**
@@ -80,6 +80,25 @@ const source = (v: unknown): PublicSource => {
   throw new Error('Неизвестный источник');
 };
 
+// The native version picker (NativeVersionPicker.swift): search and the binding stay here, as in VersionPanel.
+const versionTrack = (a: Args) => {
+  const t = trackOf(str(a.id) || controller.state.queue.find((e) => e.entryId === a.entryId)?.trackId);
+  if (!t) throw new Error('Трек не найден');
+  return t;
+};
+/** Results of the picker's last search; the picker shows one source at a time. */
+const candidates = new Map<string, Candidate>();
+/** A preview plays in the page; music it paused comes back unless the listener used the transport meanwhile. */
+const preview = { audio: null as HTMLAudioElement | null, resume: null as number | null, request: 0 };
+const stopPreview = (resume = true) => {
+  preview.request++;
+  preview.audio?.pause();
+  const back = preview.resume !== null && controller.intentVersion === preview.resume;
+  preview.resume = null;
+  if (back && resume) void controller.resume();
+  return back;
+};
+
 /** Native → page. Arguments come from our own Swift code, but are still checked: a wrong call must fail, not misplay. */
 export const commands: Record<string, (a: Args) => unknown> = {
   go: (a) => { location.hash = str(a.path) || '/'; },
@@ -114,11 +133,45 @@ export const commands: Record<string, (a: Args) => unknown> = {
     const from = upcoming(a.entryId), to = upcoming(a.to);
     if (from >= 0 && to >= 0) controller.move(from, to);
   },
-  /** Long press «Выбрать версию» (track rows by id; native player and queue by entryId): the web version picker covers native until closed. */
-  version: (a) => {
-    const t = trackOf(str(a.id) || controller.state.queue.find((e) => e.entryId === a.entryId)?.trackId);
-    if (!t) throw new Error('Трек не найден');
-    openVersionPanel({ trackId: t.id, title: t.title, artist: t.artist, duration: t.duration });
+  versions: async (a) => {
+    const t = versionTrack(a), src = a.source;
+    if (!VERSION_SOURCES.includes(src as VersionSource)) throw new Error('Неизвестный источник');
+    const items = await searchVersions(src as VersionSource, str(a.q).trim().slice(0, 200) || `${t.artist} ${t.title}`.trim(), t.title);
+    candidates.clear();
+    for (const c of items) candidates.set(c.key, c);
+    return { bound: !!t.binding, items: items.map((c) => {
+      const r = (c.remote ?? c.yandex)!;
+      return { key: c.key, title: r.title, artist: c.remote?.uploader || r.artist, duration: r.duration, cover: r.coverUrl, explicit: r.explicit,
+        labels: (c.remote?.labels ?? []).filter((l) => l.tag !== 'explicit').map((l) => TAG_TEXT[l.tag] ?? l.tag) };
+    }) };
+  },
+  /** An empty key stops the preview. Resolves with the recording's format once it plays. */
+  versionPreview: async (a) => {
+    const key = str(a.key);
+    stopPreview();
+    if (!key) return null;
+    const c = candidates.get(key);
+    if (!c) throw new Error('Результат поиска устарел');
+    const request = preview.request, intent = controller.intentVersion;
+    const t = await resolveVersion(c);
+    if (request !== preview.request || intent !== controller.intentVersion) return null;
+    if (controller.state.status === 'playing' || controller.state.status === 'buffering') { controller.pause(); preview.resume = controller.intentVersion; }
+    const audio = preview.audio ??= new Audio();
+    audio.onended = () => { if (request === preview.request) stopPreview(); };
+    audio.src = `/api/tracks/${t.id}/audio`;
+    await audio.play();
+    return { format: versionFormat(t).replace(/^ · /, '') };
+  },
+  /** A key binds that recording to the track for good; none restores the original. The queue swaps at once. */
+  versionApply: async (a) => {
+    const t = versionTrack(a), key = str(a.key), c = key ? candidates.get(key) : undefined;
+    if (key && !c) throw new Error('Результат поиска устарел');
+    const resume = stopPreview(false);
+    await api.bindRecording(t.id, c ? (await resolveVersion(c)).id : null);
+    await useApp.getState().loadLibrary();
+    await controller.recordingChanged(t.id);
+    if (resume) void controller.resume();
+    useApp.getState().toast(c ? 'Эта версия будет играть для трека' : 'Вернули исходную запись', 'success');
   },
   /** Native player «Текст»: synced lines (seconds, already shifted by the saved offset) or plain text. */
   lyrics: async (a) => {

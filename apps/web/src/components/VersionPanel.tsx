@@ -21,15 +21,16 @@ export interface VersionTarget {
 export const useVersionPanel = create<{ target: VersionTarget | null }>(() => ({ target: null }));
 export const openVersionPanel = (target: VersionTarget) => useVersionPanel.setState({ target });
 
-type Source = PublicSource | 'yandex';
-const SOURCES: Source[] = ['youtube', 'ytmusic', 'soundcloud', 'yandex'];
-const LABEL: Record<Source, string> = { ...SOURCE_LABEL, yandex: 'Яндекс Музыка' };
+export type VersionSource = PublicSource | 'yandex';
+type Source = VersionSource;
+export const VERSION_SOURCES: Source[] = ['youtube', 'ytmusic', 'soundcloud', 'yandex'];
+export const VERSION_LABEL: Record<Source, string> = { ...SOURCE_LABEL, yandex: 'Яндекс Музыка' };
 const ICON = { youtube: YoutubeLogo, ytmusic: YoutubeLogo, soundcloud: SoundcloudLogo, yandex: MusicNotesSimple };
-const format = (t?: Track) => (t?.codec ? ` · ${t.codec}${t.bitrate ? ` ${Math.round(t.bitrate / 1000)} кбит/с` : ''}` : '');
+export const versionFormat = (t?: Track) => (t?.codec ? ` · ${t.codec}${t.bitrate ? ` ${Math.round(t.bitrate / 1000)} кбит/с` : ''}` : '');
 /** Quick variants refine the query; the labels on results still come from the source or the title. */
 const VARIANTS: [string, string][] = [['', 'Как есть'], ['explicit', 'Explicit'], ['uncensored', 'Без цензуры'], ['clean', 'Clean'], ['radio edit', 'Radio edit'], ['album version', 'Альбомная'], ['remix', 'Ремикс'], ['live', 'Live'], ['slowed', 'Slowed']];
 
-interface Candidate { key: string; local?: Track; remote?: PublicTrack; yandex?: CatalogTrack }
+export interface Candidate { key: string; local?: Track; remote?: PublicTrack; yandex?: CatalogTrack }
 interface Found { loading: boolean; items: Candidate[]; error?: string }
 
 const words = (s: string) => s.normalize('NFKC').toLocaleLowerCase('ru').replace(/ё/g, 'е').replace(/\(.*?\)|\[.*?\]/g, ' ').split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1 || /\d/.test(w));
@@ -39,6 +40,21 @@ export function sameSong(original: string, candidate: string): boolean {
   if (!core.length) return true;
   const have = new Set(candidate.normalize('NFKC').toLocaleLowerCase('ru').replace(/ё/g, 'е').split(/[^\p{L}\p{N}]+/u));
   return core.filter((w) => have.has(w)).length / core.length >= 0.6;
+}
+
+/** Up to eight recordings of the same song from one source (web panel and the native picker). */
+export async function searchVersions(src: Source, query: string, title: string, signal?: AbortSignal): Promise<Candidate[]> {
+  const found: Candidate[] = src === 'yandex'
+    ? (await api.catalogSearch(query, 'track', 0, signal)).tracks.filter((i) => sameSong(title, i.title)).map((i) => ({ key: `yandex:${i.externalId}`, yandex: i }))
+    : (await api.publicSearch(src, query, signal)).items.filter((i) => sameSong(title, i.title)).map((i) => ({ key: `${src}:${i.externalId}`, remote: i }));
+  return found.slice(0, 8);
+}
+
+/** The library row that plays a candidate (prepared or imported on demand). */
+export async function resolveVersion(c: Candidate): Promise<Track> {
+  if (c.local) return c.local;
+  if (c.yandex) { const id = await catalogPlayer.ensure(c.yandex); return useApp.getState().tracks.get(id) ?? await api.track(id); }
+  return ensurePublic(c.remote!);
 }
 
 /**
@@ -77,11 +93,8 @@ function Panel({ target }: { target: VersionTarget }) {
     setResults({});
     for (const src of sources) {
       setResults((r) => ({ ...r, [src]: { loading: true, items: [] } }));
-      const found: Promise<Candidate[]> = src === 'yandex'
-        ? api.catalogSearch(full, 'track', 0, ctl.signal).then((x) => x.tracks.filter((i) => sameSong(target.title, i.title)).map((i) => ({ key: `yandex:${i.externalId}`, yandex: i })))
-        : api.publicSearch(src, full, ctl.signal).then((x) => x.items.filter((i) => sameSong(target.title, i.title)).map((i) => ({ key: `${src}:${i.externalId}`, remote: i })));
-      found
-        .then((items) => { if (!ctl.signal.aborted) setResults((r) => ({ ...r, [src]: { loading: false, items: items.slice(0, 8) } })); })
+      searchVersions(src, full, target.title, ctl.signal)
+        .then((items) => { if (!ctl.signal.aborted) setResults((r) => ({ ...r, [src]: { loading: false, items } })); })
         .catch((e) => { if (!ctl.signal.aborted) setResults((r) => ({ ...r, [src]: { loading: false, items: [], error: (e as Error).message } })); });
     }
     return () => ctl.abort();
@@ -112,9 +125,7 @@ function Panel({ target }: { target: VersionTarget }) {
   }, []);
 
   const resolve = async (c: Candidate): Promise<Track> => {
-    let t = c.local;
-    if (!t && c.yandex) { const id = await catalogPlayer.ensure(c.yandex); t = useApp.getState().tracks.get(id) ?? await api.track(id); }
-    const r = t ?? await ensurePublic(c.remote!);
+    const r = await resolveVersion(c);
     if (alive.current) setFetched((f) => ({ ...f, [c.key]: r }));
     return r;
   };
@@ -173,7 +184,7 @@ function Panel({ target }: { target: VersionTarget }) {
         <Cover url={info.cover} seed={info.seed} size={48} />
         <span className="version-card-text"><strong className="ellipsis">{info.title}</strong>
           <span className="version-card-tags"><VersionTags labels={info.labels} explicit={info.explicit} /></span>
-          <span className="muted small ellipsis">{Icon && <Icon size={13} aria-hidden="true" />} {info.artist} · {info.source} · {fmtTime(info.duration)}{d !== null && Math.abs(d) >= 2 ? ` (${d > 0 ? '+' : ''}${d} с)` : ''}{format(c.local ?? fetched[c.key])}</span></span>
+          <span className="muted small ellipsis">{Icon && <Icon size={13} aria-hidden="true" />} {info.artist} · {info.source} · {fmtTime(info.duration)}{d !== null && Math.abs(d) >= 2 ? ` (${d > 0 ? '+' : ''}${d} с)` : ''}{versionFormat(c.local ?? fetched[c.key])}</span></span>
         {chosen?.key === c.key && <Check size={18} className="version-check" />}
       </button>
       <button className="icon-btn" aria-label={preview?.key === c.key ? 'Остановить прослушивание' : `Прослушать: ${info.title}`} onClick={() => void startPreview(c)} disabled={busy === c.key}>
@@ -196,15 +207,15 @@ function Panel({ target }: { target: VersionTarget }) {
       {VARIANTS.map(([v, label]) => <button key={label} className={`chip ${variant === v ? 'on' : ''}`} aria-pressed={variant === v} onClick={() => setVariant(v)}>{label}</button>)}
     </div>
     <div className="version-chips" role="group" aria-label="Источники">
-      {SOURCES.filter((s) => !target.onPick || s !== 'yandex').map((s) => <button key={s} className={`chip ${sources.has(s) ? 'on' : ''}`} aria-pressed={sources.has(s)} onClick={() => setSources((x) => { const n = new Set(x); if (n.has(s)) n.delete(s); else n.add(s); return n; })}>{LABEL[s]}</button>)}
+      {VERSION_SOURCES.filter((s) => !target.onPick || s !== 'yandex').map((s) => <button key={s} className={`chip ${sources.has(s) ? 'on' : ''}`} aria-pressed={sources.has(s)} onClick={() => setSources((x) => { const n = new Set(x); if (n.has(s)) n.delete(s); else n.add(s); return n; })}>{VERSION_LABEL[s]}</button>)}
     </div>
     <div className="version-list">
       {locals.length > 0 && <section><h3>Ваши файлы</h3>{locals.slice(0, 6).map((t) => card({ key: `local:${t.id}`, local: t }, { cover: t.coverUrl, seed: t.album || t.id, title: t.title, artist: t.artist, source: 'Медиатека', duration: t.duration, labels: t.origin?.labels ?? [] }))}</section>}
-      {SOURCES.filter((s) => results[s]).map((s) => <section key={s}><h3>{LABEL[s]}</h3>
+      {VERSION_SOURCES.filter((s) => results[s]).map((s) => <section key={s}><h3>{VERSION_LABEL[s]}</h3>
         {results[s]!.loading && <p className="muted small">Ищем…</p>}
         {results[s]!.error && <p className="small error-text">{results[s]!.error}</p>}
         {!results[s]!.loading && !results[s]!.error && !results[s]!.items.length && <p className="muted small">Ничего не нашлось</p>}
-        {results[s]!.items.map((c) => { const t = (c.remote ?? c.yandex)!; return card(c, { cover: t.coverUrl, seed: t.externalId, title: t.title, artist: c.remote?.uploader || t.artist, source: LABEL[s], icon: s, duration: t.duration, labels: c.remote?.labels ?? [], explicit: t.explicit }); })}
+        {results[s]!.items.map((c) => { const t = (c.remote ?? c.yandex)!; return card(c, { cover: t.coverUrl, seed: t.externalId, title: t.title, artist: c.remote?.uploader || t.artist, source: VERSION_LABEL[s], icon: s, duration: t.duration, labels: c.remote?.labels ?? [], explicit: t.explicit }); })}
       </section>)}
     </div>
     <footer className="version-actions">

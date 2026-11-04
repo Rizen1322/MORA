@@ -3,19 +3,19 @@ const h = vi.hoisted(() => ({
   app: {} as any, listeners: [] as (() => void)[], radio: { active: false, loading: false, error: null as string | null },
   playTracks: vi.fn(), addToQueue: vi.fn(), toggle: vi.fn(), startWave: vi.fn(), startRadio: vi.fn(), toast: vi.fn(),
   queue: { queue: [{ entryId: 'p' }, { entryId: 'n' }, { entryId: 'x' }, { entryId: 'y' }], index: 1 },
-  jumpTo: vi.fn(), removeAt: vi.fn(), move: vi.fn(), swapNext: vi.fn(),
+  jumpTo: vi.fn(), removeAt: vi.fn(), move: vi.fn(), swapNext: vi.fn(), recordingChanged: vi.fn(),
 }));
 vi.mock('../src/store/app.ts', () => ({
   phone: true,
   controller: { playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k),
     get state() { return h.queue; }, jumpTo: (i: number) => h.jumpTo(i), removeAt: (i: number) => h.removeAt(i),
-    move: (a: number, b: number) => h.move(a, b), swapNext: () => h.swapNext() },
+    move: (a: number, b: number) => h.move(a, b), swapNext: () => h.swapNext(), recordingChanged: (id: string) => h.recordingChanged(id), intentVersion: 0 },
   trackOf: (id: string) => h.app.tracks.get(id),
   useApp: { getState: () => h.app, setState: vi.fn(), subscribe: (fn: () => void) => h.listeners.push(fn) },
 }));
 vi.mock('../src/lib/radio.ts', () => ({ startRadio: () => h.startRadio(), useRadio: { getState: () => h.radio, subscribe: vi.fn() } }));
 vi.mock('../src/store/catalog.ts', () => ({ publicPlayer: {}, usePublicPlayback: { getState: () => ({ phase: 'idle', title: '' }), subscribe: vi.fn() } }));
-vi.mock('../src/pages/Search.tsx', () => ({ asCatalog: (t: any) => t, SOURCE_LABEL: {} }));
+vi.mock('../src/pages/Search.tsx', () => ({ asCatalog: (t: any) => t, SOURCE_LABEL: {}, TAG_TEXT: { live: 'Live' }, ensurePublic: async (t: any) => ({ id: 'alt-' + t.externalId }) }));
 vi.mock('../src/components/TrackList.tsx', () => ({ react: vi.fn() }));
 vi.mock('../src/lib/api.ts', () => ({ api: {} }));
 
@@ -82,17 +82,26 @@ describe('native shell bridge (page side)', () => {
     expect(() => commands.swap({})).toThrow('нельзя');
   });
 
-  it('opens the version picker for a queue entry; native steps aside while it is open', async () => {
-    const { commands, uiState } = await import('../src/lib/native-ui.ts');
-    const { useVersionPanel } = await import('../src/components/VersionPanel.tsx');
+  it('native version picker: searches by queue entry or track id, binds a choice and swaps the queue', async () => {
+    const { commands } = await import('../src/lib/native-ui.ts');
+    const { api } = await import('../src/lib/api.ts');
+    (api as any).publicSearch = vi.fn(async () => ({ items: [
+      { externalId: 'v1', title: 'A (Live)', artist: 'X', uploader: 'Chan', duration: 99, coverUrl: null, explicit: true, labels: [{ tag: 'explicit', origin: 'source' }, { tag: 'live', origin: 'title' }] },
+    ] }));
+    (api as any).bindRecording = vi.fn(async () => ({ ok: true }));
+    h.app.loadLibrary = vi.fn(async () => {});
     (h.queue.queue[2] as any).trackId = 'a';
-    commands.version({ entryId: 'x' });
-    expect(useVersionPanel.getState().target).toMatchObject({ trackId: 'a', title: 'A', artist: 'X', duration: 100 });
-    expect(uiState().overlay).toBe(true);
-    expect(() => commands.version({ entryId: 'gone' })).toThrow('не найден');
-    useVersionPanel.setState({ target: null });
-    commands.version({ id: 'a' });
-    expect(useVersionPanel.getState().target).toMatchObject({ trackId: 'a' });
+    const found = await commands.versions({ entryId: 'x', source: 'youtube' }) as any;
+    expect((api as any).publicSearch).toHaveBeenCalledWith('youtube', 'X A', undefined);
+    expect(found).toEqual({ bound: false, items: [{ key: 'youtube:v1', title: 'A (Live)', artist: 'Chan', duration: 99, cover: null, explicit: true, labels: ['Live'] }] });
+    await expect(commands.versions({ id: 'a', source: 'evil' })).rejects.toThrow('источник');
+    await expect(commands.versionApply({ id: 'a', key: 'youtube:gone' })).rejects.toThrow('устарел');
+    await commands.versionApply({ id: 'a', key: 'youtube:v1' });
+    expect((api as any).bindRecording).toHaveBeenCalledWith('a', 'alt-v1');
+    expect(h.recordingChanged).toHaveBeenCalledWith('a');
+    await commands.versionApply({ id: 'a' });
+    expect((api as any).bindRecording).toHaveBeenLastCalledWith('a', null);
+    await expect(commands.versions({ entryId: 'gone', source: 'youtube' })).rejects.toThrow('не найден');
     delete (h.queue.queue[2] as any).trackId;
   });
 

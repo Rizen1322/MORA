@@ -300,7 +300,9 @@ struct NativeTrackActions: View {
             Label(track.reaction < 0 ? "Убрать «Не нравится»" : "Не нравится", systemImage: "hand.thumbsdown")
         }
         Divider()
-        Button { store.run("version", ["id": track.id]) } label: { Label("Выбрать версию", systemImage: "waveform") }
+        Button { store.versionTarget = NativeVersionTarget(args: ["id": track.id], title: track.title, artist: track.artist) } label: {
+            Label("Выбрать версию", systemImage: "waveform")
+        }
         if !track.album.isEmpty {
             Button { store.run("open", ["id": track.id, "to": "album"]) } label: { Label("Перейти к альбому", systemImage: "square.stack") }
         }

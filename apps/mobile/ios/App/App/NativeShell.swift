@@ -102,6 +102,8 @@ final class NativeShellStore: ObservableObject {
     @Published private(set) var player = NativePlayerState()
     @Published private(set) var artwork: UIImage?
     @Published var banner: String?
+    /// «Выбрать версию» from a track row's menu (NativeShellContent presents the picker).
+    @Published var versionTarget: NativeVersionTarget?
     weak var webView: WKWebView?
     weak var presenter: UIViewController?
     var host: NativeMixHost?
@@ -371,6 +373,7 @@ struct NativeShellContent: View {
         .animation(.easeOut(duration: 0.25), value: store.banner)
         .foregroundStyle(.white)
         .tint(.moraMint)
+        .sheet(item: $store.versionTarget) { NativeVersionPicker(target: $0, shell: store).tint(.moraMint) }
         .environmentObject(store)
     }
 }

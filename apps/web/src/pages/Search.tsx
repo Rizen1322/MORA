@@ -18,7 +18,7 @@ const REMOTE: PublicSource[] = ['ytmusic', 'youtube', 'soundcloud'];
 export const SOURCE_LABEL: Record<PublicSource, string> = { ytmusic: 'YouTube Music', youtube: 'YouTube', soundcloud: 'SoundCloud' };
 const FILTERS: [Filter, string][] = [['all', 'Все'], ['ytmusic', 'YouTube Music'], ['youtube', 'YouTube'], ['soundcloud', 'SoundCloud'], ['local', 'Моя музыка']];
 const RECENT_KEY = 'mora.search.recent';
-const TAG_TEXT: Record<string, string> = {
+export const TAG_TEXT: Record<string, string> = {
   explicit: 'E', clean: 'Clean', remix: 'Ремикс', live: 'Live', acoustic: 'Акустика', slowed: 'Slowed', 'sped-up': 'Sped up', reverb: 'Reverb',
   nightcore: 'Nightcore', instrumental: 'Инструментал', karaoke: 'Караоке', cover: 'Кавер', remaster: 'Ремастер', extended: 'Extended',
   'radio-edit': 'Radio edit', demo: 'Демо', mashup: 'Мэшап', 'bass-boosted': 'Bass boosted', '8d': '8D', uncensored: 'Uncensored',
