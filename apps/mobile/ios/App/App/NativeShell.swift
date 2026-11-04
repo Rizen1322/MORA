@@ -159,9 +159,11 @@ final class NativeShellStore: ObservableObject {
                 done = true
                 continuation.resume(with: result)
             }
-            webView.callAsyncJavaScript("if (!window.moraNativeUi) throw new Error('page'); return await window.moraNativeUi(name, args)",
-                                        arguments: ["name": name, "args": args], in: nil, in: .page) { result in
-                finish(result.map { $0 is NSNull ? nil : $0 })
+            // The Objective-C method: the Result-based Swift wrapper lives in libswiftWebKit.dylib under the
+            // iOS 26 SDK, which iOS 17/18 do not have (dyld aborts at launch).
+            webView.__callAsyncJavaScript("if (!window.moraNativeUi) throw new Error('page'); return await window.moraNativeUi(name, args)",
+                                          arguments: ["name": name, "args": args], inFrame: nil, in: .page) { value, error in
+                if let error { finish(.failure(error)) } else { finish(.success(value is NSNull ? nil : value)) }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { finish(.failure(NativeShellError.timeout)) }
         }
