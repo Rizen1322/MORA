@@ -120,6 +120,14 @@ export const commands: Record<string, (a: Args) => unknown> = {
     if (!t) throw new Error('Трек не найден');
     openVersionPanel({ trackId: t.id, title: t.title, artist: t.artist, duration: t.duration });
   },
+  /** Native player «Текст»: synced lines (seconds, already shifted by the saved offset) or plain text. */
+  lyrics: async (a) => {
+    const t = trackOf(str(a.id));
+    if (!t) throw new Error('Трек не найден');
+    const l = await api.lyrics(t.id);
+    const shift = l.offsetMs / 1000;
+    return { synced: l.status === 'synced', lines: l.lines.map((x) => ({ t: x.t - shift, text: x.text })), plain: l.plain };
+  },
   swap: () => {
     if (!controller.swapNext()) throw new Error('Заменить следующий трек сейчас нельзя');
   },

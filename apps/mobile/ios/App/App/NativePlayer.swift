@@ -202,6 +202,7 @@ struct NativePlayerView: View {
     @ObservedObject var model: NativePlayerModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var queueOpen = false
+    @State private var lyricsOpen = false
 
     var body: some View {
         let s = model.state
@@ -212,7 +213,17 @@ struct NativePlayerView: View {
                 Text("Сейчас играет").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
                     .accessibilityHidden(true)
                 Spacer()
-                IconButton(symbol: "ellipsis", label: "Ещё: нравится, текст песни") { model.close("more") }
+                Menu {
+                    if model.shell != nil {
+                        Button { lyricsOpen = true } label: { Label("Текст песни", systemImage: "quote.bubble") }
+                        versionAction(s.entryId)
+                    }
+                    Button { model.close("more") } label: { Label("Полный плеер", systemImage: "rectangle.expand.vertical") }
+                } label: {
+                    Image(systemName: "ellipsis").font(.title3.weight(.semibold))
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .accessibilityLabel("Ещё")
             }
             .padding(.horizontal, -10)
             Spacer(minLength: 12)
@@ -264,6 +275,7 @@ struct NativePlayerView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in model.stop() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in model.start() }
         .sheet(isPresented: $queueOpen) { NativeQueueView(model: model) }
+        .sheet(isPresented: $lyricsOpen) { NativeLyricsView(model: model) }
     }
 
     @ViewBuilder private func versionAction(_ entryId: String) -> some View {
@@ -465,5 +477,76 @@ private struct NativeScrubber: View {
             }
         }
         .disabled(state.duration <= 0)
+    }
+}
+
+/// Lyrics of the audible track (the page's lyrics source and saved offset): synced lines follow the native
+/// clock and seek on tap; plain text otherwise.
+private struct NativeLyricsView: View {
+    @ObservedObject var model: NativePlayerModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var lines: [(t: Double, text: String)] = []
+    @State private var plain = ""
+    @State private var status = "Загружаю текст…"
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if !lines.isEmpty {
+                    TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                        let s = model.state
+                        let now = s.position + (s.playing ? Date().timeIntervalSince(model.receivedAt) : 0)
+                        let active = lines.lastIndex(where: { $0.t <= now })
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 16) {
+                                    ForEach(lines.indices, id: \.self) { i in
+                                        Button { model.seek(to: max(0, lines[i].t)) } label: {
+                                            Text(lines[i].text.isEmpty ? "♪" : lines[i].text).font(.title3.weight(.semibold))
+                                                .foregroundStyle(i == active ? Color.moraMint : .white.opacity(i < (active ?? -1) ? 0.4 : 0.75))
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityHint("Перейти к этой строке")
+                                        .id(i)
+                                    }
+                                }
+                                .padding(20)
+                            }
+                            .onChange(of: active) { _, i in
+                                if let i { withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(i, anchor: .center) } }
+                            }
+                        }
+                    }
+                } else if !plain.isEmpty {
+                    ScrollView { Text(plain).font(.body).frame(maxWidth: .infinity, alignment: .leading).padding(20) }
+                } else {
+                    Text(status).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle(model.state.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } } }
+        }
+        .task(id: model.state.trackId) { await load(model.state.trackId) }
+        .presentationDetents([.large])
+        .presentationBackground(.ultraThinMaterial)
+    }
+
+    @MainActor private func load(_ id: String) async {
+        lines = []; plain = ""; status = "Загружаю текст…"
+        guard let shell = model.shell, !id.isEmpty else { status = "Текст недоступен"; return }
+        do {
+            let value = try await shell.call("lyrics", ["id": id]) as? [String: Any] ?? [:]
+            if value["synced"] as? Bool == true {
+                lines = (value["lines"] as? [[String: Any]] ?? []).compactMap { row in
+                    (row["t"] as? Double).map { (t: $0, text: row["text"] as? String ?? "") }
+                }
+            }
+            plain = value["plain"] as? String ?? ""
+            if lines.isEmpty && plain.isEmpty { status = "Текст не найден" }
+        } catch {
+            status = "Не удалось загрузить текст"
+        }
     }
 }

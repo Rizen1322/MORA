@@ -96,6 +96,15 @@ describe('native shell bridge (page side)', () => {
     delete (h.queue.queue[2] as any).trackId;
   });
 
+  it('serves lyrics shifted by the saved offset', async () => {
+    const { commands } = await import('../src/lib/native-ui.ts');
+    const { api } = await import('../src/lib/api.ts');
+    (api as any).lyrics = vi.fn(async () => ({ status: 'synced', lines: [{ t: 10, text: 'a' }], plain: 'a', offsetMs: 500, source: 'lrclib' }));
+    expect(await commands.lyrics({ id: 'a' })).toEqual({ synced: true, lines: [{ t: 9.5, text: 'a' }], plain: 'a' });
+    expect((api as any).lyrics).toHaveBeenCalledWith('a');
+    await expect(commands.lyrics({ id: 'zzz' })).rejects.toThrow('не найден');
+  });
+
   it('pushes the library only when it changed, and follows the shell on the page', async () => {
     vi.useFakeTimers();
     const classes = new Set<string>();
