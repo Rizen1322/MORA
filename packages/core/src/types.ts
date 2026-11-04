@@ -253,6 +253,9 @@ export interface TrackAnalysis {
     /** Onset peaks per second over 2 s, scaled 0..1 at 8/s. Not a drum or voice detector. */
     transients: number[];
   };
+  /** Actual PCM stereo measurements; bin i covers [i/rate, (i+1)/rate).
+   * Missing windows stay unavailable. Silence may use correlation=1, sideToMidDb=-120. */
+  stereo?: { rate: number; correlation: number[]; sideToMidDb: number[] };
   /** Downsampled waveform peaks for drawing, 0..1, at `curves.rate`. */
   peaks: number[];
   cues: { entry: CueCandidate[]; exit: CueCandidate[] };
@@ -281,7 +284,7 @@ export type TransitionRatingReason = (typeof TRANSITION_RATING_REASONS)[number];
 /** 'filter' is bipolar (-1 low-pass, 0 bypass, +1 high-pass).
  * 'echo' is a send level (0..1) into a tempo-synced echo; gain/low/mid/high are gains.
  * 'voiceEcho' sends only the audible separated voice of A into its own echo (vocal throw). */
-export type Lane = 'gain' | 'low' | 'mid' | 'high' | 'echo' | 'voiceEcho' | 'filter';
+export type Lane = 'gain' | 'low' | 'mid' | 'high' | 'echo' | 'voiceEcho' | 'filter' | 'width';
 
 /** A piecewise-linear automation lane. `t` is seconds from transition start (output time). */
 export interface AutomationLane {
@@ -354,7 +357,7 @@ export interface TransitionPlan {
   vocalB?: [number, number][];
   automation: AutomationLane[];
   /** Tempo-synced echo used by the 'echo' send lane (echo-out of A). */
-  echo?: { delay: number; feedback: number };
+  echo?: { delay: number; feedback: number; delayPoints?: [number, number][]; clearAt?: number };
   /** Echo used by the 'voiceEcho' lane: repeats A's last sung word and dies out before B's voice opens. */
   voiceEcho?: { delay: number; feedback: number; clearAt?: number };
   /** Static loudness normalization gains, dB. */
