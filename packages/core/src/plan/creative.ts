@@ -161,6 +161,22 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
   }
   duration = r3(duration); delay = r3(delay); pre = r3(pre);
   if (delay < 0 || duration > Math.min(60, settings.maxBlendSeconds) || entry + duration - delay > bEnd + 1e-6) return null;
+  const rhythmic = style === 'half-time-handoff' || style === 'percussion-exchange' || style === 'two-stage-bass';
+  let phaseDrift = 0;
+  if (rhythmic) {
+    const mismatch = style === 'half-time-handoff' ? Math.abs(Math.max(beat, beatB) / (2 * Math.min(beat, beatB)) - 1) : Math.abs(beat / beatB - 1);
+    phaseDrift = mismatch * (style === 'half-time-handoff' ? pre + 2 * Math.min(beat, beatB) - delay : duration - delay);
+    const swapSource = entry + pre - delay;
+    const incomingLow = measured(B, 'lowDb', swapSource, swapSource + beatB);
+    const incomingRms = measured(B, 'rmsDb', swapSource, swapSource + beatB);
+    const bodyLow = measured(B, 'lowDb', entry, B.audibleEnd);
+    if (phaseDrift > .02 || ![incomingLow, incomingRms, bodyLow].every(Number.isFinite)
+      || incomingLow < bodyLow - 6 || incomingLow < incomingRms - 14 || incomingRms < B.bodyRmsDb - 8) return null;
+    if (style === 'percussion-exchange') {
+      const high = measured(B, 'highDb', entry, entry + barB), bodyHigh = measured(B, 'highDb', entry, B.audibleEnd);
+      if (!Number.isFinite(high) || !Number.isFinite(bodyHigh) || high < bodyHigh - 8) return null;
+    }
+  }
 
   const earliest = Math.max(A.audibleStart + pre, A.audibleEnd * .55, A.audibleEnd - 40);
   const latest = A.audibleEnd - (duration - pre) - .025;
@@ -182,6 +198,7 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
     if (exit < A.audibleStart || end > A.audibleEnd || exit < .025) continue;
     if (curveNames.some(k => !Number.isFinite(measured(A, k, exit, end)) || !Number.isFinite(measured(B, k, entry, entry + bClock)))) continue;
     const aLevel = measured(A, 'rmsDb', Math.max(exit, handoff - beat), handoff);
+    if (rhythmic && measured(A, 'lowDb', Math.max(exit, handoff - beat), handoff) < aLevel - 14) continue;
     const aDensity = measured(A, 'midDensity', exit, Math.min(end, handoff + beat));
     const aOnset = onset(A, exit, Math.min(end, handoff + beat));
     const reasons = [spec.description, 'Начало B сохранено с первого слышимого сэмпла; вариант предназначен для прослушивания.'];
@@ -190,6 +207,7 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
       outgoingRmsDb: r3(aLevel), incomingRmsDb: r3(bLevel), outgoingMidDensity: r3(aDensity), incomingMidDensity: r3(bDensity),
       phraseBoundary: marked(handoff), vocalActivityKnown: !!A.vocalActivity && !!B.vocalActivity,
     };
+    if (rhythmic) measuredInfo.phaseDriftMs = r3(phaseDrift * 1000);
     if (Number.isFinite(aOnset)) measuredInfo.outgoingOnset = r3(aOnset);
     if (Number.isFinite(bOnset)) measuredInfo.incomingOnset = r3(bOnset);
     let score = .65 + (marked(handoff) ? .08 : 0);
@@ -202,6 +220,7 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
       entrySelection: { kind: 'start', skippedSeconds: 0, arrivalTime: r3(first), confidence: r3(gb.downbeatConfidence) }, debug: {},
     };
     const add = (deck: 'A' | 'B', lane: AutomationLane['lane'], knots: Points) => {
+      if (deck === 'B' && lane === 'gain') knots = [[0, 0], [.012, knots[0][1]], ...knots.filter(([t]) => t > .012)];
       const existing = p.automation.findIndex(l => l.deck === deck && l.lane === lane);
       const l = { deck, lane, points: points(knots, deck === 'A' ? duration : bClock) };
       if (existing < 0) p.automation.push(l); else p.automation[existing] = l;
@@ -317,7 +336,8 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
       measuredInfo.stereoWindowsChecked = true; measuredInfo.minimumCorrelation = .05; score += .04;
     }
     p.confidence = r3(clamp(score));
-    p.debug = { processingAllowed: true, creative: { style, name: spec.name, score: p.confidence, reasons: [...reasons], experimental: true, measured: measuredInfo } };
+    p.debug = { processingAllowed: true, creative: { style, name: spec.name, score: p.confidence, reasons: [...reasons], experimental: true,
+      limits: ['requires-listening', ...(!A.vocalActivity || !B.vocalActivity ? ['vocal-overlap-unknown'] : [])], measured: measuredInfo } };
     const key = [a.id, b.id, style, p.aExit, p.bEntry, p.duration, p.gainA, p.gainB].join('|');
     p.id = `creative_${fnv1a('creative-1|' + key)}`;
     return p;

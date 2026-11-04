@@ -6,7 +6,7 @@ export function creativeTrack(id: string, bpm = 120): PlannerTrack {
   const beats = Array.from({ length: Math.ceil(duration / period) }, (_, i) => i * period).filter(t => t < duration);
   const downbeats = beats.filter((_, i) => i % 4 === 0), rmsDb = Array.from({ length: duration * rate }, () => -16);
   const analysis: TrackAnalysis = {
-    version: 'creative-measured-fixture', duration, audibleStart: 0, audibleEnd: duration,
+    version: 'creative-measured-fixture', duration, audibleStart: 0, audibleEnd: duration, rhythmStrength: .9,
     loudness: { integratedLufs: -16, samplePeakDb: -4, truePeakDb: -3 },
     beat: { bpm, period, stable: true, confidence: .95, downbeatConfidence: .9, jitterMs: 2, beats, downbeats, downbeatPhase: 0, alternatives: [] },
     key: { tonic: -1, mode: 'unknown', name: '', camelot: '', confidence: 0 },

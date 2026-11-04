@@ -39,6 +39,7 @@ describe('explicit creative transition auditions', () => {
       }
     }
     expect(pointValue(p.automation.find(l => l.deck === 'A' && l.lane === 'gain')!.points, p.duration)).toBe(0);
+    expect(p.automation.find(l => l.deck === 'B' && l.lane === 'gain')!.points[0]).toEqual([0, 0]);
     expect(pointValue(p.automation.find(l => l.deck === 'B' && l.lane === 'gain')!.points, p.duration - (p.bDelay ?? 0))).toBe(1);
     if (p.echo) {
       expect(p.echo.feedback).toBeLessThanOrEqual(.72);
@@ -102,6 +103,22 @@ describe('explicit creative transition auditions', () => {
     expect(planCreativeTransition(stereo.from, stereo.to, stereo.settings, stereo.style)).toBeNull();
     const corrupt = creativePair('dub-throw'); corrupt.from.analysis!.curves.rmsDb.fill(NaN);
     expect(planCreativeTransition(corrupt.from, corrupt.to, corrupt.settings, corrupt.style)).toBeNull();
+  });
+
+  it('rejects bass holes and audible native drift instead of calling them bass exchanges', () => {
+    for (const style of ['half-time-handoff', 'percussion-exchange', 'two-stage-bass'] as const) {
+      const quiet = creativePair(style), B = quiet.to.analysis!;
+      for (let i = 0; i < 12 * B.curves.rate; i++) { B.curves.rmsDb[i] -= 20; B.curves.lowDb[i] -= 20; B.curves.highDb[i] -= 20; }
+      expect(planCreativeTransition(quiet.from, quiet.to, quiet.settings, style)).toBeNull();
+      const drift = creativePair(style), g = drift.to.analysis!.beat!;
+      g.bpm *= 1.014; g.period /= 1.014; g.beats = g.beats.map(t => t / 1.014); g.downbeats = g.downbeats.map(t => t / 1.014);
+      if (style === 'half-time-handoff') drift.to.analysis!.audibleStart = .5;
+      expect(planCreativeTransition(drift.from, drift.to, drift.settings, style)).toBeNull();
+      for (const deck of ['from', 'to'] as const) {
+        const noBass = creativePair(style); noBass[deck].analysis!.curves.lowDb.fill(-60);
+        expect(planCreativeTransition(noBass.from, noBass.to, noBass.settings, style)).toBeNull();
+      }
+    }
   });
 
   it('does not change automatic planning or depend on separated PCM', () => {
