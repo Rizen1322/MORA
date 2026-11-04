@@ -7,7 +7,7 @@ import { publicPlayer, usePublicPlayback } from '../store/catalog.ts';
 import { react } from '../components/TrackList.tsx';
 import { asCatalog, SOURCE_LABEL, TAG_TEXT } from '../pages/Search.tsx';
 import { resolveVersion, searchVersions, useVersionPanel, VERSION_SOURCES, versionFormat, type Candidate, type VersionSource } from '../components/VersionPanel.tsx';
-import { actions, describe, type ActResult } from './native-pages.ts';
+import { actions, describe, offline, type ActResult } from './native-pages.ts';
 
 /**
  * iPhone native shell (ios/App/App/NativeShell.swift). Data path: this page stays the only owner of
@@ -17,11 +17,11 @@ import { actions, describe, type ActResult } from './native-pages.ts';
  * which is the only time native screens can be touched; native keeps the last snapshot meanwhile.
  */
 
-export interface NativeUiTrack { id: string; title: string; artist: string; album: string; duration: number; reaction: number; cover: string | null; ok: boolean }
+export interface NativeUiTrack { id: string; title: string; artist: string; album: string; duration: number; reaction: number; cover: string | null; ok: boolean; offline: boolean }
 type Wave = 'own' | 'yandex' | 'online';
 
 export const uiTrack = (t: Track): NativeUiTrack => ({
-  id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration, reaction: t.reaction, cover: t.coverUrl, ok: t.status === 'ok',
+  id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration, reaction: t.reaction, cover: t.coverUrl, ok: t.status === 'ok', offline: offline(t),
 });
 
 /** Everything but the library and playlists, which are sent only when they change. */
@@ -180,6 +180,13 @@ export const commands: Record<string, (a: Args) => unknown> = {
     const l = await api.lyrics(t.id);
     const shift = l.offsetMs / 1000;
     return { synced: l.status === 'synced', lines: l.lines.map((x) => ({ t: x.t - shift, text: x.text })), plain: l.plain };
+  },
+  /** Track row «Скачать на телефон»: the same download job as the web track menu. */
+  download: async (a) => {
+    const t = trackOf(str(a.id));
+    if (!t) throw new Error('Трек не найден');
+    await api.download({ trackId: t.id });
+    useApp.getState().toast(`«${t.title}» скачивается на телефон`);
   },
   swap: () => {
     if (!controller.swapNext()) throw new Error('Заменить следующий трек сейчас нельзя');

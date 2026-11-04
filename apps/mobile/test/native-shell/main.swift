@@ -1,12 +1,12 @@
 import Foundation
 
 let rows: [[String: Any]] = [
-    ["id": "a", "title": "Ёлка", "artist": "Звери", "album": "Районы", "duration": 200.0, "reaction": 1, "cover": "/api/tracks/a/cover", "ok": true],
+    ["id": "a", "title": "Ёлка", "artist": "Звери", "album": "Районы", "duration": 200.0, "reaction": 1, "cover": "/api/tracks/a/cover", "ok": true, "offline": true],
     ["id": "b", "title": "Night Call", "artist": "Kavinsky", "album": "OutRun", "duration": -4.0, "reaction": 0, "ok": false],
     ["title": "no id"],
 ]
 let tracks = rows.compactMap(NativeTrack.init)
-precondition(tracks.map(\.id) == ["a", "b"] && tracks[0].liked && !tracks[1].liked && !tracks[1].ok && tracks[1].duration == 0)
+precondition(tracks.map(\.id) == ["a", "b"] && tracks[0].offline && !tracks[1].offline && tracks[0].liked &&!tracks[1].liked && !tracks[1].ok && tracks[1].duration == 0)
 precondition(NativeSearchText.filter(tracks, "елка звер").map(\.id) == ["a"], "ё and case are ignored, every word must match")
 precondition(NativeSearchText.filter(tracks, "  ").count == 2 && NativeSearchText.filter(tracks, "outrun KAV").map(\.id) == ["b"])
 precondition(NativeSearchText.filter(tracks, "kavinsky звери").isEmpty)

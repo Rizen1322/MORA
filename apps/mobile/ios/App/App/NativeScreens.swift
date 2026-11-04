@@ -242,6 +242,9 @@ struct NativeTrackRow: View {
                     Text(track.artist).font(.subheadline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
                 }
                 Spacer(minLength: 4)
+                if track.offline {
+                    Image(systemName: "arrow.down.circle.fill").font(.caption).foregroundStyle(.white.opacity(0.45)).accessibilityHidden(true)
+                }
                 if track.liked {
                     Image(systemName: "heart.fill").font(.caption).foregroundStyle(Color.moraMint).accessibilityHidden(true)
                 }
@@ -255,7 +258,7 @@ struct NativeTrackRow: View {
         .buttonStyle(.plain)
         .disabled(!track.ok)
         .listRowBackground(Color.clear)
-        .accessibilityLabel("\(track.title), \(track.artist)\(track.liked ? ", в любимом" : "")")
+        .accessibilityLabel("\(track.title), \(track.artist)\(track.liked ? ", в любимом" : "")\(track.offline ? ", на телефоне" : "")")
         .accessibilityValue(NativePlayerTime.text(track.duration))
         .accessibilityHint(track.ok ? "Играть" : "Файл недоступен")
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
@@ -300,6 +303,9 @@ struct NativeTrackActions: View {
             Label(track.reaction < 0 ? "Убрать «Не нравится»" : "Не нравится", systemImage: "hand.thumbsdown")
         }
         Divider()
+        if !track.offline {
+            Button { store.run("download", ["id": track.id]) } label: { Label("Скачать на телефон", systemImage: "arrow.down.circle") }.disabled(!track.ok)
+        }
         Button { store.versionTarget = NativeVersionTarget(args: ["id": track.id], title: track.title, artist: track.artist) } label: {
             Label("Выбрать версию", systemImage: "waveform")
         }

@@ -19,7 +19,7 @@ vi.mock('../src/pages/Search.tsx', () => ({ asCatalog: (t: any) => t, SOURCE_LAB
 vi.mock('../src/components/TrackList.tsx', () => ({ react: vi.fn() }));
 vi.mock('../src/lib/api.ts', () => ({ api: {} }));
 
-const track = (id: string, status = 'ok') => ({ id, title: id.toUpperCase(), artist: 'X', album: '', duration: 100, reaction: 0, coverUrl: null, status });
+const track = (id: string, status = 'ok') => ({ id, title: id.toUpperCase(), artist: 'X', album: '', duration: 100, reaction: 0, coverUrl: null, status, provider: id === 'a' ? 'local' : 'youtube' });
 
 beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks(); h.listeners.length = 0;
@@ -124,7 +124,7 @@ describe('native shell bridge (page side)', () => {
     startNativeUi();
     await vi.advanceTimersByTimeAsync(200);
     expect(push).toHaveBeenCalledTimes(1);
-    expect((push.mock.calls[0] as any)[0].library.map((t: any) => t.id)).toEqual(['a', 'b']);
+    expect((push.mock.calls[0] as any)[0].library.map((t: any) => [t.id, t.offline])).toEqual([['a', true], ['b', false]]);
     expect(classes.has('mora-native-shell')).toBe(true);
     h.listeners.forEach((fn) => fn()); // nothing changed
     await vi.advanceTimersByTimeAsync(200);

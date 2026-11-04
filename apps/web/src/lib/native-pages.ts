@@ -51,6 +51,8 @@ export interface Screen { title: string; sections: Section[]; search?: string; r
 export interface ActResult { go?: string; share?: { name: string; text: string } }
 
 const st = () => useApp.getState();
+/** Plays without a network: a local file or an explicit download. */
+export const offline = (t: Track) => t.provider === 'local' || !!t.pinned;
 const library = () => { const s = st(); return s.order.map((id) => s.tracks.get(id)).filter((t): t is Track => !!t); };
 const route = () => {
   const [p, q] = (location.hash.replace(/^#/, '') || '/').split('?');
@@ -139,8 +141,10 @@ async function playlist(id: string): Promise<Screen> {
   const rows = pl.entries.map((e) => ({ e, t: trackOf(e.trackId) })).filter((r): r is { e: typeof r.e; t: Track } => !!r.t);
   const ctx = { type: 'playlist', id: pl.id, label: pl.name };
   const list = rows.map((r) => r.t);
+  const missing = list.filter((t) => !offline(t)).length;
   return { title: pl.name, search: list.length ? 'Найти в плейлисте' : undefined, sections: [
-    header(list.map((t) => t.id), ctx, `${tracksWord(list.length)}, ${fmtTotal(list.reduce((a, t) => a + t.duration, 0))}`, [
+    header(list.map((t) => t.id), ctx, `${tracksWord(list.length)}, ${fmtTotal(list.reduce((a, t) => a + t.duration, 0))}${list.length ? ` · на телефоне ${list.length - missing} из ${list.length}` : ''}`, [
+      button(missing ? 'Скачать на телефон' : 'Всё на телефоне', 'downloadPlaylist', { id }, { symbol: 'arrow.down.circle', disabled: !missing }),
       button('Переименовать', 'renamePlaylist', { id }, { symbol: 'pencil', prompt: { title: 'Переименовать плейлист', initial: pl.name, placeholder: 'Название' } }),
       button('Экспорт', 'exportPlaylist', { id }, { symbol: 'square.and.arrow.up' }),
       // The mix builder runs a web worker and its own preview: it stays a web sheet.
@@ -586,7 +590,7 @@ function onlineScreen(key: string, o: Online, title: string, sub: string, more: 
 
 async function yandexArtist(id: string): Promise<Screen> {
   const d = await api.catalogArtist(id);
-  const albums: Section = { title: 'Альбомы', rows: d.albums.map((a) => ({ kind: 'item', title: a.title, subtitle: [a.year, a.trackCount && `${a.trackCount} ${tracksWord(a.trackCount)}`].filter(Boolean).join(' · '),
+  const albums: Section = { title: 'Альбомы', rows: d.albums.map((a) => ({ kind: 'item', title: a.title, subtitle: [a.year, a.trackCount && tracksWord(a.trackCount)].filter(Boolean).join(' · '),
     cover: a.imageUrl, path: go(catalogAlbumHref(a.id)) })) };
   return onlineScreen(`yandex:artist:${id}`, { player: catalogPlayer, tracks: d.popularTracks, ctx: { type: 'artist', id, label: d.artist.name } },
     d.artist.name, 'Яндекс Музыка', d.albums.length ? [albums] : []);
@@ -726,6 +730,10 @@ export const actions: Record<string, (a: Args) => unknown> = {
     const rest = (s.wave.yandexSeeds ?? []).filter((x) => !group.includes(x));
     await st().saveSettings({ wave: { ...s.wave, yandexSeeds: seed ? [...rest, seed] : rest } });
     await controller.refreshYandexWave();
+  },
+  downloadPlaylist: async (a) => {
+    const { jobs } = await api.downloadPlaylist(str(a.id));
+    st().toast(jobs ? `Скачиваем на телефон: ${tracksWord(jobs)}` : 'Всё уже на телефоне');
   },
   downloadAction: (a) => {
     const action = str(a.action);
