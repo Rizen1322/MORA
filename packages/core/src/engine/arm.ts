@@ -7,6 +7,12 @@ import { drain } from '../plan/timing.ts';
 /** Converts a planner TransitionPlan (seconds) to engine frames for a sample rate. */
 export function planToArmed(plan: TransitionPlan, sampleRate: number, fromToken: string, toToken: string): ArmedTransition {
   const f = (s: number) => Math.round(s * sampleRate);
+  if ((plan.echo?.delayPoints?.length ?? 0) > 64 || plan.echo?.delayPoints?.some(([t, d], i, points) =>
+    !Number.isFinite(t) || !Number.isFinite(d) || t < 0 || t > plan.duration || f(d) < 1 || f(d) > Math.ceil(sampleRate * 2.5) - 1 || (i > 0 && t < points[i - 1][0]))
+    || (plan.echo?.clearAt !== undefined && (!Number.isFinite(plan.echo.clearAt) || plan.echo.clearAt < 0 || plan.echo.clearAt > plan.duration))
+    || plan.automation.some(l => l.lane === 'width' && l.points.some(([, v]) => !Number.isFinite(v) || v < 0 || v > 1))) {
+    throw new Error('Invalid creative automation');
+  }
   return {
     planId: plan.id,
     method: plan.method,
@@ -27,6 +33,8 @@ export function planToArmed(plan: TransitionPlan, sampleRate: number, fromToken:
     vocalB: plan.vocalB?.map(([t, gain]) => [f(t), gain] as [number, number]),
     echoDelayFrames: plan.echo ? f(plan.echo.delay) : undefined,
     echoFeedback: plan.echo?.feedback,
+    echoDelayPointsFrames: plan.echo?.delayPoints?.map(([t, delay]) => [f(t), f(delay)] as [number, number]),
+    echoClearFrame: plan.echo?.clearAt === undefined ? undefined : f(plan.echo.clearAt),
     voiceEchoDelayFrames: plan.voiceEcho ? f(plan.voiceEcho.delay) : undefined,
     voiceEchoFeedback: plan.voiceEcho?.feedback,
     voiceEchoClearFrame: Number.isFinite(plan.voiceEcho?.clearAt) && plan.voiceEcho!.clearAt! >= 0 && plan.voiceEcho!.clearAt! <= plan.duration ? f(plan.voiceEcho!.clearAt!) : undefined,

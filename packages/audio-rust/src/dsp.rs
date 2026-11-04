@@ -310,6 +310,8 @@ pub struct Echo {
     out_step: f64,
     deadline: Option<f64>,
     deadline_fade: f64,
+    delay_map: Vec<[f64; 2]>,
+    delay_origin: f64,
 }
 impl Echo {
     pub fn new(sr: f64) -> Self {
@@ -330,6 +332,8 @@ impl Echo {
             out_step: 0.,
             deadline: None,
             deadline_fade: 1.,
+            delay_map: Vec::new(),
+            delay_origin: 0.,
         }
     }
     pub fn reset(&mut self) {
@@ -343,6 +347,7 @@ impl Echo {
         self.out = 1.;
         self.out_step = 0.;
         self.deadline = None;
+        self.delay_map.clear();
     }
     pub fn configure(&mut self, delay: f64, feedback: f64) {
         self.reset();
@@ -352,6 +357,10 @@ impl Echo {
     }
     pub fn process(&mut self, il: &[f32], ir: &[f32], l: &mut [f32], r: &mut [f32]) {
         self.process_at(il, ir, l, r, 0.);
+    }
+    pub fn set_delay_map(&mut self, points: Vec<[f64; 2]>, origin: f64) {
+        self.delay_map = points;
+        self.delay_origin = origin;
     }
     pub fn fade_out(&mut self, frames: f64) {
         self.out_step = 1. / frames.max(1.);
@@ -377,8 +386,23 @@ impl Echo {
             if tail == 0. {
                 return;
             }
-            let at = (self.pos + self.l.len() - self.delay) % self.l.len();
-            let y = [self.l[at] as f64, self.r[at] as f64];
+            let delay = if self.delay_map.is_empty() { self.delay as f64 } else {
+                let t = clock + i as f64 - self.delay_origin;
+                let hi = self.delay_map.partition_point(|p| p[0] <= t);
+                if hi == 0 { self.delay_map[0][1] }
+                else if hi == self.delay_map.len() { self.delay_map[hi - 1][1] }
+                else {
+                    let [t0, v0] = self.delay_map[hi - 1];
+                    let [t1, v1] = self.delay_map[hi];
+                    v0 + (v1 - v0) * (t - t0) / (t1 - t0)
+                }
+            };
+            let rp = (self.pos as f64 - delay + self.l.len() as f64) % self.l.len() as f64;
+            let at = rp.floor() as usize;
+            let fraction = rp - at as f64;
+            let next = (at + 1) % self.l.len();
+            let y = [self.l[at] as f64 + (self.l[next] as f64 - self.l[at] as f64) * fraction,
+                self.r[at] as f64 + (self.r[next] as f64 - self.r[at] as f64) * fraction];
             if self.out_step > 0. {
                 self.out = (self.out - self.out_step).max(0.);
                 if self.out == 0. {

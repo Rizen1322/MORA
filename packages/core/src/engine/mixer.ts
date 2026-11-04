@@ -9,11 +9,11 @@ import { CHUNK_FRAMES, ChunkStore } from './chunks.ts';
 import { VocalPcmSource, vocalSourceMap } from './vocals.ts';
 import { LoopPcmSource, type SourceLoop, type SourceTapeStop } from './loop.ts';
 
-/** Lane order: gain, low, mid, high, echo send, voice-echo send, bipolar filter. */
-export type LaneIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
-export const LANE_INDEX = { gain: 0, low: 1, mid: 2, high: 3, echo: 4, voiceEcho: 5, filter: 6 } as const;
-type Lanes = [number, number, number, number, number, number, number];
-const unity = (): Lanes => [1, 1, 1, 1, 0, 0, 0];
+/** Lane order: gain, low, mid, high, echo send, voice-echo send, bipolar filter, stereo width. */
+export type LaneIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export const LANE_INDEX = { gain: 0, low: 1, mid: 2, high: 3, echo: 4, voiceEcho: 5, filter: 6, width: 7 } as const;
+type Lanes = [number, number, number, number, number, number, number, number];
+const unity = (): Lanes => [1, 1, 1, 1, 0, 0, 0, 1];
 
 /** A transition plan converted to frames for one AudioContext sample rate. */
 export interface ArmedTransition {
@@ -46,6 +46,8 @@ export interface ArmedTransition {
   /** Echo delay (frames) and feedback for the echo send lane. */
   echoDelayFrames?: number;
   echoFeedback?: number;
+  echoDelayPointsFrames?: [number, number][];
+  echoClearFrame?: number;
   /** Delay/feedback of the separate echo fed only by A's audible voice (lane 5). */
   voiceEchoDelayFrames?: number;
   voiceEchoFeedback?: number;
@@ -155,6 +157,17 @@ export class Echo {
   private outStep = 0;
   private deadline: number | null = null;
   private deadlineFadeFrames = 1;
+  private delayMap: [number, number][] = [];
+  private delayOrigin = 0;
+
+  setDelayMap(points: [number, number][], origin: number): void {
+    if (points.length > 64 || !Number.isFinite(origin) || points.some(([t, d], i) =>
+      !Number.isFinite(t) || !Number.isFinite(d) || t < 0 || d < 1 || d > this.L.length - 1 || (i > 0 && t < points[i - 1][0]))) {
+      throw new Error('Invalid echo delay map');
+    }
+    this.delayMap = points;
+    this.delayOrigin = origin;
+  }
 
   /** Absolute output-clock deadline for a voice-only echo. Feedback estimates
    * alone cannot guarantee silence: the repeated word has a finite length. */
@@ -191,9 +204,11 @@ export class Echo {
       // Keep the deadline closed until configure/reset; a surviving send can
       // never repopulate the ring and bring the outgoing singer back.
       if(tailGain===0)return;
-      const rp = (this.pos - this.delay + N) % N;
-      const yL = this.L[rp];
-      const yR = this.R[rp];
+      const delay = this.delayMap.length ? evalPoints(this.delayMap, clock + i - this.delayOrigin) : this.delay;
+      const rp = (this.pos - delay + N) % N, at = Math.floor(rp), fraction = rp - at;
+      const next = at + 1 === N ? 0 : at + 1;
+      const yL = this.L[at] + (this.L[next] - this.L[at]) * fraction;
+      const yR = this.R[at] + (this.R[next] - this.R[at]) * fraction;
       if (this.outStep > 0) {
         this.out = Math.max(0, this.out - this.outStep);
         if (this.out === 0) {
@@ -228,6 +243,7 @@ export class Echo {
     this.out = 1;
     this.outStep = 0;
     this.deadline = null;
+    this.delayMap = [];
   }
 }
 
@@ -730,8 +746,8 @@ export class MixerCore {
     const lanes: ArmedTransition['lanes'] = [];
     for (const [role, d] of [['A', a], ['B', b]] as const) {
       if (!d) continue;
-      for (let lane = 0; lane < 7; lane++) {
-        const target = lane >= 4 || (role === 'A' && lane === 0) ? 0 : 1;
+      for (let lane = 0; lane < 8; lane++) {
+        const target = (lane >= 4 && lane <= 6) || (role === 'A' && lane === 0) ? 0 : 1;
         lanes.push({ deck: role, lane: lane as LaneIndex, points: [[0, d.lanes[lane]], [duration, target]] });
       }
     }
@@ -897,7 +913,7 @@ export class MixerCore {
       }
       off += len;
     }
-    this.echo.process(this.echoInL, this.echoInR, outL, outR, n);
+    this.echo.process(this.echoInL, this.echoInR, outL, outR, n, this.clock-n);
     this.voiceEcho.process(this.voiceInL, this.voiceInR, outL, outR, n, this.clock-n);
   }
 
@@ -1024,6 +1040,11 @@ export class MixerCore {
         fade = fade < target ? Math.min(target, fade + step) : Math.max(target, fade - step);
       }
       const k = g * fade;
+      const width = Math.max(0, Math.min(1, from[7] + (to[7] - from[7]) * i / len));
+      if (width !== 1) {
+        const mid = (bl[i] + br[i]) * 0.5, side = (bl[i] - br[i]) * 0.5 * width;
+        bl[i] = mid + side; br[i] = mid - side;
+      }
       const l = bl[i] * k;
       const r = br[i] * k;
       outL[off + i] += l;
@@ -1183,6 +1204,8 @@ export class MixerCore {
     b.pendingSeek = null;
     b.endedNotified = false;
     if (tr.echoDelayFrames) this.echo.configure(tr.echoDelayFrames, tr.echoFeedback ?? 0.5);
+    if (tr.echoDelayPointsFrames) this.echo.setDelayMap(tr.echoDelayPointsFrames, this.clock);
+    if (tr.echoClearFrame !== undefined) this.echo.limitTailAt(this.clock + tr.echoClearFrame, Math.round(this.sampleRate * 0.05));
     const throwLane = tr.lanes.some((l) => l.deck === 'A' && l.lane === 5 && l.points.some(([, v]) => v > 0));
     if (throwLane && tr.voiceEchoDelayFrames && a.vocalSource.getMap()) {
       this.voiceEcho.configure(tr.voiceEchoDelayFrames, tr.voiceEchoFeedback ?? 0.4);
