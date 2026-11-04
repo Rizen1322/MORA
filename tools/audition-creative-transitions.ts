@@ -65,7 +65,8 @@ function main(){
   const ffmpeg=arg('--ffmpeg',process.env.FFMPEG_PATH||'ffmpeg'),tracks=loadTracks(dir);if(tracks.length<2)throw Error('Fewer than two saved, analyzed, cached tracks');
   fs.mkdirSync(out,{recursive:true});console.log(`Eligible saved tracks with cached audio: ${tracks.length}`);
   const inventoryFile=path.join(out,'stereo-inventory.json');if(!fs.existsSync(inventoryFile))measureLibraryStereo(dir,out,ffmpeg);
-  const inventory=JSON.parse(fs.readFileSync(inventoryFile,'utf8'));if(inventory.version!==1||inventory.sampleRate!==16000)throw Error('Unsupported stereo inventory');
+  let inventory=JSON.parse(fs.readFileSync(inventoryFile,'utf8'));if(inventory.version!==1||inventory.sampleRate!==16000)throw Error('Unsupported stereo inventory');
+  if(tracks.some(t=>!inventory.items[t.hash])){measureLibraryStereo(dir,out,ffmpeg);inventory=JSON.parse(fs.readFileSync(inventoryFile,'utf8'));}
   for(const track of tracks)if(inventory.items[track.hash])track.analysis={...track.analysis,stereo:inventory.items[track.hash]};
   const all=new Map(CREATIVE_TRANSITION_STYLES.map(s=>[s.id,[] as Candidate[]]));
   for(const a of tracks)for(const b of tracks){if(a.id===b.id||a.hash===b.hash)continue;for(const style of CREATIVE_TRANSITION_STYLES){const plan=planCreativeTransition(pt(a),pt(b),DEFAULT_AUTOMIX_SETTINGS,style.id);if(!plan)continue;const detail=plan.debug.creative as {score:number;reasons:string[]};if(!Number.isFinite(detail?.score)||!Array.isArray(detail.reasons))continue;const list=all.get(style.id)!;list.push({a,b,plan,score:detail.score,reasons:detail.reasons});}}
@@ -81,6 +82,7 @@ function main(){
   fs.writeFileSync(path.join(out,'index.html'),html);console.log(`Done: ${manifest.reduce((n,s)=>n+s.entries.length,0)} renders in ${out}`);
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main();
+
 
 
 

@@ -1,14 +1,15 @@
 import {DatabaseSync} from 'node:sqlite';
 import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';import {execFileSync} from 'node:child_process';
 import {stereoWindows} from './audition-stereo.ts';
+import {ANALYZER_VERSION} from '../packages/core/src/types.ts';
 import {fileURLToPath} from 'node:url';
 export function measureLibraryStereo(dir:string,out:string,ffmpeg:string) {
   fs.mkdirSync(out,{recursive:true});
 const db=new DatabaseSync(path.join(dir,'automix.sqlite'),{readOnly:true});
 const rows=db.prepare(`SELECT DISTINCT a.content_hash hash,a.provider,(SELECT path FROM track_sources WHERE track_id=a.id AND path IS NOT NULL LIMIT 1) sourcePath
  FROM tracks t LEFT JOIN track_bindings b ON b.track_id=t.id JOIN tracks a ON a.id=COALESCE(b.asset_id,t.id)
- JOIN analysis n ON n.content_hash=a.content_hash AND n.version='am-analyzer-14' AND n.status='done'
- WHERE t.saved=1 AND t.status='ok' AND a.status='ok'`).all() as {hash:string;provider:string;sourcePath:string|null}[];db.close();
+ JOIN analysis n ON n.content_hash=a.content_hash AND n.version=? AND n.status='done'
+ WHERE t.saved=1 AND t.status='ok' AND a.status='ok'`).all(ANALYZER_VERSION) as {hash:string;provider:string;sourcePath:string|null}[];db.close();
 const items:Record<string,ReturnType<typeof stereoWindows>>={};let invalid=0;
 for(const row of rows){if(!/^[a-f0-9]{64}$/.test(row.hash))continue;const folder=path.join(dir,'remote',row.provider);const filename=row.provider==='local'?row.sourcePath:fs.existsSync(folder)?fs.readdirSync(folder).find(f=>path.parse(f).name===row.hash):null;const file=filename&&(row.provider==='local'?filename:path.join(folder,filename));if(!file||!fs.existsSync(file))continue;
   if(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')!==row.hash){invalid++;continue;}
@@ -23,4 +24,5 @@ if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.
   if(out===dir||out.startsWith(dir+path.sep))throw Error('Output must be outside profile data');
   measureLibraryStereo(dir,out,arg('--ffmpeg',process.env.FFMPEG_PATH||'ffmpeg'));
 }
+
 
