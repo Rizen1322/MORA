@@ -51,8 +51,9 @@ function wav(L:Float32Array,R:Float32Array):Buffer {
 }
 function render(c:Candidate,ffmpeg:string) {
   let plan=c.plan;if(plan.vocalA||plan.vocalB)plan=fallbackWithoutVocalStems(plan);
-  const spans=finalistSpans([plan]);const startA=Math.max(0,Math.min(spans.a[0],plan.aExit-PRE,plan.loopA?.start??Infinity,plan.tapeStopA?.start??Infinity));const startB=Math.max(0,Math.min(spans.b[0],plan.bEntry));
-  const a=decode(c.a.file,startA,Math.min(c.a.duration,spans.a[1]),ffmpeg),b=decode(c.b.file,startB,Math.min(c.b.duration,spans.b[1]+POST),ffmpeg);
+  const spans=finalistSpans([plan]);const startA=Math.floor(Math.max(0,Math.min(spans.a[0],plan.aExit-PRE,plan.loopA ? plan.loopA.start-plan.loopA.crossfade-.05 : Infinity,plan.tapeStopA?.start??Infinity))*SR)/SR;const startB=Math.floor(Math.max(0,Math.min(spans.b[0],plan.bEntry))*SR)/SR;
+  const endA=Math.max(spans.a[1],plan.loopA?.end??0,plan.tapeStopA?.end??0);
+  const a=decode(c.a.file,startA,Math.min(c.a.duration,endA+.05),ffmpeg),b=decode(c.b.file,startB,Math.min(c.b.duration,spans.b[1]+POST),ffmpeg);
   const r=renderTransitionOffline(a,b,planForSourceWindows(plan,startA,startB),PRE,POST);const check=inspectAudio(r.L,r.R,SR);
   if(r.transitionStartFrame<0||!r.events.some(e=>e.type==='transitionEnd'&&!e.forced)||r.events.some(e=>e.type==='fallback'||e.type==='transitionAborted')||r.metrics.underruns||!check.finite||check.peak>=1||check.longestSilence>=1)throw Error(`Render quality check failed: ${JSON.stringify({...r.metrics,...check})}`);
   return {plan,r,check};
@@ -80,6 +81,7 @@ function main(){
   fs.writeFileSync(path.join(out,'index.html'),html);console.log(`Done: ${manifest.reduce((n,s)=>n+s.entries.length,0)} renders in ${out}`);
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main();
+
 
 
 
