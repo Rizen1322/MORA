@@ -433,18 +433,13 @@ pub fn plan_drop_swap(
     let calm = n(gb, "bpm") < 0.85 * n(ga, "bpm") && energy_delta <= -3.;
     let wash = looped && calm;
     let roll = looped && !calm;
-    // v19.4 soft echo out: B enters from its own opening, never a trimmed intro; after more than 1 s of
-    // leading silence, on its first downbeat. A Next press keeps B's energetic arrival (v19.2).
+    // Preserve B's opening pickup after leading silence; Next keeps its energetic arrival.
     let start_b = n(b, "audibleStart");
-    let opening = if start_b <= 1. {
-        start_b
-    } else {
-        nums(&gb["downbeats"]).into_iter().find(|t| *t >= start_b - 0.025).unwrap_or(start_b)
-    };
+    let opening = start_b;
     let b_in = if looped || ctx.requested_at.is_some() {
         entry.clone()
     } else {
-        json!({"time":opening,"score":0.6,"kind":if opening == start_b { "start" } else { "downbeat" },"tags":["drop-swap-start"]})
+        json!({"time":opening,"score":0.6,"kind":"start","tags":["drop-swap-start"]})
     };
     // v19.4: an echo out opens B over two of its bars; a Next keeps one bar
     let echo_span = if looped {
@@ -535,7 +530,7 @@ pub fn plan_drop_swap(
         p["automation"] = json!([
             lane("A", "gain", vec![vec![[0., 1.], [r3(sweep - 0.03), 1.], [r3(sweep), 0.], [total, 0.]]]),
             // v19.4 soft echo out: a gentle low-pass muffles A's echo tail, the send steps down over three
-            // beats after the cut, B is at 0.8 at once and full after a bar, with no bass gate or filter
+            // beats after the cut; B eases in on its own clock without a bass gate or filter
             lane("A", "filter", vec![vec![[0., 0.], [r3(sweep), -0.25], [r3(sweep + 0.4), -0.3], [total, -0.3]]]),
             lane("A", "echo", vec![vec![
                 [0., 0.],
@@ -546,7 +541,7 @@ pub fn plan_drop_swap(
                 [r3(sweep + 2. * beat), 0.2],
                 [r3(sweep + 3. * beat), 0.],
             ]]),
-            lane("B", "gain", vec![vec![[0., 0.], [0.01, 0.8], [r3(bar), 1.]]]),
+            lane("B", "gain", vec![shape(0., 0.4f64.min(bar_b / 8.).min(total - t_end), |x| 0.8 * sin_up(x), 8), vec![[r3(bar_b.min(total - t_end)), 1.], [r3(total - t_end), 1.]]]),
         ]);
     }
     p["confidence"] = json!(r3(0.7f64.min(n(ga, "confidence")).min(n(gb, "confidence"))));

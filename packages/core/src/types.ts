@@ -5,7 +5,7 @@
  */
 
 export const ANALYZER_VERSION = 'am-analyzer-14';
-export const PLANNER_VERSION = 'am-planner-v18-drum-window-1';
+export const PLANNER_VERSION = 'am-planner-v18-echo-entry-2';
 
 /** Frame rate of the per-track feature curves (energy, bands, waveform). */
 export const CURVE_RATE = 20;

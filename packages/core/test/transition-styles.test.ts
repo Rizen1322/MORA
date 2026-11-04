@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { planRequestedTransition, planTransition } from '../src/plan/planner.ts';
 import { pointValue } from '../src/plan/timing.ts';
-import { planToArmed } from '../src/engine/arm.ts';
+import { renderTransitionOffline, planToArmed } from '../src/engine/arm.ts';
 import { LoopPcmSource } from '../src/engine/loop.ts';
 import { DEFAULT_AUTOMIX_SETTINGS as S, type PlannerTrack, type TrackAnalysis } from '../src/types.ts';
 
@@ -76,9 +76,28 @@ describe('v19 transition styles', () => {
     expect(pointValue(send, p.swapAt + beat)).toBeCloseTo(0.4, 2);
     expect(pointValue(send, p.swapAt + 2 * beat)).toBeCloseTo(0.2, 2);
     expect(pointValue(send, p.swapAt + 3 * beat + 0.01)).toBe(0);
-    // B is at 0.8 at once and full after a bar of A
-    expect(pointValue(lane(p, 'B', 'gain')!, 0.05)).toBeCloseTo(0.8, 2);
+    // B eases in over half its own beat, reaching unity within its own bar.
+    expect(pointValue(lane(p, 'B', 'gain')!, 0.05)).toBeLessThan(0.4);
     expect(pointValue(lane(p, 'B', 'gain')!, 4 * beat)).toBe(1);
+  });
+
+  it('renders a softer B attack without delaying or skipping its source', () => {
+    const p = planTransition(song('a', 124, { sparsePhrases: true }), song('b', 160), S);
+    const sampleRate = 8000, quiet = new Float32Array(180 * sampleRate);
+    const tone = Float32Array.from(quiet, (_, i) => 0.2 * Math.sin(2 * Math.PI * 440 * i / sampleRate));
+    const a = { L: quiet, R: quiet, sampleRate }, b = { L: tone, R: tone, sampleRate };
+    const old = { ...p, automation: p.automation.map(l => l.deck === 'B' && l.lane === 'gain'
+      ? { ...l, points: [[0, 0], [0.01, 0.8], [4 * 60 / 124, 1]] as [number, number][] } : l) };
+    const soft = renderTransitionOffline(a, b, p, 0, 1), hard = renderTransitionOffline(a, b, old, 0, 1);
+    const energy = (v: Float32Array, from: number, to: number) => {
+      const start = Math.round((p.bDelay! + from) * sampleRate), end = Math.round((p.bDelay! + to) * sampleRate);
+      let sum = 0; for (let i = start; i < end; i++) sum += v[i] ** 2; return sum / (end - start);
+    };
+    expect(soft.metrics.underruns).toBe(0);
+    expect(soft.events.some(e => e.type === 'transitionEnd')).toBe(true);
+    expect(energy(soft.L, 0.02, 0.08)).toBeLessThan(energy(hard.L, 0.02, 0.08) * 0.3);
+    expect(energy(soft.L, 2.1, 2.3)).toBeCloseTo(energy(hard.L, 2.1, 2.3), 3);
+    expect(soft.L.every(Number.isFinite)).toBe(true);
   });
 
   it('echo out: a low-pass muffles A’s echo tail after the cut', () => {
@@ -91,7 +110,7 @@ describe('v19 transition styles', () => {
     expect(pointValue(filter, p.duration)).toBeCloseTo(-0.3, 3);
   });
 
-  it('echo out never trims B’s intro: B enters at its audible start, or its first downbeat after leading silence', () => {
+  it('echo out never trims B’s intro: B enters at its audible start, including its pickup after leading silence', () => {
     const b = song('b', 160, { softIntro: 16 });
     b.analysis!.cues.entry.push({ time: b.analysis!.beat!.downbeats.find(t => t >= 16)!, score: 0.95, kind: 'section', tags: [] });
     const p = planTransition(song('a', 124, { sparsePhrases: true }), b, S);
@@ -102,7 +121,7 @@ describe('v19 transition styles', () => {
     silent.analysis!.audibleStart = 2.3;
     const q = planTransition(song('a', 124, { sparsePhrases: true }), silent, S);
     expect(q.debug.variant).toBe('drop-swap');
-    expect(q.bEntry).toBeCloseTo(silent.analysis!.beat!.downbeats.find(t => t >= 2.3)!, 3);
+    expect(q.bEntry).toBe(2.3);
     expect(q.bDelay).toBe(q.swapAt);
   });
 

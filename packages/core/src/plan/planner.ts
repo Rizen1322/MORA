@@ -1758,10 +1758,10 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
   const calm = gb.bpm < 0.85 * ga.bpm && energyDelta <= -3;
   const wash = loop && calm, roll = loop && !calm;
   // v19.4 soft echo out: B enters from its own opening, never a trimmed intro (landing on B's drop made it
-  // "slam in" in every listened variant); after more than 1 s of leading silence, on its first downbeat.
+  // "slam in" in every listened variant); preserve pickups even after leading silence.
   // A Next press keeps its v19.2 rule: B arrives at its energetic section, not inside a quiet intro.
-  const opening = B.audibleStart <= 1 ? B.audibleStart : gb.downbeats.find(t => t >= B.audibleStart - 0.025) ?? B.audibleStart;
-  const bIn = loop || now !== undefined ? entry : { time: opening, score: 0.6, kind: opening === B.audibleStart ? 'start' as const : 'downbeat' as const, tags: ['drop-swap-start'] };
+  const opening = B.audibleStart;
+  const bIn = loop || now !== undefined ? entry : { time: opening, score: 0.6, kind: 'start' as const, tags: ['drop-swap-start'] };
   // v19.3 echo out breathes (listener: "too fast, the echo cut short"): B opens from its muffled intro
   // over 2-4 of its bars (about 4 s), and the transition lasts until it is open; a Next keeps one bar
   // v19.4 (listener: "the effect is too loud, it takes you out of the music"): two bars, not 2-4
@@ -1815,8 +1815,9 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
       lane('A', 'filter', [[0, 0], [r3(S), -0.25], [r3(S + 0.4), -0.3], [D, -0.3]]),
       // pre-fader send: open over the last beat (0.6), then 0.4, 0.2 and closed three beats after the cut
       lane('A', 'echo', [[0, 0], [r3(S - beat), 0], [r3(S - 0.05), 0.6], [r3(S), 0.6], [r3(S + beat), 0.4], [r3(S + 2 * beat), 0.2], [r3(S + 3 * beat), 0]]),
-      // B runs on its own clock after bDelay: 0.8 at once, full after a bar of A; no bass gate, no filter
-      lane('B', 'gain', [[0, 0], [0.01, 0.8], [r3(bar), 1]]),
+      // B's own beat sets the attack; a short fade keeps its opening audible under the echo.
+      lane('B', 'gain', shape(0, Math.min(0.4, barB / 8, D - T), x => 0.8 * sinUp(x)),
+        [[r3(Math.min(barB, D - T)), 1], [r3(D - T), 1]]),
     ];
   }
   p.confidence = r3(Math.min(0.7, ga.confidence, gb.confidence));
