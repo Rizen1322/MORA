@@ -6,7 +6,7 @@ let rows: [[String: Any]] = [
     ["title": "no id"],
 ]
 let tracks = rows.compactMap(NativeTrack.init)
-precondition(tracks.map(\.id) == ["a", "b"] && tracks[0].offline && !tracks[1].offline && tracks[0].liked &&!tracks[1].liked && !tracks[1].ok && tracks[1].duration == 0)
+precondition(tracks.map(\.id) == ["a", "b"] && tracks[0].offline && !tracks[1].offline && tracks[0].liked && !tracks[1].liked && !tracks[1].ok && tracks[1].duration == 0)
 precondition(NativeSearchText.filter(tracks, "елка звер").map(\.id) == ["a"], "ё and case are ignored, every word must match")
 precondition(NativeSearchText.filter(tracks, "  ").count == 2 && NativeSearchText.filter(tracks, "outrun KAV").map(\.id) == ["b"])
 precondition(NativeSearchText.filter(tracks, "kavinsky звери").isEmpty)
