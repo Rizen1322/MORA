@@ -371,7 +371,7 @@ export function SettingsPage() {
             </Row>
           </Group>
           {health && <Group title="Служебные сведения">
-            <Row title="Декодер" desc={health.ffmpeg ?? 'ffmpeg не найден: установите его или укажите FFMPEG_PATH в .env'}>
+            <Row title="Декодер" desc={health.decoder ? `${health.decoder} (Rust). Для AAC и M4A — ${health.ffmpeg ?? 'ffmpeg не найден'}` : health.ffmpeg ?? 'ffmpeg не найден: установите его или укажите FFMPEG_PATH в .env'}>
               <span className={`tag ${health.ffmpeg ? 'ok' : 'warn'}`}>{health.ffmpeg ? 'Готов' : 'Нет'}</span>
             </Row>
             <Row title="Анализ звука" desc={`Анализатор ${health.analyzer}, планировщик ${health.planner}, потоков ${health.analysis.workers}.`}>

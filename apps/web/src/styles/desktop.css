@@ -6,6 +6,12 @@
   --titlebar-h: 40px;
 }
 
+/* An app, not a page: links and images are not dragged out as URLs; explicit drag sources still are. */
+.desktop a:not([draggable="true"]),
+.desktop img {
+  -webkit-user-drag: none;
+}
+
 .desktop .app {
   grid-template-rows: var(--titlebar-h) minmax(0, 1fr) var(--player-h);
   grid-template-areas:

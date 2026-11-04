@@ -2110,7 +2110,7 @@ dependencies = [
 
 [[package]]
 name = "mora-desktop-native"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -2120,6 +2120,8 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-single-instance",
+ "webview2-com",
+ "windows-core",
  "windows-sys 0.61.2",
 ]
 

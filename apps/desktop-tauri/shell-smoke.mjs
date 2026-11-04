@@ -31,6 +31,8 @@ try {
     await cdp.waitFor('!!window.automixDesktop && document.documentElement.classList.contains("desktop")', { timeoutMs: 45000 });
     assert.equal(await cdp.evaluate('document.hidden'), true);
     assert.equal(await cdp.evaluate('typeof window.automixDesktop.exportPlaylists'), 'function');
+    assert.equal(await cdp.evaluate("getComputedStyle(document.querySelector('a[href=\"#/library\"]')).webkitUserDrag"), 'none');
+    assert.equal(await cdp.evaluate("fetch('/api/health').then(r=>r.json()).then(h=>h.decoder)"), 'Symphonia');
     assert.equal(await cdp.evaluate("fetch('/api/backup/playlists').then(r=>r.json()).then(b=>b.format)"), 'mora-playlists');
     assert.match(await cdp.evaluate("window.__TAURI_INTERNALS__.invoke('desktop_action',{action:'save-export',value:{contents:'{',name:'MORA-playlists.json'}}).then(()=>'',e=>String(e))"), /JSON/);
     assert.equal(await cdp.evaluate('window.automixDesktop.getSettings().then(x => x.decorated)'), false);

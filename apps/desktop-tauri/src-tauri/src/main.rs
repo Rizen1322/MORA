@@ -283,9 +283,16 @@ fn main() {
                 if let Ok(args) = env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") { builder = builder.additional_browser_args(&args); }
             }
             let window = builder.build()?;
-            // WebView2's browser-style link preview ("http://127.0.0.1:…" in the corner) is on by default.
+            // WebView2 defaults are browser-like: link preview in the corner, Back/Reload/Print menu and
+            // Ctrl+R/Ctrl+P/Alt+Left/F5. Editing keys (Ctrl+C/V) and the page's own menus are unaffected.
             let _ = window.with_webview(|webview| unsafe {
-                if let Ok(settings) = webview.controller().CoreWebView2().and_then(|core| core.Settings()) { let _ = settings.SetIsStatusBarEnabled(false); }
+                if let Ok(settings) = webview.controller().CoreWebView2().and_then(|core| core.Settings()) {
+                    let _ = settings.SetIsStatusBarEnabled(false);
+                    let _ = settings.SetAreDefaultContextMenusEnabled(false);
+                    if let Ok(settings) = windows_core::Interface::cast::<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3>(&settings) {
+                        let _ = settings.SetAreBrowserAcceleratorKeysEnabled(false);
+                    }
+                }
             });
             if hidden { set_webview_visible(&window, false); }
             let bounds = &saved["window"];
