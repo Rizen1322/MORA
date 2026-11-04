@@ -1,6 +1,6 @@
 [package]
 name = "mora-desktop-native"
-version = "0.4.5"
+version = "0.4.6"
 edition = "2021"
 build = "build.rs"
 [build-dependencies]

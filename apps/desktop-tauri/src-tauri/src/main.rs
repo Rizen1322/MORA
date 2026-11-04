@@ -283,6 +283,10 @@ fn main() {
                 if let Ok(args) = env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") { builder = builder.additional_browser_args(&args); }
             }
             let window = builder.build()?;
+            // WebView2's browser-style link preview ("http://127.0.0.1:…" in the corner) is on by default.
+            let _ = window.with_webview(|webview| unsafe {
+                if let Ok(settings) = webview.controller().CoreWebView2().and_then(|core| core.Settings()) { let _ = settings.SetIsStatusBarEnabled(false); }
+            });
             if hidden { set_webview_visible(&window, false); }
             let bounds = &saved["window"];
             if let (Some(x), Some(y), Some(width), Some(height)) = (bounds["x"].as_i64(), bounds["y"].as_i64(), bounds["width"].as_u64(), bounds["height"].as_u64()) {
