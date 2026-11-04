@@ -52,7 +52,9 @@ precondition(wave.button(.own) == ("Слушать волну", "waveform", true
 wave.active = .online
 precondition(wave.button(.online) == ("Пауза", "pause.fill", true) && wave.preferred == .online)
 wave.playing = false; wave.loading = true
-precondition(wave.button(.online).title == "Продолжить" && wave.button(.own) == ("Подбираю…", "waveform", false))
+precondition(wave.button(.online) == ("Подбираю…", "waveform", false) && wave.button(.own) == ("Подбираю…", "waveform", false))
+wave.loading = false
+precondition(wave.button(.online) == ("Продолжить", "play.fill", true))
 precondition(!NativeWave([:]).button(.yandex).enabled && NativeWave(["yandex": true]).preferred == .yandex && NativeWave([:]).preferred == .online)
 print("Native shell: wave button")
 

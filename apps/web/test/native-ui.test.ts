@@ -39,6 +39,16 @@ describe('native shell bridge (page side)', () => {
     expect(s.now).toMatchObject({ id: 'a', title: 'A', playing: true, label: 'Моя волна' });
     h.radio.active = true;
     expect(uiState().wave.active).toBe('online');
+    h.radio.active = false;
+    // Loading means a start under way, never a refill behind a playing or paused wave.
+    h.app.player = { ...h.app.player, waveLoading: true };
+    expect(uiState().wave.loading).toBe(false);
+    h.app.player = { ...h.app.player, status: 'paused' };
+    expect(uiState().wave.loading).toBe(false);
+    h.app.player = { ...h.app.player, status: 'loading', waveLoading: false };
+    expect(uiState().wave).toMatchObject({ loading: true, active: 'own', playing: false });
+    h.app.player = { ...h.app.player, status: 'idle', waveLoading: true };
+    expect(uiState().wave.loading).toBe(true);
   });
 
   it('checks native commands before they reach the controller', async () => {
@@ -80,6 +90,9 @@ describe('native shell bridge (page side)', () => {
     expect(useVersionPanel.getState().target).toMatchObject({ trackId: 'a', title: 'A', artist: 'X', duration: 100 });
     expect(uiState().overlay).toBe(true);
     expect(() => commands.version({ entryId: 'gone' })).toThrow('не найден');
+    useVersionPanel.setState({ target: null });
+    commands.version({ id: 'a' });
+    expect(useVersionPanel.getState().target).toMatchObject({ trackId: 'a' });
     delete (h.queue.queue[2] as any).trackId;
   });
 

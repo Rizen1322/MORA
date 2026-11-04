@@ -178,12 +178,13 @@ async function wave(): Promise<Screen> {
   const selected = waveOn && active === source;
   const playing = selected && (p.status === 'playing' || p.status === 'buffering');
   const unavailable = source === 'own' ? !s.order.length : source === 'yandex' ? !yandex : false;
-  const loading = !!p.waveLoading || radio.loading;
+  // A start under way (not a refill while playing/paused): «Продолжить» then would only toggle into it.
+  const loading = radio.loading || p.status === 'loading' || (!!p.waveLoading && p.status !== 'playing' && p.status !== 'buffering' && p.status !== 'paused');
   const w = s.settings?.wave;
   const stage: Row[] = [
     { kind: 'choice', title: 'Источник', value: source, act: { name: 'waveSource' }, options: [['own', 'Моя коллекция'], ['online', 'Онлайн-радио'], ...(yandex ? [['yandex', 'Яндекс Музыка'] as [string, string]] : [])] },
-    button(selected ? playing ? 'Пауза' : 'Продолжить' : loading ? 'Подбираю музыку…' : source === 'online' ? 'Включить радио' : 'Поймать волну', 'waveLaunch', { source },
-      { symbol: playing ? 'pause.fill' : 'play.fill', style: 'primary', disabled: !selected && (loading || unavailable) }),
+    button(playing ? 'Пауза' : loading ? 'Подбираю музыку…' : selected ? 'Продолжить' : source === 'online' ? 'Включить радио' : 'Поймать волну', 'waveLaunch', { source },
+      { symbol: playing ? 'pause.fill' : 'play.fill', style: 'primary', disabled: !playing && (loading || (!selected && unavailable)) }),
   ];
   if (selected) stage.push(button('Другой трек', 'next', {}, { symbol: 'forward.fill' }));
   if (unavailable && !selected) stage.push(source === 'own' ? { kind: 'link', title: 'Добавьте музыку в медиатеку, чтобы начать', path: '/library' } : { kind: 'link', title: 'Подключите Яндекс Музыку', path: '/sources' });

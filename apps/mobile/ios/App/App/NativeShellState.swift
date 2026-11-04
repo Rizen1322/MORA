@@ -62,8 +62,10 @@ struct NativeWave: Equatable {
     /// The hero's Play button for the selected source.
     func button(_ source: NativeWaveSource) -> (title: String, symbol: String, enabled: Bool) {
         let selected = active == source
-        if selected { return playing ? ("Пауза", "pause.fill", true) : ("Продолжить", "play.fill", true) }
+        if selected && playing { return ("Пауза", "pause.fill", true) }
+        // The page reports loading only while a start is under way: «Продолжить» then would toggle into it.
         if loading { return ("Подбираю…", "waveform", false) }
+        if selected { return ("Продолжить", "play.fill", true) }
         switch source {
         case .online: return ("Включить радио", "dot.radiowaves.left.and.right", true)
         case .own: return ("Слушать волну", "waveform", own)

@@ -40,7 +40,8 @@ export function uiState(s = useApp.getState(), radio = useRadio.getState(), prep
       yandex: s.providers.some((v) => v.id === 'yandex' && v.status === 'connected'),
       active: (radio.active || ctx === 'online-radio' ? 'online' : ctx === 'yandex-wave' ? 'yandex' : ctx === 'wave' ? 'own' : null) as Wave | null,
       playing,
-      loading: !!p.waveLoading || radio.loading,
+      // Only a start under way: a refill while playing or paused keeps the Pause/«Продолжить» button.
+      loading: radio.loading || p.status === 'loading' || (!!p.waveLoading && !playing && p.status !== 'paused'),
       error: p.error ?? radio.error,
     },
     now: current ? { id: current.id, title: current.title, artist: current.artist, cover: current.coverUrl, playing, label: p.context?.label ?? '' } : null,
@@ -113,10 +114,10 @@ export const commands: Record<string, (a: Args) => unknown> = {
     const from = upcoming(a.entryId), to = upcoming(a.to);
     if (from >= 0 && to >= 0) controller.move(from, to);
   },
-  /** Long press «Выбрать версию» (native player and queue): the web version picker covers native until closed. */
+  /** Long press «Выбрать версию» (track rows by id; native player and queue by entryId): the web version picker covers native until closed. */
   version: (a) => {
-    const t = trackOf(controller.state.queue.find((e) => e.entryId === a.entryId)?.trackId);
-    if (!t) throw new Error('Трек не найден в очереди');
+    const t = trackOf(str(a.id) || controller.state.queue.find((e) => e.entryId === a.entryId)?.trackId);
+    if (!t) throw new Error('Трек не найден');
     openVersionPanel({ trackId: t.id, title: t.title, artist: t.artist, duration: t.duration });
   },
   swap: () => {
