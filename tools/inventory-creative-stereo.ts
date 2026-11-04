@@ -11,7 +11,7 @@ const rows=db.prepare(`SELECT DISTINCT a.content_hash hash,a.provider,(SELECT pa
  JOIN analysis n ON n.content_hash=a.content_hash AND n.version=? AND n.status='done'
  WHERE t.saved=1 AND t.status='ok' AND a.status='ok'`).all(ANALYZER_VERSION) as {hash:string;provider:string;sourcePath:string|null}[];db.close();
 const items:Record<string,ReturnType<typeof stereoWindows>>={};let invalid=0;
-for(const row of rows){if(!/^[a-f0-9]{64}$/.test(row.hash))continue;const folder=path.join(dir,'remote',row.provider);const filename=row.provider==='local'?row.sourcePath:fs.existsSync(folder)?fs.readdirSync(folder).find(f=>path.parse(f).name===row.hash):null;const file=filename&&(row.provider==='local'?filename:path.join(folder,filename));if(!file||!fs.existsSync(file))continue;
+for(const row of rows){if(!['local','yandex','youtube','soundcloud'].includes(row.provider)||!/^[a-f0-9]{64}$/.test(row.hash))continue;const folder=path.join(dir,'remote',row.provider);const filename=row.provider==='local'?row.sourcePath:fs.existsSync(folder)?fs.readdirSync(folder).find(f=>path.parse(f).name===row.hash):null;const file=filename&&(row.provider==='local'?filename:path.join(folder,filename));if(!file||!fs.existsSync(file))continue;
   if(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')!==row.hash){invalid++;continue;}
   try{const pcm=execFileSync(ffmpeg,['-v','error','-i',file,'-ac','2','-ar','16000','-f','f32le','pipe:1'],{maxBuffer:256*1024*1024});items[row.hash]=stereoWindows(pcm,16000);console.log(`Measured ${Object.keys(items).length}`);}catch{invalid++;console.warn('Could not measure one cached recording');}
 }
@@ -24,5 +24,6 @@ if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.
   if(out===dir||out.startsWith(dir+path.sep))throw Error('Output must be outside profile data');
   measureLibraryStereo(dir,out,arg('--ffmpeg',process.env.FFMPEG_PATH||'ffmpeg'));
 }
+
 
 

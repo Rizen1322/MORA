@@ -26,7 +26,7 @@ function loadTracks(dir:string):Track[] {
       WHERE t.saved=1 AND t.status='ok' AND a.status='ok' ORDER BY t.id`).all(ANALYZER_VERSION) as unknown as (Omit<Track,'analysis'|'file'> & {provider:string;data:string;sourcePath:string|null})[];
     const caches=new Map<string,Map<string,string>>();
     return rows.flatMap(r=>{
-      if(!/^[a-f0-9]{64}$/.test(r.hash))return [];
+      if(!['local','yandex','youtube','soundcloud'].includes(r.provider)||!/^[a-f0-9]{64}$/.test(r.hash))return [];
       let file:string|undefined;
       if(r.provider==='local')file=r.sourcePath??undefined;
       else {
@@ -82,6 +82,7 @@ function main(){
   fs.writeFileSync(path.join(out,'index.html'),html);console.log(`Done: ${manifest.reduce((n,s)=>n+s.entries.length,0)} renders in ${out}`);
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main();
+
 
 
 
