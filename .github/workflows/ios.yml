@@ -25,7 +25,7 @@ jobs:
     if: inputs.ui_only != true
     # arm64 macOS runners kept failing to be acquired (runs 41855026870, 41857841391, 41860590338, 41865834297).
     runs-on: macos-15-intel
-    timeout-minutes: 45
+    timeout-minutes: 75 # the Intel pool is about twice as slow
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:

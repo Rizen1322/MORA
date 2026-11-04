@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const dir = await mkdtemp(join(tmpdir(), 'mora-native-host-'));
-const run = (command, args, timeout = 180000) => {
+// Intel runners (macos-15-intel) need minutes for a cold simulator boot and the host compile.
+const run = (command, args, timeout = 600000) => {
   console.log('[native-host]', command, args.slice(0, 4).join(' '));
   const result = spawnSync(command, args, { encoding: 'utf8', timeout, killSignal: 'SIGKILL' });
   assert.equal(result.status, 0, `${command}: ${result.signal ? `killed (${result.signal}) after ${timeout} ms` : result.stderr || result.stdout}`); return result.stdout.trim();
@@ -46,8 +47,7 @@ try {
   device = candidates.find(d => d.state === 'Booted') ?? candidates[0];
   assert.ok(device, 'An available iPhone simulator is required');
   if (device.state !== 'Booted') run('xcrun', ['simctl', 'boot', device.udid]);
-  // A cold boot on the Intel pool (macos-15-intel) takes over 3 min; arm64 needed about 80 s.
-  run('xcrun', ['simctl', 'bootstatus', device.udid, '-b'], 600000);
+  run('xcrun', ['simctl', 'bootstatus', device.udid, '-b']);
   const app = join(dir, 'HostCheck.app'); await mkdir(join(app, 'public'), { recursive: true });
   const bundle = 'ru.mora.native-host-check';
   await writeFile(join(app, 'Info.plist'), `<?xml version="1.0"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict>
