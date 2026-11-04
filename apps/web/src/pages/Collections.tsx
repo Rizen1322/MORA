@@ -1,3 +1,4 @@
+import { exportPlaylistBackup } from '../lib/playlist-export.ts';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MagnifyingGlass, ArrowUpRight, ArrowDown, ArrowUp, DotsSixVertical, DotsThree, PencilSimple, Trash, ListNumbers, Check, X } from '@phosphor-icons/react';
 import { api, type HistoryItem, type PlaylistDetail, type Track } from '../lib/api.ts';
@@ -87,7 +88,7 @@ export function PlaylistPage() {
         <button role="menuitem" onClick={() => setModal('rename')}><PencilSimple size={18} /> Переименовать</button>
         <button role="menuitem" onClick={() => setReorder(!reorder)} disabled={tracks.length < 2}><ListNumbers size={18} /> Изменить порядок</button>
         {tracks.length > 0 && <LikeAllTracks tracks={tracks} menu />}
-        <a role="menuitem" href={`/api/backup/playlists?playlist=${encodeURIComponent(id)}`} download="MORA-playlist.json">Экспортировать</a>
+        <a role="menuitem" href={`/api/backup/playlists?playlist=${encodeURIComponent(id)}`} download="MORA-playlist.json" onClick={e => exportPlaylistBackup(e, id)}>Экспортировать</a>
         <hr />
         <button role="menuitem" onClick={() => setModal('delete')}><Trash size={18} /> Удалить плейлист</button>
       </Menu>}

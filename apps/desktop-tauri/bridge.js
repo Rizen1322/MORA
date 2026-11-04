@@ -62,6 +62,10 @@
   };
   setTimeout(() => void invoke('/api/desktop/app-update').then(publishUpdate, () => {}), 2000);
   window.automixDesktop = {
+    exportPlaylists: async playlist => {
+      const data = await invoke('/api/backup/playlists' + (playlist ? '?playlist=' + encodeURIComponent(playlist) : ''));
+      return shell('save-export', { name: playlist ? 'MORA-playlist.json' : 'MORA-playlists.json', contents: JSON.stringify(data, null, 2) });
+    },
     windowCommand: action => shell(`window-${action}`),
     nativeMix: {
       startStation: native('startStation'), setStation: native('setStation'), startSource: native('startSource'),

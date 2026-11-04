@@ -24,3 +24,20 @@ it('routes window controls and drags only empty title-bar areas', async () => {
   for (const action of ['minimize', 'maximize', 'close']) await window.automixDesktop.windowCommand(action);
   expect(invoke.mock.calls.slice(2).map(call => call[1].action)).toEqual(['window-minimize', 'window-maximize', 'window-close']);
 });
+
+it('exports playlist JSON through the save dialog and propagates backend failures', async () => {
+  const invoke = vi.fn().mockResolvedValue(true);
+  const backup = { format: 'mora-playlists', tracks: [], playlists: [{ name: 'Test', tracks: [] }] };
+  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(backup)));
+  const window: any = { __TAURI_INTERNALS__: { invoke } };
+  vm.runInNewContext(readFileSync(new URL('../bridge.js', import.meta.url), 'utf8'), {
+    window, document: { cookie: '', addEventListener() {} }, location: { origin: 'http://127.0.0.1:__MORA_PORT__' },
+    fetch: fetcher, EventSource: class {}, setTimeout: () => 0, clearTimeout() {},
+  });
+  expect(await window.automixDesktop.exportPlaylists('a&b')).toBe(true);
+  expect(fetcher.mock.calls[0][0]).toBe('/api/backup/playlists?playlist=a%26b');
+  expect(invoke).toHaveBeenCalledWith('desktop_action', { action: 'save-export', value: { name: 'MORA-playlist.json', contents: JSON.stringify(backup, null, 2) } });
+  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Export failed' }), { status: 500 }));
+  await expect(window.automixDesktop.exportPlaylists()).rejects.toThrow('Export failed');
+  expect(invoke).toHaveBeenCalledTimes(1);
+});

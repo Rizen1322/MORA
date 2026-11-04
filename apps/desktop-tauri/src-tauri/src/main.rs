@@ -126,6 +126,18 @@ fn offer_recovery(child: &mut Child, recovery: bool) {
 #[tauri::command]
 async fn desktop_action(window: tauri::WebviewWindow, state: tauri::State<'_, Session>, action: String, value: Option<Value>) -> Result<Value, String> {
     match action.as_str() {
+        "save-export" => {
+            let data = value.ok_or("Нет данных экспорта")?;
+            let contents = data["contents"].as_str().ok_or("Некорректный экспорт")?;
+            if contents.len() > 16 * 1024 * 1024 { return Err("Экспорт превышает 16 МБ".into()); }
+            let _: Value = serde_json::from_str(contents).map_err(|_| "Некорректный JSON экспорта")?;
+            let name = match data["name"].as_str() { Some("MORA-playlist.json") => "MORA-playlist.json", _ => "MORA-playlists.json" };
+            let selected = window.app_handle().dialog().file().set_title("Сохранить плейлисты").set_file_name(name).add_filter("JSON", &["json"]).blocking_save_file();
+            let Some(file) = selected else { return Ok(json!(false)); };
+            let path = file.into_path().map_err(|_| "Не удалось выбрать файл")?;
+            fs::write(path, contents).map_err(|e| format!("Не удалось сохранить файл: {e}"))?;
+            Ok(json!(true))
+        }
         "window-drag" => { window.start_dragging().map_err(|e| e.to_string())?; Ok(Value::Null) }
         "window-minimize" => { window.minimize().map_err(|e| e.to_string())?; Ok(Value::Null) }
         "window-maximize" => {
