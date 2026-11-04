@@ -10,6 +10,7 @@ import { planForSourceWindows } from './review-source-window.ts';
 import { inspectAudio } from './audition-audio-check.ts';
 import { measureLibraryStereo } from './inventory-creative-stereo.ts';
 import { assertOutputOutsideProfile } from './audition-output-path.ts';
+import { rankAuditions } from './audition-rank.ts';
 
 const SR = 44100, PRE = 6, POST = 6;
 interface Track { id:string; title:string; artist:string; assetTitle:string; assetArtist:string; hash:string; file:string; duration:number; album:string; albumArtist:string; trackNo:number|null; discNo:number|null; analysis:TrackAnalysis }
@@ -76,7 +77,7 @@ function main(){
   for(const a of tracks)for(const b of tracks){if(a.id===b.id||a.hash===b.hash)continue;for(const style of CREATIVE_TRANSITION_STYLES){const plan=planCreativeTransition(pt(a),pt(b),DEFAULT_AUTOMIX_SETTINGS,style.id);if(!plan||plan.vocalA||plan.vocalB||plan.voiceEcho||plan.automation.some(l=>l.lane==='voiceEcho'))continue;const detail=plan.debug.creative as {score:number;reasons:string[]};if(!Number.isFinite(detail?.score)||!Array.isArray(detail.reasons))continue;const list=all.get(style.id)!;list.push({a,b,plan,score:detail.score,reasons:detail.reasons});}}
   const used=new Map<string,number>(),usedTracks=new Map<string,number>(),verifiedHashes=new Map<string,boolean>(),manifest:any[]=[];
   for(const style of CREATIVE_TRANSITION_STYLES){const candidates=all.get(style.id)!,candidateCount=candidates.length;console.log(`${style.id}: ${candidates.length} measured candidates`);const entries:any[]=[];
-    while(entries.length<2&&candidates.length){const best=Math.max(...candidates.map(c=>c.score));const rank=(c:Candidate)=>c.score-.02*((usedTracks.get(c.a.hash)??0)+(usedTracks.get(c.b.hash)??0))-.04*Number(entries.some(e=>e.fromHash===c.a.hash))-.04*Number(entries.some(e=>e.toHash===c.b.hash))-2*(used.get(`${c.a.hash}/${c.b.hash}`)??0);candidates.sort((x,y)=>Number(y.score>=best-.08)-Number(x.score>=best-.08)||rank(y)-rank(x));const c=candidates.shift()!;if(entries.some(e=>e.fromHash===c.a.hash&&e.toHash===c.b.hash))continue;
+    while(entries.length<2&&candidates.length){rankAuditions(candidates,entries,used,usedTracks);const c=candidates.shift()!;if(entries.some(e=>e.fromHash===c.a.hash&&e.toHash===c.b.hash))continue;
       for(const t of [c.a,c.b])if(!verifiedHashes.has(t.hash))verifiedHashes.set(t.hash,verified(t));if(!verifiedHashes.get(c.a.hash)||!verifiedHashes.get(c.b.hash))continue;
       try {const {plan,r,check}=render(c,ffmpeg);const audio=`${style.id}-${entries.length+1}.wav`;fs.writeFileSync(path.join(out,audio),wav(r.L,r.R));const row={from:name(c.a),to:name(c.b),fromHash:c.a.hash,toHash:c.b.hash,aExit:plan.aExit,bEntry:plan.bEntry,transitionStart:r.transitionStartFrame/SR,score:c.score,reasons:c.reasons,metrics:{...r.metrics,...check},audio,plan};entries.push(row);used.set(`${c.a.hash}/${c.b.hash}`,(used.get(`${c.a.hash}/${c.b.hash}`)??0)+1);for(const t of [c.a,c.b])usedTracks.set(t.hash,(usedTracks.get(t.hash)??0)+1);console.log(`  rendered ${entries.length}`);}catch(e){console.warn('  rejected render due to source or quality check');}
     }manifest.push({id:style.id,name:style.name,description:style.description,candidateCount,entries});
@@ -86,6 +87,7 @@ function main(){
   fs.writeFileSync(path.join(out,'index.html'),html);console.log(`Done: ${manifest.reduce((n,s)=>n+s.entries.length,0)} renders in ${out}`);
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main();
+
 
 
 
