@@ -14,14 +14,21 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
   const { lib, pcm, analysis, automix, wave, db, providers } = s;
 
   // Media routes serve the recording that actually plays (a chosen alternative or the track itself).
-  const pcmEntry = (trackId: string, sr: number) => {
-    const t = lib.media(trackId);
+  const pcmEntry = async (trackId: string, sr: number) => {
+    let t = lib.media(trackId);
     if (!t) throw Object.assign(new Error('трек не найден'), { statusCode: 404 });
     if (t.status === 'missing') throw Object.assign(new Error(t.error ?? 'файл не найден'), { statusCode: 410 });
     const caps = providers.caps(t.provider);
     if (!caps?.playback) throw Object.assign(new Error('источник не поддерживает воспроизведение'), { statusCode: 409 });
+    let input: string | undefined;
+    const cached = pcm.status(t.content_hash, sr);
+    if (t.provider === 'yandex' && (!cached || cached.error)) {
+      // A fresh download can change the hash; choose the PCM key only after verification.
+      input = await lib.resolveMediaPath(t.id);
+      t = lib.get(t.id)!;
+    }
     const key = s.publicMusic.pcmKey(t.id, t.content_hash);
-    const entry = pcm.open(key, sr, (signal) => s.publicMusic.playbackInput(t.id, signal), t.duration, caps.caching !== 'persistent');
+    const entry = pcm.open(key, sr, (signal) => input ? Promise.resolve(input) : s.publicMusic.playbackInput(t.id, signal), t.duration, caps.caching !== 'persistent');
     return { t, key, entry };
   };
 
@@ -34,7 +41,7 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
       !Number.isSafeInteger(start) || start < 0 || start > Number.MAX_SAFE_INTEGER / 8 ||
       !Number.isSafeInteger(frames) || frames < 1 || frames > 32768) return reply.code(400).send({ error: 'Некорректный источник' });
     try {
-      const { t, key, entry } = pcmEntry(body.trackId, sr!);
+      const { t, key, entry } = await pcmEntry(body.trackId, sr!);
       pcm.pin(key, sr!, body.role === 'candidate' ? 30000 : 10 * 60000);
       analysis.prioritize([t.id], body.role === 'current' ? PRIORITY.current : body.role === 'next' ? PRIORITY.next : PRIORITY.wave);
       const source = await pcm.nativeSource(entry, start, frames);
@@ -58,7 +65,7 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
     const sr = Number(req.body?.sampleRate);
     if (!ALLOWED_RATES.has(sr)) return reply.code(400).send({ error: 'неподдерживаемая частота' });
     try {
-      const { t, key, entry } = pcmEntry(req.params.id, sr);
+      const { t, key, entry } = await pcmEntry(req.params.id, sr);
       pcm.pin(key, sr, req.body.role === 'candidate' ? 30_000 : 10 * 60_000);
       analysis.prioritize([t.id], req.body.role === 'current' ? PRIORITY.current : req.body.role === 'next' ? PRIORITY.next : PRIORITY.wave);
       const st = analysis.statusOf(t.content_hash);
@@ -79,7 +86,7 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
     const format = req.query.format ?? 's16le';
     if (format !== 'f32le' && format !== 's16le') return reply.code(400).send({ error: 'неподдерживаемый формат PCM' });
     try {
-      const { entry } = pcmEntry(req.params.id, sr);
+      const { entry } = await pcmEntry(req.params.id, sr);
       const r = await pcm.read(entry, start, frames);
       reply.header('Content-Type', 'application/octet-stream');
       reply.header('X-Total-Frames', String(Math.round(r.totalFrames)));
@@ -186,7 +193,7 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
     const key = s.publicMusic.pcmKey(t.id, t.content_hash);
     const sr = [48000, 44100, 96000, 88200, 32000, 22050].find(rate => { const st = pcm.status(key, rate); return st && !st.error; });
     if (!sr) return null;
-    const { entry } = pcmEntry(trackId, sr);
+    const { entry } = await pcmEntry(trackId, sr);
     const start = Math.floor(from * sr), frames = Math.ceil((to - from) * sr);
     const r = await pcm.read(entry, start, frames, 1500);
     const n = Math.floor(r.data.length / 8);

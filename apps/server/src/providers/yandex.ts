@@ -537,6 +537,11 @@ export class YandexProvider implements Provider {
     const meta = JSON.parse(src.meta || '{}') as { audioHash?: string };
     if (!track || !/^[a-f\d]{64}$/.test(track.content_hash)) throw new Error('Аудио Яндекса ещё не проверено. Добавьте трек заново.');
     if (meta.audioHash && meta.audioHash !== track.content_hash) throw new Error('Версия аудио Яндекса не совпадает с сохранённым анализом');
-    return (await this.audio.prepare(this.checkedId(String(src.external_id)), track.duration, track.content_hash, { signal, priority })).file;
+    const media = await this.audio.prepare(this.checkedId(String(src.external_id)), track.duration, track.content_hash, { signal, priority });
+    if (media.hash !== track.content_hash) {
+      this.lib.rebindContent(track.id, media.hash, media.size, media.probe,
+        { id: src.id, meta: { ...meta, audioHash: media.hash, bitrate: media.bitrate } });
+    }
+    return media.file;
   }
 }
