@@ -1,4 +1,5 @@
 import { camelotCompatibility } from '../mir/key.ts';
+export { CREATIVE_TRANSITION_STYLES, planCreativeTransition, type CreativeTransitionStyle } from './creative.ts';
 import { closureAt } from '../mir/repetition.ts';
 import { applyVocalHandoff, lyricTiming, vocalEntryScore, vocalMean, vocalPhrases, vocalPowerRetained, vocalStarts } from './vocals.ts';
 import { drain, integrateTempo, linearPower, outputTimeAt, pointValue } from './timing.ts';
