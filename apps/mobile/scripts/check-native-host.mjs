@@ -46,7 +46,8 @@ try {
   device = candidates.find(d => d.state === 'Booted') ?? candidates[0];
   assert.ok(device, 'An available iPhone simulator is required');
   if (device.state !== 'Booted') run('xcrun', ['simctl', 'boot', device.udid]);
-  run('xcrun', ['simctl', 'bootstatus', device.udid, '-b']);
+  // A cold boot on the Intel pool (macos-15-intel) takes over 3 min; arm64 needed about 80 s.
+  run('xcrun', ['simctl', 'bootstatus', device.udid, '-b'], 600000);
   const app = join(dir, 'HostCheck.app'); await mkdir(join(app, 'public'), { recursive: true });
   const bundle = 'ru.mora.native-host-check';
   await writeFile(join(app, 'Info.plist'), `<?xml version="1.0"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict>
