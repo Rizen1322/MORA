@@ -52,6 +52,21 @@ it('lands the brake on both beat grids', () => {
   expect(q.tapeStopA!.end - handoff).toBeCloseTo(.025, 3);
 });
 
+it('does not snap a decaying tail backwards into the still-loud outgoing phrase', () => {
+  const c = creativePair('tail-threshold'), A = c.from.analysis!;
+  setLevel(A, 0, 114.7, -16); setLevel(A, 114.7, 128, -38);
+  const p = planCreativeTransition(c.from, c.to, c.settings, c.style)!;
+  expect(p.aExit + p.swapAt).toBeGreaterThanOrEqual(114.7 - .001);
+  expect(p.aExit + p.swapAt).toBeLessThan(115);
+});
+
+it('does not apply bass, mid, high or filter automation with EQ handoff disabled', () => {
+  for (const { id } of CREATIVE_TRANSITION_STYLES) {
+    const c = creativePair(id), p = planCreativeTransition(c.from, c.to, { ...c.settings, eqHandoff: false }, id);
+    if (p) expect(p.automation.some(l => ['low', 'mid', 'high', 'filter'].includes(l.lane)), id).toBe(false);
+  }
+});
+
 it('pins comparisons to the nearest valid outgoing handoff without forcing an unsafe cue', () => {
   const c = creativePair('echo-adaptive');
   const p = planCreativeTransition(c.from, c.to, c.settings, c.style, 100)!;

@@ -14,7 +14,7 @@ it('only returns native cache paths to the desktop capability holder', async () 
   const source = { sourceId: 'key_48000', path: 'private.part', finalPath: 'private.f32', partPath: 'private.part',
     format: 'f32le', totalFrames: 100, availableFrames: 32, complete: false };
   let mediaId = 'a';
-  const pcm = { open: vi.fn(() => ({})), pin: vi.fn(), nativeSource: vi.fn(async () => source) };
+  const pcm = { status: vi.fn(() => null), open: vi.fn(() => ({})), pin: vi.fn(), nativeSource: vi.fn(async () => source) };
   const cfg = { desktopPlaybackToken: 'host-secret', accessToken: 'browser-secret' };
   const services = { cfg, pcm, lib: { media: () => ({ id: mediaId, title: 'A', artist: 'Artist', provider: 'local', content_hash: 'hash', duration: 1 }), mixingPolicy: new Map([['local', true]]) },
     providers: { caps: () => ({ playback: true, caching: 'persistent' }) }, publicMusic: { pcmKey: () => 'key' },

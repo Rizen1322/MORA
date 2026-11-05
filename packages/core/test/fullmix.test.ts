@@ -368,6 +368,14 @@ describe('render policy preserves musical intent', () => {
     expect(selectRenderedFinalist([base, { ...handoff, m: metrics({ dipLU: -8 }) }])).toBe(base);
   });
 
+  it('can fall back from a short creative recipe to an ordinary longer blend after rendering', () => {
+    const selected = { plan: candidate('echo', 4, .2), m: metrics({ cost: 2, dipLU: -5 }) };
+    selected.plan.debug.creativeSelection = { policy: 'creative-selection-1' };
+    const fallback = { plan: candidate('ordinary', 16, .2), m: metrics({ cost: .2, dipLU: -1 }) };
+    expect(selectRenderedFinalist([selected, fallback])).toBe(fallback);
+    expect(selectRenderedFinalist([selected, { ...fallback, m: metrics({ underruns: 1 }) }])).toBe(selected);
+  });
+
   it('includes music costs and rating preferences in the final choice', () => {
     const base = { plan: candidate('preferred', 16, 0.5, 0.15), m: metrics({ cost: 0.5 }) };
     const collision = { plan: candidate('collision', 16, 1.2), m: metrics() };

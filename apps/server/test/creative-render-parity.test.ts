@@ -1,13 +1,27 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, expect, it } from 'vitest';
-import { DEFAULT_AUTOMIX_SETTINGS, planTransition, type TransitionPlan } from '@automix/core';
+import { DEFAULT_AUTOMIX_SETTINGS, planTransition, renderMetrics, type TransitionPlan } from '@automix/core';
 import { renderTransitionOffline } from '@automix/core/engine/arm.ts';
-import { renderRust } from '../src/rust-render.ts';
+import { measureRust, renderRust } from '../src/rust-render.ts';
+import { creativePair } from '../../../packages/core/test/creative-fixtures.ts';
+import { planCreativeTransition } from '@automix/core';
 import { stopRustCompute } from '../src/rust-core.ts';
 
 const binary = process.env.AUTOMIX_RUST_CORE;
 afterAll(stopRustCompute);
+
+it.skipIf(!binary || !fs.existsSync(path.resolve(binary)))('measures the brake from cropped source windows instead of skipping its render check', async () => {
+  const c = creativePair('short-brake'), plan = planCreativeTransition(c.from, c.to, c.settings, c.style)!;
+  const sampleRate = 44100, fromA = plan.aExit - 7;
+  const pcm = { L: Float32Array.from({ length: sampleRate * 32 }, (_, i) => .1 * Math.sin(i * .2)), R: new Float32Array(sampleRate * 32), sampleRate };
+  pcm.R.set(pcm.L);
+  const a = { pcm, start: fromA }, b = { pcm, start: 0 };
+  const ts = renderMetrics(plan, a, b), rust = await measureRust(plan, a, b);
+  expect(ts).not.toBeNull(); expect(rust).not.toBeNull();
+  expect(ts!.underruns).toBe(0); expect(rust!.underruns).toBe(0);
+  for (const key of ['dipLU', 'bumpLU', 'limiterDb', 'lowHoleSeconds', 'flams', 'cost'] as const) expect(rust![key]).toBeCloseTo(ts![key], 2);
+});
 
 it.skipIf(!binary || !fs.existsSync(path.resolve(binary)))('renders moving echoes and bounded tails like the native mixer', async () => {
   const sampleRate = 48000, n = sampleRate * 6;

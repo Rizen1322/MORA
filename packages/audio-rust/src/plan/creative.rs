@@ -1,4 +1,4 @@
-//! Explicit measured auditions. Kept out of ordinary automatic ranking.
+//! Measured local recipes, also used by desktop selection with an ordinary-plan fallback.
 use super::{common::*, primitives::normalization_gain};
 use serde_json::{Value, json};
 
@@ -144,7 +144,7 @@ fn connect_incoming(mut p: Value, aa: &Value, bb: &Value, ga: &Value, gb: &Value
     let pre = r3(old_pre.max(((incoming_age+beat)/bar).ceil()*bar));
     let overlap = r3((2.*beat).max(if style == "slowing-echo" { 3.*beat_b } else { 2.*beat_b }));
     let mut event = n(&p,"aExit")+old_pre;
-    if style == "tail-threshold" || style == "short-brake" {
+    if style == "short-brake" {
         let accents = if style == "short-brake" && ga["beats"].as_array().is_some_and(|v| !v.is_empty()) { nums(&ga["beats"]).into_iter().filter(|t| t.is_finite()).collect() } else { nums(&ga["downbeats"]) };
         event = accents.into_iter().reduce(|best,t| if (t-event).abs() < (best-event).abs() { t } else { best }).unwrap_or(event);
     }
@@ -452,7 +452,12 @@ pub fn plan(a: &Value, b: &Value, settings: &Value, style: &str, preferred_hando
         p["debug"] = json!({"processingAllowed":true,"creative":{"style":style,"name":name,"score":p["confidence"],"reasons":reasons,"experimental":true,"limits":limits,"measured":measured_info}});
         let key = [s(a,"id").to_string(),s(b,"id").to_string(),style.to_string(),js_stringify(&p["aExit"]),js_stringify(&p["bEntry"]),js_stringify(&p["duration"]),js_stringify(&p["gainA"]),js_stringify(&p["gainB"])].join("|");
         p["id"] = json!(format!("creative_{}",fnv1a(&format!("creative-1|{key}"))));
-        if let Some(connected) = connect_incoming(p,aa,bb,ga,gb,style,n(settings,"maxBlendSeconds").min(60.)) { return connected; }
+        if let Some(mut connected) = connect_incoming(p,aa,bb,ga,gb,style,n(settings,"maxBlendSeconds").min(60.)) {
+            if settings["eqHandoff"] != true {
+                connected["automation"].as_array_mut().unwrap().retain(|l| !["low","mid","high","filter"].contains(&s(l,"lane")));
+            }
+            return connected;
+        }
     }
     Value::Null
 }

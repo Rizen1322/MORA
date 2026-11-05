@@ -1,7 +1,7 @@
 import { PLANNER_VERSION, type AutoMixSettings, type AutomationLane, type BeatGrid, type PlannerTrack, type TrackAnalysis, type TransitionPlan } from '../types.ts';
 import { fnv1a, normalizationGain } from './planner.ts';
 
-/** Explicit auditions only: these hypotheses never participate in automatic ranking. */
+/** Measured local recipes; desktop selection also keeps the ordinary planner as a fallback. */
 export const CREATIVE_TRANSITION_STYLES = [
   { id: 'echo-pickup', name: 'Эхо + затакт', description: 'Ввести затакт B под A и ограниченным эхом, раскрыть его устойчивую сильную долю.' },
   { id: 'echo-adaptive', name: 'Адаптивное эхо', description: 'Подобрать атаку B по измеренным RMS и onset, сохранив начало записи.' },
@@ -106,7 +106,7 @@ function connectIncoming(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis, 
   const pre = r3(Math.max(oldPre, Math.ceil((incomingAge + beat) / bar) * bar));
   const overlap = r3(Math.max(2 * beat, (style === 'slowing-echo' ? 3 : 2) * beatB));
   let event = p.aExit + oldPre;
-  if (style === 'tail-threshold' || style === 'short-brake') {
+  if (style === 'short-brake') {
     const accents = style === 'short-brake' && Array.isArray(ga.beats) && ga.beats.length ? ga.beats.filter(Number.isFinite) : ga.downbeats;
     event = accents.reduce((best, t) => Math.abs(t - event) < Math.abs(best - event) ? t : best, accents[0] ?? event);
   }
@@ -377,7 +377,10 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
     const key = [a.id, b.id, style, p.aExit, p.bEntry, p.duration, p.gainA, p.gainB].join('|');
     p.id = `creative_${fnv1a('creative-1|' + key)}`;
     const connected = connectIncoming(p, A, B, ga, gb, style, Math.min(60, settings.maxBlendSeconds));
-    if (connected) return connected;
+    if (connected) {
+      if (!settings.eqHandoff) connected.automation = connected.automation.filter(l => !['low', 'mid', 'high', 'filter'].includes(l.lane));
+      return connected;
+    }
   }
   return null;
 }

@@ -24,6 +24,7 @@ const variants = [
   ['late-handoff', c => { c.handoffA = 1000; }],
   ['nonfinite-handoff', c => { c.handoffA = NaN; }],
   ['short-limit', c => { c.settings.maxBlendSeconds = 1; }],
+  ['no-eq', c => { c.settings.eqHandoff = false; }],
   ['no-grid', c => { c.from.analysis!.beat = null; }],
   ['no-onset', c => { delete c.to.analysis!.local; delete c.from.analysis!.local; }],
   ['dense', c => { c.from.analysis!.curves.midDensity.fill(.75); c.to.analysis!.curves.midDensity.fill(.8); }],
