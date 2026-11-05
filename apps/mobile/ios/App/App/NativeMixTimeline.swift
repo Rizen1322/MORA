@@ -1,6 +1,13 @@
 import Foundation
 
 enum NativeMixTimeline {
+    /// dataPlayedBack includes route latency; those in-flight blocks cannot refill the player yet.
+    static func outputBufferCount(sampleRate: Double, frames: Int, latency: Double) -> Int {
+        guard [44100.0, 48000.0].contains(sampleRate), frames > 0 else { return 5 }
+        let seconds = latency.isFinite ? max(0, min(8, latency)) : 0
+        return 5 + Int((seconds * sampleRate / Double(frames)).rounded(.up))
+    }
+
     static func preservingTail(_ incoming: [String: Any], after old: [String: Any]?, currentEntryId: String? = nil) -> [String: Any] {
         guard incoming["replaceFuture"] as? Bool != true, let old,
               let start = incoming["from"] as? Int, let oldStart = old["from"] as? Int, start >= oldStart,

@@ -2,6 +2,7 @@ import AVKit
 import MediaPlayer
 import SwiftUI
 import UIKit
+import WebKit
 
 /// iPhone full player over the WebView while NativeMixHost plays. It reads native state only,
 /// so it keeps working while WebContent is suspended or reloading.
@@ -130,6 +131,7 @@ struct NativePlayerView: View {
     @ObservedObject var model: NativePlayerModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var queueOpen = false
+    @State private var showLyrics = false
 
     var body: some View {
         let s = model.state
@@ -140,7 +142,7 @@ struct NativePlayerView: View {
                 Text("Сейчас играет").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
                     .accessibilityHidden(true)
                 Spacer()
-                IconButton(symbol: "ellipsis", label: "Ещё: нравится, текст песни") { model.close("more") }
+                IconButton(symbol: "ellipsis", label: "Ещё") { model.close("more") }
             }
             .padding(.horizontal, -10)
             Spacer(minLength: 12)
@@ -200,21 +202,36 @@ struct NativePlayerView: View {
             .aspectRatio(1, contentMode: .fit)
             .frame(maxWidth: 360)
             .overlay {
-                if let image = model.artwork {
-                    Image(uiImage: image).resizable().scaledToFill()
-                } else {
-                    ZStack {
-                        Color.moraMint.opacity(0.12)
-                        Image(systemName: "music.note").font(.system(size: 64)).foregroundStyle(.white.opacity(0.4))
+                ZStack(alignment: .bottomTrailing) {
+                    Group {
+                        if showLyrics {
+                            NativeLyricsView(model: model)
+                        } else if let image = model.artwork {
+                            Image(uiImage: image).resizable().scaledToFill().accessibilityHidden(true)
+                        } else {
+                            ZStack {
+                                Color.moraMint.opacity(0.12)
+                                Image(systemName: "music.note").font(.system(size: 64)).foregroundStyle(.white.opacity(0.4))
+                            }
+                            .accessibilityHidden(true)
+                        }
                     }
+                    .transition(.opacity)
+                    Button { showLyrics.toggle() } label: {
+                        Image(systemName: showLyrics ? "square.stack" : "text.alignleft")
+                            .font(.body.weight(.semibold)).frame(width: 44, height: 44)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel(showLyrics ? "Показать обложку" : "Показать текст песни")
+                    .padding(12)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(0.6), radius: playing ? 30 : 14, y: playing ? 20 : 10)
-            .scaleEffect(playing || reduceMotion ? 1 : 0.84)
+            .scaleEffect(showLyrics || playing || reduceMotion ? 1 : 0.84)
             .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.75), value: playing)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: showLyrics)
             .layoutPriority(-1)
-            .accessibilityHidden(true)
     }
 
     private func transport(playing: Bool) -> some View {
@@ -243,6 +260,93 @@ struct NativePlayerView: View {
     }
 }
 
+private struct NativeLyrics {
+    let status: String
+    let plain: String
+    let lines: [(time: Double, text: String)]
+    let offset: Double
+
+    init(_ value: [String: Any]) {
+        status = value["status"] as? String ?? "none"
+        plain = value["plain"] as? String ?? ""
+        let raw = value["wordLines"] as? [[String: Any]] ?? value["lines"] as? [[String: Any]] ?? []
+        lines = raw.compactMap { line in
+            guard let time = (line["t"] as? NSNumber)?.doubleValue, let text = line["text"] as? String else { return nil }
+            return (time, text)
+        }
+        offset = (value["offsetMs"] as? NSNumber)?.doubleValue ?? 0
+    }
+}
+
+private struct NativeLyricsView: View {
+    @ObservedObject var model: NativePlayerModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var lyrics: NativeLyrics?
+    @State private var failure: String?
+    @State private var retry = 0
+
+    var body: some View {
+        let lines = lyrics?.lines ?? []
+        let now = model.state.position + (lyrics?.offset ?? 0) / 1000
+        let active = lines.lastIndex { $0.time <= now } ?? -1
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 16) {
+                    if let failure {
+                        Text(failure).foregroundStyle(.white.opacity(0.7))
+                        Button("Повторить") { retry &+= 1 }.buttonStyle(.bordered)
+                    } else if let lyrics {
+                        if !lines.isEmpty {
+                            ForEach(lines.indices, id: \.self) { index in
+                                Button { model.seek(to: max(0, lines[index].time - lyrics.offset / 1000)) } label: {
+                                    Text(lines[index].text.isEmpty ? "♪" : lines[index].text)
+                                        .font(.body.weight(index == active ? .semibold : .regular))
+                                        .foregroundStyle(index == active ? Color.moraMint : .white.opacity(0.58))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .buttonStyle(.plain)
+                                .id(index)
+                            }
+                        } else if lyrics.status == "plain" && !lyrics.plain.isEmpty {
+                            Text(lyrics.plain).frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Text("Текст для этой песни не найден.")
+                            Button("Поискать снова") { retry &+= 1 }.buttonStyle(.bordered)
+                        }
+                    } else {
+                        ProgressView("Ищем текст…")
+                    }
+                }
+                .padding(20)
+                .padding(.bottom, 48)
+            }
+            .onChange(of: active) { _, index in
+                if index >= 0 { withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) { proxy.scrollTo(index, anchor: .center) } }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.moraBackground)
+        .task(id: "\(model.state.trackId)|\(retry)") { await load(model.state.trackId, refresh: retry > 0) }
+    }
+
+    @MainActor private func load(_ id: String, refresh: Bool) async {
+        lyrics = nil; failure = nil
+        guard !id.isEmpty else { failure = "Трек недоступен"; return }
+        guard let webView = NativeShellStore.shared?.webView else { failure = "Медиатека ещё загружается"; return }
+        do {
+            let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Any, Error>) in
+                webView.callAsyncJavaScript("const response = await fetch('/api/tracks/' + encodeURIComponent(id) + '/lyrics' + (refresh ? '?refresh=1' : '')); if (!response.ok) throw new Error('HTTP ' + response.status); return await response.json()",
+                                            arguments: ["id": id, "refresh": refresh], in: nil, in: .page) { continuation.resume(with: $0) }
+            }
+            guard !Task.isCancelled else { return }
+            if let value = result as? [String: Any] { lyrics = NativeLyrics(value) }
+            else { failure = "Не удалось прочитать текст" }
+        } catch {
+            if !Task.isCancelled { failure = error.localizedDescription }
+        }
+    }
+}
+
 private struct NativeQueueView: View {
     @ObservedObject var model: NativePlayerModel
     @Environment(\.dismiss) private var dismiss
@@ -255,7 +359,7 @@ private struct NativeQueueView: View {
                 }
                 ForEach(model.state.upcoming) { row in
                     HStack(spacing: 12) {
-                        NativeCover(url: row.cover, size: 44, radius: 6)
+                        NativeCover(url: row.cover ?? NativeShellStore.shared?.byId[row.trackId]?.cover, size: 44, radius: 6, embedded: row.artwork)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(row.title).font(.body.weight(.medium)).lineLimit(1)
                             Text(row.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)

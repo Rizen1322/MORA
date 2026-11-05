@@ -3,16 +3,19 @@ import Foundation
 /// What the native full player shows, mapped from NativeMixHost.playerState. Foundation only (swiftc test).
 struct NativePlayerRow: Equatable, Identifiable {
     let id: String
+    let trackId: String
     let title: String
     let artist: String
     let automix: Bool
     /// HTTPS, or a library cover (/api/...) that the page serves.
     let cover: String?
+    /// Embedded cover from the native queue manifest (local files).
+    let artwork: String?
 }
 
 struct NativePlayerState: Equatable {
     var active = false, playing = false, blending = false, artworkReady = false
-    var title = "", artist = "", entryId = ""
+    var title = "", artist = "", entryId = "", trackId = ""
     var position = 0.0, duration = 0.0
     var upcoming: [NativePlayerRow] = []
     /// Where the AutoMix transition into the next track starts and how long it lasts (seconds), if planned.
@@ -28,6 +31,7 @@ struct NativePlayerState: Equatable {
         title = current["title"] as? String ?? ""
         artist = current["artist"] as? String ?? ""
         entryId = value["entryId"] as? String ?? current["entryId"] as? String ?? ""
+        trackId = current["trackId"] as? String ?? ""
         duration = max(0, value["duration"] as? Double ?? 0)
         position = min(duration, max(0, value["position"] as? Double ?? 0))
         let prepared = value["upcoming"] as? [[String: Any]] ?? []
@@ -51,16 +55,17 @@ struct NativePlayerState: Equatable {
 
     /// Prepared tracks after the audible one, then the manifest items not prepared yet.
     static func queue(current: String, prepared: [[String: Any]], manifest: [[String: Any]]) -> [NativePlayerRow] {
-        var covers: [String: String] = [:]
+        var covers: [String: String] = [:], artworks: [String: String] = [:]
         for item in manifest {
-            if let id = item["entryId"] as? String, let text = item["coverUrl"] as? String,
-               text.hasPrefix("https://") || text.hasPrefix("/api/") { covers[id] = text }
+            guard let id = item["entryId"] as? String else { continue }
+            if let text = item["coverUrl"] as? String, text.hasPrefix("https://") || text.hasPrefix("/api/") { covers[id] = text }
+            if let embedded = item["artwork"] as? [String: Any], let base64 = embedded["base64"] as? String { artworks[id] = base64 }
         }
         var rows: [NativePlayerRow] = [], seen: Set<String> = [current]
         func add(_ item: [String: Any], automix: Bool) {
             guard let id = item["entryId"] as? String, !id.isEmpty, seen.insert(id).inserted else { return }
-            rows.append(NativePlayerRow(id: id, title: item["title"] as? String ?? "", artist: item["artist"] as? String ?? "",
-                                        automix: automix, cover: covers[id]))
+            rows.append(NativePlayerRow(id: id, trackId: item["trackId"] as? String ?? "", title: item["title"] as? String ?? "", artist: item["artist"] as? String ?? "",
+                                        automix: automix, cover: covers[id], artwork: artworks[id]))
         }
         for track in prepared { add(track, automix: track["transition"] != nil) }
         // The manifest can still list tracks that were played since it was sent.

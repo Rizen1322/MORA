@@ -997,6 +997,10 @@ final class Echo {
     private var width = 0.0
     private var zeros: Int
     private var out = 1.0, outStep = 0.0
+    private var delayMap: [LanePoint] = []
+    private var delayOrigin = 0.0
+    private var deadline: Double?
+    private var deadlineFadeFrames = 1.0
     init(_ sampleRate: Double) {
         let n = Int((sampleRate * 2.5).rounded(.up))
         L = FBuf(n, 0); R = FBuf(n, 0); zeros = n
@@ -1012,7 +1016,13 @@ final class Echo {
         delay = max(1, min(L.count - 1, jsRoundInt(delayFrames)))
         self.feedback = max(0, min(0.85, feedback))
     }
-    func process(_ inL: FBuf, _ inR: FBuf, _ outL: FBuf, _ outR: FBuf, _ n: Int) {
+    func setDelayMap(_ points: [LanePoint], _ origin: Double) {
+        delayMap = points; delayOrigin = origin
+    }
+    func limitTailAt(_ frame: Double, _ fadeFrames: Double) {
+        deadline = frame; deadlineFadeFrames = max(1, fadeFrames)
+    }
+    func process(_ inL: FBuf, _ inR: FBuf, _ outL: FBuf, _ outR: FBuf, _ n: Int, _ clock: Double = 0) {
         let N = L.count
         if zeros >= N && outStep == 0 {
             var silent = true
@@ -1020,14 +1030,19 @@ final class Echo {
             if silent { hpL = 0; hpR = 0; hpXL = 0; hpXR = 0; lpL = 0; lpR = 0; return }
         }
         for i in 0..<n {
-            let rp = (pos - delay + N) % N
-            let yL = Double(L[rp]), yR = Double(R[rp])
+            let tailGain = deadline.map { max(0, min(1, ($0 - clock - Double(i)) / deadlineFadeFrames)) } ?? 1
+            if tailGain == 0 { return }
+            let d = delayMap.isEmpty ? Double(delay) : evalPoints(delayMap, clock + Double(i) - delayOrigin)
+            let rp = (Double(pos) - d + Double(N)).truncatingRemainder(dividingBy: Double(N))
+            let at = Int(rp.rounded(.down)), fraction = rp - Double(at), next = at + 1 == N ? 0 : at + 1
+            let yL = Double(L[at]) + (Double(L[next]) - Double(L[at])) * fraction
+            let yR = Double(R[at]) + (Double(R[next]) - Double(R[at])) * fraction
             if outStep > 0 {
                 out = max(0, out - outStep)
                 if out == 0 { reset(); return }
             }
-            outL[i] = Float(Double(outL[i]) + yL * out * 1)
-            outR[i] = Float(Double(outR[i]) + yR * out * 1)
+            outL[i] = Float(Double(outL[i]) + yL * out * tailGain)
+            outR[i] = Float(Double(outR[i]) + yR * out * tailGain)
             let hL = hpA * (hpL + yL - hpXL), hR = hpA * (hpR + yR - hpXR)
             hpXL = yL; hpXR = yR; hpL = hL; hpR = hR
             lpL += lpA * (hL - lpL); lpR += lpA * (hR - lpR)
@@ -1048,6 +1063,7 @@ final class Echo {
         L.fill(0); R.fill(0); zeros = L.count; pos = 0
         hpL = 0; hpR = 0; hpXL = 0; hpXR = 0; lpL = 0; lpR = 0
         out = 1; outStep = 0
+        deadline = nil; delayMap = []
     }
 }
 
@@ -1078,6 +1094,7 @@ struct ArmedTransition {
     var loopA: SourceLoop?, tapeStopA: SourceTapeStop?
     var lanes: [Lane]
     var echoDelayFrames: Double?, echoFeedback: Double?, echoLowpassHz: Double?, echoWidth: Double?
+    var echoDelayPointsFrames: [LanePoint]?, echoClearFrame: Double?
     /** Vocal stems or a vocal throw: not playable natively. */
     var usesVocals = false
 
@@ -1108,6 +1125,15 @@ struct ArmedTransition {
         self.lanes = parsed
         echoDelayFrames = num("echoDelayFrames"); echoFeedback = num("echoFeedback")
         echoLowpassHz = num("echoLowpassHz"); echoWidth = num("echoWidth")
+        if raw["echoDelayPointsFrames"] != nil {
+            guard let map = points(raw["echoDelayPointsFrames"]), map.count <= 64,
+                  map.enumerated().allSatisfy({ i, p in p.t >= 0 && p.t <= duration && p.v >= 1 && (i == 0 || p.t >= map[i - 1].t) }) else { return nil }
+            echoDelayPointsFrames = map
+        }
+        if raw["echoClearFrame"] != nil {
+            guard let frame = num("echoClearFrame"), frame >= 0, frame <= duration else { return nil }
+            echoClearFrame = frame
+        }
         if let l = raw["loopA"] as? [String: Any], let s = l["start"] as? Int, let e = l["end"] as? Int,
            let u = l["until"] as? Int, let f = l["fade"] as? Int {
             let roll = (l["roll"] as? [[String: Any]])?.compactMap { r -> (at: Int, length: Int)? in
@@ -1342,6 +1368,9 @@ final class MixerCore {
     }
     func arm(_ tr: ArmedTransition) {
         if active { return }
+        if tr.echoDelayPointsFrames?.contains(where: { $0.v > (sampleRate * 2.5).rounded(.up) - 1 }) == true {
+            emit(.fallback(planId: tr.planId, reason: "invalid-echo-delay")); return
+        }
         for d in decks { d.loopSource.setLoop(nil) }
         armed = tr
         active = false; late = false; lateNotified = false; swapped = false; forced = false
@@ -1420,7 +1449,7 @@ final class MixerCore {
             }
             off += len
         }
-        echo.process(echoInL, echoInR, outL, outR, n)
+        echo.process(echoInL, echoInR, outL, outR, n, clock - Double(n))
     }
 
     private func renderSub(_ outL: FBuf, _ outR: FBuf, _ off: Int, _ len: Int) {
@@ -1587,6 +1616,8 @@ final class MixerCore {
         b.pendingSeek = nil
         b.endedNotified = false
         if let delay = tr.echoDelayFrames, delay != 0 { echo.configure(delay, tr.echoFeedback ?? 0.5, tr.echoLowpassHz ?? 6000, tr.echoWidth ?? 0) }
+        if let map = tr.echoDelayPointsFrames { echo.setDelayMap(map, clock) }
+        if let end = tr.echoClearFrame { echo.limitTailAt(clock + end, jsRound(sampleRate * 0.05)) }
         b.tempo = (origin: clock + (tr.gapFrames > 0 ? tr.durationFrames + tr.gapFrames : tr.bDelayFrames ?? 0), points: tr.tempoB)
         if let tempoA = tr.tempoA, !tempoA.isEmpty { a.tempo = (origin: clock, points: tempoA) }
         b.lanes = evalLanes(tr, false, 0)

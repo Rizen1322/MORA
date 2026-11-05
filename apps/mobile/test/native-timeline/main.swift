@@ -1,5 +1,32 @@
 import Foundation
 
+// Model the actual dataPlayedBack credit: the engine needs new audio before the car reports playback.
+func outputGaps(sampleRate: Double, latency: Double, count: Int) -> Int {
+    let block = 8192.0 / sampleRate
+    var end = Double(count) * block
+    var callbacks = (1...count).map { Double($0) * block + latency + 0.02 }
+    var gaps = 0
+    for i in 0..<1800 {
+        let callback = callbacks[i]
+        if callback > end + 0.000001 { gaps += 1 }
+        end = max(end, callback) + block
+        callbacks.append(end + latency + (i % 9 == 0 ? 0.12 : 0.02))
+    }
+    return gaps
+}
+for rate in [44100.0, 48000.0] {
+    for latency in [0.0, 0.02, 0.2, 0.7, 1.5, 2.0, 4.0, 8.0] {
+        let count = NativeMixTimeline.outputBufferCount(sampleRate: rate, frames: 8192, latency: latency)
+        precondition(outputGaps(sampleRate: rate, latency: latency, count: count) == 0, "Route \(rate)/\(latency) starved")
+        if latency >= 0.7 { precondition(outputGaps(sampleRate: rate, latency: latency, count: 5) > 0, "The old queue should reproduce the dropout") }
+    }
+}
+precondition(NativeMixTimeline.outputBufferCount(sampleRate: 48000, frames: 8192, latency: .nan) == 5)
+precondition(NativeMixTimeline.outputBufferCount(sampleRate: 48000, frames: 8192, latency: -1) == 5)
+precondition(NativeMixTimeline.outputBufferCount(sampleRate: 48000, frames: 8192, latency: 1000) == 52)
+precondition(NativeMixTimeline.outputBufferCount(sampleRate: .infinity, frames: 8192, latency: 1) == 5)
+print("Native output buffering: former CarPlay starvation reproduced; latency-aware queue stays fed at 44.1/48 kHz")
+
 // Native preparation inserts Swift Int values; bridge/JSON inserts NSNumber values.
 let frames = 357 * 48000
 for value in [frames as Any, Double(frames) as Any, NSNumber(value: frames) as Any] {

@@ -48,6 +48,8 @@ final class NativeMixHost {
     private var failed = false
     private var underruns = 0
     private var maxRenderMs = 0.0
+    private var outputBufferCount = 5
+    private var outputLatency = 0.0
     private var lastLogFrame: Int64 = -1
     private var nowPlaying: (key: String, position: Double, rate: Double, at: Double, row: Double)?
     private var prunedIndex = -1
@@ -121,6 +123,7 @@ final class NativeMixHost {
             "preparing": preparing, "index": index, "position": position, "duration": duration,
             "renderedFrames": rendered, "queuedFrames": queued, "presentedFrames": presented,
             "epoch": epoch, "ownership": ownershipRevision, "underruns": underruns, "maxRenderMs": maxRenderMs, "failed": failed,
+            "outputBufferCount": outputBufferCount, "outputLatency": outputLatency,
             "artworkReady": artworks.indices.contains(index) && artworks[index] != nil, "count": tracks.count, "ended": ended,
             "waitingForPreparation": continueWhenPrepared && ended, "pendingSkips": pendingSkips,
             "entryId": tracks.indices.contains(index) ? tracks[index]["entryId"] as? String ?? "" : ""]
@@ -621,9 +624,14 @@ final class NativeMixHost {
     private func fill() throws {
         guard let renderer, let format, let player else { throw Failure.playback }
         let generation = epoch
-        // 5 x 8192 frames (~0.85 s at 48 kHz): after a completion 4 blocks (~0.68 s) stay
-        // queued, more than the former 7 x 4096, with half the callbacks and allocations.
-        while pending < 5 && !done {
+        let session = AVAudioSession.sharedInstance()
+        let routeLatency = max(session.outputLatency, player.outputPresentationLatency)
+        outputLatency = routeLatency.isFinite ? max(0, min(8, routeLatency)) : 0
+        // Some car routes initially report zero before the first audio reaches the receiver.
+        let bufferLatency = session.currentRoute.outputs.contains { $0.portType == .carAudio } ? max(2, outputLatency) : outputLatency
+        outputBufferCount = NativeMixTimeline.outputBufferCount(sampleRate: sr, frames: 8192,
+            latency: bufferLatency + max(0, session.ioBufferDuration))
+        while pending < outputBufferCount && !done {
             let began = ProcessInfo.processInfo.systemUptime
             let block = try autoreleasepool { try renderer.render() }
             maxRenderMs = max(maxRenderMs, (ProcessInfo.processInfo.systemUptime - began) * 1000)
@@ -681,7 +689,7 @@ final class NativeMixHost {
         var audible = completed
         if let player, let time = player.lastRenderTime, let played = player.playerTime(forNodeTime: time) {
             // Estimate between dataPlayedBack checkpoints; completion accounts for device latency.
-            let estimated = played.sampleTime - Int64(AVAudioSession.sharedInstance().outputLatency * sr)
+            let estimated = played.sampleTime - Int64(outputLatency * sr)
             audible = max(completed, estimated)
         }
         presented = max(presented, min(queued, max(0, audible)))
@@ -949,6 +957,12 @@ final class NativeMixHost {
     func routeChange(_ notification: Notification) {
         let reason = (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue
         if active && reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { command("pause", source: "route") { _ in } }
+        else {
+            work.async {
+                guard self.folder != nil, self.wantsPlaying, self.engine?.isRunning == true else { return }
+                do { try self.fill(); self.publish("routeBuffering") } catch { self.fail() }
+            }
+        }
     }
     func mediaReset() {
         work.async {

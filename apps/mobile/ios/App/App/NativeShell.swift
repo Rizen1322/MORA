@@ -308,6 +308,7 @@ struct NativeCover: View {
     var size: CGFloat = 48
     var radius: CGFloat = 8
     var image: UIImage? = nil
+    var embedded: String? = nil
     @State private var loaded: UIImage?
 
     var body: some View {
@@ -322,10 +323,14 @@ struct NativeCover: View {
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .accessibilityHidden(true)
-        .task(id: url) {
+        .task(id: embedded ?? url) {
             loaded = nil
-            guard image == nil, let url else { return }
-            loaded = await NativeCovers.image(url)
+            guard image == nil else { return }
+            if let embedded, let decoded = NativeArtworkImage.decode(embedded) {
+                loaded = UIImage(cgImage: decoded)
+            } else if let url {
+                loaded = await NativeCovers.image(url)
+            }
         }
     }
 }

@@ -151,14 +151,22 @@ struct NativePageView: View {
                 else if let promptRow { promptText = promptRow.initial; prompt = (promptRow, act) }
                 else { run(act, ["form": form]) }
             } label: {
-                Group {
-                    if let symbol { Label(title, systemImage: symbol) } else { Text(title) }
+                if style == "primary" {
+                    Group { if let symbol { Label(title, systemImage: symbol) } else { Text(title) } }
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color.moraBackground)
+                        .frame(minHeight: 44)
+                        .padding(.horizontal, 22)
+                        .background(Color.moraMint.opacity(disabled ? 0.4 : 1), in: Capsule())
+                        .frame(maxWidth: .infinity)
+                } else {
+                    Group { if let symbol { Label(title, systemImage: symbol) } else { Text(title) } }
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .foregroundStyle(style == "destructive" ? Color.red : Color.moraMint)
                 }
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: style == "primary" ? .center : .leading)
-                .fontWeight(style == "primary" ? .semibold : .regular)
-                .foregroundStyle(style == "primary" ? Color.moraBackground : style == "destructive" ? Color.red : Color.moraMint)
             }
-            .listRowBackground(style == "primary" ? Color.moraMint.opacity(disabled ? 0.4 : 1) : Color.white.opacity(0.06))
+            .buttonStyle(.plain)
+            .listRowBackground(Color.white.opacity(0.06))
             .disabled(disabled || running)
 
         case .link(let title, let detail, let symbol, let path):

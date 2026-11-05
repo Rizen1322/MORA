@@ -1,5 +1,6 @@
 import { AnalysisAccumulator } from '../../../packages/core/src/mir/analyzePcm.ts';
 import { planTransition } from '../../../packages/core/src/plan/planner.ts';
+import { creativeFinalists } from '../../../packages/core/src/plan/creative-selection.ts';
 import { fallbackWithoutVocalStems } from '../../../packages/core/src/plan/first-words.ts';
 import { planToArmed } from '../../../packages/core/src/engine/arm.ts';
 import { ANALYZER_VERSION, DEFAULT_AUTOMIX_SETTINGS, type AutoMixSettings, type PlannerTrack } from '../../../packages/core/src/types.ts';
@@ -47,6 +48,7 @@ export function analyzeJSON(input: string): string {
 export function planJSON(input: string): string {
   const request = JSON.parse(input) as { a: PlannerTrack; b: PlannerTrack; settings?: AutoMixSettings; sampleRate: number };
   const settings = { ...DEFAULT_AUTOMIX_SETTINGS, ...request.settings };
-  const plan = fallbackWithoutVocalStems(planTransition(request.a, request.b, settings));
+  const base = fallbackWithoutVocalStems(planTransition(request.a, request.b, settings));
+  const plan = creativeFinalists([base], request.a, request.b, settings, null)[0];
   return JSON.stringify({ plan, transition: planToArmed(plan, request.sampleRate, 'A', 'B'), gainDb: plan.gainB });
 }

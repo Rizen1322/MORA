@@ -16,7 +16,7 @@ function command(cmd, args) {
   assert.equal(result.status, 0, `${cmd} failed`);
 }
 function validate(cases) {
-  assert.equal(cases.length, 8);
+  assert.equal(cases.length, 10);
   for (const c of cases) {
     assert.ok(c.pcm.every(Number.isFinite), `${c.kind}: nonfinite PCM`);
     assert.ok(c.pcm.some(x => Math.abs(x) > .01), `${c.kind}: silent output`);
@@ -26,7 +26,7 @@ function validate(cases) {
       assert.deepEqual(c.events.filter(e => ['transitionStart', 'swap', 'transitionEnd'].includes(e.type)).map(e => e.type),
         ['transitionStart', 'swap', 'transitionEnd']);
       assert.equal(c.phases.at(-1).main, 1);
-    } else if (c.kind === 'transition') {
+    } else if (c.kind === 'transition' || c.kind === 'moving-echo') {
       assert.deepEqual(c.events.filter(e => ['transitionStart', 'swap', 'transitionEnd'].includes(e.type)).map(e => e.type),
         ['transitionStart', 'swap', 'transitionEnd']);
       assert.equal(c.phases.at(-1).main, 1);
@@ -62,7 +62,7 @@ try {
   validate(reference);
   // A broken renderer/comparator must not pass simply because both produce JSON.
   assert.throws(() => compare([.25], [.251]));
-  console.log(`Node reference passed: ${reference.reduce((n, c) => n + c.pcm.length, 0)} stereo samples, 8 fixtures`);
+  console.log(`Node reference passed: ${reference.reduce((n, c) => n + c.pcm.length, 0)} stereo samples, 10 fixtures`);
   // The Swift mixer has no telemetry ticks or PCM requests: compare the audible events only.
   const audible = cases => cases.map(c => ({ ...c, events: c.events.filter(e => !['tick', 'need', 'audioHealth'].includes(e.type)).map(e => e.type) }));
   if (!referenceOnly) {
