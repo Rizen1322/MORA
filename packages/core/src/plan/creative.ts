@@ -107,9 +107,94 @@ function loopDifference(an: TrackAnalysis, start: number, bar: number): number {
   return sum / 32;
 }
 
+/** Keep the outgoing music until the incoming recording actually has a musical bed, not merely a nonzero sample. */
+function connectIncoming(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis, ga: BeatGrid, gb: BeatGrid, style: CreativeTransitionStyle, limit: number): TransitionPlan | null {
+  if (style === 'percussion-exchange' || style === 'two-stage-bass') return p;
+  const beat = ga.period, beatB = gb.period, bar = 4 * beat, oldPre = p.swapAt, oldDelay = p.bDelay ?? 0;
+  const anchor = gb.downbeats.find(t => t >= B.audibleStart + beatB && t + 2 * beatB < B.audibleEnd
+    && t - B.audibleStart < limit - bar
+    && measured(B, 'rmsDb', t - beatB, t) >= B.bodyRmsDb - 10
+    && measured(B, 'rmsDb', t, t + beatB) >= B.bodyRmsDb - 6);
+  if (anchor === undefined) return null;
+  if (style === 'half-time-handoff') {
+    const low = measured(B, 'lowDb', anchor, anchor + beatB), bodyLow = measured(B, 'lowDb', B.audibleStart, B.audibleEnd);
+    if (!Number.isFinite(low) || !Number.isFinite(bodyLow) || low < bodyLow - 6
+      || low < measured(B, 'rmsDb', anchor, anchor + beatB) - 14) return null;
+  }
+  const incomingAge = anchor - p.bEntry;
+  const pre = r3(Math.max(oldPre, Math.ceil((incomingAge + beat) / bar) * bar));
+  const overlap = r3(Math.max(2 * beat, 2 * beatB));
+  let event = p.aExit + oldPre;
+  if (style === 'tail-threshold') event = ga.downbeats.reduce((best, t) => Math.abs(t - event) < Math.abs(best - event) ? t : best, ga.downbeats[0]);
+  const exit = r3(event - pre), duration = r3(pre + overlap), delay = r3(pre - incomingAge);
+  if (exit < A.audibleStart + .025 || event + overlap > A.audibleEnd || duration > limit || delay < 0
+    || anchor + overlap > B.audibleEnd) return null;
+  const phaseDrift = style === 'half-time-handoff' ? Math.abs(Math.max(beat, beatB) / (2 * Math.min(beat, beatB)) - 1) * (duration - delay) : 0;
+  if (phaseDrift > .02) return null;
+  const originalAnchor = oldPre - oldDelay, bEnd = duration - delay;
+  const neutral = (lane: AutomationLane['lane']) => ['echo', 'voiceEcho', 'filter'].includes(lane) ? 0 : 1;
+  const lanes = p.automation.map(l => ({ ...l, points: points([[0, l.deck === 'A' ? neutral(l.lane) : l.points[0][1]],
+    ...l.points.map(([t, v]) => [t + (l.deck === 'A' ? pre - oldPre : incomingAge - originalAnchor), v] as [number, number])], l.deck === 'A' ? duration : bEnd) }));
+  const add = (deck: 'A' | 'B', lane: AutomationLane['lane'], knots: Points) => {
+    const i = lanes.findIndex(l => l.deck === deck && l.lane === lane), value = { deck, lane, points: points(knots, deck === 'A' ? duration : bEnd) };
+    if (i < 0) lanes.push(value); else lanes[i] = value;
+  };
+  const approach = Math.min(incomingAge - .05, Math.max(beat, beatB));
+  add('A', 'gain', [[0, 1], [pre - overlap, 1], [pre, .65], [duration, 0]]);
+  add('B', 'gain', [[0, 0], [.04, .15], [Math.max(.05, incomingAge - approach), .25], [incomingAge, .85], [incomingAge + overlap, 1]]);
+  // Bass is handed over on the common accent, rather than removed before B has any low end.
+  const swap = Math.min(beat, beatB) * .5;
+  add('A', 'low', [[0, 1], [pre - swap, 1], [pre, .707], [pre + swap, 0], [duration, 0]]);
+  add('B', 'low', [[0, .12], [incomingAge - swap, .12], [incomingAge, .707], [incomingAge + swap, 1], [bEnd, 1]]);
+  if (style === 'natural-break' || style === 'tail-threshold') {
+    add('B', 'gain', [[0, 0], [.04, .15], [Math.max(.05, incomingAge - approach), .4], [incomingAge, 1], [bEnd, 1]]);
+    add('A', 'gain', [[0, 1], [pre - overlap, 1], [pre, .5], [duration, 0]]);
+  }
+  if (style === 'tail-threshold') {
+    add('A', 'gain', [[0, 1], [pre - overlap, 1], [pre, .9], [duration, 0]]);
+    add('B', 'gain', [[0, 0], [.04, .15], [Math.max(.05, incomingAge - approach), .55], [incomingAge - .25 * beatB, .95], [incomingAge, 1], [bEnd, 1]]);
+  }
+  if (style === 'one-bar-breath') {
+    add('A', 'gain', [[0, 1], [pre - bar, .85], [pre, .7], [duration, 0]]);
+    add('A', 'filter', [[0, 0], [pre - bar, -.2], [pre, -.45], [duration, -.45]]);
+  }
+  if (style === 'dub-throw') {
+    add('A', 'echo', [[0, 0], [pre - beat, 0], [pre - .8 * beat, .32], [pre, .32], [pre + .1 * beat, 0], [duration, 0]]);
+  }
+  if (style === 'bandpass-bridge') {
+    add('A', 'low', [[0, 1], [pre - overlap, .5], [pre, .15], [duration, 0]]);
+    add('B', 'mid', [[0, .3], [incomingAge - approach, .45], [incomingAge, .85], [incomingAge + beatB, 1], [bEnd, 1]]);
+    add('B', 'high', [[0, .12], [incomingAge - approach, .25], [incomingAge, .6], [bEnd, 1]]);
+  }
+  if (style === 'stereo-reveal') {
+    if (!stereoSafe(A, exit - .025, event + overlap) || !stereoSafe(B, p.bEntry, anchor + overlap)) return null;
+    add('A', 'width', [[0, 1], [pre - overlap, 1], [pre, .45], [duration, .45]]);
+    add('B', 'width', [[0, .25], [incomingAge - approach, .25], [incomingAge, .7], [bEnd, 1]]);
+  }
+  let tapeStopA = p.tapeStopA;
+  if (style === 'short-brake') {
+    const brake = clamp(beat, .25, .65);
+    tapeStopA = { start: r3(event - brake), end: r3(event + .025), crossfade: .025 };
+    add('A', 'gain', [[0, 1], [pre - brake, 1], [pre, .4], [pre + .025, 0], [duration, 0]]);
+    add('B', 'gain', [[0, 0], [.04, .15], [Math.max(.05, incomingAge - approach), .35], [incomingAge, 1], [bEnd, 1]]);
+  }
+  const echo = p.echo ? { ...p.echo, feedback: style === 'dub-throw' ? .32 : Math.min(.52, p.echo.feedback),
+    delay: style === 'dub-throw' ? r3(beat) : p.echo.delay,
+    clearAt: r3(Math.min(duration, Math.max(pre + beat, (p.echo.clearAt ?? p.duration) + pre - oldPre))),
+    delayPoints: p.echo.delayPoints ? points(p.echo.delayPoints.map(([t, d]) => [t + pre - oldPre, d]), duration) : undefined } : undefined;
+  const measuredInfo = (p.debug.creative as any)?.measured ?? {};
+  return { ...p, id: `creative_${fnv1a('creative-2|' + p.id + '|' + exit + '|' + anchor)}`, aExit: exit, duration,
+    bDelay: delay, swapAt: pre, automation: lanes, tapeStopA, echo,
+    entrySelection: { ...p.entrySelection!, arrivalTime: r3(anchor) },
+    debug: { ...p.debug, creative: { ...(p.debug.creative as any), policy: 'audible-overlap-2', measured: { ...measuredInfo,
+      incomingAnchorSeconds: r3(anchor), incomingAnchorRmsDb: r3(measured(B, 'rmsDb', anchor, anchor + beatB)),
+      incomingPrerollSeconds: r3(incomingAge), dryOverlapSeconds: overlap, handoffSourceA: r3(event),
+      ...(style === 'half-time-handoff' ? { phaseDriftMs: r3(phaseDrift * 1000) } : {}) } } } };
+}
+
 /** A null result means this recording pair lacks the measurements or musical fit for the requested effect.
  * No sources are separated and no automatic planner/decorators are called. */
-export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings, style: CreativeTransitionStyle): TransitionPlan | null {
+export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, settings: AutoMixSettings, style: CreativeTransitionStyle, preferredHandoffA?: number): TransitionPlan | null {
   const spec = CREATIVE_TRANSITION_STYLES.find(s => s.id === style), A = analysis(a), B = analysis(b);
   if (!spec || !settings.enabled || !A || !B || !Number.isFinite(settings.maxBlendSeconds) || settings.maxBlendSeconds <= 0) return null;
   const ga = grid(A), gb = grid(B);
@@ -170,8 +255,8 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
     const incomingLow = measured(B, 'lowDb', swapSource, swapSource + beatB);
     const incomingRms = measured(B, 'rmsDb', swapSource, swapSource + beatB);
     const bodyLow = measured(B, 'lowDb', entry, B.audibleEnd);
-    if (phaseDrift > .02 || ![incomingLow, incomingRms, bodyLow].every(Number.isFinite)
-      || incomingLow < bodyLow - 6 || incomingLow < incomingRms - 14 || incomingRms < B.bodyRmsDb - 8) return null;
+    if (phaseDrift > .02 || (style !== 'half-time-handoff' && (![incomingLow, incomingRms, bodyLow].every(Number.isFinite)
+      || incomingLow < bodyLow - 6 || incomingLow < incomingRms - 14 || incomingRms < B.bodyRmsDb - 8))) return null;
     if (style === 'percussion-exchange') {
       const high = measured(B, 'highDb', entry, entry + barB), bodyHigh = measured(B, 'highDb', entry, B.audibleEnd);
       if (!Number.isFinite(high) || !Number.isFinite(bodyHigh) || high < bodyHigh - 8) return null;
@@ -193,6 +278,7 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
   const marked = (t: number) => (A.phraseConfidence >= .5 && A.phrases.some(p => Math.abs(p - t) <= .06))
     || A.sectionBoundaries.some(p => Math.abs(p - t) <= .06);
   handoffs.sort((x, y) => Number(marked(y)) - Number(marked(x)) || y - x);
+  if (Number.isFinite(preferredHandoffA)) handoffs.sort((x, y) => Math.abs(x - preferredHandoffA!) - Math.abs(y - preferredHandoffA!));
   for (const handoff of handoffs) {
     const exit = r3(handoff - pre), end = exit + duration, bClock = r3(duration - delay);
     if (exit < A.audibleStart || end > A.audibleEnd || exit < .025) continue;
@@ -340,7 +426,8 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
       limits: ['requires-listening', ...(!A.vocalActivity || !B.vocalActivity ? ['vocal-overlap-unknown'] : [])], measured: measuredInfo } };
     const key = [a.id, b.id, style, p.aExit, p.bEntry, p.duration, p.gainA, p.gainB].join('|');
     p.id = `creative_${fnv1a('creative-1|' + key)}`;
-    return p;
+    const connected = connectIncoming(p, A, B, ga, gb, style, Math.min(60, settings.maxBlendSeconds));
+    if (connected) return connected;
   }
   return null;
 }

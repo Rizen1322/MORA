@@ -76,7 +76,9 @@ describe('explicit creative transition auditions', () => {
         } else {
           const t = p.tapeStopA!;
           expect(source.setTapeStop({ start: Math.round(t.start * sr), end: Math.round(t.end * sr), fade: Math.round(t.crossfade * sr) })).toBe(true);
-          expect(pointValue(p.automation.find(l => l.deck === 'B' && l.lane === 'gain')!.points, .02)).toBeGreaterThan(.7);
+          const incomingClock = p.swapAt - (p.bDelay ?? 0);
+          expect(pointValue(p.automation.find(l => l.deck === 'B' && l.lane === 'gain')!.points, incomingClock)).toBe(1);
+          expect(p.bDelay!).toBeLessThan(t.start - p.aExit);
         }
       }
     }
@@ -109,7 +111,11 @@ describe('explicit creative transition auditions', () => {
     for (const style of ['half-time-handoff', 'percussion-exchange', 'two-stage-bass'] as const) {
       const quiet = creativePair(style), B = quiet.to.analysis!;
       for (let i = 0; i < 12 * B.curves.rate; i++) { B.curves.rmsDb[i] -= 20; B.curves.lowDb[i] -= 20; B.curves.highDb[i] -= 20; }
-      expect(planCreativeTransition(quiet.from, quiet.to, quiet.settings, style)).toBeNull();
+      const quietPlan = planCreativeTransition(quiet.from, quiet.to, quiet.settings, style);
+      if (style === 'half-time-handoff') {
+        expect(quietPlan).not.toBeNull();
+        expect(quietPlan!.entrySelection!.arrivalTime).toBeGreaterThanOrEqual(12);
+      } else expect(quietPlan).toBeNull();
       const drift = creativePair(style), g = drift.to.analysis!.beat!;
       g.bpm *= 1.014; g.period /= 1.014; g.beats = g.beats.map(t => t / 1.014); g.downbeats = g.downbeats.map(t => t / 1.014);
       if (style === 'half-time-handoff') drift.to.analysis!.audibleStart = .5;
