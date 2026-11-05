@@ -105,6 +105,10 @@ final class NativeMixHost {
     }
 
     private var sr: Double { config["sampleRate"] as? Double ?? 48000 }
+    private var presentationDelay: Double {
+        let delay = max(AVAudioSession.sharedInstance().outputLatency, player?.outputPresentationLatency ?? 0)
+        return delay.isFinite ? max(0, min(8, delay)) : 0
+    }
     private func file(_ key: Int) -> URL? { folder?.appendingPathComponent("\(key).f32le") }
     private static func key(_ track: [String: Any], _ i: Int) -> Int { track["file"] as? Int ?? i }
     private func available(_ index: Int) -> Bool {
@@ -625,8 +629,7 @@ final class NativeMixHost {
         guard let renderer, let format, let player else { throw Failure.playback }
         let generation = epoch
         let session = AVAudioSession.sharedInstance()
-        let routeLatency = max(session.outputLatency, player.outputPresentationLatency)
-        outputLatency = routeLatency.isFinite ? max(0, min(8, routeLatency)) : 0
+        outputLatency = presentationDelay
         // Some car routes initially report zero before the first audio reaches the receiver.
         let bufferLatency = session.currentRoute.outputs.contains { $0.portType == .carAudio } ? max(2, outputLatency) : outputLatency
         outputBufferCount = NativeMixTimeline.outputBufferCount(sampleRate: sr, frames: 8192,
@@ -689,6 +692,7 @@ final class NativeMixHost {
         var audible = completed
         if let player, let time = player.lastRenderTime, let played = player.playerTime(forNodeTime: time) {
             // Estimate between dataPlayedBack checkpoints; completion accounts for device latency.
+            outputLatency = presentationDelay
             let estimated = played.sampleTime - Int64(outputLatency * sr)
             audible = max(completed, estimated)
         }
