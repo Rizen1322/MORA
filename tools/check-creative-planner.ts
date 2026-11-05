@@ -7,6 +7,7 @@ import { creativeCases } from '../packages/core/test/creative-fixtures.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const exe = process.argv.find(v => v.startsWith('--exe='))?.slice(6) ?? path.join(root, 'packages/audio-rust/target/debug/mora-audio.exe');
+type CreativeCase = ReturnType<typeof creativeCases>[number] & { handoffA?: number };
 function compare(actual: any, expected: any, at = '$'): void {
   if (typeof actual === 'number' && typeof expected === 'number') {
     assert.ok(Math.abs(actual - expected) <= 1e-9, `${at}: ${actual} != ${expected}`); return;
@@ -16,7 +17,12 @@ function compare(actual: any, expected: any, at = '$'): void {
   for (const key of Object.keys(expected)) compare(actual[key], expected[key], `${at}.${key}`);
 }
 const variants = [
-  ['baseline', (_: ReturnType<typeof creativeCases>[number]) => {}],
+  ['baseline', (_: CreativeCase) => {}],
+  ['preferred-handoff', c => { c.handoffA = 112; }],
+  ['fractional-handoff', c => { c.handoffA = 111.7; }],
+  ['early-handoff', c => { c.handoffA = -100; }],
+  ['late-handoff', c => { c.handoffA = 1000; }],
+  ['nonfinite-handoff', c => { c.handoffA = NaN; }],
   ['short-limit', c => { c.settings.maxBlendSeconds = 1; }],
   ['no-grid', c => { c.from.analysis!.beat = null; }],
   ['no-onset', c => { delete c.to.analysis!.local; delete c.from.analysis!.local; }],
@@ -33,11 +39,11 @@ const variants = [
   ['restricted', c => { c.from.mixingAllowed = false; }],
   ['normalization', c => { c.settings.loudnessTarget = -14; c.from.analysis!.loudness.truePeakDb = 1; }],
   ['unicode', c => { c.from.id = 'Диск 🎵'; c.to.id = 'Следующий 🦀'; }],
-] satisfies [string, (c: ReturnType<typeof creativeCases>[number]) => void][];
+] satisfies [string, (c: CreativeCase) => void][];
 let count = 0, applicable = 0;
 for (const [variant, mutate] of variants) for (const original of creativeCases()) {
-  const c = structuredClone(original); mutate(c);
-  const expected = planCreativeTransition(c.from, c.to, c.settings, c.style);
+  const c: CreativeCase = structuredClone(original); mutate(c);
+  const expected = planCreativeTransition(c.from, c.to, c.settings, c.style, c.handoffA);
   const input = JSON.stringify({ ...c, operation: 'plan' });
   const child = spawnSync(exe, ['--compute'], { input, encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
   assert.equal(child.status, 0, `${variant}/${c.style}: ${child.error ?? child.stderr}`);

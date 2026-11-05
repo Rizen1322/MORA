@@ -112,6 +112,9 @@ fn add(p: &mut Value, deck: &str, name: &str, mut knots: Points) {
         knots.retain(|p| p[0] > 0.012);
         knots.insert(0,[0.012,initial]); knots.insert(0,[0.,0.]);
     }
+    add_lane(p,deck,name,knots);
+}
+fn add_lane(p: &mut Value, deck: &str, name: &str, knots: Points) {
     let end = n(p, "duration") - if deck == "B" { n(p, "bDelay") } else { 0. };
     let lane = json!({"deck":deck,"lane":name,"points":smooth_points(knots,end)});
     let lanes = p["automation"].as_array_mut().unwrap();
@@ -145,7 +148,109 @@ fn loop_difference(an: &Value, start: f64, bar: f64) -> f64 {
     sum / 32.
 }
 
-pub fn plan(a: &Value, b: &Value, settings: &Value, style: &str) -> Value {
+fn connect_incoming(mut p: Value, aa: &Value, bb: &Value, ga: &Value, gb: &Value, style: &str, limit: f64) -> Option<Value> {
+    if ["percussion-exchange", "two-stage-bass"].contains(&style) { return Some(p); }
+    let beat = n(ga,"period");
+    let beat_b = n(gb,"period");
+    let bar = 4.*beat;
+    let old_pre = n(&p,"swapAt");
+    let old_delay = n(&p,"bDelay");
+    let anchor = nums(&gb["downbeats"]).into_iter().find(|t| *t >= n(bb,"audibleStart")+beat_b && *t+2.*beat_b < n(bb,"audibleEnd")
+        && *t-n(bb,"audibleStart") < limit-bar
+        && measured(bb,"rmsDb",*t-beat_b,*t) >= n(bb,"bodyRmsDb")-10.
+        && measured(bb,"rmsDb",*t,*t+beat_b) >= n(bb,"bodyRmsDb")-6.)?;
+    if style == "half-time-handoff" {
+        let low = measured(bb,"lowDb",anchor,anchor+beat_b);
+        let body_low = measured(bb,"lowDb",n(bb,"audibleStart"),n(bb,"audibleEnd"));
+        if !low.is_finite() || !body_low.is_finite() || low < body_low-6.
+            || low < measured(bb,"rmsDb",anchor,anchor+beat_b)-14. { return None; }
+    }
+    let incoming_age = anchor-n(&p,"bEntry");
+    let pre = r3(old_pre.max(((incoming_age+beat)/bar).ceil()*bar));
+    let overlap = r3((2.*beat).max(2.*beat_b));
+    let mut event = n(&p,"aExit")+old_pre;
+    if style == "tail-threshold" {
+        event = nums(&ga["downbeats"]).into_iter().reduce(|best,t| if (t-event).abs() < (best-event).abs() { t } else { best }).unwrap();
+    }
+    let exit = r3(event-pre);
+    let duration = r3(pre+overlap);
+    let delay = r3(pre-incoming_age);
+    if exit < n(aa,"audibleStart")+0.025 || event+overlap > n(aa,"audibleEnd") || duration > limit || delay < 0.
+        || anchor+overlap > n(bb,"audibleEnd") { return None; }
+    let phase_drift = if style == "half-time-handoff" { (beat.max(beat_b)/(2.*beat.min(beat_b))-1.).abs()*(duration-delay) } else { 0. };
+    if phase_drift > 0.02 { return None; }
+    let original_anchor = old_pre-old_delay;
+    let b_end = duration-delay;
+    let lanes: Vec<Value> = arr(&p["automation"]).iter().map(|l| {
+        let deck_a = s(l,"deck") == "A";
+        let initial = if deck_a { if ["echo","voiceEcho","filter"].contains(&s(l,"lane")) { 0. } else { 1. } } else { num(&l["points"][0][1]) };
+        let mut knots = vec![[0.,initial]];
+        knots.extend(arr(&l["points"]).iter().map(|pt| [num(&pt[0])+if deck_a { pre-old_pre } else { incoming_age-original_anchor },num(&pt[1])]));
+        json!({"deck":l["deck"],"lane":l["lane"],"points":smooth_points(knots,if deck_a { duration } else { b_end })})
+    }).collect();
+    let old_id = s(&p,"id").to_string();
+    p["aExit"] = json!(exit); p["duration"] = json!(duration); p["bDelay"] = json!(delay); p["swapAt"] = json!(pre); p["automation"] = json!(lanes);
+    let approach = (incoming_age-0.05).min(beat.max(beat_b));
+    add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-overlap,1.],[pre,0.65],[duration,0.]]);
+    add_lane(&mut p,"B","gain",vec![[0.,0.],[0.04,0.15],[0.05f64.max(incoming_age-approach),0.25],[incoming_age,0.85],[incoming_age+overlap,1.]]);
+    let swap = beat.min(beat_b)*0.5;
+    add_lane(&mut p,"A","low",vec![[0.,1.],[pre-swap,1.],[pre,0.707],[pre+swap,0.],[duration,0.]]);
+    add_lane(&mut p,"B","low",vec![[0.,0.12],[incoming_age-swap,0.12],[incoming_age,0.707],[incoming_age+swap,1.],[b_end,1.]]);
+    if ["natural-break","tail-threshold"].contains(&style) {
+        add_lane(&mut p,"B","gain",vec![[0.,0.],[0.04,0.15],[0.05f64.max(incoming_age-approach),0.4],[incoming_age,1.],[b_end,1.]]);
+        add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-overlap,1.],[pre,0.5],[duration,0.]]);
+    }
+    if style == "tail-threshold" {
+        add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-overlap,1.],[pre,0.9],[duration,0.]]);
+        add_lane(&mut p,"B","gain",vec![[0.,0.],[0.04,0.15],[0.05f64.max(incoming_age-approach),0.55],[incoming_age-0.25*beat_b,0.95],[incoming_age,1.],[b_end,1.]]);
+    }
+    if style == "one-bar-breath" {
+        add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-bar,0.85],[pre,0.7],[duration,0.]]);
+        add_lane(&mut p,"A","filter",vec![[0.,0.],[pre-bar,-0.2],[pre,-0.45],[duration,-0.45]]);
+    }
+    if style == "dub-throw" {
+        add_lane(&mut p,"A","echo",vec![[0.,0.],[pre-beat,0.],[pre-0.8*beat,0.32],[pre,0.32],[pre+0.1*beat,0.],[duration,0.]]);
+    }
+    if style == "bandpass-bridge" {
+        add_lane(&mut p,"A","low",vec![[0.,1.],[pre-overlap,0.5],[pre,0.15],[duration,0.]]);
+        add_lane(&mut p,"B","mid",vec![[0.,0.3],[incoming_age-approach,0.45],[incoming_age,0.85],[incoming_age+beat_b,1.],[b_end,1.]]);
+        add_lane(&mut p,"B","high",vec![[0.,0.12],[incoming_age-approach,0.25],[incoming_age,0.6],[b_end,1.]]);
+    }
+    if style == "stereo-reveal" {
+        if !stereo_safe(aa,exit-0.025,event+overlap) || !stereo_safe(bb,n(&p,"bEntry"),anchor+overlap) { return None; }
+        add_lane(&mut p,"A","width",vec![[0.,1.],[pre-overlap,1.],[pre,0.45],[duration,0.45]]);
+        add_lane(&mut p,"B","width",vec![[0.,0.25],[incoming_age-approach,0.25],[incoming_age,0.7],[b_end,1.]]);
+    }
+    if style == "short-brake" {
+        let brake = clamp(beat,0.25,0.65);
+        p["tapeStopA"] = json!({"start":r3(event-brake),"end":r3(event+0.025),"crossfade":0.025});
+        add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-brake,1.],[pre,0.4],[pre+0.025,0.],[duration,0.]]);
+        add_lane(&mut p,"B","gain",vec![[0.,0.],[0.04,0.15],[0.05f64.max(incoming_age-approach),0.35],[incoming_age,1.],[b_end,1.]]);
+    }
+    if !p["echo"].is_null() {
+        let echo = &mut p["echo"];
+        echo["feedback"] = json!(if style == "dub-throw" { 0.32 } else { 0.52f64.min(n(echo,"feedback")) });
+        if style == "dub-throw" { echo["delay"] = json!(r3(beat)); }
+        echo["clearAt"] = json!(r3(duration.min((pre+beat).max(n(echo,"clearAt")+pre-old_pre))));
+        if !echo["delayPoints"].is_null() {
+            let knots = arr(&echo["delayPoints"]).iter().map(|pt| [num(&pt[0])+pre-old_pre,num(&pt[1])]).collect();
+            echo["delayPoints"] = json!(smooth_points(knots,duration));
+        }
+    }
+    p["id"] = json!(format!("creative_{}",fnv1a(&format!("creative-2|{old_id}|{}|{}",js_stringify(&json!(exit)),js_stringify(&json!(anchor))))));
+    p["entrySelection"]["arrivalTime"] = json!(r3(anchor));
+    p["debug"]["creative"]["policy"] = json!("audible-overlap-2");
+    let info = &mut p["debug"]["creative"]["measured"];
+    info["incomingAnchorSeconds"] = json!(r3(anchor));
+    info["incomingAnchorRmsDb"] = json!(r3(measured(bb,"rmsDb",anchor,anchor+beat_b)));
+    info["incomingPrerollSeconds"] = json!(r3(incoming_age));
+    info["dryOverlapSeconds"] = json!(overlap);
+    info["handoffSourceA"] = json!(r3(event));
+    if style == "half-time-handoff" { info["phaseDriftMs"] = json!(r3(phase_drift*1000.)); }
+    Some(p)
+}
+
+pub fn plan(a: &Value, b: &Value, settings: &Value, style: &str, preferred_handoff_a: Option<f64>) -> Value {
     let Some((_, name, description)) = STYLES.iter().find(|(id, _, _)| *id == style) else { return Value::Null };
     if settings["enabled"] != true || !valid_analysis(a) || !valid_analysis(b) || !n(settings, "maxBlendSeconds").is_finite() || n(settings, "maxBlendSeconds") <= 0. { return Value::Null; }
     let aa = &a["analysis"];
@@ -216,8 +321,8 @@ pub fn plan(a: &Value, b: &Value, settings: &Value, style: &str) -> Value {
         let incoming_low = measured(bb,"lowDb",swap_source,swap_source+beat_b);
         let incoming_rms = measured(bb,"rmsDb",swap_source,swap_source+beat_b);
         let body_low = measured(bb,"lowDb",entry,b_end);
-        if phase_drift > 0.02 || ![incoming_low,incoming_rms,body_low].iter().all(|v| v.is_finite())
-            || incoming_low < body_low-6. || incoming_low < incoming_rms-14. || incoming_rms < n(bb,"bodyRmsDb")-8. { return Value::Null; }
+        if phase_drift > 0.02 || (style != "half-time-handoff" && (![incoming_low,incoming_rms,body_low].iter().all(|v| v.is_finite())
+            || incoming_low < body_low-6. || incoming_low < incoming_rms-14. || incoming_rms < n(bb,"bodyRmsDb")-8.)) { return Value::Null; }
         if style == "percussion-exchange" {
             let high = measured(bb,"highDb",entry,entry+bar_b);
             let body_high = measured(bb,"highDb",entry,b_end);
@@ -242,6 +347,9 @@ pub fn plan(a: &Value, b: &Value, settings: &Value, style: &str) -> Value {
     let marked = |t: f64| (n(aa,"phraseConfidence") >= 0.5 && arr(&aa["phrases"]).iter().any(|p| (num(p)-t).abs() <= 0.06))
         || arr(&aa["sectionBoundaries"]).iter().any(|p| (num(p)-t).abs() <= 0.06);
     handoffs.sort_by(|x,y| marked(*y).cmp(&marked(*x)).then_with(|| y.total_cmp(x)));
+    if let Some(preferred) = preferred_handoff_a.filter(|v| v.is_finite()) {
+        handoffs.sort_by(|x,y| (x-preferred).abs().total_cmp(&(y-preferred).abs()));
+    }
     for handoff in handoffs {
         let exit = r3(handoff-pre);
         let end = exit+duration;
@@ -399,7 +507,7 @@ pub fn plan(a: &Value, b: &Value, settings: &Value, style: &str) -> Value {
         p["debug"] = json!({"processingAllowed":true,"creative":{"style":style,"name":name,"score":p["confidence"],"reasons":reasons,"experimental":true,"limits":limits,"measured":measured_info}});
         let key = [s(a,"id").to_string(),s(b,"id").to_string(),style.to_string(),js_stringify(&p["aExit"]),js_stringify(&p["bEntry"]),js_stringify(&p["duration"]),js_stringify(&p["gainA"]),js_stringify(&p["gainB"])].join("|");
         p["id"] = json!(format!("creative_{}",fnv1a(&format!("creative-1|{key}"))));
-        return p;
+        if let Some(connected) = connect_incoming(p,aa,bb,ga,gb,style,n(settings,"maxBlendSeconds").min(60.)) { return connected; }
     }
     Value::Null
 }
