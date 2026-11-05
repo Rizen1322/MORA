@@ -27,7 +27,8 @@ it('introduces actual incoming music before releasing A, even through a six-seco
 });
 
 it('renders the quiet intro handoff without the former long loudness hole', () => {
-  const c = creativePair('echo-adaptive'); setLevel(c.to.analysis!, 0, 6, -40);
+  for (const style of ['echo-adaptive', 'one-bar-breath', 'single-loop', 'short-brake'] as const) {
+  const c = creativePair(style); setLevel(c.to.analysis!, 0, 6, -40);
   const p = planCreativeTransition(c.from, c.to, c.settings, c.style)!;
   const sr = 8000, n = Math.round(c.from.duration * sr);
   const L = Float32Array.from({ length: n }, (_, i) => .2 * Math.sin(i * 2 * Math.PI * 440 / sr));
@@ -38,8 +39,21 @@ it('renders the quiet intro handoff without the former long loudness hole', () =
   for (let offset = -sr; offset < sr; offset += sr / 4) {
     let power = 0; const start = Math.round(handoff + offset);
     for (let i = start; i < start + sr / 4; i++) power += r.L[i] * r.L[i];
-    expect(10 * Math.log10(power / (sr / 4)), `window ${offset / sr}`).toBeGreaterThan(-24);
+    expect(10 * Math.log10(power / (sr / 4)), `${style} window ${offset / sr}`).toBeGreaterThan(-24);
   }
+  }
+});
+
+it('finishes the loop fader before the source stops and lands the brake on both beat grids', () => {
+  const c = creativePair('single-loop'), p = planCreativeTransition(c.from, c.to, c.settings, c.style)!;
+  const sourceStop = p.loopA!.until - p.aExit;
+  const gain = p.automation.find(l => l.deck === 'A' && l.lane === 'gain')!.points;
+  expect(pointValue(gain, sourceStop - .02)).toBe(0);
+  const d = creativePair('short-brake'), q = planCreativeTransition(d.from, d.to, d.settings, d.style)!;
+  const handoff = q.aExit + q.swapAt;
+  expect(d.from.analysis!.beat!.beats.some(t => Math.abs(t - handoff) < .0011)).toBe(true);
+  expect(q.bDelay! + q.entrySelection!.arrivalTime! - q.bEntry).toBeCloseTo(q.swapAt, 3);
+  expect(q.tapeStopA!.end - handoff).toBeCloseTo(.025, 3);
 });
 
 it('pins comparisons to the nearest valid outgoing handoff without forcing an unsafe cue', () => {
