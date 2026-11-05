@@ -111,10 +111,12 @@ function loopDifference(an: TrackAnalysis, start: number, bar: number): number {
 function connectIncoming(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis, ga: BeatGrid, gb: BeatGrid, style: CreativeTransitionStyle, limit: number): TransitionPlan | null {
   if (style === 'percussion-exchange' || style === 'two-stage-bass') return p;
   const beat = ga.period, beatB = gb.period, bar = 4 * beat, oldPre = p.swapAt, oldDelay = p.bDelay ?? 0;
-  const anchor = gb.downbeats.find(t => t >= B.audibleStart + beatB && t + 2 * beatB < B.audibleEnd
+  const supportWindow = Math.max(4 * beatB, 2 * beat);
+  const anchor = gb.downbeats.find(t => t >= B.audibleStart + beatB && t + supportWindow < B.audibleEnd
     && t - B.audibleStart < limit - bar
     && measured(B, 'rmsDb', t - beatB, t) >= B.bodyRmsDb - 10
-    && measured(B, 'rmsDb', t, t + beatB) >= B.bodyRmsDb - 6);
+    && measured(B, 'rmsDb', t, t + beatB) >= B.bodyRmsDb - 6
+    && measured(B, 'rmsDb', t, t + supportWindow) >= B.bodyRmsDb - 8);
   if (anchor === undefined) return null;
   if (style === 'half-time-handoff') {
     const low = measured(B, 'lowDb', anchor, anchor + beatB), bodyLow = measured(B, 'lowDb', B.audibleStart, B.audibleEnd);
