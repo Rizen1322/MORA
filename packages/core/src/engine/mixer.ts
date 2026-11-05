@@ -9,11 +9,11 @@ import { CHUNK_FRAMES, ChunkStore } from './chunks.ts';
 import { VocalPcmSource, vocalSourceMap } from './vocals.ts';
 import { LoopPcmSource, type SourceLoop, type SourceTapeStop } from './loop.ts';
 
-/** Lane order: gain, low, mid, high, echo send, voice-echo send, bipolar filter, stereo width. */
-export type LaneIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
-export const LANE_INDEX = { gain: 0, low: 1, mid: 2, high: 3, echo: 4, voiceEcho: 5, filter: 6, width: 7 } as const;
-type Lanes = [number, number, number, number, number, number, number, number];
-const unity = (): Lanes => [1, 1, 1, 1, 0, 0, 0, 1];
+/** Lane order: gain, low, mid, high, echo send, voice-echo send, bipolar filter. */
+export type LaneIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+export const LANE_INDEX = { gain: 0, low: 1, mid: 2, high: 3, echo: 4, voiceEcho: 5, filter: 6 } as const;
+type Lanes = [number, number, number, number, number, number, number];
+const unity = (): Lanes => [1, 1, 1, 1, 0, 0, 0];
 
 /** A transition plan converted to frames for one AudioContext sample rate. */
 export interface ArmedTransition {
@@ -746,8 +746,8 @@ export class MixerCore {
     const lanes: ArmedTransition['lanes'] = [];
     for (const [role, d] of [['A', a], ['B', b]] as const) {
       if (!d) continue;
-      for (let lane = 0; lane < 8; lane++) {
-        const target = (lane >= 4 && lane <= 6) || (role === 'A' && lane === 0) ? 0 : 1;
+      for (let lane = 0; lane < 7; lane++) {
+        const target = lane >= 4 || (role === 'A' && lane === 0) ? 0 : 1;
         lanes.push({ deck: role, lane: lane as LaneIndex, points: [[0, d.lanes[lane]], [duration, target]] });
       }
     }
@@ -1040,11 +1040,6 @@ export class MixerCore {
         fade = fade < target ? Math.min(target, fade + step) : Math.max(target, fade - step);
       }
       const k = g * fade;
-      const width = Math.max(0, Math.min(1, from[7] + (to[7] - from[7]) * i / len));
-      if (width !== 1) {
-        const mid = (bl[i] + br[i]) * 0.5, side = (bl[i] - br[i]) * 0.5 * width;
-        bl[i] = mid + side; br[i] = mid - side;
-      }
       const l = bl[i] * k;
       const r = br[i] * k;
       outL[off + i] += l;

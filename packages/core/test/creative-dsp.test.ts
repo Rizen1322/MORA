@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
-import { Echo, LANE_INDEX } from '../src/engine/mixer.ts';
-import { planToArmed, renderTransitionOffline } from '../src/engine/arm.ts';
+import { Echo } from '../src/engine/mixer.ts';
+import { planToArmed } from '../src/engine/arm.ts';
 import { planTransition } from '../src/plan/planner.ts';
 import { DEFAULT_AUTOMIX_SETTINGS, type TransitionPlan } from '../src/types.ts';
 
@@ -11,23 +11,6 @@ function plan(): TransitionPlan {
     tempoB: [[0, 1]], automation: [{ deck: 'A', lane: 'gain', points: [[0, 0]] },
       { deck: 'B', lane: 'gain', points: [[0, 1]] }] };
 }
-
-it('narrows only stereo side energy and preserves mono at the original level', () => {
-  const sr = 8000, tone = Float32Array.from({ length: sr * 8 }, (_, i) => .1 * Math.sin(i * .21));
-  const silent = { L: new Float32Array(tone.length), R: new Float32Array(tone.length), sampleRate: sr };
-  const p = plan();
-  p.automation.push({ deck: 'B', lane: 'width', points: [[0, 0], [.5, 0], [1, 1], [2, 1]] });
-  const stereo = renderTransitionOffline(silent, { L: tone, R: tone.map(v => -v), sampleRate: sr }, p, 0, .1);
-  const energy = (from: number, to: number) => stereo.L.slice(from * sr, to * sr).reduce((s, v) => s + v * v, 0);
-  expect(energy(.1, .4)).toBe(0);
-  expect(energy(1.2, 1.8)).toBeGreaterThan(1);
-  expect(stereo.L.every((v, i) => Math.abs(v + stereo.R[i]) < 1e-6)).toBe(true);
-  expect(stereo.metrics.underruns).toBe(0);
-  const mono = { L: tone, R: tone, sampleRate: sr };
-  const narrowed = renderTransitionOffline(silent, mono, p, 0, .1);
-  const bypass = renderTransitionOffline(silent, mono, plan(), 0, .1);
-  expect(narrowed.L).toEqual(bypass.L);
-});
 
 it('slows repeats continuously and independently of render block size', () => {
   const sr = 8000, n = sr, input = new Float32Array(n);
@@ -65,11 +48,9 @@ it('a bounded echo cannot reappear after its tail deadline, even with an open se
 it('converts and validates creative automation at the engine boundary', () => {
   const p = plan();
   p.echo = { delay: .25, feedback: .4, delayPoints: [[0, .25], [2, .5]], clearAt: 1.9 };
-  p.automation.push({ deck: 'B', lane: 'width', points: [[0, 0], [1, 1]] });
   const armed = planToArmed(p, 48000, 'a', 'b');
   expect(armed.echoDelayPointsFrames).toEqual([[0, 12000], [96000, 24000]]);
   expect(armed.echoClearFrame).toBe(91200);
-  expect(armed.lanes.at(-1)?.lane).toBe(LANE_INDEX.width);
   for (const points of [[[0, NaN]], [[0, -.1]], [[0, 3]], [[1, .2], [0, .3]], [[3, .3]]] as [number, number][][]) {
     expect(() => planToArmed({ ...p, echo: { ...p.echo!, delayPoints: points } }, 48000, 'a', 'b')).toThrow('Invalid creative');
   }

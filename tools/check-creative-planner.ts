@@ -26,8 +26,6 @@ const variants = [
   ['short-limit', c => { c.settings.maxBlendSeconds = 1; }],
   ['no-grid', c => { c.from.analysis!.beat = null; }],
   ['no-onset', c => { delete c.to.analysis!.local; delete c.from.analysis!.local; }],
-  ['no-stereo', c => { delete c.from.analysis!.stereo; }],
-  ['stereo-bad', c => { c.from.analysis!.stereo!.correlation.fill(-.4); }],
   ['dense', c => { c.from.analysis!.curves.midDensity.fill(.75); c.to.analysis!.curves.midDensity.fill(.8); }],
   ['voice', c => { for (const t of [c.from, c.to]) t.analysis!.vocalActivity = { rate: 1, source: 'demucs', model: 'fixture', values: Array(128).fill(.8) }; }],
   ['pickup', c => { c.to.analysis!.audibleStart = .075; }],

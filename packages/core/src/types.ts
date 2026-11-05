@@ -253,9 +253,6 @@ export interface TrackAnalysis {
     /** Onset peaks per second over 2 s, scaled 0..1 at 8/s. Not a drum or voice detector. */
     transients: number[];
   };
-  /** Actual PCM stereo measurements; bin i covers [i/rate, (i+1)/rate).
-   * Missing windows stay unavailable. Silence may use correlation=1, sideToMidDb=-120. */
-  stereo?: { rate: number; correlation: number[]; sideToMidDb: number[] };
   /** Downsampled waveform peaks for drawing, 0..1, at `curves.rate`. */
   peaks: number[];
   cues: { entry: CueCandidate[]; exit: CueCandidate[] };
@@ -284,7 +281,7 @@ export type TransitionRatingReason = (typeof TRANSITION_RATING_REASONS)[number];
 /** 'filter' is bipolar (-1 low-pass, 0 bypass, +1 high-pass).
  * 'echo' is a send level (0..1) into a tempo-synced echo; gain/low/mid/high are gains.
  * 'voiceEcho' sends only the audible separated voice of A into its own echo (vocal throw). */
-export type Lane = 'gain' | 'low' | 'mid' | 'high' | 'echo' | 'voiceEcho' | 'filter' | 'width';
+export type Lane = 'gain' | 'low' | 'mid' | 'high' | 'echo' | 'voiceEcho' | 'filter';
 
 /** A piecewise-linear automation lane. `t` is seconds from transition start (output time). */
 export interface AutomationLane {

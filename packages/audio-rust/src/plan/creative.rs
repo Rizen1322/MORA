@@ -3,22 +3,18 @@ use super::{common::*, primitives::normalization_gain};
 use serde_json::{Value, json};
 
 const CURVES: [&str; 5] = ["rmsDb", "lowDb", "midDb", "highDb", "midDensity"];
-const STYLES: [(&str, &str, &str); 15] = [
+const STYLES: [(&str, &str, &str); 11] = [
     ("echo-pickup", "Эхо + затакт", "Ввести затакт B под A и ограниченным эхом, раскрыть его устойчивую сильную долю."),
     ("echo-adaptive", "Адаптивное эхо", "Подобрать атаку B по измеренным RMS и onset, сохранив начало записи."),
     ("natural-break", "Естественный брейк", "Подвести звучащий B к измеренной паузе A и плавно передать музыку."),
-    ("one-bar-breath", "Однотактное дыхание", "На один такт приглушить A под эхом, сохранив звучащую подложку B."),
     ("half-time-handoff", "Полутемповая передача", "Передать бас на общей границе темпов 2:1 без растяжения."),
     ("percussion-exchange", "Обмен перкуссией", "Ввести верх B, освободить середину и затем передать бас."),
-    ("bandpass-bridge", "Полосовой мост", "Окрасить плавное сведение полосовым сужением A и раскрытием B."),
     ("two-stage-bass", "Двухступенчатый бас", "Сначала убрать низ A, затем в две доли ввести низ B."),
     ("dub-throw", "Короткий dub throw", "Один короткий посыл и два тихих повтора вместо длинного хвоста."),
     ("slowing-echo", "Замедляющееся эхо", "Замедлить последние повторы A поверх уже входящего более медленного B."),
     ("filter-arrival", "Фильтр к приходу энергии", "Раскрыть спектр B к измеренному подъёму его энергии."),
-    ("single-loop", "Один повтор такта", "Один раз повторить устойчивый такт A и заранее вплести в него B."),
     ("tail-threshold", "Вход по затуханию", "Подвести B до затухания хвоста A и передать музыку на сильной доле."),
     ("short-brake", "Короткий тормоз", "Тормозить разреженную фразу A под уже входящим B и попасть в его сильную долю."),
-    ("stereo-reveal", "Раскрытие стерео", "Окрасить плавное сведение сужением A и раскрытием B; эффект заметнее в наушниках."),
 ];
 
 fn mean(values: &Value, rate: f64, from: f64, to: f64, power: bool) -> f64 {
@@ -69,19 +65,7 @@ fn valid_analysis(track: &Value) -> bool {
         && n(a, "audibleEnd") <= n(track, "duration").min(n(a, "duration")) + 1e-6
         && CURVES.iter().all(|k| a["curves"][k].is_array() && arr(&a["curves"][k]).len() as f64 >= (n(a, "audibleEnd") * n(&a["curves"], "rate")).ceil())
 }
-fn stereo_safe(an: &Value, from: f64, to: f64) -> bool {
-    let st = &an["stereo"];
-    let rate = n(st, "rate");
-    if !rate.is_finite() || rate <= 0. || !st["correlation"].is_array() || !st["sideToMidDb"].is_array() { return false; }
-    let lo = (from.max(0.) * rate).floor() as usize;
-    let hi = (to * rate).ceil() as usize;
-    hi > lo && hi <= arr(&st["correlation"]).len() && hi <= arr(&st["sideToMidDb"]).len()
-        && (lo..hi).all(|i| {
-            let corr = num(&st["correlation"][i]);
-            let side = num(&st["sideToMidDb"][i]);
-            corr.is_finite() && side.is_finite() && corr >= 0.05 && corr <= 1. && side <= 0.
-        })
-}
+
 fn smooth_points(knots: Points, end: f64) -> Points {
     let mut sorted: Points = knots.into_iter().map(|[t, v]| [r3(clamp(t, 0., end)), r3(v)]).collect();
     sorted.sort_by(|a, b| a[0].total_cmp(&b[0]));
@@ -135,18 +119,6 @@ fn echo(p: &mut Value, pre: f64, beat: f64, feedback: f64, clear_at: f64, send: 
     p["echo"] = json!({"delay":r3(0.75*beat),"feedback":feedback,"clearAt":r3(d.min(clear_at))});
     add(p, "A", "echo", vec![[0., 0.], [(pre-beat).max(0.), 0.], [pre-0.4*beat, send], [pre, send], [pre+0.06, 0.], [d, 0.]]);
 }
-fn loop_difference(an: &Value, start: f64, bar: f64) -> f64 {
-    let mut sum = 0.;
-    for name in &CURVES[..4] { for i in 0..8 {
-        let t = start + i as f64 * bar / 8.;
-        let dt = (bar / 8.).min(0.1);
-        let a = measured(an, name, t, t + dt);
-        let b = measured(an, name, t + bar, t + bar + dt);
-        if !a.is_finite() || !b.is_finite() { return f64::NAN; }
-        sum += (a - b).abs();
-    }}
-    sum / 32.
-}
 
 fn connect_incoming(mut p: Value, aa: &Value, bb: &Value, ga: &Value, gb: &Value, style: &str, limit: f64) -> Option<Value> {
     if ["percussion-exchange", "two-stage-bass"].contains(&style) { return Some(p); }
@@ -170,7 +142,7 @@ fn connect_incoming(mut p: Value, aa: &Value, bb: &Value, ga: &Value, gb: &Value
     }
     let incoming_age = anchor-n(&p,"bEntry");
     let pre = r3(old_pre.max(((incoming_age+beat)/bar).ceil()*bar));
-    let overlap = r3((2.*beat).max(2.*beat_b));
+    let overlap = r3((2.*beat).max(if style == "slowing-echo" { 3.*beat_b } else { 2.*beat_b }));
     let mut event = n(&p,"aExit")+old_pre;
     if style == "tail-threshold" || style == "short-brake" {
         let accents = if style == "short-brake" && ga["beats"].as_array().is_some_and(|v| !v.is_empty()) { nums(&ga["beats"]).into_iter().filter(|t| t.is_finite()).collect() } else { nums(&ga["downbeats"]) };
@@ -194,43 +166,32 @@ fn connect_incoming(mut p: Value, aa: &Value, bb: &Value, ga: &Value, gb: &Value
     }).collect();
     let old_id = s(&p,"id").to_string();
     p["aExit"] = json!(exit); p["duration"] = json!(duration); p["bDelay"] = json!(delay); p["swapAt"] = json!(pre); p["automation"] = json!(lanes);
-    let approach = (incoming_age-0.05).min((2.*beat).max(2.*beat_b));
-    add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-overlap,1.],[pre,0.65],[duration,0.]]);
-    add_lane(&mut p,"B","gain",vec![[0.,0.],[0.04,0.15],[0.05f64.max(incoming_age-approach),0.25],[incoming_age,0.85],[incoming_age+overlap,1.]]);
+    let approach = (incoming_age-0.05).min(beat.max(beat_b)*if style == "short-brake" { 2. } else { 1. });
+    add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-approach,1.],[pre,0.65],[duration,0.]]);
+    add_lane(&mut p,"B","gain",vec![[0.,0.],[incoming_age-approach,0.],[incoming_age,0.85],[incoming_age+overlap,1.]]);
     let swap = beat.min(beat_b)*0.5;
     add_lane(&mut p,"A","low",vec![[0.,1.],[pre-swap,1.],[pre,0.707],[pre+swap,0.],[duration,0.]]);
     add_lane(&mut p,"B","low",vec![[0.,0.12],[incoming_age-swap,0.12],[incoming_age,0.707],[incoming_age+swap,1.],[b_end,1.]]);
     if ["natural-break","tail-threshold"].contains(&style) {
-        add_lane(&mut p,"B","gain",vec![[0.,0.],[0.04,0.15],[0.05f64.max(incoming_age-approach),0.4],[incoming_age,1.],[b_end,1.]]);
-        add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-overlap,1.],[pre,0.5],[duration,0.]]);
+        add_lane(&mut p,"B","gain",vec![[0.,0.],[incoming_age-approach,0.],[incoming_age,1.],[b_end,1.]]);
+        add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-approach,1.],[pre,0.5],[duration,0.]]);
     }
     if style == "tail-threshold" {
-        add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-overlap,1.],[pre,0.9],[duration,0.]]);
-        add_lane(&mut p,"B","gain",vec![[0.,0.],[0.04,0.15],[0.05f64.max(incoming_age-approach),0.55],[incoming_age-0.25*beat_b,0.95],[incoming_age,1.],[b_end,1.]]);
+        add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-approach,1.],[pre,0.9],[duration,0.]]);
+        add_lane(&mut p,"B","gain",vec![[0.,0.],[incoming_age-approach,0.],[incoming_age-0.25*beat_b,0.95],[incoming_age,1.],[b_end,1.]]);
     }
-    if style == "one-bar-breath" {
-        add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-bar,0.85],[pre,0.7],[duration,0.]]);
-        add_lane(&mut p,"A","filter",vec![[0.,0.],[pre-bar,-0.2],[pre,-0.45],[duration,-0.45]]);
-    }
+
     if style == "dub-throw" {
         add_lane(&mut p,"A","echo",vec![[0.,0.],[pre-beat,0.],[pre-0.8*beat,0.32],[pre,0.32],[pre+0.1*beat,0.],[duration,0.]]);
     }
-    if style == "single-loop" {
-        add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-overlap,1.],[pre-0.04,0.],[duration,0.]]);
-        add_lane(&mut p,"B","gain",vec![[0.,0.],[0.04,0.15],[0.05f64.max(incoming_age-approach),0.35],[incoming_age-0.25*beat_b,0.9],[incoming_age,1.],[b_end,1.]]);
-        add_lane(&mut p,"A","low",vec![[0.,1.],[pre-beat,1.],[pre-0.04,0.],[duration,0.]]);
-        add_lane(&mut p,"B","low",vec![[0.,0.12],[incoming_age-beat_b,0.12],[incoming_age-0.04,1.],[b_end,1.]]);
+
+    if style == "slowing-echo" {
+        add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-0.04,1.],[pre+0.04,0.],[duration,0.]]);
+        add_lane(&mut p,"A","echo",vec![[0.,0.],[pre-beat,0.],[pre-0.85*beat,0.7],[pre,0.7],[pre+0.04,0.],[duration,0.]]);
+        add_lane(&mut p,"B","mid",vec![[0.,0.35],[incoming_age+beat_b,0.35],[incoming_age+2.*beat_b,1.],[b_end,1.]]);
+        add_lane(&mut p,"B","high",vec![[0.,0.45],[incoming_age+beat_b,0.45],[incoming_age+2.*beat_b,1.],[b_end,1.]]);
     }
-    if style == "bandpass-bridge" {
-        add_lane(&mut p,"A","low",vec![[0.,1.],[pre-overlap,0.5],[pre,0.15],[duration,0.]]);
-        add_lane(&mut p,"B","mid",vec![[0.,0.3],[incoming_age-approach,0.45],[incoming_age,0.85],[incoming_age+beat_b,1.],[b_end,1.]]);
-        add_lane(&mut p,"B","high",vec![[0.,0.12],[incoming_age-approach,0.25],[incoming_age,0.6],[b_end,1.]]);
-    }
-    if style == "stereo-reveal" {
-        if !stereo_safe(aa,exit-0.025,event+overlap) || !stereo_safe(bb,n(&p,"bEntry"),anchor+overlap) { return None; }
-        add_lane(&mut p,"A","width",vec![[0.,1.],[pre-overlap,1.],[pre,0.45],[duration,0.45]]);
-        add_lane(&mut p,"B","width",vec![[0.,0.25],[incoming_age-approach,0.25],[incoming_age,0.7],[b_end,1.]]);
-    }
+
     if style == "short-brake" {
         let brake = clamp(beat,0.25,0.65);
         p["tapeStopA"] = json!({"start":r3(event-brake),"end":r3(event+0.025),"crossfade":0.025});
@@ -239,17 +200,22 @@ fn connect_incoming(mut p: Value, aa: &Value, bb: &Value, ga: &Value, gb: &Value
     }
     if !p["echo"].is_null() {
         let echo = &mut p["echo"];
-        echo["feedback"] = json!(if style == "dub-throw" { 0.32 } else { 0.52f64.min(n(echo,"feedback")) });
+        echo["feedback"] = json!(if style == "slowing-echo" { 0.62 } else if style == "dub-throw" { 0.32 } else { 0.52f64.min(n(echo,"feedback")) });
         if style == "dub-throw" { echo["delay"] = json!(r3(beat)); }
-        echo["clearAt"] = json!(r3(duration.min((pre+beat).max(n(echo,"clearAt")+pre-old_pre))));
+        echo["clearAt"] = json!(if style == "slowing-echo" { duration } else { r3(duration.min((pre+beat).max(n(echo,"clearAt")+pre-old_pre))) });
         if !echo["delayPoints"].is_null() {
             let knots = arr(&echo["delayPoints"]).iter().map(|pt| [num(&pt[0])+pre-old_pre,num(&pt[1])]).collect();
             echo["delayPoints"] = json!(smooth_points(knots,duration));
         }
     }
-    p["id"] = json!(format!("creative_{}",fnv1a(&format!("creative-2|{old_id}|{}|{}",js_stringify(&json!(exit)),js_stringify(&json!(anchor))))));
+    let revision = if style == "short-brake" { 2 } else { 3 };
+    if style != "short-brake" {
+        p["reasons"] = json!([p["reasons"][0], "Вступление B до последней доли приглушено полностью; сильная доля B совмещена с передачей."]);
+        p["debug"]["creative"]["reasons"] = p["reasons"].clone();
+    }
+    p["id"] = json!(format!("creative_{}",fnv1a(&format!("creative-{revision}|{old_id}|{}|{}",js_stringify(&json!(exit)),js_stringify(&json!(anchor))))));
     p["entrySelection"]["arrivalTime"] = json!(r3(anchor));
-    p["debug"]["creative"]["policy"] = json!("audible-overlap-2");
+    p["debug"]["creative"]["policy"] = json!(format!("audible-overlap-{revision}"));
     let info = &mut p["debug"]["creative"]["measured"];
     info["incomingAnchorSeconds"] = json!(r3(anchor));
     info["incomingAnchorRmsDb"] = json!(r3(measured(bb,"rmsDb",anchor,anchor+beat_b)));
@@ -287,7 +253,7 @@ pub fn plan(a: &Value, b: &Value, settings: &Value, style: &str, preferred_hando
         },
         "echo-adaptive" => { if !b_onset.is_finite() { return Value::Null; } },
         "natural-break" => { pre = beat; delay = pre; duration = pre+bar_b; },
-        "one-bar-breath" => { delay = pre+bar; duration = delay+bar_b; },
+
         "half-time-handoff" => {
             if (beat/beat_b-2.).abs().min((beat_b/beat-2.).abs()) > 0.03 { return Value::Null; }
             pre = 4.*beat.max(beat_b); delay = pre-pickup; duration = pre*2.;
@@ -296,9 +262,7 @@ pub fn plan(a: &Value, b: &Value, settings: &Value, style: &str, preferred_hando
             if !native_lock || pickup > bar-0.05 || settings["eqHandoff"] != true { return Value::Null; }
             delay = bar-pickup; pre = 2.*bar; duration = 3.*bar;
         },
-        "bandpass-bridge" => {
-            if settings["eqHandoff"] != true || b_density > 0.4 || !voice_clear(bb, entry, b_end.min(entry+bar_b), 0.25) { return Value::Null; }
-        },
+
         "dub-throw" => { pre = 2.*beat; delay = pre; duration = pre+bar_b; },
         "slowing-echo" => {
             if n(gb,"bpm")/n(ga,"bpm") < 0.5 || n(gb,"bpm")/n(ga,"bpm") > 0.82 { return Value::Null; }
@@ -313,10 +277,7 @@ pub fn plan(a: &Value, b: &Value, settings: &Value, style: &str, preferred_hando
             let Some(rise) = rise else { return Value::Null };
             arrival = rise-entry; pre = arrival; delay = 0.; duration = pre+bar_b;
         },
-        "single-loop" => {
-            if settings["loopBridges"] == false || n(ga,"confidence") < 0.85 || n(ga,"downbeatConfidence") < 0.8 || n(ga,"jitterMs") > 12. || bar > 8. || pickup > bar-0.05 { return Value::Null; }
-            pre = 2.*bar; delay = pre-pickup; duration = pre+bar_b;
-        },
+
         "short-brake" => { pre = beat; delay = pre+clamp(beat,0.25,0.65)-0.03; duration = delay+bar_b; },
         _ => {},
     }
@@ -370,7 +331,7 @@ pub fn plan(a: &Value, b: &Value, settings: &Value, style: &str, preferred_hando
         if rhythmic && measured(aa,"lowDb",exit.max(handoff-beat),handoff) < a_level-14. { continue; }
         let a_density = measured(aa,"midDensity",exit,end.min(handoff+beat));
         let a_onset = onset(aa,exit,end.min(handoff+beat));
-        let mut reasons = vec![(*description).to_string(), "Начало B сохранено с первого слышимого сэмпла; вариант предназначен для прослушивания.".to_string()];
+        let reasons = vec![(*description).to_string(), "Начало B сохранено с первого слышимого сэмпла; вариант предназначен для прослушивания.".to_string()];
         let mut measured_info = json!({"bpmA":r3(n(ga,"bpm")),"bpmB":r3(n(gb,"bpm")),"firstDownbeatB":r3(first),"pickupSeconds":r3(pickup),
             "outgoingRmsDb":r3(a_level),"incomingRmsDb":r3(b_level),"outgoingMidDensity":r3(a_density),"incomingMidDensity":r3(b_density),
             "phraseBoundary":marked(handoff),"vocalActivityKnown":!aa["vocalActivity"].is_null() && !bb["vocalActivity"].is_null()});
@@ -409,11 +370,7 @@ pub fn plan(a: &Value, b: &Value, settings: &Value, style: &str, preferred_hando
                 fade_a(&mut p,pre-0.025,pre+0.06); open_b(&mut p,clamp(beat_b*0.15,0.025,0.1),0.2);
                 measured_info["breakDropDb"] = json!(r3(drop)); measured_info["breakRmsDb"] = json!(r3(after)); score += clamp(drop/60.,0.,0.18);
             },
-            "one-bar-breath" => {
-                if a_level < n(aa,"bodyRmsDb")-3. || !a_onset.is_finite() || a_onset < 0.3 || !voice_clear(aa,handoff-beat,handoff+0.1,0.2) { continue; }
-                echo(&mut p,pre,beat,0.72,delay+0.5*beat_b,0.6); fade_a(&mut p,pre-0.08,pre+0.06); open_b(&mut p,0.15f64.min(0.25*beat_b),0.15);
-                p["swapAt"] = json!(delay); measured_info["breathSeconds"] = json!(r3(bar)); score -= 0.06;
-            },
+
             "half-time-handoff" => {
                 p["method"] = json!("beatmatch_blend");
                 add(&mut p,"A","low",vec![[0.,1.],[pre-0.3*beat.min(beat_b),1.],[pre,0.],[duration,0.]]);
@@ -432,15 +389,7 @@ pub fn plan(a: &Value, b: &Value, settings: &Value, style: &str, preferred_hando
                 add(&mut p,"B","low",vec![[0.,0.],[pre-delay-0.2*beat,0.],[pre-delay+0.2*beat,1.]]);
                 fade_a(&mut p,pre,duration); open_b(&mut p,pickup+bar,0.65); score += 0.08;
             },
-            "bandpass-bridge" => {
-                if a_density > 0.4 || !voice_clear(aa,exit,handoff+beat,0.25) { continue; }
-                add(&mut p,"A","low",vec![[0.,1.],[pre-beat,0.2],[pre,0.]]);
-                add(&mut p,"A","high",vec![[0.,1.],[pre-beat,0.2],[pre,0.]]);
-                add(&mut p,"A","mid",vec![[0.,1.],[pre,0.6],[pre+beat,0.]]);
-                add(&mut p,"B","mid",vec![[0.,0.25],[beat_b,0.65],[2.*beat_b,1.]]);
-                add(&mut p,"B","high",vec![[0.,0.1],[2.*beat_b,0.4],[bar_b,1.]]);
-                fade_a(&mut p,pre,pre+beat); open_b(&mut p,0.2f64.min(0.5*beat_b),0.25); score += 0.02;
-            },
+
             "two-stage-bass" => {
                 let low_a = measured(aa,"lowDb",handoff-beat,handoff);
                 let low_b = measured(bb,"lowDb",entry,entry+bar_b);
@@ -475,15 +424,7 @@ pub fn plan(a: &Value, b: &Value, settings: &Value, style: &str, preferred_hando
                 fade_a(&mut p,(pre-beat).max(0.),pre+0.5*beat); open_b(&mut p,beat_b.min(arrival*0.5),0.65);
                 p["entrySelection"]["arrivalTime"] = json!(r3(entry+arrival)); measured_info["energyRiseDb"] = json!(r3(rise)); measured_info["arrivalSeconds"] = json!(r3(arrival)); score += 0.08;
             },
-            "single-loop" => {
-                let difference = loop_difference(aa,exit,bar);
-                let density = measured(aa,"midDensity",exit,exit+2.*bar);
-                if !difference.is_finite() || difference > 3. || density > 0.23 || !a_onset.is_finite() || a_onset < 0.28 || !voice_clear(aa,exit-0.006,exit+2.*bar,0.12) { continue; }
-                p["loopA"] = json!({"start":exit,"end":r3(exit+bar),"until":r3(exit+2.*bar),"crossfade":0.006});
-                fade_a(&mut p,pre-0.2*beat,pre); open_b(&mut p,(pickup+0.04).max(0.06),0.65);
-                reasons.push("Повторяется полный микс: сходство огибающих не доказывает отсутствие слов.".into());
-                measured_info["loopDifferenceDb"] = json!(r3(difference)); measured_info["loopCycles"] = json!(2); score -= 0.03;
-            },
+
             "tail-threshold" => {
                 let tail = measured(aa,"rmsDb",handoff,handoff+0.5*beat);
                 if tail > n(aa,"bodyRmsDb")-14. { continue; }
@@ -501,13 +442,7 @@ pub fn plan(a: &Value, b: &Value, settings: &Value, style: &str, preferred_hando
                 open_b(&mut p,attack,0.72); p["swapAt"] = json!(delay);
                 measured_info["brakeSeconds"] = json!(r3(brake)); measured_info["attackSeconds"] = json!(r3(attack)); score -= 0.02;
             },
-            "stereo-reveal" => {
-                if !stereo_safe(aa,exit-0.025,end) || !stereo_safe(bb,entry,entry+b_clock) { continue; }
-                add(&mut p,"A","width",vec![[0.,1.],[pre-beat,0.8],[pre,0.65],[duration,0.65]]);
-                add(&mut p,"B","width",vec![[0.,0.6],[beat_b,0.75],[bar_b,1.]]);
-                fade_a(&mut p,pre-0.5*beat,pre+beat); open_b(&mut p,0.18f64.min(0.35*beat_b),0.3);
-                measured_info["stereoWindowsChecked"] = json!(true); measured_info["minimumCorrelation"] = json!(0.05); score += 0.04;
-            },
+
             _ => {},
         }
         p["confidence"] = json!(r3(clamp(score,0.,1.)));

@@ -6,18 +6,14 @@ export const CREATIVE_TRANSITION_STYLES = [
   { id: 'echo-pickup', name: 'Эхо + затакт', description: 'Ввести затакт B под A и ограниченным эхом, раскрыть его устойчивую сильную долю.' },
   { id: 'echo-adaptive', name: 'Адаптивное эхо', description: 'Подобрать атаку B по измеренным RMS и onset, сохранив начало записи.' },
   { id: 'natural-break', name: 'Естественный брейк', description: 'Подвести звучащий B к измеренной паузе A и плавно передать музыку.' },
-  { id: 'one-bar-breath', name: 'Однотактное дыхание', description: 'На один такт приглушить A под эхом, сохранив звучащую подложку B.' },
   { id: 'half-time-handoff', name: 'Полутемповая передача', description: 'Передать бас на общей границе темпов 2:1 без растяжения.' },
   { id: 'percussion-exchange', name: 'Обмен перкуссией', description: 'Ввести верх B, освободить середину и затем передать бас.' },
-  { id: 'bandpass-bridge', name: 'Полосовой мост', description: 'Окрасить плавное сведение полосовым сужением A и раскрытием B.' },
   { id: 'two-stage-bass', name: 'Двухступенчатый бас', description: 'Сначала убрать низ A, затем в две доли ввести низ B.' },
   { id: 'dub-throw', name: 'Короткий dub throw', description: 'Один короткий посыл и два тихих повтора вместо длинного хвоста.' },
   { id: 'slowing-echo', name: 'Замедляющееся эхо', description: 'Замедлить последние повторы A поверх уже входящего более медленного B.' },
   { id: 'filter-arrival', name: 'Фильтр к приходу энергии', description: 'Раскрыть спектр B к измеренному подъёму его энергии.' },
-  { id: 'single-loop', name: 'Один повтор такта', description: 'Один раз повторить устойчивый такт A и заранее вплести в него B.' },
   { id: 'tail-threshold', name: 'Вход по затуханию', description: 'Подвести B до затухания хвоста A и передать музыку на сильной доле.' },
   { id: 'short-brake', name: 'Короткий тормоз', description: 'Тормозить разреженную фразу A под уже входящим B и попасть в его сильную долю.' },
-  { id: 'stereo-reveal', name: 'Раскрытие стерео', description: 'Окрасить плавное сведение сужением A и раскрытием B; эффект заметнее в наушниках.' },
 ] as const;
 export type CreativeTransitionStyle = (typeof CREATIVE_TRANSITION_STYLES)[number]['id'];
 
@@ -66,15 +62,7 @@ function analysis(track: PlannerTrack): TrackAnalysis | null {
     || curveNames.some(k => !Array.isArray(a.curves[k]) || a.curves[k].length < Math.ceil(a.audibleEnd * a.curves.rate))) return null;
   return a;
 }
-function stereoSafe(an: TrackAnalysis, from: number, to: number): boolean {
-  const s = an.stereo;
-  if (!s || !Number.isFinite(s.rate) || s.rate <= 0 || !Array.isArray(s.correlation) || !Array.isArray(s.sideToMidDb)) return false;
-  const lo = Math.floor(Math.max(0, from) * s.rate), hi = Math.ceil(to * s.rate);
-  if (hi <= lo || hi > s.correlation.length || hi > s.sideToMidDb.length) return false;
-  for (let i = lo; i < hi; i++) if (!Number.isFinite(s.correlation[i]) || !Number.isFinite(s.sideToMidDb[i])
-    || s.correlation[i] < .05 || s.correlation[i] > 1 || s.sideToMidDb[i] > 0) return false;
-  return true;
-}
+
 function points(knots: Points, end: number): Points {
   const sorted = knots.map(([t, v]) => [r3(clamp(t, 0, end)), r3(v)] as [number, number]).sort((a, b) => a[0] - b[0]);
   const out: Points = [];
@@ -96,16 +84,6 @@ function points(knots: Points, end: number): Points {
   }
   return smooth;
 }
-function loopDifference(an: TrackAnalysis, start: number, bar: number): number {
-  let sum = 0;
-  for (const name of curveNames.slice(0, 4)) for (let i = 0; i < 8; i++) {
-    const t = start + i * bar / 8, dt = Math.min(bar / 8, .1);
-    const a = measured(an, name, t, t + dt), b = measured(an, name, t + bar, t + bar + dt);
-    if (!Number.isFinite(a) || !Number.isFinite(b)) return NaN;
-    sum += Math.abs(a - b);
-  }
-  return sum / 32;
-}
 
 /** Keep the outgoing music until the incoming recording actually has a musical bed, not merely a nonzero sample. */
 function connectIncoming(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis, ga: BeatGrid, gb: BeatGrid, style: CreativeTransitionStyle, limit: number): TransitionPlan | null {
@@ -126,7 +104,7 @@ function connectIncoming(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis, 
   }
   const incomingAge = anchor - p.bEntry;
   const pre = r3(Math.max(oldPre, Math.ceil((incomingAge + beat) / bar) * bar));
-  const overlap = r3(Math.max(2 * beat, 2 * beatB));
+  const overlap = r3(Math.max(2 * beat, (style === 'slowing-echo' ? 3 : 2) * beatB));
   let event = p.aExit + oldPre;
   if (style === 'tail-threshold' || style === 'short-brake') {
     const accents = style === 'short-brake' && Array.isArray(ga.beats) && ga.beats.length ? ga.beats.filter(Number.isFinite) : ga.downbeats;
@@ -145,44 +123,35 @@ function connectIncoming(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis, 
     const i = lanes.findIndex(l => l.deck === deck && l.lane === lane), value = { deck, lane, points: points(knots, deck === 'A' ? duration : bEnd) };
     if (i < 0) lanes.push(value); else lanes[i] = value;
   };
-  const approach = Math.min(incomingAge - .05, Math.max(2 * beat, 2 * beatB));
-  add('A', 'gain', [[0, 1], [pre - overlap, 1], [pre, .65], [duration, 0]]);
-  add('B', 'gain', [[0, 0], [.04, .15], [Math.max(.05, incomingAge - approach), .25], [incomingAge, .85], [incomingAge + overlap, 1]]);
+  const approach = Math.min(incomingAge - .05, Math.max(beat, beatB) * (style === 'short-brake' ? 2 : 1));
+  add('A', 'gain', [[0, 1], [pre - approach, 1], [pre, .65], [duration, 0]]);
+  // Run the preserved intro silently; only the last beat approaches the common accent.
+  add('B', 'gain', [[0, 0], [incomingAge - approach, 0], [incomingAge, .85], [incomingAge + overlap, 1]]);
   // Bass is handed over on the common accent, rather than removed before B has any low end.
   const swap = Math.min(beat, beatB) * .5;
   add('A', 'low', [[0, 1], [pre - swap, 1], [pre, .707], [pre + swap, 0], [duration, 0]]);
   add('B', 'low', [[0, .12], [incomingAge - swap, .12], [incomingAge, .707], [incomingAge + swap, 1], [bEnd, 1]]);
   if (style === 'natural-break' || style === 'tail-threshold') {
-    add('B', 'gain', [[0, 0], [.04, .15], [Math.max(.05, incomingAge - approach), .4], [incomingAge, 1], [bEnd, 1]]);
-    add('A', 'gain', [[0, 1], [pre - overlap, 1], [pre, .5], [duration, 0]]);
+    add('B', 'gain', [[0, 0], [incomingAge - approach, 0], [incomingAge, 1], [bEnd, 1]]);
+    add('A', 'gain', [[0, 1], [pre - approach, 1], [pre, .5], [duration, 0]]);
   }
   if (style === 'tail-threshold') {
-    add('A', 'gain', [[0, 1], [pre - overlap, 1], [pre, .9], [duration, 0]]);
-    add('B', 'gain', [[0, 0], [.04, .15], [Math.max(.05, incomingAge - approach), .55], [incomingAge - .25 * beatB, .95], [incomingAge, 1], [bEnd, 1]]);
+    add('A', 'gain', [[0, 1], [pre - approach, 1], [pre, .9], [duration, 0]]);
+    add('B', 'gain', [[0, 0], [incomingAge - approach, 0], [incomingAge - .25 * beatB, .95], [incomingAge, 1], [bEnd, 1]]);
   }
-  if (style === 'one-bar-breath') {
-    add('A', 'gain', [[0, 1], [pre - bar, .85], [pre, .7], [duration, 0]]);
-    add('A', 'filter', [[0, 0], [pre - bar, -.2], [pre, -.45], [duration, -.45]]);
-  }
+
   if (style === 'dub-throw') {
     add('A', 'echo', [[0, 0], [pre - beat, 0], [pre - .8 * beat, .32], [pre, .32], [pre + .1 * beat, 0], [duration, 0]]);
   }
-  if (style === 'single-loop') {
-    add('A', 'gain', [[0, 1], [pre - overlap, 1], [pre - .04, 0], [duration, 0]]);
-    add('B', 'gain', [[0, 0], [.04, .15], [Math.max(.05, incomingAge - approach), .35], [incomingAge - .25 * beatB, .9], [incomingAge, 1], [bEnd, 1]]);
-    add('A', 'low', [[0, 1], [pre - beat, 1], [pre - .04, 0], [duration, 0]]);
-    add('B', 'low', [[0, .12], [incomingAge - beatB, .12], [incomingAge - .04, 1], [bEnd, 1]]);
+
+  if (style === 'slowing-echo') {
+    add('A', 'gain', [[0, 1], [pre - .04, 1], [pre + .04, 0], [duration, 0]]);
+    add('A', 'echo', [[0, 0], [pre - beat, 0], [pre - .85 * beat, .7], [pre, .7], [pre + .04, 0], [duration, 0]]);
+    // Let the repeats carry A's mids while B takes the beat and bass underneath.
+    add('B', 'mid', [[0, .35], [incomingAge + beatB, .35], [incomingAge + 2 * beatB, 1], [bEnd, 1]]);
+    add('B', 'high', [[0, .45], [incomingAge + beatB, .45], [incomingAge + 2 * beatB, 1], [bEnd, 1]]);
   }
-  if (style === 'bandpass-bridge') {
-    add('A', 'low', [[0, 1], [pre - overlap, .5], [pre, .15], [duration, 0]]);
-    add('B', 'mid', [[0, .3], [incomingAge - approach, .45], [incomingAge, .85], [incomingAge + beatB, 1], [bEnd, 1]]);
-    add('B', 'high', [[0, .12], [incomingAge - approach, .25], [incomingAge, .6], [bEnd, 1]]);
-  }
-  if (style === 'stereo-reveal') {
-    if (!stereoSafe(A, exit - .025, event + overlap) || !stereoSafe(B, p.bEntry, anchor + overlap)) return null;
-    add('A', 'width', [[0, 1], [pre - overlap, 1], [pre, .45], [duration, .45]]);
-    add('B', 'width', [[0, .25], [incomingAge - approach, .25], [incomingAge, .7], [bEnd, 1]]);
-  }
+
   let tapeStopA = p.tapeStopA;
   if (style === 'short-brake') {
     const brake = clamp(beat, .25, .65);
@@ -190,15 +159,17 @@ function connectIncoming(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis, 
     add('A', 'gain', [[0, 1], [pre - brake, 1], [pre, .4], [pre + .025, 0], [duration, 0]]);
     add('B', 'gain', [[0, 0], [.04, .15], [Math.max(.05, incomingAge - approach), .35], [incomingAge, 1], [bEnd, 1]]);
   }
-  const echo = p.echo ? { ...p.echo, feedback: style === 'dub-throw' ? .32 : Math.min(.52, p.echo.feedback),
+  const echo = p.echo ? { ...p.echo, feedback: style === 'slowing-echo' ? .62 : style === 'dub-throw' ? .32 : Math.min(.52, p.echo.feedback),
     delay: style === 'dub-throw' ? r3(beat) : p.echo.delay,
-    clearAt: r3(Math.min(duration, Math.max(pre + beat, (p.echo.clearAt ?? p.duration) + pre - oldPre))),
+    clearAt: style === 'slowing-echo' ? duration : r3(Math.min(duration, Math.max(pre + beat, (p.echo.clearAt ?? p.duration) + pre - oldPre))),
     delayPoints: p.echo.delayPoints ? points(p.echo.delayPoints.map(([t, d]) => [t + pre - oldPre, d]), duration) : undefined } : undefined;
   const measuredInfo = (p.debug.creative as any)?.measured ?? {};
-  return { ...p, id: `creative_${fnv1a('creative-2|' + p.id + '|' + exit + '|' + anchor)}`, aExit: exit, duration,
-    bDelay: delay, swapAt: pre, automation: lanes, tapeStopA, echo,
+  const revision = style === 'short-brake' ? 2 : 3;
+  const reasons = style === 'short-brake' ? p.reasons : [p.reasons[0], 'Вступление B до последней доли приглушено полностью; сильная доля B совмещена с передачей.'];
+  return { ...p, id: `creative_${fnv1a('creative-' + revision + '|' + p.id + '|' + exit + '|' + anchor)}`, aExit: exit, duration,
+    bDelay: delay, swapAt: pre, automation: lanes, tapeStopA, echo, reasons,
     entrySelection: { ...p.entrySelection!, arrivalTime: r3(anchor) },
-    debug: { ...p.debug, creative: { ...(p.debug.creative as any), policy: 'audible-overlap-2', measured: { ...measuredInfo,
+    debug: { ...p.debug, creative: { ...(p.debug.creative as any), reasons: [...reasons], policy: 'audible-overlap-' + revision, measured: { ...measuredInfo,
       incomingAnchorSeconds: r3(anchor), incomingAnchorRmsDb: r3(measured(B, 'rmsDb', anchor, anchor + beatB)),
       incomingPrerollSeconds: r3(incomingAge), dryOverlapSeconds: overlap, handoffSourceA: r3(event),
       ...(style === 'half-time-handoff' ? { phaseDriftMs: r3(phaseDrift * 1000) } : {}) } } } };
@@ -228,16 +199,12 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
     if (!Number.isFinite(bOnset)) return null;
   } else if (style === 'natural-break') {
     pre = beat; delay = pre; duration = pre + barB;
-  } else if (style === 'one-bar-breath') {
-    delay = pre + bar; duration = delay + barB;
   } else if (style === 'half-time-handoff') {
     if (Math.min(Math.abs(beat / beatB - 2), Math.abs(beatB / beat - 2)) > .03) return null;
     pre = 4 * Math.max(beat, beatB); delay = pre - pickup; duration = pre * 2;
   } else if (style === 'percussion-exchange' || style === 'two-stage-bass') {
     if (!nativeLock || pickup > bar - .05 || !settings.eqHandoff) return null;
     delay = bar - pickup; pre = 2 * bar; duration = 3 * bar;
-  } else if (style === 'bandpass-bridge') {
-    if (!settings.eqHandoff || bDensity > .4 || !voiceClear(B, entry, Math.min(bEnd, entry + barB))) return null;
   } else if (style === 'dub-throw') {
     pre = 2 * beat; delay = pre; duration = pre + barB;
   } else if (style === 'slowing-echo') {
@@ -250,9 +217,6 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
     const rise = candidates.find(t => measured(B, 'rmsDb', t, t + beatB) - initial >= 5 && measured(B, 'lowDb', t, t + beatB) - initialLow >= 4);
     if (rise === undefined) return null;
     arrival = rise - entry; pre = arrival; delay = 0; duration = pre + barB;
-  } else if (style === 'single-loop') {
-    if (settings.loopBridges === false || ga.confidence < .85 || ga.downbeatConfidence < .8 || ga.jitterMs > 12 || bar > 8 || pickup > bar - .05) return null;
-    pre = 2 * bar; delay = pre - pickup; duration = pre + barB;
   } else if (style === 'short-brake') {
     pre = beat; delay = pre + clamp(beat, .25, .65) - .03; duration = delay + barB;
   }
@@ -347,10 +311,6 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
       if (drop < 7 || after > A.bodyRmsDb - 9) continue;
       fadeA(pre - .025, pre + .06); openB(clamp(beatB * .15, .025, .1), .2);
       measuredInfo.breakDropDb = r3(drop); measuredInfo.breakRmsDb = r3(after); score += clamp(drop / 60, 0, .18);
-    } else if (style === 'one-bar-breath') {
-      if (aLevel < A.bodyRmsDb - 3 || !Number.isFinite(aOnset) || aOnset < .3 || !voiceClear(A, handoff - beat, handoff + .1, .2)) continue;
-      echo(.72, delay + .5 * beatB, .6); fadeA(pre - .08, pre + .06); openB(Math.min(.15, .25 * beatB), .15);
-      p.swapAt = delay; measuredInfo.breathSeconds = r3(bar); score -= .06;
     } else if (style === 'half-time-handoff') {
       p.method = 'beatmatch_blend';
       add('A', 'low', [[0, 1], [pre - .3 * Math.min(beat, beatB), 1], [pre, 0], [duration, 0]]);
@@ -367,14 +327,6 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
       add('A', 'low', [[0, 1], [pre - .2 * beat, 1], [pre + .2 * beat, 0]]);
       add('B', 'low', [[0, 0], [pre - delay - .2 * beat, 0], [pre - delay + .2 * beat, 1]]);
       fadeA(pre, duration); openB(pickup + bar, .65); score += .08;
-    } else if (style === 'bandpass-bridge') {
-      if (aDensity > .4 || !voiceClear(A, exit, handoff + beat)) continue;
-      add('A', 'low', [[0, 1], [pre - beat, .2], [pre, 0]]);
-      add('A', 'high', [[0, 1], [pre - beat, .2], [pre, 0]]);
-      add('A', 'mid', [[0, 1], [pre, .6], [pre + beat, 0]]);
-      add('B', 'mid', [[0, .25], [beatB, .65], [2 * beatB, 1]]);
-      add('B', 'high', [[0, .1], [2 * beatB, .4], [barB, 1]]);
-      fadeA(pre, pre + beat); openB(Math.min(.2, .5 * beatB), .25); score += .02;
     } else if (style === 'two-stage-bass') {
       const lowA = measured(A, 'lowDb', handoff - beat, handoff), lowB = measured(B, 'lowDb', entry, entry + barB);
       if (lowA < aLevel - 12 || lowB < bLevel - 14) continue;
@@ -404,14 +356,6 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
       add('A', 'filter', [[0, 0], [Math.max(0, pre - beat), 0], [pre + .25 * beat, .7]]);
       fadeA(Math.max(0, pre - beat), pre + .5 * beat); openB(Math.min(beatB, arrival * .5), .65);
       p.entrySelection!.arrivalTime = r3(entry + arrival); measuredInfo.energyRiseDb = r3(rise); measuredInfo.arrivalSeconds = r3(arrival); score += .08;
-    } else if (style === 'single-loop') {
-      const difference = loopDifference(A, exit, bar), density = measured(A, 'midDensity', exit, exit + 2 * bar);
-      if (!Number.isFinite(difference) || difference > 3 || density > .23 || !Number.isFinite(aOnset) || aOnset < .28
-        || !voiceClear(A, exit - .006, exit + 2 * bar, .12)) continue;
-      p.loopA = { start: exit, end: r3(exit + bar), until: r3(exit + 2 * bar), crossfade: .006 };
-      fadeA(pre - .2 * beat, pre); openB(Math.max(.06, pickup + .04), .65);
-      reasons.push('Повторяется полный микс: сходство огибающих не доказывает отсутствие слов.');
-      measuredInfo.loopDifferenceDb = r3(difference); measuredInfo.loopCycles = 2; score -= .03;
     } else if (style === 'tail-threshold') {
       const tail = measured(A, 'rmsDb', handoff, handoff + .5 * beat);
       if (tail > A.bodyRmsDb - 14) continue;
@@ -426,12 +370,6 @@ export function planCreativeTransition(a: PlannerTrack, b: PlannerTrack, setting
       attack = Number.isFinite(bOnset) ? clamp(.05 + bOnset * .08, .05, .13) : .08;
       openB(attack, .72); p.swapAt = delay;
       measuredInfo.brakeSeconds = r3(brake); measuredInfo.attackSeconds = r3(attack); score -= .02;
-    } else if (style === 'stereo-reveal') {
-      if (!stereoSafe(A, exit - .025, end) || !stereoSafe(B, entry, entry + bClock)) continue;
-      add('A', 'width', [[0, 1], [pre - beat, .8], [pre, .65], [duration, .65]]);
-      add('B', 'width', [[0, .6], [beatB, .75], [barB, 1]]);
-      fadeA(pre - .5 * beat, pre + beat); openB(Math.min(.18, .35 * beatB), .3);
-      measuredInfo.stereoWindowsChecked = true; measuredInfo.minimumCorrelation = .05; score += .04;
     }
     p.confidence = r3(clamp(score));
     p.debug = { processingAllowed: true, creative: { style, name: spec.name, score: p.confidence, reasons: [...reasons], experimental: true,

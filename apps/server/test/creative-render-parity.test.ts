@@ -2,14 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, expect, it } from 'vitest';
 import { DEFAULT_AUTOMIX_SETTINGS, planTransition, type TransitionPlan } from '@automix/core';
-import { planToArmed, renderTransitionOffline } from '@automix/core/engine/arm.ts';
+import { renderTransitionOffline } from '@automix/core/engine/arm.ts';
 import { renderRust } from '../src/rust-render.ts';
 import { stopRustCompute } from '../src/rust-core.ts';
 
 const binary = process.env.AUTOMIX_RUST_CORE;
 afterAll(stopRustCompute);
 
-it.skipIf(!binary || !fs.existsSync(path.resolve(binary)))('renders width, moving echoes and bounded tails like the native mixer', async () => {
+it.skipIf(!binary || !fs.existsSync(path.resolve(binary)))('renders moving echoes and bounded tails like the native mixer', async () => {
   const sampleRate = 48000, n = sampleRate * 6;
   const a = { L: new Float32Array(n), R: new Float32Array(n), sampleRate };
   for (let i = sampleRate; i < sampleRate * 1.15; i++) a.L[i] = a.R[i] = .2 * Math.sin(i * .37);
@@ -22,9 +22,8 @@ it.skipIf(!binary || !fs.existsSync(path.resolve(binary)))('renders width, movin
     automation: [{ deck: 'A', lane: 'gain', points: [[0, .5], [.2, 0]] },
       { deck: 'A', lane: 'echo', points: [[0, .5], [.15, .5], [.2, 0]] },
       { deck: 'B', lane: 'gain', points: [[0, 0], [.1, .8], [1, 1]] },
-      { deck: 'B', lane: 'width', points: [[0, 0], [.5, 0], [1.5, 1], [3, 1]] }] };
+      { deck: 'B', lane: 'filter', points: [[0, -.4], [1.5, 0], [3, 0]] }] };
   const ts = renderTransitionOffline(a, b, base, .25, .25);
-  expect(planToArmed(base, sampleRate, 'A', 'B').lanes.at(-1)?.lane).toBe(7);
   const rust = await renderRust(a, b, base, .25, .25);
   expect(ts.metrics.underruns).toBe(0); expect(rust.metrics.underruns).toBe(0);
   expect(rust.L.length).toBe(ts.L.length);

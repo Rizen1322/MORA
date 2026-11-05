@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { DEFAULT_AUTOMIX_SETTINGS } from '../packages/core/src/index.ts';
-import { planCreativeTransition } from '../packages/core/src/plan/creative.ts';
+import { CREATIVE_TRANSITION_STYLES, planCreativeTransition } from '../packages/core/src/plan/creative.ts';
 import { loadTracks, pt, verified, render, wav, type Candidate } from './audition-creative-transitions.ts';
 import { assertOutputOutsideProfile } from './audition-output-path.ts';
 import { windowRmsDb } from './audition-deck-energy.ts';
@@ -18,10 +18,9 @@ function main(){
  const dir=arg('--data-dir'),out=arg('--out'),original=arg('--original'),ffmpeg=arg('--ffmpeg');assertOutputOutsideProfile(dir,out);
  const source=path.dirname(original),old=path.join(out,'old');if(path.resolve(source).toLowerCase()===path.resolve(out).toLowerCase())throw Error('Output must differ from original');
  fs.mkdirSync(old,{recursive:true});copyOnce(original,path.join(old,'manifest.json'));
- const manifest=JSON.parse(fs.readFileSync(original,'utf8')),inventory=JSON.parse(fs.readFileSync(path.join(source,'stereo-inventory.json'),'utf8'));
- if(inventory.version!==1||inventory.sampleRate!==16000)throw Error('Unsupported stereo inventory');
- const tracks=new Map(loadTracks(dir).map(t=>{if(inventory.items[t.hash])t.analysis={...t.analysis,stereo:inventory.items[t.hash]};return [t.id,t]})),checked=new Map<string,boolean>(),styles:any[]=[];
- for(const style of manifest.styles){const entries:any[]=[];for(const e of style.entries){
+ const manifest=JSON.parse(fs.readFileSync(original,'utf8'));
+ const tracks=new Map(loadTracks(dir).map(t=>{return [t.id,t]})),checked=new Map<string,boolean>(),styles:any[]=[];
+ for(const style of manifest.styles){if(!CREATIVE_TRANSITION_STYLES.some(s=>s.id===style.id))continue;const entries:any[]=[];for(const e of style.entries){
    if(path.basename(e.audio)!==e.audio)throw Error('Invalid original audio path');copyOnce(path.join(source,e.audio),path.join(old,e.audio));
    const a=tracks.get(e.plan.fromTrackId),b=tracks.get(e.plan.toTrackId);if(!a||!b||a.hash!==e.fromHash||b.hash!==e.toHash)throw Error(`Source mismatch: ${e.audio}`);
    for(const t of [a,b])if(!checked.has(t.hash))checked.set(t.hash,verified(t));if(!checked.get(a.hash)||!checked.get(b.hash))throw Error(`Source hash mismatch: ${e.audio}`);

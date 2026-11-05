@@ -8,7 +8,6 @@ import { ANALYZER_VERSION, DEFAULT_AUTOMIX_SETTINGS, finalistSpans, renderTransi
 import { CREATIVE_TRANSITION_STYLES, planCreativeTransition } from '../packages/core/src/plan/creative.ts';
 import { planForSourceWindows } from './review-source-window.ts';
 import { inspectAudio } from './audition-audio-check.ts';
-import { measureLibraryStereo } from './inventory-creative-stereo.ts';
 import { assertOutputOutsideProfile } from './audition-output-path.ts';
 import { rankAuditions } from './audition-rank.ts';
 
@@ -17,7 +16,7 @@ export interface Track { id:string; title:string; artist:string; assetTitle:stri
 export interface Candidate { a:Track; b:Track; plan:TransitionPlan; score:number; reasons:string[] }
 const esc = (s:unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 const stamp=(seconds:number)=>`${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')} (${seconds.toFixed(2)} с)`;
-const measuredLabels:Record<string,string>={bpmA:'Темп A, BPM',bpmB:'Темп B, BPM',pickupSeconds:'Затакт B, с',outgoingRmsDb:'RMS A, дБ',incomingRmsDb:'RMS B, дБ',outgoingMidDensity:'Плотность середины A',incomingMidDensity:'Плотность середины B',outgoingOnset:'Атаки A',incomingOnset:'Атаки B',breakDropDb:'Падение в брейке, дБ',breathSeconds:'Длительность дыхания, с',tempoRelation:'Отношение темпов',outgoingLowDb:'Низ A, дБ',incomingLowDb:'Низ B, дБ',finalEchoDelay:'Последняя задержка эха, с',energyRiseDb:'Подъём энергии, дБ',arrivalSeconds:'Время до подъёма, с',loopDifferenceDb:'Разница повторов, дБ',loopCycles:'Повторы',thresholdDb:'Порог хвоста, дБ',tailRmsDb:'RMS хвоста, дБ',brakeSeconds:'Торможение, с',attackSeconds:'Атака B, с',stereoWindowsChecked:'Проверенных стереоокон',minimumCorrelation:'Минимальная стереокорреляция'};
+const measuredLabels:Record<string,string>={bpmA:'Темп A, BPM',bpmB:'Темп B, BPM',pickupSeconds:'Затакт B, с',outgoingRmsDb:'RMS A, дБ',incomingRmsDb:'RMS B, дБ',outgoingMidDensity:'Плотность середины A',incomingMidDensity:'Плотность середины B',outgoingOnset:'Атаки A',incomingOnset:'Атаки B',breakDropDb:'Падение в брейке, дБ',tempoRelation:'Отношение темпов',outgoingLowDb:'Низ A, дБ',incomingLowDb:'Низ B, дБ',finalEchoDelay:'Последняя задержка эха, с',energyRiseDb:'Подъём энергии, дБ',arrivalSeconds:'Время до подъёма, с',thresholdDb:'Порог хвоста, дБ',tailRmsDb:'RMS хвоста, дБ',brakeSeconds:'Торможение, с',attackSeconds:'Атака B, с'};
 function measuredSummary(m:Record<string,unknown>) {return Object.entries(measuredLabels).flatMap(([key,label])=>typeof m?.[key]==='number'&&Number.isFinite(m[key])?[`${label}: ${(m[key] as number).toFixed(2)}`]:[]).join('; ');}
 const name = (t:Track) => `${t.artist} — ${t.title}${t.title !== t.assetTitle || t.artist !== t.assetArtist ? ` (recording: ${t.assetArtist} — ${t.assetTitle})` : ''}`;
 function arg(key:string, fallback:string):string { const i=process.argv.indexOf(key); if(i<0)return fallback; const v=process.argv[i+1]; if(!v || v.startsWith('--'))throw Error(`Missing ${key}`); return v; }
@@ -72,10 +71,6 @@ function main(){
   assertOutputOutsideProfile(dir,out);
   const ffmpeg=arg('--ffmpeg',process.env.FFMPEG_PATH||'ffmpeg'),tracks=loadTracks(dir);if(tracks.length<2)throw Error('Fewer than two saved, analyzed, cached tracks');
   fs.mkdirSync(out,{recursive:true});console.log(`Eligible saved tracks with cached audio: ${tracks.length}`);
-  const inventoryFile=path.join(out,'stereo-inventory.json');if(!fs.existsSync(inventoryFile))measureLibraryStereo(dir,out,ffmpeg);
-  let inventory=JSON.parse(fs.readFileSync(inventoryFile,'utf8'));if(inventory.version!==1||inventory.sampleRate!==16000)throw Error('Unsupported stereo inventory');
-  if(tracks.some(t=>!inventory.items[t.hash])){measureLibraryStereo(dir,out,ffmpeg);inventory=JSON.parse(fs.readFileSync(inventoryFile,'utf8'));}
-  for(const track of tracks)if(inventory.items[track.hash])track.analysis={...track.analysis,stereo:inventory.items[track.hash]};
   const all=new Map(CREATIVE_TRANSITION_STYLES.map(s=>[s.id,[] as Candidate[]]));
   for(const a of tracks)for(const b of tracks){if(a.id===b.id||a.hash===b.hash)continue;for(const style of CREATIVE_TRANSITION_STYLES){const plan=planCreativeTransition(pt(a),pt(b),DEFAULT_AUTOMIX_SETTINGS,style.id);if(!plan||plan.vocalA||plan.vocalB||plan.voiceEcho||plan.automation.some(l=>l.lane==='voiceEcho'))continue;const detail=plan.debug.creative as {score:number;reasons:string[]};if(!Number.isFinite(detail?.score)||!Array.isArray(detail.reasons))continue;const list=all.get(style.id)!;list.push({a,b,plan,score:detail.score,reasons:detail.reasons});}}
   const used=new Map<string,number>(),usedTracks=new Map<string,number>(),verifiedHashes=new Map<string,boolean>(),manifest:any[]=[];

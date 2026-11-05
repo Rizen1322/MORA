@@ -9,8 +9,7 @@ export function planToArmed(plan: TransitionPlan, sampleRate: number, fromToken:
   const f = (s: number) => Math.round(s * sampleRate);
   if ((plan.echo?.delayPoints?.length ?? 0) > 64 || plan.echo?.delayPoints?.some(([t, d], i, points) =>
     !Number.isFinite(t) || !Number.isFinite(d) || t < 0 || t > plan.duration || f(d) < 1 || f(d) > Math.ceil(sampleRate * 2.5) - 1 || (i > 0 && t < points[i - 1][0]))
-    || (plan.echo?.clearAt !== undefined && (!Number.isFinite(plan.echo.clearAt) || plan.echo.clearAt < 0 || plan.echo.clearAt > plan.duration))
-    || plan.automation.some(l => l.lane === 'width' && l.points.some(([, v]) => !Number.isFinite(v) || v < 0 || v > 1))) {
+    || (plan.echo?.clearAt !== undefined && (!Number.isFinite(plan.echo.clearAt) || plan.echo.clearAt < 0 || plan.echo.clearAt > plan.duration))) {
     throw new Error('Invalid creative automation');
   }
   return {

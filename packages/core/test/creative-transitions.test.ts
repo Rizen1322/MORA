@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CREATIVE_TRANSITION_STYLES, planCreativeTransition } from '../src/plan/creative.ts';
+import { CREATIVE_TRANSITION_STYLES, planCreativeTransition, type CreativeTransitionStyle } from '../src/plan/creative.ts';
 import { planTransition } from '../src/plan/planner.ts';
 import { pointValue } from '../src/plan/timing.ts';
 import { LoopPcmSource } from '../src/engine/loop.ts';
@@ -48,12 +48,12 @@ describe('explicit creative transition auditions', () => {
     }
   });
 
-  it('all fifteen plans have a distinct executable character', () => {
+  it('all retained plans have a distinct executable character', () => {
     const fingerprints = creativeCases().map(c => {
       const p = planCreativeTransition(c.from, c.to, c.settings, c.style)!;
       return JSON.stringify([p.duration, p.bDelay, p.automation, p.echo, p.loopA, p.tapeStopA]);
     });
-    expect(new Set(fingerprints).size).toBe(15);
+    expect(new Set(fingerprints).size).toBe(11);
     const pickup = creativePair('echo-pickup'), p = planCreativeTransition(pickup.from, pickup.to, pickup.settings, pickup.style)!;
     expect(p.bDelay! + pickup.to.analysis!.beat!.downbeats.find(t => t >= p.bEntry)! - p.bEntry).toBeCloseTo(p.swapAt, 3);
     const slow = creativePair('slowing-echo'), q = planCreativeTransition(slow.from, slow.to, slow.settings, slow.style)!;
@@ -65,22 +65,14 @@ describe('explicit creative transition auditions', () => {
     expect(pointValue(lowB, r.swapAt - r.bDelay! + .5)).toBe(.55);
   });
 
-  it('finite loop and tape plans satisfy the actual PCM source guards at both output rates', () => {
-    for (const style of ['single-loop', 'short-brake'] as const) {
-      const c = creativePair(style), p = planCreativeTransition(c.from, c.to, c.settings, style)!;
-      for (const sr of [44100, 48000]) {
-        const source = new LoopPcmSource({ totalFrames: c.from.duration * sr, read: () => true }, sr);
-        if (p.loopA) {
-          const l = p.loopA; expect(l.roll).toBeUndefined(); expect(l.until - l.start).toBeCloseTo(2 * (l.end - l.start), 8);
-          expect(source.setLoop({ start: Math.round(l.start * sr), end: Math.round(l.end * sr), until: Math.round(l.until * sr), fade: Math.round(l.crossfade * sr) })).toBe(true);
-        } else {
-          const t = p.tapeStopA!;
-          expect(source.setTapeStop({ start: Math.round(t.start * sr), end: Math.round(t.end * sr), fade: Math.round(t.crossfade * sr) })).toBe(true);
-          const incomingClock = p.swapAt - (p.bDelay ?? 0);
-          expect(pointValue(p.automation.find(l => l.deck === 'B' && l.lane === 'gain')!.points, incomingClock)).toBe(1);
-          expect(p.bDelay!).toBeLessThan(t.start - p.aExit);
-        }
-      }
+  it('the retained tape plan satisfies the PCM source guard at both output rates', () => {
+    const c = creativePair('short-brake'), p = planCreativeTransition(c.from, c.to, c.settings, c.style)!;
+    for (const sr of [44100, 48000]) {
+      const source = new LoopPcmSource({ totalFrames: c.from.duration * sr, read: () => true }, sr), t = p.tapeStopA!;
+      expect(source.setTapeStop({ start: Math.round(t.start * sr), end: Math.round(t.end * sr), fade: Math.round(t.crossfade * sr) })).toBe(true);
+      const incomingClock = p.swapAt - (p.bDelay ?? 0);
+      expect(pointValue(p.automation.find(l => l.deck === 'B' && l.lane === 'gain')!.points, incomingClock)).toBe(1);
+      expect(p.bDelay!).toBeLessThan(t.start - p.aExit);
     }
   });
 
@@ -98,13 +90,16 @@ describe('explicit creative transition auditions', () => {
     expect(planCreativeTransition(half.from, creativeTrack('c', 90), half.settings, half.style)).toBeNull();
     const adaptive = creativePair('echo-adaptive'); delete adaptive.to.analysis!.local;
     expect(planCreativeTransition(adaptive.from, adaptive.to, adaptive.settings, adaptive.style)).toBeNull();
-    const stereo = creativePair('stereo-reveal');
-    stereo.from.analysis!.stereo!.correlation.fill(-.2);
-    expect(planCreativeTransition(stereo.from, stereo.to, stereo.settings, stereo.style)).toBeNull();
-    delete stereo.from.analysis!.stereo;
-    expect(planCreativeTransition(stereo.from, stereo.to, stereo.settings, stereo.style)).toBeNull();
     const corrupt = creativePair('dub-throw'); corrupt.from.analysis!.curves.rmsDb.fill(NaN);
     expect(planCreativeTransition(corrupt.from, corrupt.to, corrupt.settings, corrupt.style)).toBeNull();
+  });
+
+  it('rejects the four deleted styles rather than keeping hidden implementations', () => {
+    const c = creativePair('echo-adaptive');
+    for (const id of ['one-bar-breath', 'bandpass-bridge', 'single-loop', 'stereo-reveal']) {
+      expect(CREATIVE_TRANSITION_STYLES.some(s => s.id === id)).toBe(false);
+      expect(planCreativeTransition(c.from, c.to, c.settings, id as CreativeTransitionStyle)).toBeNull();
+    }
   });
 
   it('rejects bass holes and audible native drift instead of calling them bass exchanges', () => {

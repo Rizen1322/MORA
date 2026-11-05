@@ -27,7 +27,7 @@ it('introduces actual incoming music before releasing A, even through a six-seco
 });
 
 it('renders the quiet intro handoff without the former long loudness hole', () => {
-  for (const style of ['echo-adaptive', 'one-bar-breath', 'single-loop', 'short-brake'] as const) {
+  for (const style of ['echo-adaptive', 'short-brake'] as const) {
   const c = creativePair(style); setLevel(c.to.analysis!, 0, 6, -40);
   const p = planCreativeTransition(c.from, c.to, c.settings, c.style)!;
   const sr = 8000, n = Math.round(c.from.duration * sr);
@@ -44,11 +44,7 @@ it('renders the quiet intro handoff without the former long loudness hole', () =
   }
 });
 
-it('finishes the loop fader before the source stops and lands the brake on both beat grids', () => {
-  const c = creativePair('single-loop'), p = planCreativeTransition(c.from, c.to, c.settings, c.style)!;
-  const sourceStop = p.loopA!.until - p.aExit;
-  const gain = p.automation.find(l => l.deck === 'A' && l.lane === 'gain')!.points;
-  expect(pointValue(gain, sourceStop - .02)).toBe(0);
+it('lands the brake on both beat grids', () => {
   const d = creativePair('short-brake'), q = planCreativeTransition(d.from, d.to, d.settings, d.style)!;
   const handoff = q.aExit + q.swapAt;
   expect(d.from.analysis!.beat!.beats.some(t => Math.abs(t - handoff) < .0011)).toBe(true);
@@ -63,4 +59,36 @@ it('pins comparisons to the nearest valid outgoing handoff without forcing an un
   const q = planCreativeTransition(c.from, c.to, c.settings, c.style, 1)!;
   expect(q.aExit).toBeGreaterThan(0);
   expect(q.aExit + q.duration).toBeLessThanOrEqual(c.from.analysis!.audibleEnd);
+});
+
+it('keeps B silent until the final beat instead of exposing its entire preroll', () => {
+  for (const { id } of revised.filter(s => s.id !== 'short-brake')) {
+    const c = creativePair(id); setLevel(c.to.analysis!, 0, 6, -40);
+    const p = planCreativeTransition(c.from, c.to, c.settings, id)!;
+    const incoming = p.swapAt - p.bDelay!, approach = Math.max(c.from.analysis!.beat!.period, c.to.analysis!.beat!.period);
+    const gain = p.automation.find(l => l.deck === 'B' && l.lane === 'gain')!.points;
+    expect(pointValue(gain, incoming - approach - .01), id).toBe(0);
+    expect(pointValue(gain, incoming - approach / 2), id).toBeGreaterThan(.1);
+  }
+});
+
+it('leaves audible slowing repeats after A dry stops, while B carries the bass', () => {
+  const c = creativePair('slowing-echo'), p = planCreativeTransition(c.from, c.to, c.settings, c.style)!;
+  const sr = 8000, n = c.from.duration * sr;
+  const A = Float32Array.from({ length: n }, (_, i) => .2 * Math.sin(i * 2 * Math.PI * 440 / sr));
+  const B = Float32Array.from({ length: n }, (_, i) => .2 * Math.sin(i * 2 * Math.PI * 90 / sr));
+  const a = { L: A, R: A, sampleRate: sr }, b = { L: B, R: B, sampleRate: sr };
+  const wet = renderTransitionOffline(a, b, p, 1, 1), dry = renderTransitionOffline(a, b, { ...p, echo: undefined }, 1, 1);
+  const handoff = wet.transitionStartFrame + Math.round(p.swapAt * sr), beatB = c.to.analysis!.beat!.period;
+  const gainA = p.automation.find(l => l.deck === 'A' && l.lane === 'gain')!.points;
+  expect(pointValue(gainA, p.swapAt + .05)).toBe(0);
+  for (const [start, end] of [[.1, beatB], [beatB, 2 * beatB]]) {
+    let repeats = 0, incoming = 0;
+    for (let i = handoff + Math.round(start * sr); i < handoff + Math.round(end * sr); i++) {
+      repeats += (wet.L[i] - dry.L[i]) ** 2; incoming += dry.L[i] ** 2;
+    }
+    expect(repeats / incoming).toBeGreaterThan(.04);
+  }
+  expect(p.echo!.clearAt).toBeGreaterThanOrEqual(p.swapAt + 3 * beatB - .001);
+  expect(p.echo!.delayPoints!.at(-1)![1]).toBeCloseTo(beatB, 3);
 });

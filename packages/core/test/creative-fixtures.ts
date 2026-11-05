@@ -14,7 +14,6 @@ export function creativeTrack(id: string, bpm = 120): PlannerTrack {
     intro: { start: 0, end: 8 }, outro: { start: 104, end: duration }, bodyRmsDb: -16,
     curves: { rate, rmsDb, lowDb: rmsDb.map(v => v - 3), midDb: rmsDb.map(v => v - 6), highDb: rmsDb.map(v => v - 10), midDensity: rmsDb.map(() => .15) },
     local: { rate: 1, transients: Array(duration).fill(.6), camelot: Array(duration).fill(''), keyConfidence: Array(duration).fill(0) },
-    stereo: { rate: 1, correlation: Array(duration).fill(.8), sideToMidDb: Array(duration).fill(-9) },
     peaks: rmsDb.map(() => .3), cues: { entry: [{ time: 0, score: .9, kind: 'start', tags: [] }], exit: [] },
     features: { energy: .6, brightness: .5, rhythmStrength: .9, onsetRate: .6, bassWeight: .6, midDensity: .15, dynamics: .2, acousticness: .1 },
     warnings: [], elapsedMs: 0,

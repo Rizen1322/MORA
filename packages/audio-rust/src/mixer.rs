@@ -89,7 +89,7 @@ impl Transition {
             || self
                 .lanes
                 .iter()
-                .any(|l| l.lane > 7 || !["A", "B"].contains(&l.deck.as_str()))
+                .any(|l| l.lane > 6 || !["A", "B"].contains(&l.deck.as_str()))
         {
             return Err("Invalid transition".into());
         }
@@ -138,13 +138,12 @@ impl Transition {
                 || p[0] < 0. || p[0] > self.duration_frames || p[1] < 1. || p[1] > (sr * 2.5).ceil() - 1.)
             || self.echo_delay_points_frames.windows(2).any(|w| w[0][0] > w[1][0])
             || self.echo_clear_frame.is_some_and(|v| !v.is_finite() || v < 0. || v > self.duration_frames)
-            || self.lanes.iter().any(|l| l.lane == 7 && l.points.iter().any(|p| !(0.0..=1.).contains(&p[1])))
         {
             return Err("Invalid creative automation".into());
         }
         Ok(())
     }
-    fn lanes(&self, role: &str, t: f64) -> [f64; 8] {
+    fn lanes(&self, role: &str, t: f64) -> [f64; 7] {
         let mut v = unity();
         for l in &self.lanes {
             if l.deck == role {
@@ -154,8 +153,8 @@ impl Transition {
         v
     }
 }
-fn unity() -> [f64; 8] {
-    [1., 1., 1., 1., 0., 0., 0., 1.]
+fn unity() -> [f64; 7] {
+    [1., 1., 1., 1., 0., 0., 0.]
 }
 #[derive(Clone)]
 struct Tempo {
@@ -172,8 +171,8 @@ struct Deck {
     starved: bool,
     norm: f64,
     norm_target: f64,
-    lanes: [f64; 8],
-    lane_target: Option<[f64; 8]>,
+    lanes: [f64; 7],
+    lane_target: Option<[f64; 7]>,
     tempo: Option<Tempo>,
     cue: f64,
     fade: f64,
@@ -1047,13 +1046,6 @@ impl Musical {
                     };
                 }
                 let k = g * fade;
-                let width = (from[7] + (to[7] - from[7]) * i as f64 / len as f64).clamp(0., 1.);
-                if width != 1. {
-                    let mid = (self.bl[i] as f64 + self.br[i] as f64) * 0.5;
-                    let side = (self.bl[i] as f64 - self.br[i] as f64) * 0.5 * width;
-                    self.bl[i] = (mid + side) as f32;
-                    self.br[i] = (mid - side) as f32;
-                }
                 l[off + i] = (l[off + i] as f64 + self.bl[i] as f64 * k) as f32;
                 r[off + i] = (r[off + i] as f64 + self.br[i] as f64 * k) as f32;
                 if sending {
@@ -1521,8 +1513,8 @@ impl Mixer {
                     let mut lanes = Vec::new();
                     for (role, index) in [("A", a), ("B", b)] {
                         if let Some(i) = index {
-                            for lane in 0..8 {
-                                let target = if (4..=6).contains(&lane) || (role == "A" && lane == 0) {
+                            for lane in 0..7 {
+                                let target = if lane >= 4 || (role == "A" && lane == 0) {
                                     0.
                                 } else {
                                     1.
