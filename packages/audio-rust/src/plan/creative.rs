@@ -4,21 +4,21 @@ use serde_json::{Value, json};
 
 const CURVES: [&str; 5] = ["rmsDb", "lowDb", "midDb", "highDb", "midDensity"];
 const STYLES: [(&str, &str, &str); 15] = [
-    ("echo-pickup", "Эхо + затакт", "Сохранить затакт B под ограниченным эхом A и открыть первую сильную долю."),
+    ("echo-pickup", "Эхо + затакт", "Ввести затакт B под A и ограниченным эхом, раскрыть его устойчивую сильную долю."),
     ("echo-adaptive", "Адаптивное эхо", "Подобрать атаку B по измеренным RMS и onset, сохранив начало записи."),
-    ("natural-break", "Естественный брейк", "Передать музыку в измеренной паузе A без наложения ударных."),
-    ("one-bar-breath", "Однотактное дыхание", "Оставить один такт ограниченного эха перед входом B."),
+    ("natural-break", "Естественный брейк", "Подвести звучащий B к измеренной паузе A и плавно передать музыку."),
+    ("one-bar-breath", "Однотактное дыхание", "На один такт приглушить A под эхом, сохранив звучащую подложку B."),
     ("half-time-handoff", "Полутемповая передача", "Передать бас на общей границе темпов 2:1 без растяжения."),
     ("percussion-exchange", "Обмен перкуссией", "Ввести верх B, освободить середину и затем передать бас."),
-    ("bandpass-bridge", "Полосовой мост", "Сузить A до середины и раскрыть B снизу вверх."),
+    ("bandpass-bridge", "Полосовой мост", "Окрасить плавное сведение полосовым сужением A и раскрытием B."),
     ("two-stage-bass", "Двухступенчатый бас", "Сначала убрать низ A, затем в две доли ввести низ B."),
     ("dub-throw", "Короткий dub throw", "Один короткий посыл и два тихих повтора вместо длинного хвоста."),
-    ("slowing-echo", "Замедляющееся эхо", "Увеличить интервал последних повторов перед более медленным B."),
+    ("slowing-echo", "Замедляющееся эхо", "Замедлить последние повторы A поверх уже входящего более медленного B."),
     ("filter-arrival", "Фильтр к приходу энергии", "Раскрыть спектр B к измеренному подъёму его энергии."),
-    ("single-loop", "Один повтор такта", "Повторить измеренный устойчивый такт A один раз, без roll."),
-    ("tail-threshold", "Вход по затуханию", "Ввести B после измеренного падения хвоста A на 14 дБ."),
-    ("short-brake", "Короткий тормоз", "Коротко остановить разреженную фразу A и мягко открыть B."),
-    ("stereo-reveal", "Раскрытие стерео", "Слегка сузить A и раскрыть B после проверки реальных stereo-окон."),
+    ("single-loop", "Один повтор такта", "Один раз повторить устойчивый такт A и заранее вплести в него B."),
+    ("tail-threshold", "Вход по затуханию", "Подвести B до затухания хвоста A и передать музыку на сильной доле."),
+    ("short-brake", "Короткий тормоз", "Тормозить разреженную фразу A под уже входящим B и попасть в его сильную долю."),
+    ("stereo-reveal", "Раскрытие стерео", "Окрасить плавное сведение сужением A и раскрытием B; эффект заметнее в наушниках."),
 ];
 
 fn mean(values: &Value, rate: f64, from: f64, to: f64, power: bool) -> f64 {
@@ -155,10 +155,13 @@ fn connect_incoming(mut p: Value, aa: &Value, bb: &Value, ga: &Value, gb: &Value
     let bar = 4.*beat;
     let old_pre = n(&p,"swapAt");
     let old_delay = n(&p,"bDelay");
-    let anchor = nums(&gb["downbeats"]).into_iter().find(|t| *t >= n(bb,"audibleStart")+beat_b && *t+2.*beat_b < n(bb,"audibleEnd")
+    let support_window = (4.*beat_b).max(2.*beat);
+    let anchor = nums(&gb["downbeats"]).into_iter().find(|t| *t >= n(bb,"audibleStart")+beat_b && *t+support_window < n(bb,"audibleEnd")
         && *t-n(bb,"audibleStart") < limit-bar
-        && measured(bb,"rmsDb",*t-beat_b,*t) >= n(bb,"bodyRmsDb")-10.
-        && measured(bb,"rmsDb",*t,*t+beat_b) >= n(bb,"bodyRmsDb")-6.)?;
+        && measured(bb,"rmsDb",*t-2.*beat_b,*t) >= n(bb,"bodyRmsDb")-8.
+        && measured(bb,"rmsDb",*t-beat_b,*t) >= n(bb,"bodyRmsDb")-6.
+        && measured(bb,"rmsDb",*t,*t+beat_b) >= n(bb,"bodyRmsDb")-6.
+        && measured(bb,"rmsDb",*t,*t+support_window) >= n(bb,"bodyRmsDb")-8.)?;
     if style == "half-time-handoff" {
         let low = measured(bb,"lowDb",anchor,anchor+beat_b);
         let body_low = measured(bb,"lowDb",n(bb,"audibleStart"),n(bb,"audibleEnd"));
@@ -169,8 +172,9 @@ fn connect_incoming(mut p: Value, aa: &Value, bb: &Value, ga: &Value, gb: &Value
     let pre = r3(old_pre.max(((incoming_age+beat)/bar).ceil()*bar));
     let overlap = r3((2.*beat).max(2.*beat_b));
     let mut event = n(&p,"aExit")+old_pre;
-    if style == "tail-threshold" {
-        event = nums(&ga["downbeats"]).into_iter().reduce(|best,t| if (t-event).abs() < (best-event).abs() { t } else { best }).unwrap();
+    if style == "tail-threshold" || style == "short-brake" {
+        let accents = if style == "short-brake" && ga["beats"].as_array().is_some_and(|v| !v.is_empty()) { nums(&ga["beats"]).into_iter().filter(|t| t.is_finite()).collect() } else { nums(&ga["downbeats"]) };
+        event = accents.into_iter().reduce(|best,t| if (t-event).abs() < (best-event).abs() { t } else { best }).unwrap_or(event);
     }
     let exit = r3(event-pre);
     let duration = r3(pre+overlap);
@@ -190,7 +194,7 @@ fn connect_incoming(mut p: Value, aa: &Value, bb: &Value, ga: &Value, gb: &Value
     }).collect();
     let old_id = s(&p,"id").to_string();
     p["aExit"] = json!(exit); p["duration"] = json!(duration); p["bDelay"] = json!(delay); p["swapAt"] = json!(pre); p["automation"] = json!(lanes);
-    let approach = (incoming_age-0.05).min(beat.max(beat_b));
+    let approach = (incoming_age-0.05).min((2.*beat).max(2.*beat_b));
     add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-overlap,1.],[pre,0.65],[duration,0.]]);
     add_lane(&mut p,"B","gain",vec![[0.,0.],[0.04,0.15],[0.05f64.max(incoming_age-approach),0.25],[incoming_age,0.85],[incoming_age+overlap,1.]]);
     let swap = beat.min(beat_b)*0.5;
@@ -210,6 +214,12 @@ fn connect_incoming(mut p: Value, aa: &Value, bb: &Value, ga: &Value, gb: &Value
     }
     if style == "dub-throw" {
         add_lane(&mut p,"A","echo",vec![[0.,0.],[pre-beat,0.],[pre-0.8*beat,0.32],[pre,0.32],[pre+0.1*beat,0.],[duration,0.]]);
+    }
+    if style == "single-loop" {
+        add_lane(&mut p,"A","gain",vec![[0.,1.],[pre-overlap,1.],[pre-0.04,0.],[duration,0.]]);
+        add_lane(&mut p,"B","gain",vec![[0.,0.],[0.04,0.15],[0.05f64.max(incoming_age-approach),0.35],[incoming_age-0.25*beat_b,0.9],[incoming_age,1.],[b_end,1.]]);
+        add_lane(&mut p,"A","low",vec![[0.,1.],[pre-beat,1.],[pre-0.04,0.],[duration,0.]]);
+        add_lane(&mut p,"B","low",vec![[0.,0.12],[incoming_age-beat_b,0.12],[incoming_age-0.04,1.],[b_end,1.]]);
     }
     if style == "bandpass-bridge" {
         add_lane(&mut p,"A","low",vec![[0.,1.],[pre-overlap,0.5],[pre,0.15],[duration,0.]]);

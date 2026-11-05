@@ -3,21 +3,21 @@ import { fnv1a, normalizationGain } from './planner.ts';
 
 /** Explicit auditions only: these hypotheses never participate in automatic ranking. */
 export const CREATIVE_TRANSITION_STYLES = [
-  { id: 'echo-pickup', name: 'Эхо + затакт', description: 'Сохранить затакт B под ограниченным эхом A и открыть первую сильную долю.' },
+  { id: 'echo-pickup', name: 'Эхо + затакт', description: 'Ввести затакт B под A и ограниченным эхом, раскрыть его устойчивую сильную долю.' },
   { id: 'echo-adaptive', name: 'Адаптивное эхо', description: 'Подобрать атаку B по измеренным RMS и onset, сохранив начало записи.' },
-  { id: 'natural-break', name: 'Естественный брейк', description: 'Передать музыку в измеренной паузе A без наложения ударных.' },
-  { id: 'one-bar-breath', name: 'Однотактное дыхание', description: 'Оставить один такт ограниченного эха перед входом B.' },
+  { id: 'natural-break', name: 'Естественный брейк', description: 'Подвести звучащий B к измеренной паузе A и плавно передать музыку.' },
+  { id: 'one-bar-breath', name: 'Однотактное дыхание', description: 'На один такт приглушить A под эхом, сохранив звучащую подложку B.' },
   { id: 'half-time-handoff', name: 'Полутемповая передача', description: 'Передать бас на общей границе темпов 2:1 без растяжения.' },
   { id: 'percussion-exchange', name: 'Обмен перкуссией', description: 'Ввести верх B, освободить середину и затем передать бас.' },
-  { id: 'bandpass-bridge', name: 'Полосовой мост', description: 'Сузить A до середины и раскрыть B снизу вверх.' },
+  { id: 'bandpass-bridge', name: 'Полосовой мост', description: 'Окрасить плавное сведение полосовым сужением A и раскрытием B.' },
   { id: 'two-stage-bass', name: 'Двухступенчатый бас', description: 'Сначала убрать низ A, затем в две доли ввести низ B.' },
   { id: 'dub-throw', name: 'Короткий dub throw', description: 'Один короткий посыл и два тихих повтора вместо длинного хвоста.' },
-  { id: 'slowing-echo', name: 'Замедляющееся эхо', description: 'Увеличить интервал последних повторов перед более медленным B.' },
+  { id: 'slowing-echo', name: 'Замедляющееся эхо', description: 'Замедлить последние повторы A поверх уже входящего более медленного B.' },
   { id: 'filter-arrival', name: 'Фильтр к приходу энергии', description: 'Раскрыть спектр B к измеренному подъёму его энергии.' },
-  { id: 'single-loop', name: 'Один повтор такта', description: 'Повторить измеренный устойчивый такт A один раз, без roll.' },
-  { id: 'tail-threshold', name: 'Вход по затуханию', description: 'Ввести B после измеренного падения хвоста A на 14 дБ.' },
-  { id: 'short-brake', name: 'Короткий тормоз', description: 'Коротко остановить разреженную фразу A и мягко открыть B.' },
-  { id: 'stereo-reveal', name: 'Раскрытие стерео', description: 'Слегка сузить A и раскрыть B после проверки реальных stereo-окон.' },
+  { id: 'single-loop', name: 'Один повтор такта', description: 'Один раз повторить устойчивый такт A и заранее вплести в него B.' },
+  { id: 'tail-threshold', name: 'Вход по затуханию', description: 'Подвести B до затухания хвоста A и передать музыку на сильной доле.' },
+  { id: 'short-brake', name: 'Короткий тормоз', description: 'Тормозить разреженную фразу A под уже входящим B и попасть в его сильную долю.' },
+  { id: 'stereo-reveal', name: 'Раскрытие стерео', description: 'Окрасить плавное сведение сужением A и раскрытием B; эффект заметнее в наушниках.' },
 ] as const;
 export type CreativeTransitionStyle = (typeof CREATIVE_TRANSITION_STYLES)[number]['id'];
 
@@ -114,7 +114,8 @@ function connectIncoming(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis, 
   const supportWindow = Math.max(4 * beatB, 2 * beat);
   const anchor = gb.downbeats.find(t => t >= B.audibleStart + beatB && t + supportWindow < B.audibleEnd
     && t - B.audibleStart < limit - bar
-    && measured(B, 'rmsDb', t - beatB, t) >= B.bodyRmsDb - 10
+    && measured(B, 'rmsDb', t - 2 * beatB, t) >= B.bodyRmsDb - 8
+    && measured(B, 'rmsDb', t - beatB, t) >= B.bodyRmsDb - 6
     && measured(B, 'rmsDb', t, t + beatB) >= B.bodyRmsDb - 6
     && measured(B, 'rmsDb', t, t + supportWindow) >= B.bodyRmsDb - 8);
   if (anchor === undefined) return null;
@@ -127,7 +128,10 @@ function connectIncoming(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis, 
   const pre = r3(Math.max(oldPre, Math.ceil((incomingAge + beat) / bar) * bar));
   const overlap = r3(Math.max(2 * beat, 2 * beatB));
   let event = p.aExit + oldPre;
-  if (style === 'tail-threshold') event = ga.downbeats.reduce((best, t) => Math.abs(t - event) < Math.abs(best - event) ? t : best, ga.downbeats[0]);
+  if (style === 'tail-threshold' || style === 'short-brake') {
+    const accents = style === 'short-brake' && Array.isArray(ga.beats) && ga.beats.length ? ga.beats.filter(Number.isFinite) : ga.downbeats;
+    event = accents.reduce((best, t) => Math.abs(t - event) < Math.abs(best - event) ? t : best, accents[0] ?? event);
+  }
   const exit = r3(event - pre), duration = r3(pre + overlap), delay = r3(pre - incomingAge);
   if (exit < A.audibleStart + .025 || event + overlap > A.audibleEnd || duration > limit || delay < 0
     || anchor + overlap > B.audibleEnd) return null;
@@ -141,7 +145,7 @@ function connectIncoming(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis, 
     const i = lanes.findIndex(l => l.deck === deck && l.lane === lane), value = { deck, lane, points: points(knots, deck === 'A' ? duration : bEnd) };
     if (i < 0) lanes.push(value); else lanes[i] = value;
   };
-  const approach = Math.min(incomingAge - .05, Math.max(beat, beatB));
+  const approach = Math.min(incomingAge - .05, Math.max(2 * beat, 2 * beatB));
   add('A', 'gain', [[0, 1], [pre - overlap, 1], [pre, .65], [duration, 0]]);
   add('B', 'gain', [[0, 0], [.04, .15], [Math.max(.05, incomingAge - approach), .25], [incomingAge, .85], [incomingAge + overlap, 1]]);
   // Bass is handed over on the common accent, rather than removed before B has any low end.
@@ -162,6 +166,12 @@ function connectIncoming(p: TransitionPlan, A: TrackAnalysis, B: TrackAnalysis, 
   }
   if (style === 'dub-throw') {
     add('A', 'echo', [[0, 0], [pre - beat, 0], [pre - .8 * beat, .32], [pre, .32], [pre + .1 * beat, 0], [duration, 0]]);
+  }
+  if (style === 'single-loop') {
+    add('A', 'gain', [[0, 1], [pre - overlap, 1], [pre - .04, 0], [duration, 0]]);
+    add('B', 'gain', [[0, 0], [.04, .15], [Math.max(.05, incomingAge - approach), .35], [incomingAge - .25 * beatB, .9], [incomingAge, 1], [bEnd, 1]]);
+    add('A', 'low', [[0, 1], [pre - beat, 1], [pre - .04, 0], [duration, 0]]);
+    add('B', 'low', [[0, .12], [incomingAge - beatB, .12], [incomingAge - .04, 1], [bEnd, 1]]);
   }
   if (style === 'bandpass-bridge') {
     add('A', 'low', [[0, 1], [pre - overlap, .5], [pre, .15], [duration, 0]]);
