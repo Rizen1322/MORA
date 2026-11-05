@@ -13,15 +13,15 @@ import { assertOutputOutsideProfile } from './audition-output-path.ts';
 import { rankAuditions } from './audition-rank.ts';
 
 const SR = 44100, PRE = 6, POST = 6;
-interface Track { id:string; title:string; artist:string; assetTitle:string; assetArtist:string; hash:string; file:string; duration:number; album:string; albumArtist:string; trackNo:number|null; discNo:number|null; analysis:TrackAnalysis }
-interface Candidate { a:Track; b:Track; plan:TransitionPlan; score:number; reasons:string[] }
+export interface Track { id:string; title:string; artist:string; assetTitle:string; assetArtist:string; hash:string; file:string; duration:number; album:string; albumArtist:string; trackNo:number|null; discNo:number|null; analysis:TrackAnalysis }
+export interface Candidate { a:Track; b:Track; plan:TransitionPlan; score:number; reasons:string[] }
 const esc = (s:unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 const stamp=(seconds:number)=>`${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')} (${seconds.toFixed(2)} с)`;
 const measuredLabels:Record<string,string>={bpmA:'Темп A, BPM',bpmB:'Темп B, BPM',pickupSeconds:'Затакт B, с',outgoingRmsDb:'RMS A, дБ',incomingRmsDb:'RMS B, дБ',outgoingMidDensity:'Плотность середины A',incomingMidDensity:'Плотность середины B',outgoingOnset:'Атаки A',incomingOnset:'Атаки B',breakDropDb:'Падение в брейке, дБ',breathSeconds:'Длительность дыхания, с',tempoRelation:'Отношение темпов',outgoingLowDb:'Низ A, дБ',incomingLowDb:'Низ B, дБ',finalEchoDelay:'Последняя задержка эха, с',energyRiseDb:'Подъём энергии, дБ',arrivalSeconds:'Время до подъёма, с',loopDifferenceDb:'Разница повторов, дБ',loopCycles:'Повторы',thresholdDb:'Порог хвоста, дБ',tailRmsDb:'RMS хвоста, дБ',brakeSeconds:'Торможение, с',attackSeconds:'Атака B, с',stereoWindowsChecked:'Проверенных стереоокон',minimumCorrelation:'Минимальная стереокорреляция'};
 function measuredSummary(m:Record<string,unknown>) {return Object.entries(measuredLabels).flatMap(([key,label])=>typeof m?.[key]==='number'&&Number.isFinite(m[key])?[`${label}: ${(m[key] as number).toFixed(2)}`]:[]).join('; ');}
 const name = (t:Track) => `${t.artist} — ${t.title}${t.title !== t.assetTitle || t.artist !== t.assetArtist ? ` (recording: ${t.assetArtist} — ${t.assetTitle})` : ''}`;
 function arg(key:string, fallback:string):string { const i=process.argv.indexOf(key); if(i<0)return fallback; const v=process.argv[i+1]; if(!v || v.startsWith('--'))throw Error(`Missing ${key}`); return v; }
-function loadTracks(dir:string):Track[] {
+export function loadTracks(dir:string):Track[] {
   const db=new DatabaseSync(path.join(dir,'automix.sqlite'),{readOnly:true});
   try {
     const rows=db.prepare(`SELECT t.id,t.title,t.artist, a.title AS assetTitle,a.artist AS assetArtist,a.content_hash AS hash,a.provider,a.duration,a.album,a.album_artist AS albumArtist,a.track_no AS trackNo,a.disc_no AS discNo,n.data,
@@ -43,26 +43,27 @@ function loadTracks(dir:string):Track[] {
     });
   } finally {db.close();}
 }
-function pt(t:Track):PlannerTrack {return {id:t.id,duration:t.duration,mixingAllowed:true,analysis:t.analysis,album:t.album,albumArtist:t.albumArtist||t.assetArtist,trackNo:t.trackNo,discNo:t.discNo};}
-function verified(t:Track):boolean {return crypto.createHash('sha256').update(fs.readFileSync(t.file)).digest('hex')===t.hash;}
+export function pt(t:Track):PlannerTrack {return {id:t.id,duration:t.duration,mixingAllowed:true,analysis:t.analysis,album:t.album,albumArtist:t.albumArtist||t.assetArtist,trackNo:t.trackNo,discNo:t.discNo};}
+export function verified(t:Track):boolean {return crypto.createHash('sha256').update(fs.readFileSync(t.file)).digest('hex')===t.hash;}
 function decode(file:string,start:number,end:number,ffmpeg:string):StereoPcm {
   if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start)throw Error('Invalid source window');
   const buf=execFileSync(ffmpeg,['-v','error','-ss',String(start),'-i',file,'-t',String(end-start),'-ac','2','-ar',String(SR),'-f','f32le','pipe:1'],{maxBuffer:256*1024*1024,windowsHide:true,timeout:120_000});
   if(!buf.length||buf.length%8)throw Error('Incomplete stereo PCM'); const n=buf.length/8,L=new Float32Array(n),R=new Float32Array(n);
   for(let i=0;i<n;i++){L[i]=buf.readFloatLE(i*8);R[i]=buf.readFloatLE(i*8+4);}return {L,R,sampleRate:SR};
 }
-function wav(L:Float32Array,R:Float32Array):Buffer {
+export function wav(L:Float32Array,R:Float32Array):Buffer {
   const out=Buffer.alloc(44+L.length*4);out.write('RIFF',0);out.writeUInt32LE(out.length-8,4);out.write('WAVEfmt ',8);out.writeUInt32LE(16,16);out.writeUInt16LE(1,20);out.writeUInt16LE(2,22);out.writeUInt32LE(SR,24);out.writeUInt32LE(SR*4,28);out.writeUInt16LE(4,32);out.writeUInt16LE(16,34);out.write('data',36);out.writeUInt32LE(L.length*4,40);
   for(let i=0;i<L.length;i++){out.writeInt16LE(Math.max(-32768,Math.min(32767,Math.round(L[i]*32767))),44+i*4);out.writeInt16LE(Math.max(-32768,Math.min(32767,Math.round(R[i]*32767))),46+i*4);}return out;
 }
-function render(c:Candidate,ffmpeg:string) {
+export function render(c:Candidate,ffmpeg:string,solo?:'A'|'B') {
   const plan=c.plan;if(plan.vocalA||plan.vocalB||plan.voiceEcho||plan.automation.some(l=>l.lane==='voiceEcho'))throw Error('Plan requires separated vocals');
   if(!Number.isFinite(plan.gainA)||!Number.isFinite(plan.gainB))throw Error('Invalid normalization gain');
   const spans=finalistSpans([plan]);const startA=Math.floor(Math.max(0,Math.min(spans.a[0],plan.aExit-PRE,plan.loopA ? plan.loopA.start-plan.loopA.crossfade-.05 : Infinity,plan.tapeStopA?.start??Infinity))*SR)/SR;const startB=Math.floor(Math.max(0,Math.min(spans.b[0],plan.bEntry))*SR)/SR;
   const endA=Math.max(spans.a[1],plan.loopA?.end??0,plan.tapeStopA?.end??0);
   const a=decode(c.a.file,startA,Math.min(c.a.duration,endA+.05),ffmpeg),b=decode(c.b.file,startB,Math.min(c.b.duration,spans.b[1]+POST),ffmpeg);
+  if(solo==='A'){b.L.fill(0);b.R.fill(0)}else if(solo==='B'){a.L.fill(0);a.R.fill(0)}
   const r=renderTransitionOffline(a,b,planForSourceWindows(plan,startA,startB),PRE,POST);const check=inspectAudio(r.L,r.R,SR);
-  if(r.transitionStartFrame<0||!r.events.some(e=>e.type==='transitionEnd'&&!e.forced)||r.events.some(e=>e.type==='fallback'||e.type==='transitionAborted')||r.metrics.underruns||!Number.isFinite(r.metrics.maxLimiterReductionDb)||r.metrics.maxLimiterReductionDb>4||!check.finite||check.peak>=1||check.longestSilence>=1)throw Error(`Render quality check failed: ${JSON.stringify({...r.metrics,...check})}`);
+  if(!solo && (r.transitionStartFrame<0||!r.events.some(e=>e.type==='transitionEnd'&&!e.forced)||r.events.some(e=>e.type==='fallback'||e.type==='transitionAborted')||r.metrics.underruns||!Number.isFinite(r.metrics.maxLimiterReductionDb)||r.metrics.maxLimiterReductionDb>4||!check.finite||check.peak>=1||check.longestSilence>=1))throw Error(`Render quality check failed: ${JSON.stringify({...r.metrics,...check})}`);
   return {plan,r,check};
 }
 function main(){
