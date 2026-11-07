@@ -6,6 +6,7 @@ import { controller, trackOf, useApp } from '../store/app.ts';
 import { Cover, Equalizer } from './common.tsx';
 import { togglePreview, usePreview } from '../lib/transition-preview.ts';
 import { desktop } from '../lib/desktop.ts';
+import { actionFor, comboLabel, comboOf, hotkeys } from '../lib/hotkeys.ts';
 import { api, type ListeningReadiness } from '../lib/api.ts';
 
 /** Plays the rendered blend from the current track into `to`; again stops it. */
@@ -143,10 +144,11 @@ export function QueuePanel({ onClose, className = '' }: { onClose?: () => void; 
               }}
               onDoubleClick={() => controller.jumpTo(i)}
               onKeyDown={(ev) => {
-                if (ev.altKey && ev.key === 'ArrowUp' && i > p.index + 1) {
+                const combo = comboOf(ev.nativeEvent), action = combo && actionFor(combo);
+                if (action === 'queueUp' && i > p.index + 1) {
                   ev.preventDefault();
                   controller.move(i, i - 1);
-                } else if (ev.altKey && ev.key === 'ArrowDown' && i < p.queue.length - 1) {
+                } else if (action === 'queueDown' && i < p.queue.length - 1) {
                   ev.preventDefault();
                   controller.move(i, i + 1);
                 }
@@ -156,7 +158,7 @@ export function QueuePanel({ onClose, className = '' }: { onClose?: () => void; 
                 <DotsSixVertical size={16} weight="bold" />
               </span>
               <Cover url={t.coverUrl} seed={t.album || t.id} size={40} />
-              <button style={{ minWidth: 0, textAlign: 'left' }} onClick={() => controller.jumpTo(i)} aria-label={`Играть: ${t.title}. Alt+стрелки меняют порядок`}>
+              <button style={{ minWidth: 0, textAlign: 'left' }} onClick={() => controller.jumpTo(i)} aria-label={`Играть: ${t.title}. ${comboLabel(hotkeys().queueUp)} и ${comboLabel(hotkeys().queueDown)} меняют порядок`}>
                 <div className="t-title ellipsis" style={{ fontSize: 14 }}>
                   {t.title}
                 </div>
