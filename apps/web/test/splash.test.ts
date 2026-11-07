@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { BEAT, skyAt, T } from '../src/lib/splash.ts';
+import { describe, expect, it, vi } from 'vitest';
+import { BEAT, setSplashEnabled, skyAt, splashEnabled, T } from '../src/lib/splash.ts';
 
 describe('launch splash timeline', () => {
   it('fits the 5–7 s brief, beats in order', () => {
@@ -23,4 +23,13 @@ describe('launch splash timeline', () => {
     expect(endTop.map(Math.round)).toEqual([5, 13, 10]); // --bg #050d0a
     expect(endMid.map(Math.round)).toEqual([5, 13, 10]);
   });
+});
+
+it('remembers when the intro is turned off in Settings', () => {
+  const store = new Map<string, string>();
+  vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v) });
+  setSplashEnabled(false);
+  expect(splashEnabled()).toBe(false);
+  setSplashEnabled(true);
+  expect(splashEnabled()).toBe(true);
 });

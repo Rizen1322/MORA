@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { ClockCounterClockwise, GearSix, Plugs, ChartLine, Waveform, DownloadSimple } from '@phosphor-icons/react';
 import { desktop } from '../lib/desktop.ts';
 import { HOTKEY_ACTIONS, comboLabel, comboOf, hotkeys, reservedCombo, resetHotkeys, setHotkey, type HotkeyAction } from '../lib/hotkeys.ts';
+import { setSplashEnabled, splashEnabled } from '../lib/splash.ts';
 import { api, type StemGpu, type StemHealth } from '../lib/api.ts';
 import { plural } from '../lib/format.ts';
 import { useApp } from '../store/app.ts';
@@ -249,6 +250,15 @@ const SETTINGS_TABS = [
 ];
 export const SETTINGS_PATHS = SETTINGS_TABS.map((t) => t.path);
 
+function SplashRow() {
+  const [on, setOn] = useState(splashEnabled);
+  return (
+    <Row title="Заставка при запуске" desc="Короткая анимация перед главным экраном. Выключите, чтобы MORA открывалась сразу.">
+      <Switch checked={on} onChange={(v) => { setSplashEnabled(v); setOn(v); }} label="Заставка при запуске" />
+    </Row>
+  );
+}
+
 /** Section switcher shown above Settings and the pages that moved into it from the sidebar. */
 export function SettingsTabs({ path }: { path: string }) {
   return (
@@ -376,6 +386,7 @@ export function SettingsPage() {
               <option value="system">Как в системе</option><option value="full">Полные анимации</option><option value="reduced">Минимум движения</option>
             </select>
           </Row>
+          {desktop && <SplashRow />}
           <Row wide title="Графика волны" desc="Совместимый режим помогает на старых видеокартах.">
             <select className="select" aria-label="Графика волны" value={s.ui.graphics ?? 'auto'} onChange={(e) => void save({ ui: { ...s.ui, graphics: e.target.value as 'auto' | 'canvas' } })}>
               <option value="auto">Автоматически</option><option value="canvas">Совместимый режим</option>

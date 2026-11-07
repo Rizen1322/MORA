@@ -779,3 +779,11 @@ export function playSplash({ ready, target }: SplashOptions) {
   };
   requestAnimationFrame(frame);
 }
+
+const SPLASH_KEY = 'mora.splash';
+export function splashEnabled() {
+  try { return localStorage.getItem(SPLASH_KEY) !== 'off'; } catch { return true; }
+}
+export function setSplashEnabled(on: boolean) {
+  try { localStorage.setItem(SPLASH_KEY, on ? 'on' : 'off'); } catch { /* kept until restart */ }
+}
