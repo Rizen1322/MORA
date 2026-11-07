@@ -113,7 +113,7 @@ final class NativeShellStore: ObservableObject {
 
     var screen: NativeScreen { NativeRoute.screen(path) }
     var tab: NativeTab { NativeRoute.tab(path) }
-    var liked: [NativeTrack] { library.filter(\.liked) }
+    var liked: [NativeTrack] { NativeTrack.favorites(library) }
 
     init() {
         let nc = NotificationCenter.default

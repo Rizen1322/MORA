@@ -12,6 +12,19 @@ precondition(NativeSearchText.filter(tracks, "  ").count == 2 && NativeSearchTex
 precondition(NativeSearchText.filter(tracks, "kavinsky звери").isEmpty)
 print("Native shell: tracks and search-as-you-type")
 
+let favoriteRows: [[String: Any]] = [
+    ["id": "old", "reaction": 1, "likedAt": 100, "addedAt": 900],
+    ["id": "new", "reaction": 1, "likedAt": 300, "addedAt": 700],
+    ["id": "legacy", "reaction": 1, "addedAt": 200],
+    ["id": "disliked", "reaction": -1, "likedAt": 1000],
+    ["id": "neutral", "reaction": 0, "addedAt": 2000],
+    ["id": "a-tie", "reaction": 1, "likedAt": 300],
+]
+let favorites = favoriteRows.compactMap(NativeTrack.init)
+precondition(NativeTrack.favorites(favorites).map(\.id) == ["a-tie", "new", "legacy", "old"], "Favorites must follow like dates, not import completion")
+precondition(NativeTrack.favorites(Array(favorites.reversed())).map(\.id) == ["a-tie", "new", "legacy", "old"])
+print("Native shell: favorites newest first, legacy fallback and stable ties")
+
 precondition(NativeRoute.screen("/") == .home && NativeRoute.screen("/more") == .more && NativeRoute.screen("/liked") == .liked)
 precondition(NativeRoute.screen("/library") == .library && NativeRoute.screen("/library/albums") == .page && NativeRoute.screen("/search") == .search)
 precondition(NativeRoute.screen("/album/x/y") == .page && NativeRoute.screen("/settings") == .page && NativeRoute.screen("/playlist/7") == .page)

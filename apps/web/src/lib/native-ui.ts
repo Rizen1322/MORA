@@ -17,11 +17,11 @@ import { actions, describe, type ActResult } from './native-pages.ts';
  * which is the only time native screens can be touched; native keeps the last snapshot meanwhile.
  */
 
-export interface NativeUiTrack { id: string; title: string; artist: string; album: string; duration: number; reaction: number; cover: string | null; ok: boolean }
+export interface NativeUiTrack { id: string; title: string; artist: string; album: string; duration: number; reaction: number; likedAt?: number; addedAt?: number; cover: string | null; ok: boolean }
 type Wave = 'own' | 'yandex' | 'online';
 
 export const uiTrack = (t: Track): NativeUiTrack => ({
-  id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration, reaction: t.reaction, cover: t.coverUrl, ok: t.status === 'ok',
+  id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration, reaction: t.reaction, likedAt: t.likedAt, addedAt: t.addedAt, cover: t.coverUrl, ok: t.status === 'ok',
 });
 
 /** Everything but the library and playlists, which are sent only when they change. */

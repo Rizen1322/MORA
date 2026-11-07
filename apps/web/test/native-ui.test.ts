@@ -27,6 +27,12 @@ beforeEach(() => {
 });
 
 describe('native shell bridge (page side)', () => {
+  it('passes like and addition dates to the native favorites list', async () => {
+    const { uiTrack } = await import('../src/lib/native-ui.ts');
+    expect(uiTrack({ ...track('a'), reaction: 1, likedAt: 123, addedAt: 456 } as any)).toMatchObject({ likedAt: 123, addedAt: 456 });
+    expect(uiTrack({ ...track('b'), addedAt: 789 } as any)).toMatchObject({ addedAt: 789 });
+  });
+
   it('maps the store to the small snapshot', async () => {
     const { uiState } = await import('../src/lib/native-ui.ts');
     const s = uiState();

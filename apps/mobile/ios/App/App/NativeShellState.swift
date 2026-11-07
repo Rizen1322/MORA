@@ -7,6 +7,7 @@ struct NativeTrack: Equatable, Identifiable {
     let title: String, artist: String, album: String
     let duration: Double
     var reaction: Int
+    let likedAt: Double
     let cover: String?
     let ok: Bool
     /// Lowercased, ё → е: what search-as-you-type matches against.
@@ -20,11 +21,16 @@ struct NativeTrack: Equatable, Identifiable {
         album = value["album"] as? String ?? ""
         duration = max(0, value["duration"] as? Double ?? 0)
         reaction = value["reaction"] as? Int ?? 0
+        likedAt = value["likedAt"] as? Double ?? value["addedAt"] as? Double ?? 0
         cover = value["cover"] as? String
         ok = value["ok"] as? Bool ?? true
         key = NativeSearchText.normalize("\(title) \(artist) \(album)")
     }
     var liked: Bool { reaction > 0 }
+
+    static func favorites(_ tracks: [NativeTrack]) -> [NativeTrack] {
+        tracks.filter(\.liked).sorted { $0.likedAt == $1.likedAt ? $0.id < $1.id : $0.likedAt > $1.likedAt }
+    }
 }
 
 struct NativePlaylist: Equatable, Identifiable {
