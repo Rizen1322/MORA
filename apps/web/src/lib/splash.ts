@@ -42,8 +42,16 @@ export function skyAt(t: number): [RGB, RGB, RGB] {
   return [mixc(a[0], b[0], k), mixc(a[1], b[1], k), mixc(a[2], b[2], k)];
 }
 
+/** The scene keeps an unheard tempo, 104 bpm, so the green flash lands on a downbeat (beat 8). */
+export const BEAT = T.flash / 8;
+/** Wind swells once a bar and peaks on the downbeat. */
+const bar = (t: number) => 0.5 + 0.5 * Math.cos((2 * Math.PI * t) / (4 * BEAT));
+/** A pluck from a beat onset: quick soft attack, slower release. */
+const pluck = (f: number) => (1 - Math.exp(-f * 18)) * Math.exp(-f * 3.2);
+/** What the mist river carries: a slow waveform with an envelope, like a track seen from afar. */
+const waveform = (u: number, t: number) => (0.55 + 0.45 * Math.sin(u * 5.5 - t * 0.9)) * (0.65 * Math.sin(u * 38 - t * 2.6) + 0.35 * Math.sin(u * 83 - t * 4.1));
 /** One smooth wind field for the whole scene: slow swell plus gusts rolling left to right. */
-const gust =(x: number, t: number) => 0.55 * Math.sin(t * 0.8 - x * 0.004) + 0.3 * Math.sin(t * 0.33 - x * 0.0016 + 1.3) + 0.15 * Math.sin(t * 1.7 - x * 0.011);
+const gust = (x: number, t: number) => 0.55 * Math.sin(t * 0.8 - x * 0.004) + 0.3 * Math.sin(t * 0.33 - x * 0.0016 + 1.3) + 0.15 * Math.sin(t * 1.7 - x * 0.011);
 
 function rng(seed: number) {
   return () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -563,31 +571,66 @@ export function playSplash({ ready, target }: SplashOptions) {
       if (night > 0) { g.globalAlpha = night; g.drawImage(l.night, 0, y, w, h); }
       return y;
     };
+    // «Play»: from the period two sound waves roll out over the valley, a beat apart.
+    // On the ground plane, so the rings are flattened by perspective.
+    const waves = [[T.flash + 0.05, 1], [T.flash + 0.05 + BEAT, 0.55]].map(([t0, a]) => ({ R: (st - t0) * W * 1.5, a }));
+    const reach = W * 1.7;
+    const ripple = (x: number, y: number) => {
+      let e = 0;
+      const d = Math.hypot(x - dotX, (y - dotY) / 0.45);
+      for (const w of waves) if (w.R > 0 && w.R < reach) e += w.a * Math.exp(-Math.pow((d - w.R) / (W * 0.08), 2)) * (1 - smooth(w.R / reach));
+      return e;
+    };
     s.ridges.forEach((l, i) => {
       const y = draw(l);
       haze(y + (i ? H * 0.07 : 18), [0.5, 0.35, 0.18][i] * (1 - night * 0.5));
       if (i < 2) {
-        // a slow river of mist between the hills
-        const mw = s.mist.width / s.q;
+        // a river of mist between the hills carrying a slow waveform; it flattens as the sun goes down
+        const mw = s.mist.width / s.q, mh = s.mist.height / s.q;
+        const my = y + H * (0.065 + i * 0.05);
+        const scroll = (wall * (10 + i * 8)) % (mw - W);
+        const flat = 1 - smooth((st - 3.4) / 1.2);
+        const amp = H * (0.02 - i * 0.009) * flat * (0.75 + 0.25 * bar(wall));
+        const off = (x: number) => amp * waveform(x / W, wall + i * 2) - H * 0.025 * ripple(x, my + mh / 2);
         g.globalAlpha = (0.6 - i * 0.2) * (1 - night * 0.85);
-        g.drawImage(s.mist, -((wall * (10 + i * 8)) % (mw - W)), y + H * (0.065 + i * 0.05) + Math.sin(wall * 0.7 + i) * 2, mw, s.mist.height / s.q);
+        // exact device-pixel columns: overlapping translucent slices would show seams
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        const cw = 6, src = Math.round(scroll * s.q);
+        for (let px = 0; px < cv.width; px += cw) {
+          const w = Math.min(cw, cv.width - px);
+          g.drawImage(s.mist, src + px, 0, w, s.mist.height, px, (my + off((px + cw / 2) / q)) * q, w, mh * q);
+        }
+        g.setTransform(q, 0, 0, q, 0, 0);
+        if (i === 0) {
+          // the light caught along its crest makes the waveform readable
+          g.save();
+          g.globalAlpha = 0.5 * lit * flat;
+          g.strokeStyle = 'rgba(255,238,196,1)'; g.lineWidth = 1.2;
+          g.shadowColor = 'rgba(255,226,170,.9)'; g.shadowBlur = 6 * q;
+          g.beginPath();
+          for (let x = 0; x <= W; x += 8) g.lineTo(x, my + mh / 2 + off(x));
+          g.stroke();
+          g.restore();
+        }
       }
     });
     draw(s.meadow);
     // pollen in the low light, fireflies at dusk
     const fire = smooth((st - 2.6) / 1.4);
     const motesA = 1 - smooth((st - T.fade) / 0.6);
-    for (const m of s.motes) {
+    // fireflies answer the beat in four groups, one group per beat; the waves light them as they pass
+    const beatNo = Math.floor(wall / BEAT), beatF = (wall / BEAT) % 1;
+    s.motes.forEach((m, idx) => {
       const y = m.y + shift - ((wall * m.v) % (H * 0.5));
       const x = m.x + Math.sin(wall * 0.6 + m.p) * 12 + Math.sin(wall * 1.3 + m.p * 2) * 4;
-      const blink = 0.5 + 0.5 * Math.sin(wall * 2.4 + m.p * 3);
+      const blink = clamp(0.2 + 0.8 * (beatNo % 4 === idx % 4 ? pluck(beatF) : 0) + ripple(x, y));
       const size = m.s * 9 * (1 + fire * blink * 0.8);
       g.globalCompositeOperation = 'lighter';
       g.globalAlpha = clamp(0.4 * (1 - fire) * motesA);
       if (g.globalAlpha > 0) g.drawImage(s.pollen, x - size / 2, y - size / 2, size, size);
       g.globalAlpha = clamp(fire * blink * motesA);
       if (g.globalAlpha > 0) g.drawImage(s.fly, x - size / 2, y - size / 2, size, size);
-    }
+    });
     g.globalCompositeOperation = 'source-over';
     // near spruces bend from the root in the wind and part like curtains at night
     const part = smooth((st - T.night) / (T.fade - T.night + 0.6)) * W * 0.36;
@@ -598,8 +641,10 @@ export function playSplash({ ready, target }: SplashOptions) {
       if (night > 0) { g.globalAlpha = night; g.drawImage(sp.night, sp.x, sp.y, sp.w, sp.h); }
     };
     const lift = descend * H * 0.35 + night * H * 0.04;
-    s.near.forEach((sp, i) => bendDraw(sp, (sp.x < W / 2 ? -1 : 1) * part * (1 + (i % 3) * 0.15), -0.012 * gust(sp.x, wall) - 0.004, lift));
-    for (const t of s.tufts) bendDraw(t, 0, -0.16 * gust(t.x, wall) - 0.05, lift * 1.1);
+    // wind on the bar, and the sound waves push everything away from the period as they pass
+    const push = (sp: Sprite, l: number) => ripple(sp.x + sp.w / 2, sp.y + sp.h + l) * (sp.x + sp.w / 2 > dotX ? 1 : -1);
+    s.near.forEach((sp, i) => bendDraw(sp, (sp.x < W / 2 ? -1 : 1) * part * (1 + (i % 3) * 0.15), -0.012 * gust(sp.x, wall) - 0.004 - 0.008 * bar(wall) - 0.045 * push(sp, lift), lift));
+    for (const t of s.tufts) bendDraw(t, 0, -0.16 * gust(t.x, wall) - 0.05 - 0.07 * bar(wall) - 0.35 * push(t, lift * 1.1), lift * 1.1);
     g.setTransform(q, 0, 0, q, 0, 0);
     // night settles into --bg with Home's soft green glow around the hero
     if (night > 0) {
@@ -607,6 +652,19 @@ export function playSplash({ ready, target }: SplashOptions) {
       gr = g.createRadialGradient(dotX, hY, 0, dotX, hY, Math.max(W, H) * 0.6);
       gr.addColorStop(0, '#0d2216'); gr.addColorStop(0.5, css(BG)); gr.addColorStop(1, css(BG));
       g.fillStyle = gr; g.fillRect(0, 0, W, H);
+    }
+    // the waves themselves: a soft band of jade light sweeping over the land, never a drawn line
+    for (const w of waves) {
+      if (w.R <= 0 || w.R >= reach) continue;
+      const a = w.a * (1 - smooth(w.R / reach)) * smooth(w.R / (W * 0.05));
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      g.shadowColor = css(JADE, 1); g.shadowBlur = 26 * q;
+      for (const [width, alpha] of [[14 + w.R * 0.04, 0.12], [4 + w.R * 0.01, 0.2]]) {
+        g.lineWidth = width; g.strokeStyle = css(JADE, alpha * a);
+        g.beginPath(); g.ellipse(dotX, dotY + 4, w.R, w.R * 0.45, 0, 0.04, Math.PI - 0.04); g.stroke();
+      }
+      g.restore();
     }
     // the green flash: the sun's last sliver turns jade and rounds up into the period
     const flash = smooth((st - (T.flash - 0.22)) / 0.3);
