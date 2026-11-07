@@ -300,6 +300,8 @@ struct NativeTrackActions: View {
             Label(track.reaction < 0 ? "Убрать «Не нравится»" : "Не нравится", systemImage: "hand.thumbsdown")
         }
         Divider()
+        // The page's version picker takes over the screen (lib/native-ui.ts `versions`); the shell steps aside.
+        Button { store.run("versions", ["id": track.id]) } label: { Label("Заменить трек", systemImage: "arrow.triangle.swap") }
         if !track.album.isEmpty {
             Button { store.run("open", ["id": track.id, "to": "album"]) } label: { Label("Перейти к альбому", systemImage: "square.stack") }
         }

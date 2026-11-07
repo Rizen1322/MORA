@@ -10,7 +10,7 @@ const AUDIO_TYPES: Record<string, string> = { '.opus': 'audio/ogg', '.ogg': 'aud
 
 /** Public search and playback preparation: works without any account. */
 export function registerSearchRoutes(app: FastifyInstance, s: Services): void {
-  const { publicMusic, lib } = s;
+  const { publicMusic, lib, downloads } = s;
 
   app.get<{ Params: { id: string } }>('/api/tracks/:id/cover', async (req, reply) => {
     const file = await publicMusic.ensureCover(req.params.id);
@@ -88,6 +88,7 @@ export function registerSearchRoutes(app: FastifyInstance, s: Services): void {
       if (!asset || asset.status !== 'ok') return reply.code(404).send({ error: 'запись не найдена' });
       lib.bind(track.id, asset.id === track.id ? null : asset.id);
     } else lib.bind(track.id, null);
+    downloads.follow(track.id); // a downloaded track keeps playing offline, now with the chosen version
     return { ok: true, mediaId: lib.mediaId(track.id) };
   });
 

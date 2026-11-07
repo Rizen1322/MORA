@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   app: {} as any, listeners: [] as (() => void)[], radio: { active: false, loading: false, error: null as string | null },
   playTracks: vi.fn(), addToQueue: vi.fn(), toggle: vi.fn(), startWave: vi.fn(), startRadio: vi.fn(), toast: vi.fn(),
+  openVersionPanel: vi.fn(),
 }));
 vi.mock('../src/store/app.ts', () => ({
   phone: true,
@@ -13,6 +14,10 @@ vi.mock('../src/lib/radio.ts', () => ({ startRadio: () => h.startRadio(), useRad
 vi.mock('../src/store/catalog.ts', () => ({ publicPlayer: {}, usePublicPlayback: { getState: () => ({ phase: 'idle', title: '' }), subscribe: vi.fn() } }));
 vi.mock('../src/pages/Search.tsx', () => ({ asCatalog: (t: any) => t, SOURCE_LABEL: {} }));
 vi.mock('../src/components/TrackList.tsx', () => ({ react: vi.fn() }));
+vi.mock('../src/components/VersionPanel.tsx', () => ({
+  openVersionPanel: (...a: any[]) => h.openVersionPanel(...a),
+  useVersionPanel: { getState: () => ({ target: null }), subscribe: vi.fn() },
+}));
 vi.mock('../src/lib/api.ts', () => ({ api: {} }));
 
 const track = (id: string, status = 'ok') => ({ id, title: id.toUpperCase(), artist: 'X', album: '', duration: 100, reaction: 0, coverUrl: null, status });
@@ -55,6 +60,14 @@ describe('native shell bridge (page side)', () => {
     expect(h.startRadio).toHaveBeenCalledTimes(1);
     expect(() => commands.publicPlay({ source: 'ytmusic', id: 'x' })).toThrow('устарел');
     await expect(commands.cover({ url: 'https://evil/' })).rejects.toThrow();
+  });
+
+  it('opens the version picker for a native menu row', async () => {
+    const { commands } = await import('../src/lib/native-ui.ts');
+    commands.versions({ id: 'a' });
+    expect(h.openVersionPanel).toHaveBeenCalledWith({ trackId: 'a', title: 'A', artist: 'X', duration: 100 });
+    expect(() => commands.versions({ id: 'zzz' })).toThrow('не найден');
+    expect(h.openVersionPanel).toHaveBeenCalledTimes(1);
   });
 
   it('pushes the library only when it changed, and follows the shell on the page', async () => {

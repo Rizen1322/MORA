@@ -93,6 +93,12 @@ export class Downloads {
     if (patch.state !== undefined) this.save();
   }
 
+  /** The recording a download of this track fetches: the chosen version, not necessarily its own. */
+  private recording(trackId: string): { provider: AudioProvider | null; externalId: string | null } {
+    const src = this.lib.sources(this.lib.mediaId(trackId)).find((s) => s.kind === 'remote');
+    return src && (src.provider === 'youtube' || src.provider === 'soundcloud') ? { provider: src.provider, externalId: src.external_id } : { provider: null, externalId: null };
+  }
+
   /** Adds a download; asking twice for the same recording returns the same job. */
   add(input: { trackId?: string; provider?: string; externalId?: string; title?: string }): DownloadJob {
     let provider: AudioProvider | null = null, externalId: string | null = null, trackId: string | null = null, title = input.title?.slice(0, 200) ?? '';
@@ -101,8 +107,7 @@ export class Downloads {
       if (!t) throw new ResolverError('Трек не найден', 'failed');
       trackId = t.id;
       title = t.title;
-      const src = this.lib.sources(this.lib.mediaId(t.id)).find((s) => s.kind === 'remote');
-      if (src && (src.provider === 'youtube' || src.provider === 'soundcloud')) { provider = src.provider; externalId = src.external_id; }
+      ({ provider, externalId } = this.recording(t.id));
     } else {
       if (input.provider !== 'youtube' && input.provider !== 'soundcloud') throw new ResolverError('Неизвестный источник', 'failed');
       if (!validExternalId(input.provider, String(input.externalId ?? ''))) throw new ResolverError('Некорректный ID записи', 'failed');
@@ -147,6 +152,21 @@ export class Downloads {
     for (const j of this.jobs.values()) if (j.trackId === trackId && j.state === 'done') this.jobs.delete(j.id);
     this.save();
     void this.evict().catch(() => {});
+  }
+
+  /** A downloaded track keeps its offline copy when another version is chosen: the new recording is fetched and the old job forgotten. */
+  follow(trackId: string): void {
+    if (!this.lib.get(trackId)?.pinned) return;
+    const { provider, externalId } = this.recording(trackId);
+    const key = provider && externalId ? `${provider}:${externalId}` : `track:${trackId}`;
+    for (const j of [...this.jobs.values()]) {
+      if (j.trackId !== trackId || j.key === key) continue;
+      if (j.state === 'done') this.jobs.delete(j.id); // the old recording is not wanted anymore
+      else this.cancel(j.id);
+    }
+    // A file from this disk is offline already; anything else has to be downloaded for the chosen version.
+    if (this.lib.get(this.lib.mediaId(trackId))?.provider !== 'local') this.add({ trackId });
+    this.save();
   }
 
   private pump(): void {

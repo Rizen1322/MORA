@@ -6,7 +6,7 @@ import { controller, phone, trackOf, useApp } from '../store/app.ts';
 import { publicPlayer, usePublicPlayback } from '../store/catalog.ts';
 import { react } from '../components/TrackList.tsx';
 import { asCatalog, SOURCE_LABEL } from '../pages/Search.tsx';
-import { useVersionPanel } from '../components/VersionPanel.tsx';
+import { useVersionPanel, openVersionPanel } from '../components/VersionPanel.tsx';
 import { actions, describe, type ActResult } from './native-pages.ts';
 
 /**
@@ -129,6 +129,12 @@ export const commands: Record<string, (a: Args) => unknown> = {
     const { items } = await api.publicSearch(src, q);
     results.set(src, { q, items });
     return items.map((t) => ({ id: t.externalId, title: t.title, artist: t.artist, album: t.album, duration: t.duration, reaction: 0, cover: t.coverUrl, ok: t.playable }));
+  },
+  /** «Заменить трек»: the web version picker takes over the screen (uiState.overlay), native steps aside. */
+  versions: (a) => {
+    const t = trackOf(str(a.id));
+    if (!t) throw new Error('Трек не найден');
+    openVersionPanel({ trackId: t.id, title: t.title, artist: t.artist, duration: t.duration });
   },
   publicPlay: (a) => {
     const src = source(a.source), { q, items, index } = publicItem(src, str(a.id));
