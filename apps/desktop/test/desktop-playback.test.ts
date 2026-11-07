@@ -35,6 +35,36 @@ it('reuses a slow initial plan after arming the one-second fallback', async () =
   } finally { await host.stop(); }
 });
 
+it('keeps asking for the real plan after a failed request instead of keeping the fallback', async () => {
+  const track = (id: string) => ({ id, duration: 20, mixingAllowed: true, analysis: null });
+  const plan = { ...planTransition(track('a'), track('b'), DEFAULT_AUTOMIX_SETTINGS), id: 'late-plan' };
+  let calls = 0;
+  let host: DesktopPlayback;
+  const audio = { process: {}, start: vi.fn(async () => ({ sampleRate: 48000, queueFrames: 2048 })),
+    feedFile: vi.fn(async () => {}), stop: vi.fn(async () => {}), command: vi.fn(async (v: any) => {
+      if (v.cmd === 'start') queueMicrotask(() => host.onEvent({ type: 'tick', clock: 0, paused: false, main: v.deck,
+        decks: [0, 1].map(deck => ({ token: deck === v.deck ? v.token : null, playing: deck === v.deck,
+          position: v.frame, totalFrames: 960000, starved: false, ratio: 1, bufferedAhead: 960000 })), transition: null, limiterDb: 0, peak: 0 }));
+    }) };
+  const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(url)).pathname, body = init?.body ? JSON.parse(String(init.body)) : null;
+    if (path === '/internal/desktop/pcm-source') return Response.json({ path: 'private', finalPath: 'private', partPath: '',
+      format: 'f32le', totalFrames: 960000, availableFrames: 960000, complete: true,
+      track: { trackId: body.trackId, title: '', artist: '', duration: 20, coverUrl: '', mixingAllowed: true } });
+    if (path === '/api/settings') return Response.json({ automix: DEFAULT_AUTOMIX_SETTINGS });
+    // the first two requests fail (busy server), the third one has the plan
+    if (path === '/api/automix/plan') return ++calls < 3 ? Response.json({ error: 'busy' }, { status: 503 }) : Response.json({ plan, pending: [] });
+    return Response.json({});
+  };
+  host = new DesktopPlayback(audio, { backend: () => ({ origin: 'http://127.0.0.1', accessToken: '', pcmToken: 'secret' }),
+    ready: vi.fn(), track: vi.fn(), fetch: fetcher as typeof fetch });
+  try {
+    await host.startSource({ trackId: 'a', entryId: 'entry-a' }, { sampleRate: 48000, position: 0 });
+    await host.prepareQueue(1, [{ trackId: 'b', entryId: 'entry-b' }], 'a');
+    await vi.waitFor(() => expect(host.state().nextTrack?.plan?.id).toBe('late-plan'), { timeout: 6000 });
+  } finally { await host.stop(); }
+}, 10000);
+
 it('replans a missed musical point after seeking instead of keeping the nearby fallback', async () => {
   const settings = { ...DEFAULT_AUTOMIX_SETTINGS, mixOnNext: false };
   const track = (id: string) => ({ id, duration: 20, mixingAllowed: true, analysis: null });

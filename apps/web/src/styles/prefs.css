@@ -321,3 +321,22 @@
 .playback-diagnostics-option input { width: 20px; height: 20px; accent-color: #66e9ad; }
 .playback-diagnostics summary { cursor: pointer; padding: 12px 0; }
 .playback-diagnostics-log { max-height: 350px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+
+/* ---------------------------------------------------------------- settings sections (Downloads, Sources, History, Diagnostics live under Settings) */
+
+.settings-tabs {
+  display: flex; gap: 6px; max-width: 1540px; margin-inline: auto; padding: 32px var(--gutter) 0;
+  overflow-x: auto; scrollbar-width: none;
+}
+.settings-tabs a {
+  display: inline-flex; align-items: center; gap: 8px; flex: none; min-height: 40px; padding: 0 16px;
+  border-radius: var(--radius-pill); background: rgba(196, 240, 214, 0.06); box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-2); font-size: 14px; font-weight: 550; text-decoration: none; transition: background 160ms, color 160ms;
+}
+.settings-tabs a:hover { background: rgba(196, 240, 214, 0.11); color: var(--text); }
+.settings-tabs a[aria-current='page'] { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+.settings-shell > .main-inner { padding-top: 20px; }
+
+.kbd-btn { padding: 0; border: 0; background: none; cursor: pointer; border-radius: 8px; }
+.kbd-btn:hover kbd { border-color: var(--accent-soft); }
+.kbd-btn[aria-pressed='true'] kbd { border-color: var(--accent); color: var(--accent-soft); }

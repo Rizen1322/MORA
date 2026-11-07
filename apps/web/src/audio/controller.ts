@@ -2190,7 +2190,12 @@ export class PlayerController {
 
   onAnalysisDone(trackId: string): void {
     if (this.native) {
-      if (this.nativeTracks.slice(Math.max(0, this.nativeAt)).some(t => t.trackId === trackId)) { this.nativeStale.add(trackId); void this.nativeSync(); }
+      if (this.nativeTracks.slice(Math.max(0, this.nativeAt)).some(t => t.trackId === trackId)) {
+        this.nativeStale.add(trackId);
+        // The desktop host re-plans its armed blend on any queue handoff, even an unchanged one.
+        if (desktop?.nativeMix) this.nativeManifestKey = '';
+        void this.nativeSync();
+      }
       return;
     }
     this.resourceRevisions.set(trackId, (this.resourceRevisions.get(trackId) ?? 0) + 1);

@@ -5,6 +5,7 @@ import { connectEvents, controller, trackOf, useApp } from './store/app.ts';
 import { systemVolume } from './audio/controller.ts';
 import { DropTarget, Sidebar, TabBar, TitleBar, Toasts, UploadCard } from './components/Layout.tsx';
 import { desktop } from './lib/desktop.ts';
+import { actionFor, comboOf } from './lib/hotkeys.ts';
 import { FullPlayer, MiniPlayer, PlayerBar } from './components/Player.tsx';
 import { QueuePanel } from './components/QueuePanel.tsx';
 import { react } from './components/TrackList.tsx';
@@ -13,7 +14,7 @@ import { WavePage } from './pages/Wave.tsx';
 import { AlbumPage, ArtistPage, LibraryPage } from './pages/Library.tsx';
 import { HistoryPage, LikedPage, PlaylistPage } from './pages/Collections.tsx';
 import { SourcesPage } from './pages/Sources.tsx';
-import { MorePage, SettingsPage } from './pages/Settings.tsx';
+import { MorePage, SETTINGS_PATHS, SettingsPage, SettingsTabs } from './pages/Settings.tsx';
 import { DiagnosticsPage } from './pages/Diagnostics.tsx';
 import { YandexSearchPage, CatalogArtistPage, CatalogAlbumPage, CatalogPlaybackNotice } from './pages/Catalog.tsx';
 import { SearchPage } from './pages/Search.tsx';
@@ -26,6 +27,12 @@ import { SoundPanel } from './components/SoundPanel.tsx';
 import { LyricsPanel } from './components/LyricsPanel.tsx';
 
 function Page() {
+  const { path } = useRoute();
+  if (!SETTINGS_PATHS.some((p) => path === p || path.startsWith(`${p}/`))) return <PageContent />;
+  return <div className="settings-shell"><SettingsTabs path={path} /><PageContent /></div>;
+}
+
+function PageContent() {
   const { parts } = useRoute();
   switch (parts[0]) {
     case undefined:
@@ -91,60 +98,33 @@ function useShortcuts() {
         else history.forward();
         return;
       }
+      const combo = comboOf(e);
+      const action = combo && actionFor(combo);
+      // queue moves belong to the focused queue row
+      if (!action || action === 'queueUp' || action === 'queueDown') return;
+      // Space and Enter keep activating the focused button or link.
+      if ((combo === 'Space' || combo === 'Enter') && el.closest('button, a')) return;
+      // the phone has no in-app volume control to unmute with
+      if ((action === 'volumeUp' || action === 'volumeDown' || action === 'mute') && systemVolume) return;
+      e.preventDefault();
       const p = controller.state;
-      switch (e.key) {
-        case ' ':
-          if (el.closest('button, a')) return;
-          e.preventDefault();
-          controller.toggle();
-          break;
-        case 'ArrowRight':
-          if (e.shiftKey) void controller.nextTrack();
-          else controller.seek(p.position + 5);
-          break;
-        case 'ArrowLeft':
-          if (e.shiftKey) void controller.prevTrack();
-          else controller.seek(p.position - 5);
-          break;
-        case 'ArrowUp':
-          if (e.altKey || systemVolume) return;
-          e.preventDefault();
-          controller.setVolume(p.volume + 0.05);
-          break;
-        case 'ArrowDown':
-          if (e.altKey || systemVolume) return;
-          e.preventDefault();
-          controller.setVolume(p.volume - 0.05);
-          break;
-        case 'm':
-        case 'M':
-        case 'ь':
-          // the phone has no in-app volume control to unmute with
-          if (!systemVolume) controller.toggleMute();
-          break;
-        case 'l':
-        case 'L':
-        case 'д': {
+      switch (action) {
+        case 'toggle': controller.toggle(); break;
+        case 'seekForward': controller.seek(p.position + 5); break;
+        case 'seekBack': controller.seek(p.position - 5); break;
+        case 'next': void controller.nextTrack(); break;
+        case 'prev': void controller.prevTrack(); break;
+        case 'volumeUp': controller.setVolume(p.volume + 0.05); break;
+        case 'volumeDown': controller.setVolume(p.volume - 0.05); break;
+        case 'mute': controller.toggleMute(); break;
+        case 'like': {
           const t = trackOf(p.queue[p.index]?.trackId);
           if (t) void react(t, t.reaction > 0 ? 0 : 1);
           break;
         }
-        case 'q':
-        case 'Q':
-        case 'й':
-          useApp.getState().setQueueOpen(!useApp.getState().queueOpen);
-          break;
-        case 'f':
-        case 'F':
-        case 'а':
-          useApp.getState().setFullPlayer(!useApp.getState().fullPlayer);
-          break;
-        case '/':
-          e.preventDefault();
-          location.hash = '/search';
-          break;
-        default:
-          return;
+        case 'queue': useApp.getState().setQueueOpen(!useApp.getState().queueOpen); break;
+        case 'fullPlayer': useApp.getState().setFullPlayer(!useApp.getState().fullPlayer); break;
+        case 'search': location.hash = '/search'; break;
       }
     };
     window.addEventListener('keydown', onKey);

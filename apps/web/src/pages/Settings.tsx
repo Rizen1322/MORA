@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
-import { ClockCounterClockwise, GearSix, Plugs, ChartLine, Waveform } from '@phosphor-icons/react';
+import { ClockCounterClockwise, GearSix, Plugs, ChartLine, Waveform, DownloadSimple } from '@phosphor-icons/react';
 import { desktop } from '../lib/desktop.ts';
+import { HOTKEY_ACTIONS, comboLabel, comboOf, hotkeys, reservedCombo, resetHotkeys, setHotkey, type HotkeyAction } from '../lib/hotkeys.ts';
 import { api, type StemGpu, type StemHealth } from '../lib/api.ts';
 import { plural } from '../lib/format.ts';
 import { useApp } from '../store/app.ts';
@@ -199,18 +200,67 @@ function DesktopSettings() {
   );
 }
 
-const SHORTCUTS = [
-  ['Пробел', 'пауза и продолжение'],
-  ['← / →', 'перемотка на 5 с'],
-  ['Shift + ← / →', 'предыдущий / следующий трек'],
-  ['↑ / ↓', 'громкость'],
-  ['M', 'без звука'],
-  ['L', 'нравится'],
-  ['Q', 'очередь'],
-  ['F', 'полноэкранный плеер'],
-  ['/', 'поиск в медиатеке'],
-  ['Alt + ↑ / ↓', 'переместить трек в очереди'],
+/** Click a key, press the new one. Esc cancels; a key already in use swaps with it. */
+function Hotkeys() {
+  const [keys, setKeys] = useState(hotkeys);
+  const [listening, setListening] = useState<HotkeyAction | null>(null);
+  useEffect(() => {
+    if (!listening) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault(); e.stopPropagation();
+      if (e.code === 'Escape') { setListening(null); return; }
+      const combo = !e.ctrlKey && !e.metaKey && comboOf(e);
+      if (!combo || reservedCombo(combo)) return;
+      setHotkey(listening, combo); setKeys(hotkeys()); setListening(null);
+      // Space/Enter would otherwise click the focused button again on key up.
+      (document.activeElement as HTMLElement | null)?.blur();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [listening]);
+  return (
+    <Group title="Клавиши" footer="Нажмите на клавишу и затем новую комбинацию (можно с Shift и Alt). Esc — отмена, Alt + ← / → заняты под «назад» и «вперёд». Занятая клавиша поменяется местами. Перемещение в очереди работает, когда выбран трек в очереди.">
+      <dl className="pref-keys">
+        {HOTKEY_ACTIONS.map((a) => (
+          <div key={a.id}>
+            <dt>
+              <button type="button" className="kbd-btn" aria-pressed={listening === a.id} aria-label={`${a.label}: ${comboLabel(keys[a.id])}. Изменить`}
+                onClick={() => setListening(listening === a.id ? null : a.id)}>
+                <kbd>{listening === a.id ? 'Нажмите клавишу…' : comboLabel(keys[a.id])}</kbd>
+              </button>
+            </dt>
+            <dd>{a.label}</dd>
+          </div>
+        ))}
+      </dl>
+      <Row title="Стандартные клавиши">
+        <button className="btn btn-ghost btn-sm" onClick={() => { resetHotkeys(); setKeys(hotkeys()); setListening(null); }}>Сбросить</button>
+      </Row>
+    </Group>
+  );
+}
+
+const SETTINGS_TABS = [
+  { href: '#/settings', path: '/settings', label: 'Основные', Icon: GearSix },
+  { href: '#/downloads', path: '/downloads', label: 'Загрузки', Icon: DownloadSimple },
+  { href: '#/sources', path: '/sources', label: 'Источники', Icon: Plugs },
+  { href: '#/history', path: '/history', label: 'История', Icon: ClockCounterClockwise },
+  { href: '#/diagnostics', path: '/diagnostics', label: 'Диагностика', Icon: ChartLine },
 ];
+export const SETTINGS_PATHS = SETTINGS_TABS.map((t) => t.path);
+
+/** Section switcher shown above Settings and the pages that moved into it from the sidebar. */
+export function SettingsTabs({ path }: { path: string }) {
+  return (
+    <nav className="settings-tabs" aria-label="Разделы настроек">
+      {SETTINGS_TABS.map(({ href, path: p, label, Icon }) => (
+        <a key={p} href={href} aria-current={path === p || path.startsWith(`${p}/`) ? 'page' : undefined}>
+          <Icon size={18} aria-hidden="true" /> {label}
+        </a>
+      ))}
+    </nav>
+  );
+}
 
 const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(0)} МБ`;
 
@@ -381,16 +431,7 @@ export function SettingsPage() {
               <button className="btn btn-ghost btn-sm" onClick={() => setConfirm(true)}>Очистить</button>
             </Row>
           </Group>}
-          {!mobileApp && <Group title="Клавиши">
-            <dl className="pref-keys">
-              {SHORTCUTS.map(([k, v]) => (
-                <div key={k}>
-                  <dt><kbd>{k}</kbd></dt>
-                  <dd>{v}</dd>
-                </div>
-              ))}
-            </dl>
-          </Group>}
+          {!mobileApp && <Hotkeys />}
         </details>
       </div>
       <aside className="settings-context">

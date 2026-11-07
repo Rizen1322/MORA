@@ -446,7 +446,11 @@ export class DesktopPlayback {
         if (now.plan.aExit - this.position(cur) > 0.3) await this.arm(cur, item, now.plan);
       }
       if (result.pending.length) this.refreshTimer = setTimeout(() => void this.refresh(cur, item, entry, generation), 3000);
-    } catch { /* The prepared full-mix fallback remains armed. */ }
+    } catch {
+      // The fallback stays armed meanwhile; one failed request must not keep it for the whole track.
+      if (this.current === cur && this.incoming === item && generation === this.generation && revision === this.manifestRevision && !item.manualRequested)
+        this.refreshTimer = setTimeout(() => void this.refresh(cur, item, entry, generation), 3000);
+    }
   }
   private planQuery(cur: Item, entry: NativeQueueEntry): URLSearchParams {
     const params = new URLSearchParams({ from: cur.trackId, to: entry.trackId });

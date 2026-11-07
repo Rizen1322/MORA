@@ -1,6 +1,6 @@
 import { WindowControls } from './WindowControls.tsx';
 import { useEffect, useState } from 'react';
-import { House, Waveform, Books, Heart, ClockCounterClockwise, Plugs, GearSix, Plus, MagnifyingGlass, DotsThreeCircle, X, CheckCircle, WarningCircle, Info, ChartLine, CaretLeft, CaretRight, DownloadSimple } from '@phosphor-icons/react';
+import { House, Waveform, Books, Heart, GearSix, Plus, MagnifyingGlass, DotsThreeCircle, X, CheckCircle, WarningCircle, Info, CaretLeft, CaretRight, DownloadSimple } from '@phosphor-icons/react';
 import { api } from '../lib/api.ts';
 import { filesFromDrop, importFiles } from '../lib/importer.ts';
 import { useRoute } from '../lib/router.ts';
@@ -8,6 +8,7 @@ import { desktop } from '../lib/desktop.ts';
 import { CompactToggle } from './Player.tsx';
 import { useApp } from '../store/app.ts';
 import { Cover, PromptModal } from './common.tsx';
+import { SETTINGS_PATHS } from '../pages/Settings.tsx';
 
 function active(path: string, prefix: string, exact = false): 'page' | undefined {
   if (exact) return path === prefix ? 'page' : undefined;
@@ -50,14 +51,6 @@ export function Sidebar() {
           <Heart size={22} weight={path === '/liked' ? 'fill' : 'regular'} />
           <span className="label-text">Любимое</span>
         </a>
-        <a href="#/downloads" aria-current={active(path, '/downloads')}>
-          <DownloadSimple size={22} />
-          <span className="label-text">Загрузки</span>
-        </a>
-        <a href="#/history" aria-current={active(path, '/history')}>
-          <ClockCounterClockwise size={22} />
-          <span className="label-text">История</span>
-        </a>
       </div>
       <div className="side-section">
         <div className="side-head">
@@ -85,9 +78,7 @@ export function Sidebar() {
         </div>
       </div>
       <div className="nav nav-utility" aria-label="Приложение">
-        <a href="#/sources" aria-current={active(path, '/sources')}><Plugs size={20} weight={path === '/sources' ? 'fill' : 'regular'} /><span className="label-text">Источники</span></a>
-        <a href="#/diagnostics" aria-current={active(path, '/diagnostics')}><ChartLine size={20} /><span className="label-text">Диагностика</span></a>
-        <a href="#/settings" aria-current={active(path, '/settings')}><GearSix size={20} weight={path === '/settings' ? 'fill' : 'regular'} /><span className="label-text">Настройки</span></a>
+        <a href="#/settings" aria-current={SETTINGS_PATHS.some((p) => active(path, p)) ? 'page' : undefined}><GearSix size={20} weight={SETTINGS_PATHS.some((p) => active(path, p)) ? 'fill' : 'regular'} /><span className="label-text">Настройки</span></a>
       </div>
       {creating && (
         <PromptModal
@@ -138,7 +129,7 @@ export function TabBar() {
     { href: '#/liked', label: 'Любимое', Icon: Heart, on: path === '/liked' },
     { href: '#/library', label: 'Медиатека', Icon: Books, on: (path.startsWith('/library') && path !== '/library/search') || path.startsWith('/playlist') || path.startsWith('/album') || path.startsWith('/artist') },
     { href: '#/search', label: 'Поиск', Icon: MagnifyingGlass, on: path === '/library/search' || path === '/search' || path.startsWith('/catalog') },
-    { href: '#/more', label: 'Ещё', Icon: DotsThreeCircle, on: ['/more', '/settings', '/sources', '/history', '/diagnostics'].includes(path) },
+    { href: '#/more', label: 'Ещё', Icon: DotsThreeCircle, on: path === '/more' || SETTINGS_PATHS.includes(path) },
   ];
   return (
     <nav className="tabbar" aria-label="Разделы">
