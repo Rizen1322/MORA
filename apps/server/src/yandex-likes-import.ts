@@ -14,7 +14,9 @@ export class YandexLikesImport {
   private job: Job | null;
   private task: Promise<void> | null = null;
   private stopped = false;
-  constructor(private db: Db, private lib: Library, private provider: Pick<YandexProvider, 'reactionSession' | 'likeIds' | 'importTrack'>, private events: EventHub) {
+  constructor(private db: Db, private lib: Library, private provider: Pick<YandexProvider, 'reactionSession' | 'likeIds' | 'importTrack'>, private events: EventHub,
+    /** «Скачивать лайкнутые треки»: imported likes get an offline copy too, like a like made in the app. */
+    private downloads: Pick<import('./public/downloads.ts').Downloads, 'add'> | null = null) {
     db.exec(`CREATE TABLE IF NOT EXISTS yandex_likes_import_items (
       job_id TEXT NOT NULL, position INTEGER NOT NULL, external_id TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', track_id TEXT,
       PRIMARY KEY(job_id, position));`);
@@ -79,6 +81,7 @@ export class YandexLikesImport {
       });
     }
     let consecutiveFailures = 0;
+    const offline = !!this.downloads && getSettings(this.db).downloads.autoLiked;
     const worker = async () => {
       while (current()) {
         const item = q(this.db, "SELECT * FROM yandex_likes_import_items WHERE job_id=? AND state='pending' ORDER BY position LIMIT 1").get(job.id) as Item | undefined;
@@ -103,6 +106,9 @@ export class YandexLikesImport {
             }
             q(this.db, 'UPDATE yandex_likes_import_items SET state=?, track_id=? WHERE job_id=? AND position=?').run(newer ? 'skipped' : 'done', id, job.id, item.position);
           });
+          // «Скачивать лайкнутые треки» covers imported likes as well: without this they stay in
+          // the collection but never reach «Загрузки», unlike a like made in the app.
+          if (!newer && offline && this.downloads) { try { this.downloads.add({ trackId: id }); } catch { /* the like itself is saved */ } }
           consecutiveFailures = 0;
           this.events.emit({ type: 'library', reason: 'yandex-likes-import', trackId: id });
         } catch {

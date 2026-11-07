@@ -29,7 +29,7 @@ async function fixture(count = 6) {
       } finally { active--; }
     },
   };
-  const make = () => new YandexLikesImport(a.services.db, a.services.lib, provider, a.services.events);
+  const make = (downloads: unknown = null) => new YandexLikesImport(a.services.db, a.services.lib, provider, a.services.events, downloads as never);
   const job = make(); cleanup.push(() => job.stop());
   return { a, ids, known, calls, job, make, peak: () => peak, account: (next: string) => { key = next; }, failures: (on: boolean) => { failures = on; }, gate: (next: Promise<void> | null) => { gate = next; } };
 }
@@ -104,5 +104,27 @@ describe('durable complete Yandex likes import', () => {
     expect(f.job.status()).toMatchObject({ state: 'done', done: 2 });
     kvSet(f.a.services.db, 'settings', { yandex: { importLikes: false }, version: 2 });
     expect(() => f.job.resume()).toThrow('выключен в настройках источников');
+  });
+
+  it('gives imported likes an offline copy when «скачивать лайкнутые» is on', async () => {
+    const f = await fixture(3);
+    kvSet(f.a.services.db, 'settings', { downloads: { autoLiked: true }, version: 2 });
+    const added: string[] = [];
+    const downloads = { add: (input: { trackId: string }) => { added.push(input.trackId); return { id: input.trackId }; } };
+    const job = f.make(downloads); cleanup.push(() => job.stop());
+    job.start(); await job.settled();
+    expect(job.status()).toMatchObject({ state: 'done', done: 3 });
+    expect(added).toHaveLength(3);
+    expect(new Set(added)).toEqual(new Set(f.known.values()));
+  });
+
+  it('downloads nothing for imported likes while the setting is off', async () => {
+    const f = await fixture(2);
+    const added: string[] = [];
+    const downloads = { add: (input: { trackId: string }) => { added.push(input.trackId); return { id: input.trackId }; } };
+    const job = f.make(downloads); cleanup.push(() => job.stop());
+    job.start(); await job.settled();
+    expect(job.status()).toMatchObject({ state: 'done', done: 2 });
+    expect(added).toEqual([]);
   });
 });

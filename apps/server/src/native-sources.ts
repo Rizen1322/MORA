@@ -1,19 +1,29 @@
 import type { Services } from './app.ts';
 import { getSettings } from './automix.ts';
 import type { NativeMediaSource, NativePreparationItem } from '@automix/core/native-preparation.ts';
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
+import type { TrackRow } from './library.ts';
 
 const RESOLVE_TIMEOUT_MS = 20000;
 // A growing Wave reserve is handed off several times; stream addresses outlive 30 min, so do not re-run yt-dlp each time.
 const RESOLVED_TTL_MS = 30 * 60 * 1000;
 const resolvedBy = new WeakMap<Services, Map<string, { source: NativeMediaSource; at: number }>>();
 interface Entry { trackId: string; entryId: string; file: number }
+/** A verified Yandex download sits in remote/yandex/<content hash>.mp3 (YandexAudio): the phone can play it offline. */
+function yandexCachedAudio(s: Services, track: TrackRow): string | null {
+  if (!/^[a-f0-9]{64}$/.test(track.content_hash)) return null;
+  const file = path.join(s.cfg.dataDir, 'remote', 'yandex', `${track.content_hash}.mp3`);
+  return existsSync(file) ? file : null;
+}
 function localFile(s: Services, trackId: string): string | null {
   const t = s.lib.media(trackId);
   if (!t) return null;
   return s.lib.sources(t.id).find(source => source.kind !== 'remote' && source.path)?.path
-    ?? s.publicMusic.cachedAudioPath(t.id);
+    ?? s.publicMusic.cachedAudioPath(t.id)
+    ?? yandexCachedAudio(s, t);
 }
 export async function nativeSources(s: Services, entries: Entry[], previousId: string) {
   if (!Array.isArray(entries) || entries.length > 1000 || entries.some(e => !e || typeof e.trackId !== 'string'

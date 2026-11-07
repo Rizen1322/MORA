@@ -507,9 +507,19 @@ export class YandexProvider implements Provider {
 
   async fetchAudio(src: SourceRow): Promise<string> {
     const track = this.lib.get(src.track_id);
+    if (!track) throw new Error('Трек не найден');
     const meta = JSON.parse(src.meta || '{}') as { audioHash?: string };
-    if (!track || !/^[a-f\d]{64}$/.test(track.content_hash)) throw new Error('Аудио Яндекса ещё не проверено. Добавьте трек заново.');
+    const id = this.checkedId(String(src.external_id));
+    // Rows imported before audio was verified (metadata only) carry no hash. The hash is what
+    // ties analysis to the bytes, so fetch the file once, record it and carry on: asking the
+    // listener to remove and re-add the track is not a fix for a missing download.
+    if (!/^[a-f\d]{64}$/.test(track.content_hash)) {
+      const media = await this.audio.prepare(id, track.duration);
+      this.lib.rebindContent(track.id, media.hash, media.size, media.probe,
+        { id: src.id, meta: { ...meta, audioHash: media.hash, bitrate: media.bitrate } });
+      return media.file;
+    }
     if (meta.audioHash && meta.audioHash !== track.content_hash) throw new Error('Версия аудио Яндекса не совпадает с сохранённым анализом');
-    return (await this.audio.prepare(this.checkedId(String(src.external_id)), track.duration, track.content_hash)).file;
+    return (await this.audio.prepare(id, track.duration, track.content_hash)).file;
   }
 }

@@ -76,7 +76,7 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
   const analysis = new AnalysisService(db, cfg, lib, events);
   const stems = new StemService(cfg,lib,events);
   const yandexReactions = new YandexReactionSync(db, lib, providers.yandex, events);
-  const yandexLikesImport = new YandexLikesImport(db, lib, providers.yandex, events);
+  const yandexLikesImport = new YandexLikesImport(db, lib, providers.yandex, events, downloads);
   providers.yandex.onReactionConnectionChanged = () => yandexReactions.connectionChanged();
   providers.yandex.localReactionFor = (externalId) => yandexReactions.valueForExternal(externalId);
   providers.yandex.catalog.reactionReader = () => providers.yandex.readReactions();

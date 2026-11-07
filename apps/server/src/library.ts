@@ -382,9 +382,14 @@ export class Library {
    * Analysis, stems and plans are keyed by content hash, so the new hash simply
    * starts fresh; nothing computed for the old file is attached to the new one.
    */
-  rebindContent(id: string, hash: string, size: number, probe: ProbeResult): void {
-    q(this.db, 'UPDATE tracks SET content_hash = ?, size = ?, duration = ?, sample_rate = ?, channels = ?, codec = ?, bitrate = ?, updated_at = ? WHERE id = ?')
-      .run(hash, size, probe.duration, probe.sampleRate, probe.channels, probe.codec, probe.bitrate, Date.now(), id);
+  rebindContent(id: string, hash: string, size: number, probe: ProbeResult, source?: { id: number; meta: Record<string, unknown> }): void {
+    tx(this.db, () => {
+      q(this.db, 'UPDATE tracks SET content_hash = ?, size = ?, duration = ?, sample_rate = ?, channels = ?, codec = ?, bitrate = ?, updated_at = ? WHERE id = ?')
+        .run(hash, size, probe.duration, probe.sampleRate, probe.channels, probe.codec, probe.bitrate, Date.now(), id);
+      // The source keeps the remembered audio hash next to its link; leaving it stale would
+      // make every later fetch compare against bytes that are gone.
+      if (source) q(this.db, 'UPDATE track_sources SET meta = ? WHERE id = ? AND track_id = ?').run(JSON.stringify(source.meta), source.id, id);
+    });
     const row = this.get(id);
     if (row) this.onTrackAdded?.(row);
     this.events.emit({ type: 'library', reason: 'content', trackId: id });

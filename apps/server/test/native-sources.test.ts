@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Services } from '../src/app.ts';
 vi.mock('../src/automix.ts', () => ({ getSettings: () => ({ automix: { enabled: true } }) }));
@@ -58,4 +61,22 @@ it('reuses resolved remote sources across growing handoffs', async () => {
   await nativeSources(services, list(4), 'previous');
   await nativeSources(services, list(8), 'previous');
   expect(resolve).toHaveBeenCalledTimes(8);
+});
+
+it('plays a downloaded Yandex track from disk instead of streaming it again', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mora-native-yandex-'));
+  const hash = 'c'.repeat(64);
+  fs.mkdirSync(path.join(dataDir, 'remote', 'yandex'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'remote', 'yandex', `${hash}.mp3`), Buffer.alloc(16));
+  const resolve = vi.fn(async () => ({ kind: 'direct', url: 'https://audio.test/stream.mp3' }));
+  const services = { cfg: { dataDir }, db: {}, lib: {
+    media: (id: string) => ({ id, duration: 180, content_hash: hash, provider: 'yandex', title: id, artist: 'artist', cover_id: null }),
+    sources: (id: string) => [{ provider: 'yandex', kind: 'remote', external_id: id, meta: '{}' }],
+    mixingPolicy: new Map([['yandex', true]]),
+  }, providers: { get: () => ({ nativeSource: resolve }) }, analysis: { get: () => null }, publicMusic: { cachedAudioPath: () => null } } as unknown as Services;
+  try {
+    const manifest = await nativeSources(services, [{ trackId: 'track1', entryId: 'entry1', file: 1 }], 'track1');
+    expect(manifest.items[0].source).toEqual({ kind: 'upload', trackId: 'track1' });
+    expect(resolve).not.toHaveBeenCalled();
+  } finally { fs.rmSync(dataDir, { recursive: true, force: true }); }
 });
