@@ -9,7 +9,7 @@ import './splash.css';
 
 type RGB = [number, number, number];
 type Ctx = CanvasRenderingContext2D;
-type Sprite = { day: HTMLCanvasElement; night: HTMLCanvasElement; x: number; y: number; w: number; h: number };
+type Sprite = { day: HTMLCanvasElement; night: HTMLCanvasElement; halo?: HTMLCanvasElement; x: number; y: number; w: number; h: number };
 
 /** Scene seconds. HOLD is where the scene waits (sun half set) while the app is still loading. */
 export const T = { bloom: 1.1, hold: 4.3, flash: 4.62, night: 4.4, fade: 5.6, end: 6.6 };
@@ -47,7 +47,7 @@ export const BEAT = T.flash / 8;
 /** Wind swells once a bar and peaks on the downbeat. */
 const bar = (t: number) => 0.5 + 0.5 * Math.cos((2 * Math.PI * t) / (4 * BEAT));
 /** A pluck from a beat onset: quick soft attack, slower release. */
-const pluck = (f: number) => (1 - Math.exp(-f * 18)) * Math.exp(-f * 3.2);
+const pluck = (f: number) => (1 - Math.exp(-f * 9)) * Math.exp(-f * 3.2);
 /** What the mist river carries: a slow waveform with an envelope, like a track seen from afar. */
 const waveform = (u: number, t: number) => (0.55 + 0.45 * Math.sin(u * 5.5 - t * 0.9)) * (0.65 * Math.sin(u * 38 - t * 2.6) + 0.35 * Math.sin(u * 83 - t * 4.1));
 /** One smooth wind field for the whole scene: slow swell plus gusts rolling left to right. */
@@ -105,8 +105,8 @@ class Brush {
   constructor(private g: Ctx, private t: Tone) {}
   line(v: number, x0: number, y0: number, x1: number, y1: number) { this.p[v].moveTo(x0, y0); this.p[v].lineTo(x1, y1); }
   flush(width: number) {
-    this.g.lineWidth = width;
-    this.p.forEach((p, i) => { this.g.strokeStyle = this.t[i]; this.g.stroke(p); });
+    // shade strokes are fuller, rim strokes finer: the brush lightens as it lifts
+    this.p.forEach((p, i) => { this.g.lineWidth = width * [1.35, 1.1, 0.9, 0.7][i]; this.g.strokeStyle = this.t[i]; this.g.stroke(p); });
     this.p = [new Path2D(), new Path2D(), new Path2D(), new Path2D()];
   }
 }
@@ -142,42 +142,55 @@ function spruce(g: Ctx, r: () => number, x: number, base: number, h: number, t: 
     g.beginPath(); g.moveTo(x, base); g.lineTo(x + lean * 0.5, base - h * 0.5); g.stroke();
   }
   /** One bough: it droops from the trunk and lifts again at the tip; branchlets hang from it in fans. */
-  const bough = (tx: number, y: number, s: number, len: number, f: number, front: boolean) => {
+  const bough = (tx: number, y: number, s: number, len: number, f: number, front: boolean, br = brush, core = t[0]) => {
     const droop = (0.1 + (1 - f) * 0.3 + r() * 0.12) * len;
     const curl = len * (0.05 + r() * 0.08);
     const at = (u: number): [number, number] => [tx + s * len * u, y + droop * Math.sin(u * 2.2) * 0.9 - curl * u * u * u];
     if (!small) {
-      g.strokeStyle = t[0]; g.lineWidth = d * (front ? 0.9 : 1.3);
+      g.strokeStyle = core; g.lineWidth = d * (front ? 0.9 : 1.3);
       g.beginPath(); g.moveTo(tx, y);
       for (let u = 0.1; u <= 1.001; u += 0.1) { const [px, py] = at(u); g.lineTo(px, py); }
       g.stroke();
     }
-    const fans = Math.max(2, Math.round(len / (d * (small ? 1.1 : 0.8))));
+    const fans = Math.max(2, Math.round(len / (d * (small ? 1.1 : 0.7))));
     for (let k = 1; k <= fans; k++) {
       const u = k / fans;
       const [px, py] = at(u);
-      const hang = d * (0.7 + u * 0.9) * (0.8 + r() * 0.5);
-      const strands = small ? 3 : 5 + ((r() * 3) | 0);
+      const hang = d * (0.7 + u * 0.9) * (0.75 + r() * 0.6);
+      const strands = small ? 3 : 6 + ((r() * 3) | 0);
       for (let m = 0; m < strands; m++) {
-        // a fan from lying-out to hanging-down; the upper strands face the sky
-        const a = (m / (strands - 1)) * 1.25 + (r() - 0.5) * 0.25;
-        const nx = px + s * Math.cos(a) * hang * 0.8, ny = py + Math.sin(a) * hang - hang * 0.15;
+        // a fan from lying-out to hanging-down; the upper strands face the sky and are shorter
+        const a = (m / (strands - 1)) * 1.3 + (r() - 0.5) * 0.3;
         const upper = a < 0.35;
-        const rim = upper && ((s === side && u > 0.45 && r() < 0.8) || (f > 0.8 && r() < 0.6));
+        const l = hang * (upper ? 0.65 : 1) * (0.75 + r() * 0.4);
+        const nx = px + s * Math.cos(a) * l * 0.8, ny = py + Math.sin(a) * l - l * 0.15;
+        const rim = upper && ((s === side && u > 0.5 && r() < 0.8) || (f > 0.85 && r() < 0.5));
         const v = rim ? 3 : upper ? 2 : a > 0.95 ? 0 : front && r() < 0.5 ? 0 : 1;
-        brush.line(v, px, py, nx, ny);
+        br.line(v, px, py, nx, ny);
       }
     }
-    if (!small) brush.flush(lw);
+    if (!small) br.flush(lw);
   };
   const n = Math.round(clamp(h / 8, 5, 48));
+  if (!small) {
+    // the far side of the crown first: darker boughs between the visible ones give the tree its volume
+    const back: Tone = [t[0], t[0], mixh(t[0], t[1], 0.5), mixh(t[1], t[3], 0.25)];
+    const bb = new Brush(g, back);
+    for (let i = 0; i < n; i++) {
+      const f = (i + 0.5) / n;
+      const y = base - h * 0.1 - f * h * 0.86;
+      const reach = (w * Math.pow(1 - f, 0.75) + d) * (0.6 + r() * 0.4);
+      for (const s of [-1, 1]) bough(x + lean * (base - y) / h, y, s, reach * (0.7 + r() * 0.3), f, false, bb, t[0]);
+    }
+  }
   for (let i = 0; i < n; i++) {
     const f = i / (n - 1);
     const y = base - h * 0.1 - f * h * 0.86 + (r() - 0.5) * h * 0.02;
     const tx = x + lean * (base - y) / h;
     // a slightly convex cone with ragged edges and the odd missing bough
     const reach = (w * Math.pow(1 - f, 0.75) + d) * (0.65 + r() * 0.6);
-    for (const s of [-1, 1]) if (r() > 0.08 || f > 0.8) bough(tx, y, s, reach * (0.75 + r() * 0.45), f, false);
+    // small trees keep their boughs inside their silhouette, or they read as crosses
+    for (const s of [-1, 1]) if (r() > 0.08 || f > 0.8) { const len = reach * (0.75 + r() * 0.45); bough(tx, y, s, small ? Math.min(len, w * (1 - f) + d * 0.4) : len, f, false); }
     // boughs reaching toward the camera hide the trunk and give the crown depth
     if (!small && f < 0.85) bough(tx + (r() - 0.5) * d, y + d * 0.6, r() < 0.5 ? -1 : 1, reach * (0.25 + r() * 0.25), f, true);
   }
@@ -188,9 +201,9 @@ function spruce(g: Ctx, r: () => number, x: number, base: number, h: number, t: 
   brush.flush(lw);
 }
 
-/** Short grass strokes over a slope, lighter toward its lit crest. */
+/** Grass over a slope: tapered, gently curved blades, lighter toward the lit crest. */
 function grass(g: Ctx, r: () => number, t: Tone, W: number, crest: (x: number) => number, bottom: number, n: number, len: number) {
-  const brush = new Brush(g, t);
+  const p = [new Path2D(), new Path2D(), new Path2D(), new Path2D()];
   for (let i = 0; i < n; i++) {
     const x = r() * W;
     const top = crest(x);
@@ -198,9 +211,14 @@ function grass(g: Ctx, r: () => number, t: Tone, W: number, crest: (x: number) =
     const y = top + 2 + depth * (bottom - top);
     const l = len * (0.5 + r() * 0.8) * (0.6 + depth * 0.8);
     const v = depth < 0.08 ? (r() < 0.25 ? 3 : 2) : r() < 0.3 ? 2 : r() < 0.6 ? 1 : 0;
-    brush.line(v, x, y, x + (r() - 0.45) * l * 0.5, y - l);
+    const lean = (r() - 0.45) * l * 0.55, bw = Math.max(0.35, l * 0.045) * (0.7 + r() * 0.6);
+    const b = p[v];
+    b.moveTo(x - bw, y);
+    b.quadraticCurveTo(x + lean * 0.25 - bw * 0.3, y - l * 0.6, x + lean, y - l);
+    b.quadraticCurveTo(x + lean * 0.3 + bw * 0.5, y - l * 0.5, x + bw, y);
+    b.closePath();
   }
-  brush.flush(Math.max(0.6, len * 0.09));
+  p.forEach((b, i) => { g.fillStyle = t[i]; g.fill(b); });
 }
 
 /** Volume over a finished layer: warm bounce near the sun, cool shade lower down. */
@@ -235,11 +253,11 @@ function cloud(W: number, th: number, q: number, seed: number) {
   const r = rng(seed);
   const bw = W * (0.55 + r() * 0.35);
   const [c, g] = canvas(bw, th * 3.2, q);
-  const wv = wave(r, bw);
-  const shape = (grow: number, dy: number) => {
+  /** A band of overlapping puffs along part of the cloud, tapering at both ends. */
+  const shape = (grow: number, dy: number, a0 = 0, a1 = 1, wv = wave(r, bw)) => {
     const p = new Path2D();
-    for (let x = 0; x < bw; x += th * 0.18) {
-      const env = Math.pow(Math.sin(Math.PI * x / bw), 0.6);
+    for (let x = a0 * bw; x < a1 * bw; x += th * 0.16) {
+      const env = Math.pow(Math.sin(Math.PI * (x / bw - a0) / (a1 - a0)), 0.6);
       const rad = th * env * (0.3 + 0.7 * wv(x)) * grow + 0.5;
       const cy = th * 1.9 - rad * 0.55 + dy;
       p.moveTo(x + rad * 1.3, cy); p.ellipse(x, cy, rad * 1.3, rad, 0, 0, 6.29);
@@ -248,11 +266,26 @@ function cloud(W: number, th: number, q: number, seed: number) {
   };
   const body = g.createLinearGradient(0, th * 0.6, 0, th * 2.5);
   body.addColorStop(0, '#dca4a8'); body.addColorStop(0.45, '#f7e4c8'); body.addColorStop(1, '#f2c487');
+  // a fainter, broken tier behind and above: stratus is never one clean lens
+  g.filter = `blur(${2.2 * q}px)`;
+  g.globalAlpha = 0.55;
+  g.fillStyle = body; g.fill(shape(0.6, -th * 0.55, 0.05 + r() * 0.2, 0.55 + r() * 0.2));
+  g.fill(shape(0.45, -th * 0.4, 0.5 + r() * 0.15, 0.92));
+  g.globalAlpha = 1;
   g.filter = `blur(${0.9 * q}px)`;
   g.fillStyle = body; g.fill(shape(1, 0));
   g.filter = `blur(${1.6 * q}px)`;
   g.fillStyle = 'rgba(255,246,226,.55)'; g.fill(shape(0.6, -th * 0.15));
   g.fillStyle = 'rgba(250,196,130,.5)'; g.fill(shape(0.45, th * 0.32));
+  // wisps trailing off the ends, combed by the wind
+  g.filter = `blur(${1.2 * q}px)`;
+  for (let i = 0; i < 14; i++) {
+    const x = bw * (0.1 + r() * 0.8), y = th * (1.5 + r() * 0.7);
+    // never wider than the room left to the canvas edge, or the wisp would end in a cut
+    const rx = Math.min(th * (1 + r() * 2.5), x - 4, bw - x - 4);
+    g.fillStyle = `rgba(250,232,206,${0.12 + r() * 0.15})`;
+    g.beginPath(); g.ellipse(x, y, rx, 0.8 + r() * 1.6, 0, 0, 6.29); g.fill();
+  }
   return c;
 }
 
@@ -266,13 +299,14 @@ function glow(color: RGB, q: number) {
 
 /** A grass tuft for the foreground: tapered blades, dark with sunlit edges. */
 function tuft(r: () => number, h: number, q: number, sunRight: boolean): Sprite {
-  const w = h * 0.9;
+  // wide enough that no blade, leaning or blurred, ever reaches the sprite's edge
+  const w = h * 1.5;
   const [c, g] = canvas(w, h, q);
-  const blades = 9 + ((r() * 8) | 0);
+  const blades = 11 + ((r() * 9) | 0);
   for (let i = 0; i < blades; i++) {
-    const bx = w / 2 + (r() - 0.5) * w * 0.35;
-    const bh = h * (0.45 + r() * 0.55);
-    const tip = bx + (r() - 0.5) * w * 0.7;
+    const bx = w / 2 + (r() - 0.5) * h * 0.3;
+    const bh = h * (0.4 + r() * 0.55);
+    const tip = bx + (r() - 0.5) * h * 0.6;
     const bw = 1.2 + r() * 2.2;
     const col = r() < 0.5 ? '#10251a' : r() < 0.75 ? '#163021' : '#203d28';
     g.fillStyle = col;
@@ -395,16 +429,31 @@ function build(W: number, H: number, hY: number, sunX: number, q: number) {
   });
 
   // near spruces framing the frame; each one its own sprite so it can bend in the wind
-  const near = (left: boolean) => [0, 1, 2].map((i): Sprite => {
+  const tree = (left: boolean, i: number): Sprite => {
     const rr = rng(left ? 51 + i : 67 + i);
     const h = H * (0.82 + rr() * 0.36) * (1 - i * 0.12);
-    const w = h * 0.5;
-    const [c, g] = canvas(w, h * 1.04, q);
-    spruce(g, rr, w / 2, h * 1.04, h, tone('#1f3d2a'), left ? 1e9 : -1e9);
-    light(g, w, 0, h * 1.04, left ? w : 0, h * 0.35, 0.22, 0.65);
+    // the widest bough reaches ~0.46 h from the trunk; the margin keeps every needle inside the sprite
+    const w = h * 1.15, ch = h * 1.08;
+    const [c, g] = canvas(w, ch, q);
+    spruce(g, rr, w / 2, ch, h, tone('#1f3d2a'), left ? 1e9 : -1e9);
+    light(g, w, 0, ch, left ? w : 0, h * 0.35, 0.22, 0.65);
+    // depth: the crown darkens toward the trunk, where little light gets in
+    g.save();
+    g.globalCompositeOperation = 'source-atop';
+    const ao = g.createLinearGradient(w / 2 - h * 0.3, 0, w / 2 + h * 0.3, 0);
+    ao.addColorStop(0, 'rgba(5,14,9,0)'); ao.addColorStop(0.5, 'rgba(5,14,9,.38)'); ao.addColorStop(1, 'rgba(5,14,9,0)');
+    g.fillStyle = ao; g.fillRect(0, 0, w, ch);
+    g.restore();
+    // backlight scattering around the foliage, painted at a quarter size and scaled up soft
+    const [halo, hg] = canvas(w / 4, ch / 4, 1);
+    hg.filter = `blur(${Math.max(3, h * 0.008)}px)`;
+    hg.drawImage(silhouette(c, '#ffd08a'), 0, 0, w / 4, ch / 4);
     const cx = left ? W * (0.04 + i * 0.075) - W * 0.03 * i : W * (0.96 - i * 0.075) + W * 0.03 * i;
-    return { day: c, night: silhouette(c, '#060f0b'), x: cx - w / 2, y: H - h * 1.04 + H * 0.02, w, h: h * 1.04 };
-  }).reverse();
+    return { day: c, night: silhouette(c, '#060f0b'), halo, x: cx - w / 2, y: H - ch + H * 0.02, w, h: ch };
+  };
+  // the near spruces are the costliest paint; they are made one per frame while the opening is still dark
+  const near: (Sprite | undefined)[] = [];
+  const jobs = [true, false].flatMap((left, k) => [2, 1, 0].map((i, j) => () => { near[k * 3 + j] = tree(left, i); }));
 
   const tr = rng(99);
   const tufts = Array.from({ length: Math.round(W / 70) }, (_, i) => {
@@ -421,7 +470,9 @@ function build(W: number, H: number, hY: number, sunX: number, q: number) {
     mg.beginPath(); mg.ellipse(r() * W * 1.4, H * 0.04, W * (0.05 + r() * 0.1), H * (0.008 + r() * 0.012), 0, 0, 6.29); mg.fill();
   }
   const motes = Array.from({ length: 46 }, () => ({ x: r() * W, y: hY + r() * ground, s: 0.6 + r() * 1.2, v: 5 + r() * 12, p: r() * 6.28 }));
-  return { streaks, ridges: [far, l1, l2], near: [...near(true), ...near(false)], meadow, tufts, clouds, mist, motes, pollen: glow(hex('#fff2cf'), q), fly: glow(AMBER, q), q };
+  // kept away from the centre so they never sit on the title or the sun
+  const bokeh = Array.from({ length: 7 }, (_, i) => ({ x: W * (i % 2 ? 0.62 + r() * 0.34 : 0.04 + r() * 0.34), y: H * (0.45 + r() * 0.5), s: H * (0.05 + r() * 0.07), v: 3 + r() * 6, p: r() * 6.28 }));
+  return { streaks, ridges: [far, l1, l2], near, jobs, meadow, tufts, clouds, mist, motes, bokeh, pollen: glow(hex('#fff2cf'), q), fly: glow(AMBER, q), q };
 }
 
 export interface SplashOptions {
@@ -498,6 +549,8 @@ export function playSplash({ ready, target }: SplashOptions) {
     if (freeze) st = freeze;
     else if (!waiting) st += dt;
     const s = scene;
+    // one near spruce per frame while the screen is still dark; all at once if it is already lit (a resize)
+    do s.jobs.shift()?.(); while (s.jobs.length && st > 0.3);
     const shift = dotY - builtY;
     const hY = dotY;
     const night = smooth((st - T.night) / (T.fade + 0.4 - T.night));
@@ -620,16 +673,21 @@ export function playSplash({ ready, target }: SplashOptions) {
     const motesA = 1 - smooth((st - T.fade) / 0.6);
     // fireflies answer the beat in four groups, one group per beat; the waves light them as they pass
     const beatNo = Math.floor(wall / BEAT), beatF = (wall / BEAT) % 1;
+    const mote = (x: number, y: number, size: number, day: number, dusk: number) => {
+      g.globalAlpha = clamp(day * (1 - fire) * motesA);
+      if (g.globalAlpha > 0) g.drawImage(s.pollen, x - size / 2, y - size / 2, size, size);
+      g.globalAlpha = clamp(dusk * fire * motesA);
+      if (g.globalAlpha > 0) g.drawImage(s.fly, x - size / 2, y - size / 2, size, size);
+    };
+    g.globalCompositeOperation = 'lighter';
     s.motes.forEach((m, idx) => {
-      const y = m.y + shift - ((wall * m.v) % (H * 0.5));
+      const rise = (wall * m.v) % (H * 0.5);
+      // fade in at the bottom of the climb and out at the top, so no mote ever pops
+      const life = smooth(rise / (H * 0.06)) * smooth((H * 0.5 - rise) / (H * 0.06));
+      const y = m.y + shift - rise;
       const x = m.x + Math.sin(wall * 0.6 + m.p) * 12 + Math.sin(wall * 1.3 + m.p * 2) * 4;
       const blink = clamp(0.2 + 0.8 * (beatNo % 4 === idx % 4 ? pluck(beatF) : 0) + ripple(x, y));
-      const size = m.s * 9 * (1 + fire * blink * 0.8);
-      g.globalCompositeOperation = 'lighter';
-      g.globalAlpha = clamp(0.4 * (1 - fire) * motesA);
-      if (g.globalAlpha > 0) g.drawImage(s.pollen, x - size / 2, y - size / 2, size, size);
-      g.globalAlpha = clamp(fire * blink * motesA);
-      if (g.globalAlpha > 0) g.drawImage(s.fly, x - size / 2, y - size / 2, size, size);
+      mote(x, y, m.s * 9 * (1 + fire * blink * 0.8), 0.4 * life, blink * life);
     });
     g.globalCompositeOperation = 'source-over';
     // near spruces bend from the root in the wind and part like curtains at night
@@ -637,15 +695,30 @@ export function playSplash({ ready, target }: SplashOptions) {
     const bendDraw = (sp: Sprite, dx: number, bend: number, lift: number) => {
       const base = sp.y + sp.h; // bends from its own root
       g.setTransform(q, 0, q * bend, q, q * (dx - bend * base), q * lift);
+      if (sp.halo && lit > 0) {
+        g.globalCompositeOperation = 'lighter';
+        g.globalAlpha = 0.2 * lit * smooth(st / 1.5);
+        g.drawImage(sp.halo, sp.x, sp.y, sp.w, sp.h);
+        g.globalCompositeOperation = 'source-over';
+      }
       g.globalAlpha = 1; g.drawImage(sp.day, sp.x, sp.y, sp.w, sp.h);
       if (night > 0) { g.globalAlpha = night; g.drawImage(sp.night, sp.x, sp.y, sp.w, sp.h); }
     };
     const lift = descend * H * 0.35 + night * H * 0.04;
     // wind on the bar, and the sound waves push everything away from the period as they pass
-    const push = (sp: Sprite, l: number) => ripple(sp.x + sp.w / 2, sp.y + sp.h + l) * (sp.x + sp.w / 2 > dotX ? 1 : -1);
-    s.near.forEach((sp, i) => bendDraw(sp, (sp.x < W / 2 ? -1 : 1) * part * (1 + (i % 3) * 0.15), -0.012 * gust(sp.x, wall) - 0.004 - 0.008 * bar(wall) - 0.045 * push(sp, lift), lift));
-    for (const t of s.tufts) bendDraw(t, 0, -0.16 * gust(t.x, wall) - 0.05 - 0.07 * bar(wall) - 0.35 * push(t, lift * 1.1), lift * 1.1);
+    const centre = (sp: Sprite) => sp.x + sp.w / 2;
+    const push = (sp: Sprite, l: number) => ripple(centre(sp), sp.y + sp.h + l) * (centre(sp) > dotX ? 1 : -1);
+    s.near.forEach((sp, i) => sp && bendDraw(sp, (centre(sp) < W / 2 ? -1 : 1) * part * (1 + (i % 3) * 0.15), -0.012 * gust(centre(sp), wall) - 0.004 - 0.008 * bar(wall) - 0.045 * push(sp, lift), lift));
+    for (const t of s.tufts) bendDraw(t, 0, -0.16 * gust(centre(t), wall) - 0.05 - 0.07 * bar(wall) - 0.35 * push(t, lift * 1.1), lift * 1.1);
     g.setTransform(q, 0, 0, q, 0, 0);
+    // a few lights drifting right in front of the lens, far out of focus
+    g.globalCompositeOperation = 'lighter';
+    for (const b of s.bokeh) {
+      const x = b.x + Math.sin(wall * 0.25 + b.p) * W * 0.02;
+      const y = b.y + shift - wall * b.v + Math.sin(wall * 0.4 + b.p) * H * 0.01;
+      mote(x, y, b.s, 0.09, 0.16 * (0.6 + 0.4 * Math.sin(wall * 1.1 + b.p)));
+    }
+    g.globalCompositeOperation = 'source-over';
     // night settles into --bg with Home's soft green glow around the hero
     if (night > 0) {
       g.globalAlpha = night * 0.9;
@@ -661,7 +734,10 @@ export function playSplash({ ready, target }: SplashOptions) {
       g.globalCompositeOperation = 'lighter';
       g.shadowColor = css(JADE, 1); g.shadowBlur = 26 * q;
       for (const [width, alpha] of [[14 + w.R * 0.04, 0.12], [4 + w.R * 0.01, 0.2]]) {
-        g.lineWidth = width; g.strokeStyle = css(JADE, alpha * a);
+        // brightest where it rolls toward the viewer, dissolving into the horizon at its ends
+        const fadeIn = g.createLinearGradient(0, dotY, 0, dotY + w.R * 0.45);
+        fadeIn.addColorStop(0, css(JADE, 0)); fadeIn.addColorStop(0.6, css(JADE, alpha * a)); fadeIn.addColorStop(1, css(JADE, alpha * a));
+        g.lineWidth = width; g.strokeStyle = fadeIn;
         g.beginPath(); g.ellipse(dotX, dotY + 4, w.R, w.R * 0.45, 0, 0.04, Math.PI - 0.04); g.stroke();
       }
       g.restore();
