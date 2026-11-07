@@ -21,7 +21,7 @@ struct NativeTrack: Equatable, Identifiable {
         album = value["album"] as? String ?? ""
         duration = max(0, value["duration"] as? Double ?? 0)
         reaction = value["reaction"] as? Int ?? 0
-        likedAt = value["likedAt"] as? Double ?? value["addedAt"] as? Double ?? 0
+        likedAt = (value["likedAt"] as? NSNumber)?.doubleValue ?? (value["addedAt"] as? NSNumber)?.doubleValue ?? 0
         cover = value["cover"] as? String
         ok = value["ok"] as? Bool ?? true
         key = NativeSearchText.normalize("\(title) \(artist) \(album)")
