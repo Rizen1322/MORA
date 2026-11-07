@@ -45,17 +45,20 @@ fn config(device: &cpal::Device, sr: Option<u32>) -> Result<cpal::SupportedStrea
         .supported_output_configs()
         .map_err(|e| e.to_string())?
         .collect();
-    for rate in sr.map_or(vec![48000, 44100, 96000, 88200], |s| vec![s]) {
-        if let Some(r) = ranges.iter().find(|r| {
-            r.channels() == 2
-                && r.min_sample_rate().0 <= rate
-                && r.max_sample_rate().0 >= rate
-                && r.sample_format() == cpal::SampleFormat::F32
-        }) {
-            return Ok((*r).with_sample_rate(cpal::SampleRate(rate)));
+    // Stereo first; a surround device (e.g. a 7.1 headset in shared mode) gets L/R on its front pair.
+    for stereo_only in [true, false] {
+        for rate in sr.map_or(vec![48000, 44100, 96000, 88200], |s| vec![s]) {
+            if let Some(r) = ranges.iter().find(|r| {
+                (if stereo_only { r.channels() == 2 } else { r.channels() > 2 })
+                    && r.min_sample_rate().0 <= rate
+                    && r.max_sample_rate().0 >= rate
+                    && r.sample_format() == cpal::SampleFormat::F32
+            }) {
+                return Ok((*r).with_sample_rate(cpal::SampleRate(rate)));
+            }
         }
     }
-    Err("Audio output must support stereo float PCM at 44.1, 48, 88.2 or 96 kHz".into())
+    Err("Audio output must support float PCM with at least two channels at 44.1, 48, 88.2 or 96 kHz".into())
 }
 struct Output {
     _stream: cpal::Stream,
@@ -74,24 +77,26 @@ fn output(device: &cpal::Device, c: &cpal::SupportedStreamConfig) -> Result<Outp
     let p = presented.clone();
     let error = Arc::new(std::sync::Mutex::new(None));
     let err = error.clone();
+    let channels = c.channels() as usize;
     // The device callback only moves fixed-size frames. DSP, JSON, I/O and allocations run on the producer.
     let stream = device
         .build_output_stream(
             &c.config(),
             move |data: &mut [f32], _| {
                 let mut missed = false;
-                for frame in data.chunks_exact_mut(2) {
+                for frame in data.chunks_exact_mut(channels) {
                     let sample = consumer.pop().unwrap_or_else(|_| {
                         missed = true;
                         [0., 0.]
                     });
-                    frame.copy_from_slice(&sample);
+                    frame[..2].copy_from_slice(&sample);
+                    frame[2..].fill(0.);
                     let _ = monitor.push(sample);
                 }
                 if missed {
                     u.fetch_add(1, Ordering::Relaxed);
                 }
-                p.fetch_add((data.len() / 2) as u64, Ordering::Relaxed);
+                p.fetch_add((data.len() / channels) as u64, Ordering::Relaxed);
             },
             move |e| {
                 if let Ok(mut slot) = err.lock() {
