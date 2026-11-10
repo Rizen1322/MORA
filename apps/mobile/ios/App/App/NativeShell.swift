@@ -37,12 +37,15 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
         tabs.viewControllers = NativeTab.allCases.enumerated().map { index, tab in
             let page = UIViewController()
             page.view.backgroundColor = .clear
+            page.view.isOpaque = false
             page.tabBarItem = UITabBarItem(title: tab.item.0, image: UIImage(systemName: tab.item.1), tag: index)
             return page
         }
         tabs.view.backgroundColor = .clear
+        tabs.view.isOpaque = false
         tabs.tabBar.tintColor = UIColor(Color.moraMint)
         tabsOverlay.backgroundColor = .clear
+        tabsOverlay.isOpaque = false
         tabsOverlay.frame = view.bounds
         tabsOverlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         tabsOverlay.bar = tabs.tabBar
