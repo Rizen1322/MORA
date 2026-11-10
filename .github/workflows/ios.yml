@@ -102,7 +102,7 @@ jobs:
 
   ui:
     if: inputs.ui_only == true
-    runs-on: macos-15-intel
+    runs-on: macos-15
     timeout-minutes: 25
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
@@ -120,7 +120,8 @@ jobs:
           (cd apps/mobile && npx cap sync ios)
       - name: Build simulator app
         run: |
-          DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for r,a in json.load(sys.stdin)["devices"].items() if "iOS" in r for d in a if "iPhone" in d["name"]))')
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/mora-ui-devices.json"
+          DEVICE=$(python3 -c 'import json,sys; rows=[d for r,a in json.load(open(sys.argv[1]))["devices"].items() if r.endswith("iOS-26-2") for d in a if "iPhone" in d["name"]]; assert rows, "iOS 26.2 simulator is required for Liquid Glass verification"; print(next((d["udid"] for d in rows if d["name"] == "iPhone 17 Pro"), rows[0]["udid"]))' "$RUNNER_TEMP/mora-ui-devices.json")
           echo "DEVICE=$DEVICE" >> "$GITHUB_ENV"
           xcrun simctl boot "$DEVICE"
           xcrun simctl bootstatus "$DEVICE" -b
@@ -144,6 +145,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/mora-ui-diagnostics"
           cp "$RUNNER_TEMP"/mora-ui-*.log "$RUNNER_TEMP/mora-ui-diagnostics/" 2>/dev/null || true
+          cp "$RUNNER_TEMP"/mora-ui-devices.json "$RUNNER_TEMP/mora-ui-diagnostics/" 2>/dev/null || true
           cp "$RUNNER_TEMP"/mora-ui-process.txt "$RUNNER_TEMP"/mora-native-home.png "$RUNNER_TEMP/mora-ui-diagnostics/" 2>/dev/null || true
           if [ -n "$DEVICE" ]; then
             xcrun simctl spawn "$DEVICE" log show --last 3m --style compact --predicate 'process == "App" OR eventMessage CONTAINS "ru.mora.player"' > "$RUNNER_TEMP/mora-ui-diagnostics/runtime.log" 2>&1 || true
