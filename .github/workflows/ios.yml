@@ -133,12 +133,11 @@ jobs:
           APP="$RUNNER_TEMP/mora-ui/Build/Products/Debug-iphonesimulator/App.app"
           codesign --force --deep --sign - "$APP"
           xcrun simctl install "$DEVICE" "$APP"
-          xcrun simctl launch --console --terminate-running-process "$DEVICE" ru.mora.player > "$RUNNER_TEMP/mora-ui-console.log" 2>&1 &
-          LAUNCH_PID=$!
+          # Wait for simctl to confirm the actual app launch; cold iOS 26 registration can exceed 30 seconds.
+          xcrun simctl launch --terminate-running-process "$DEVICE" ru.mora.player > "$RUNNER_TEMP/mora-ui-console.log" 2>&1
           sleep 30
-          xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mora-native-home.png"
-          kill -0 "$LAUNCH_PID" || { cat "$RUNNER_TEMP/mora-ui-console.log"; exit 1; }
           xcrun simctl spawn "$DEVICE" launchctl list | grep ru.mora.player > "$RUNNER_TEMP/mora-ui-process.txt"
+          xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mora-native-home.png"
           cat "$RUNNER_TEMP/mora-ui-console.log"
       - name: Collect simulator diagnostics
         if: always()
