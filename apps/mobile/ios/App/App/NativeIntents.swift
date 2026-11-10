@@ -1,0 +1,89 @@
+import AppIntents
+import MediaPlayer
+
+/// Siri and Shortcuts («Включи волну в MORA», «Что играет в MORA», «Лайкни трек в MORA»).
+/// They act through the same shell store as the native screens. Starting the wave needs the page,
+/// which only runs in the foreground, so that intent opens the app; the others work while music plays.
+
+enum NativeIntentError: Error, CustomLocalizedStringResourceConvertible {
+    case notReady
+    var localizedStringResource: LocalizedStringResource { "MORA ещё загружается — попробуйте через пару секунд" }
+}
+
+@MainActor private enum NativeIntentShell {
+    /// The shell once the page has loaded (a cold start from Siri needs a few seconds).
+    static func ready() async -> NativeShellStore? {
+        for _ in 0..<80 {
+            if let store = NativeShellStore.shared, store.webView != nil, store.ui.loaded { return store }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        return nil
+    }
+
+    /// The track that plays now: the native host's, or the page's when the web engine plays.
+    static func currentTrackId(_ store: NativeShellStore) async -> String? {
+        if let host = store.host, host.active {
+            let id: String? = await withCheckedContinuation { done in
+                host.playerState { result in
+                    if case .success(let value) = result { done.resume(returning: NativePlayerState(value).trackId) } else { done.resume(returning: nil) }
+                }
+            }
+            if let id, !id.isEmpty { return id }
+        }
+        return store.ui.now?.id
+    }
+}
+
+struct StartWaveIntent: AppIntent {
+    static let title: LocalizedStringResource = "Включить волну"
+    static let description = IntentDescription("Запускает «Мою волну» в MORA с источником, выбранным на главной.")
+    static let openAppWhenRun = true
+
+    @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+        guard let store = await NativeIntentShell.ready() else { throw NativeIntentError.notReady }
+        let wave = store.ui.wave
+        // The page's `wave` command toggles a wave that already plays.
+        if wave.active != nil && wave.playing { return .result(dialog: "Волна уже играет") }
+        store.run("wave", ["source": (wave.active ?? wave.preferred).rawValue])
+        return .result(dialog: "Включаю волну")
+    }
+}
+
+struct NowPlayingIntent: AppIntent {
+    static let title: LocalizedStringResource = "Что сейчас играет"
+    static let description = IntentDescription("Называет трек и исполнителя, которые играют в MORA.")
+
+    @MainActor func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
+        let info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        let title = info[MPMediaItemPropertyTitle] as? String ?? NativeShellStore.shared?.miniTitle ?? ""
+        let artist = info[MPMediaItemPropertyArtist] as? String ?? NativeShellStore.shared?.miniArtist ?? ""
+        guard !title.isEmpty else { return .result(value: "", dialog: "Сейчас ничего не играет") }
+        let text = artist.isEmpty ? title : "\(title) — \(artist)"
+        return .result(value: text, dialog: "\(text)")
+    }
+}
+
+struct LikeCurrentTrackIntent: AppIntent {
+    static let title: LocalizedStringResource = "Лайкнуть текущий трек"
+    static let description = IntentDescription("Добавляет играющий трек в «Любимое». Без сети отметка сохранится и отправится позже.")
+
+    @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+        guard let store = NativeShellStore.shared else { throw NativeIntentError.notReady }
+        guard let id = await NativeIntentShell.currentTrackId(store), !id.isEmpty else { return .result(dialog: "Сейчас ничего не играет") }
+        if store.reaction(id) > 0 { return .result(dialog: "Трек уже в любимом") }
+        // The same outbox as the lock-screen like: saved now, synced when the page can take it.
+        store.react(id: id, value: 1)
+        return .result(dialog: "Трек в любимом")
+    }
+}
+
+struct MoraShortcuts: AppShortcutsProvider {
+    static var appShortcuts: [AppShortcut] {
+        AppShortcut(intent: StartWaveIntent(), phrases: ["Включи волну в \(.applicationName)", "Запусти мою волну в \(.applicationName)"],
+                    shortTitle: "Моя волна", systemImageName: "waveform")
+        AppShortcut(intent: NowPlayingIntent(), phrases: ["Что играет в \(.applicationName)", "Какой трек играет в \(.applicationName)"],
+                    shortTitle: "Что играет", systemImageName: "music.note")
+        AppShortcut(intent: LikeCurrentTrackIntent(), phrases: ["Лайкни трек в \(.applicationName)", "Мне нравится этот трек в \(.applicationName)"],
+                    shortTitle: "Нравится", systemImageName: "heart")
+    }
+}

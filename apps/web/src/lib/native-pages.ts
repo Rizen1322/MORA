@@ -1,4 +1,4 @@
-import { keyNameRu } from '@automix/core';
+import { BUILTIN_PRESETS, EQ_BANDS, EQ_MAX_DB, keyNameRu } from '@automix/core';
 import { describeNativeCatalog, nativeCatalogCommands } from './native-catalog.ts';
 import { api, type ExternalTrack, type HealthStatus, type ImportJob, type ImportRow, type ProviderInfo, type Track, type TransitionLogItem } from './api.ts';
 import { trackArtists, hasTrackArtist } from './artists.ts';
@@ -132,20 +132,30 @@ function playlists(): Screen {
   ] };
 }
 
+/** A playlist's view order on the phone; the saved order stays as it is (and can still be dragged when shown). */
+const playlistSort = new Map<string, 'title' | 'artist' | 'duration'>();
+
 async function playlist(id: string): Promise<Screen> {
   const pl = await api.playlist(id);
-  const rows = pl.entries.map((e) => ({ e, t: trackOf(e.trackId) })).filter((r): r is { e: typeof r.e; t: Track } => !!r.t);
+  const saved = pl.entries.map((e) => ({ e, t: trackOf(e.trackId) })).filter((r): r is { e: typeof r.e; t: Track } => !!r.t);
+  const sort = playlistSort.get(id);
+  const byTrack = new Map<string, typeof saved>();
+  for (const r of saved) byTrack.set(r.t.id, [...(byTrack.get(r.t.id) ?? []), r]);
+  const rows = sort ? sortTracks(saved.map((r) => r.t), sort, 1).map((t) => byTrack.get(t.id)!.shift()!) : saved;
   const ctx = { type: 'playlist', id: pl.id, label: pl.name };
   const list = rows.map((r) => r.t);
   return { title: pl.name, search: list.length ? 'Найти в плейлисте' : undefined, sections: [
     header(list.map((t) => t.id), ctx, `${tracksWord(list.length)}, ${fmtTotal(list.reduce((a, t) => a + t.duration, 0))}`, [
       button('Переименовать', 'renamePlaylist', { id }, { symbol: 'pencil', prompt: { title: 'Переименовать плейлист', initial: pl.name, placeholder: 'Название' } }),
+      { kind: 'choice', title: 'Порядок', value: sort ?? '', act: { name: 'playlistSort', args: { id } },
+        options: [['', 'Как в плейлисте'], ['title', 'По названию'], ['artist', 'По исполнителю'], ['duration', 'По длительности']] },
+      button('Скачать на iPhone', 'downloadTracks', { ids: list.map((t) => t.id) }, { symbol: 'arrow.down.circle' }),
       button('Экспорт', 'exportPlaylist', { id }, { symbol: 'square.and.arrow.up' }),
       // The mix builder runs a web worker and its own preview: it stays a web sheet.
       { kind: 'link', title: 'Собрать микс', symbol: 'wand.and.stars', path: `/playlist/${id}/mix` },
       button('Удалить', 'deletePlaylist', { id }, { symbol: 'trash', style: 'destructive', confirm: { title: 'Удалить плейлист?', text: `Плейлист «${pl.name}» будет удалён. Треки останутся в медиатеке.`, button: 'Удалить' } }),
     ]),
-    list.length ? { ...tracks([], ctx), reorder: { name: 'reorderPlaylist', args: { id, entries: rows.map((r) => r.e.entryId) } },
+    list.length ? { ...tracks([], ctx), reorder: sort ? undefined : { name: 'reorderPlaylist', args: { id, entries: rows.map((r) => r.e.entryId) } },
       rows: rows.map(({ e, t }) => ({ kind: 'track', id: t.id, remove: { title: 'Убрать из плейлиста', symbol: 'minus.circle', act: { name: 'removeFromPlaylist', args: { id, entry: e.entryId } } } })) }
       : { title: 'У каждой истории есть первый трек', rows: [text('Добавьте музыку через меню трека.'), { kind: 'link', title: 'Выбрать из медиатеки', path: '/library' }] },
   ] };
@@ -580,6 +590,25 @@ async function trackAnalysis(id: string): Promise<Screen> {
   return { title: 'Анализ трека', sections: [{ rows }] };
 }
 
+// MARK: Sound
+
+const bandLabel = (f: number) => (f >= 1000 ? `${f / 1000} кГц` : `${f} Гц`);
+
+/** The web «Звук» panel's equalizer; the native mixer receives the same tone (controller.setTone). */
+function sound(): Screen {
+  const s = st().settings;
+  if (!s) return { title: 'Звук', sections: [{ rows: [text('Настройки ещё загружаются.')] }] };
+  const tone = s.sound.tone, presets = [...BUILTIN_PRESETS, ...s.sound.presets];
+  const preset = presets.find((p) => p.gains.every((g, i) => Math.abs(g - tone.gains[i]) < 0.05))?.name ?? '';
+  return { title: 'Звук', sections: [
+    { footer: 'Вывод звука (AirPlay, Bluetooth) выбирается кнопкой в плеере.', rows: [
+      { kind: 'toggle', title: 'Эквалайзер', on: tone.enabled, act: { name: 'tone' } },
+      { kind: 'choice', title: 'Пресет', value: preset, options: [...(preset ? [] : [['', 'Свой'] as [string, string]]), ...presets.map((p): [string, string] => [p.name, p.name])], act: { name: 'tonePreset' } },
+    ] },
+    { title: 'Полосы', rows: EQ_BANDS.map((f, i): Row => ({ kind: 'slider', title: bandLabel(f), value: tone.gains[i], min: -EQ_MAX_DB, max: EQ_MAX_DB, step: 0.5, unit: ' дБ', act: { name: 'toneBand', args: { band: i } } })) },
+  ] };
+}
+
 // MARK: routes and actions
 
 /** The native page for a hash route, or null when it stays web (NativeRoute in NativeShellState.swift lists the same routes). */
@@ -600,6 +629,7 @@ export function describe(): Promise<Screen> | Screen | null {
       case 'sources': return sources();
       case 'settings': return settings();
       case 'diagnostics': return diagnostics();
+      case 'sound': return sound();
     }
   }
   return null;
@@ -630,6 +660,33 @@ export const actions: Record<string, (a: Args) => unknown> = {
     st().toast(likeAllSummary(liked, failed, list.filter((t) => t.reaction < 0).length), failed ? 'error' : 'success');
   },
   artistRadio: (a) => startArtistRadio(str(a.artist)),
+  playlistSort: (a) => {
+    const id = str(a.id), v = a.value;
+    if (v === 'title' || v === 'artist' || v === 'duration') playlistSort.set(id, v); else playlistSort.delete(id);
+  },
+  tone: (a) => { const t = st().settings?.sound.tone; if (t) st().setTone({ ...t, enabled: a.value === true }); },
+  toneBand: (a) => {
+    const t = st().settings?.sound.tone, band = Number(a.band), v = Number(a.value);
+    if (!t || !(band >= 0 && band < t.gains.length) || !Number.isFinite(v)) return;
+    st().setTone({ ...t, enabled: true, gains: t.gains.map((g, i) => (i === band ? Math.max(-EQ_MAX_DB, Math.min(EQ_MAX_DB, Math.round(v * 2) / 2)) : g)) });
+  },
+  tonePreset: (a) => {
+    const s = st().settings, p = s && [...BUILTIN_PRESETS, ...s.sound.presets].find((x) => x.name === a.value);
+    if (s && p) st().setTone({ ...s.sound.tone, enabled: true, gains: [...p.gains] });
+  },
+  /** «Скачать» for a selection, «Любимое» or a playlist: only online tracks that are not on the phone yet. */
+  downloadTracks: async (a) => {
+    const todo = ids(a.ids).map((id) => trackOf(id)).filter((t): t is Track => t?.sourceKind === 'remote' && !t.pinned);
+    for (const t of todo) await api.download({ trackId: t.id });
+    st().toast(todo.length ? `Скачиваем: ${tracksWord(todo.length)} — прогресс в «Загрузках»` : 'Эти треки уже на iPhone или не скачиваются');
+  },
+  /** Removes tracks from the library (native confirms first), as the web track menu does. */
+  deleteTracks: async (a) => {
+    const list = ids(a.ids).filter((id) => trackOf(id));
+    for (const id of list) await api.deleteTrack(id);
+    await st().loadLibrary();
+    st().toast(list.length === 1 ? 'Трек удалён' : `Удалено: ${tracksWord(list.length)}`);
+  },
   createPlaylist: async (a): Promise<ActResult | void> => {
     const name = str(a.value).trim();
     if (!name) return;

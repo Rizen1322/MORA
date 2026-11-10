@@ -199,6 +199,19 @@ final class NativePlayerModel: ObservableObject {
         NativeShellStore.shared?.presentVersions(id: state.trackId, from: controller)
     }
 
+    /// The page owns the queue (lib/native-ui.ts `queueEdit`); its next snapshot redraws the list.
+    func editQueue(_ action: String, _ entry: String, after: String? = nil) {
+        guard let store = NativeShellStore.shared else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        var args: [String: Any] = ["action": action, "entry": entry]
+        if let after { args["after"] = after }
+        Task { @MainActor in
+            do { _ = try await store.call("queueEdit", args) }
+            catch { actionError = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription }
+            refresh()
+        }
+    }
+
     func react(_ value: Int) {
         guard let store = NativeShellStore.shared else { return }
         reaction = reaction == value ? 0 : value
@@ -215,6 +228,53 @@ final class NativePlayerModel: ObservableObject {
     func finish() {
         stop()
         onFinish?(action); onFinish = nil
+    }
+}
+
+/// Sleep timer of native playback. The page's timer (lib/sleepTimer.ts) cannot run while WebContent is
+/// suspended in the background, so this one lives next to the host: a wall-clock deadline (a phone that slept
+/// past it pauses on the next tick) or the end of the current track, where an AutoMix blend counts as the end.
+final class NativeSleepTimer: ObservableObject {
+    static let shared = NativeSleepTimer()
+    enum Mode: Equatable { case until(Date), endOfTrack(entryId: String) }
+    @Published private(set) var mode: Mode?
+    private var timer: Timer?
+
+    func set(_ mode: Mode?) {
+        self.mode = mode
+        timer?.invalidate(); timer = nil
+        guard mode != nil else { return }
+        // Audio playback keeps the app running in the background, so the main run loop keeps ticking.
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private func tick() {
+        guard let mode, let host = NativeShellStore.shared?.host else { return }
+        switch mode {
+        case .until(let date): if Date() >= date { finish(host) }
+        case .endOfTrack(let entry):
+            host.playerState { [weak self] result in
+                guard let self, self.mode == mode, case .success(let value) = result else { return }
+                let blending = value["blend"].map { !($0 is NSNull) } ?? false
+                if value["active"] as? Bool != true || value["entryId"] as? String != entry || blending { self.finish(host) }
+            }
+        }
+    }
+
+    private func finish(_ host: NativeMixHost) {
+        set(nil)
+        host.command("pause", source: "player") { _ in }
+    }
+
+    /// «23 мин», «конец трека», nil when off.
+    var label: String? {
+        switch mode {
+        case .until(let date): return "\(max(1, Int((date.timeIntervalSinceNow / 60).rounded(.up)))) мин"
+        case .endOfTrack: return "конец трека"
+        case nil: return nil
+        }
     }
 }
 
@@ -251,6 +311,7 @@ private struct RoutePicker: UIViewRepresentable {
 
 struct NativePlayerView: View {
     @ObservedObject var model: NativePlayerModel
+    @ObservedObject private var sleep = NativeSleepTimer.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var queueOpen = false
     @State private var showLyrics = false
@@ -269,6 +330,7 @@ struct NativePlayerView: View {
                     Button("Другая версия", systemImage: "arrow.triangle.swap") { model.versions() }
                     Button("Перейти к исполнителю", systemImage: "music.mic") { model.open("artist") }
                     Button("Перейти к альбому", systemImage: "square.stack") { model.open("album") }.disabled(model.albumPath == nil)
+                    Button("Звук и эквалайзер", systemImage: "slider.vertical.3") { model.navigate("/sound") }
                 } label: {
                     Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
                 }.accessibilityLabel("Действия с треком")
@@ -296,6 +358,8 @@ struct NativePlayerView: View {
                 IconButton(symbol: "quote.bubble", label: "Текст песни") {
                     queueOpen = false; showLyrics.toggle()
                 }.foregroundStyle(showLyrics ? Color.moraMint : .white.opacity(0.7))
+                Spacer()
+                sleepMenu
                 Spacer()
                 RoutePicker().frame(width: 44, height: 44)
                 Spacer()
@@ -333,6 +397,25 @@ struct NativePlayerView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in model.stop() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in model.start() }
 
+    }
+
+    private var sleepMenu: some View {
+        Menu {
+            if let label = sleep.label {
+                Button("Выключить таймер (\(label))", systemImage: "moon.zzz", role: .destructive) { sleep.set(nil) }
+            }
+            ForEach([15, 30, 45, 60], id: \.self) { minutes in
+                Button("\(minutes) минут") { sleep.set(.until(Date().addingTimeInterval(Double(minutes) * 60))) }
+            }
+            Button("В конце трека", systemImage: "music.note") { sleep.set(.endOfTrack(entryId: model.state.entryId)) }
+                .disabled(model.state.entryId.isEmpty)
+        } label: {
+            Image(systemName: sleep.mode == nil ? "moon" : "moon.fill").font(.title3.weight(.semibold))
+                .frame(width: 44, height: 44).contentShape(Rectangle())
+        }
+        .foregroundStyle(sleep.mode == nil ? .white.opacity(0.7) : Color.moraMint)
+        .accessibilityLabel("Таймер сна")
+        .accessibilityValue(sleep.label ?? "Выключен")
     }
 
     private var metadata: some View {
@@ -390,9 +473,11 @@ struct NativePlayerView: View {
     }
 
     private func cover(playing: Bool) -> some View {
-        Color.clear
-            .aspectRatio(1, contentMode: .fit)
-            .frame(maxWidth: 430)
+        // Lyrics take all the height the cover leaves, so lines can be large.
+        Group {
+            if showLyrics { Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity) }
+            else { Color.clear.aspectRatio(1, contentMode: .fit).frame(maxWidth: 430) }
+        }
             .overlay {
                 Group {
                         if showLyrics {
@@ -444,7 +529,9 @@ struct NativePlayerView: View {
 private struct NativeLyrics {
     let status: String
     let plain: String
-    let lines: [(time: Double, text: String)]
+    typealias Word = (time: Double, end: Double, text: String)
+    /// `words` is empty without word timings (Whisper alignment); then only whole lines light up.
+    let lines: [(time: Double, text: String, words: [Word])]
     let offset: Double
 
     init(_ value: [String: Any]) {
@@ -453,7 +540,11 @@ private struct NativeLyrics {
         let raw = value["wordLines"] as? [[String: Any]] ?? value["lines"] as? [[String: Any]] ?? []
         lines = raw.compactMap { line in
             guard let time = (line["t"] as? NSNumber)?.doubleValue, let text = line["text"] as? String else { return nil }
-            return (time, text)
+            let words: [Word] = (line["words"] as? [[String: Any]] ?? []).compactMap { word in
+                guard let t = (word["t"] as? NSNumber)?.doubleValue, let end = (word["end"] as? NSNumber)?.doubleValue, let text = word["text"] as? String else { return nil }
+                return (t, end, text)
+            }
+            return (time, text, words)
         }
         offset = (value["offsetMs"] as? NSNumber)?.doubleValue ?? 0
     }
@@ -480,10 +571,17 @@ private struct NativeLyricsView: View {
                         if !lines.isEmpty {
                             ForEach(lines.indices, id: \.self) { index in
                                 Button { model.seek(to: max(0, lines[index].time - lyrics.offset / 1000)) } label: {
-                                    Text(lines[index].text.isEmpty ? "♪" : lines[index].text)
-                                        .font(.body.weight(index == active ? .semibold : .regular))
-                                        .foregroundStyle(index == active ? Color.moraMint : .white.opacity(0.58))
-                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    Group {
+                                        if index == active && !lines[index].words.isEmpty {
+                                            // Karaoke: the sung words of the current line fill in between the 0.4 s polls.
+                                            TimelineView(.periodic(from: .now, by: 0.1)) { _ in karaoke(lines[index].words, now: clock(lyrics)) }
+                                        } else {
+                                            Text(lines[index].text.isEmpty ? "♪" : lines[index].text)
+                                                .foregroundStyle(index == active ? Color.moraMint : .white.opacity(index < active ? 0.38 : 0.58))
+                                        }
+                                    }
+                                    .font(.title3.weight(index == active ? .bold : .semibold))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 .buttonStyle(.plain)
                                 .id(index)
@@ -510,6 +608,19 @@ private struct NativeLyricsView: View {
         .task(id: "\(model.state.trackId)|\(retry)") { await load(model.state.trackId, refresh: retry > 0) }
     }
 
+    /// The track clock run on from the last poll, as the scrubber does.
+    private func clock(_ lyrics: NativeLyrics) -> Double {
+        let s = model.state
+        return s.position + (s.playing ? Date().timeIntervalSince(model.receivedAt) : 0) + lyrics.offset / 1000
+    }
+
+    /// Word texts carry their own spacing (as in the web WordLyricLine).
+    private func karaoke(_ words: [NativeLyrics.Word], now: Double) -> Text {
+        words.reduce(Text("")) { line, word in
+            line + Text(word.text).foregroundColor(now >= word.time ? .moraMint : .white.opacity(0.58))
+        }
+    }
+
     @MainActor private func load(_ id: String, refresh: Bool) async {
         lyrics = nil; failure = nil
         guard !id.isEmpty else { failure = "Трек недоступен"; return }
@@ -531,15 +642,21 @@ private struct NativeLyricsView: View {
 private struct NativeQueueContent: View {
     @ObservedObject var model: NativePlayerModel
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
+        let upcoming = model.state.upcoming
+        List {
+            Group {
                 NativeQueueModes(model: model).padding(.top, 16)
-                Text("Продолжение").font(.title2.bold())
-                if let label = NativeShellStore.shared?.ui.now?.label, !label.isEmpty {
-                    Text("Из: \(label)").font(.subheadline).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Продолжение").font(.title2.bold())
+                    if let label = NativeShellStore.shared?.ui.now?.label, !label.isEmpty {
+                        Text("Из: \(label)").font(.subheadline).foregroundStyle(.secondary)
+                    }
                 }
-                if model.state.upcoming.isEmpty { Text("Очередь пуста").foregroundStyle(.secondary) }
-                ForEach(model.state.upcoming) { row in
+                if upcoming.isEmpty { Text("Очередь пуста").foregroundStyle(.secondary) }
+            }
+            .listRowBackground(Color.clear).listRowSeparator(.hidden).listRowInsets(EdgeInsets())
+            ForEach(upcoming) { row in
+                Button { model.editQueue("jump", row.id) } label: {
                     HStack(spacing: 12) {
                         NativeCover(url: row.cover ?? NativeShellStore.shared?.byId[row.trackId]?.cover, size: 48, radius: 7, embedded: row.artwork)
                         VStack(alignment: .leading, spacing: 3) {
@@ -550,12 +667,37 @@ private struct NativeQueueContent: View {
                             }
                         }
                         Spacer(minLength: 0)
-                    }.accessibilityElement(children: .combine)
-                        .transition(.opacity.combined(with: .offset(y: 10)))
+                    }
+                    .contentShape(Rectangle())
                 }
-            }.frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 16)
-                .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.3), value: model.state.upcoming.map(\.id))
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .accessibilityHint("Играть сейчас")
+                .accessibilityAction(named: "Играть следующим") { model.editQueue("next", row.id) }
+                .accessibilityAction(named: "Убрать из очереди") { model.editQueue("remove", row.id) }
+                .swipeActions(edge: .leading) {
+                    Button { model.editQueue("next", row.id) } label: { Label("Следующим", systemImage: "text.line.first.and.arrowtriangle.forward") }
+                        .tint(.moraMint)
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    Button(role: .destructive) { model.editQueue("remove", row.id) } label: { Label("Убрать", systemImage: "minus.circle") }
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+                .transition(.opacity.combined(with: .offset(y: 10)))
+            }
+            // Drag to reorder: the moved entry goes after the row above its new place (or after the current track).
+            .onMove { from, to in
+                guard let index = from.first, upcoming.indices.contains(index) else { return }
+                let after = to == 0 ? model.state.entryId : upcoming[to - 1].id
+                guard after != upcoming[index].id else { return }
+                model.editQueue("move", upcoming[index].id, after: after)
+            }
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .environment(\.defaultMinListRowHeight, 0)
+        .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.3), value: upcoming.map(\.id))
     }
 }
 

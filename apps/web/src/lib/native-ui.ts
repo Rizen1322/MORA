@@ -103,6 +103,20 @@ export const commands: Record<string, (a: Args) => unknown> = {
     controller.addToQueue(ids, a.next === true);
     useApp.getState().toast(a.next === true ? 'Сыграет следующим' : 'Добавлено в очередь');
   },
+  /** The native player's queue: remove, play next, play now, or move an entry after another one (by entry ids, so a list that changed meanwhile cannot hit the wrong row). */
+  queueEdit: (a) => {
+    const q = controller.state.queue, from = q.findIndex((e) => e.entryId === str(a.entry));
+    if (from < 0) throw new Error('Трека уже нет в очереди');
+    const cur = controller.state.index;
+    if (a.action === 'remove') controller.removeAt(from);
+    else if (a.action === 'jump') controller.jumpTo(from);
+    else if (a.action === 'next') { if (from > cur + 1) controller.move(from, cur + 1); }
+    else if (a.action === 'move') {
+      const after = q.findIndex((e) => e.entryId === str(a.after));
+      if (after < 0) throw new Error('Очередь изменилась, попробуйте ещё раз');
+      if (after !== from) controller.move(from, from < after ? after : after + 1);
+    } else throw new Error('Неизвестное действие с очередью');
+  },
   react: (a) => {
     const t = trackOf(str(a.id));
     const value = Number(a.value);

@@ -5,10 +5,12 @@ const h = vi.hoisted(() => ({
   toggleShuffle: vi.fn(), cycleRepeat: vi.fn(), playTracks: vi.fn(), addToQueue: vi.fn(), toggle: vi.fn(), startWave: vi.fn(), startRadio: vi.fn(), toast: vi.fn(),
   importFiles: vi.fn(), imports: vi.fn(), openVersionPanel: vi.fn(), yandexWaveSettings: vi.fn(), refreshYandexWave: vi.fn(), react: vi.fn(), patchTrack: vi.fn(),
   addToPlaylist: vi.fn(), createPlaylist: vi.fn(), loadPlaylists: vi.fn(), downloads: vi.fn(),
+  move: vi.fn(), removeAt: vi.fn(), jumpTo: vi.fn(), queueState: { queue: [] as any[], index: 0 }, download: vi.fn(), deleteTrack: vi.fn(),
 }));
 vi.mock('../src/store/app.ts', () => ({
   phone: true,
-  controller: { resume: () => h.resume(), pause: () => h.pause(), nextTrack: () => h.nextTrack(), prevTrack: () => h.prevTrack(), seek: (time: number) => h.seek(time), toggleShuffle: () => h.toggleShuffle(), cycleRepeat: () => h.cycleRepeat(), playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k), refreshYandexWave: () => h.refreshYandexWave() },
+  controller: { resume: () => h.resume(), pause: () => h.pause(), nextTrack: () => h.nextTrack(), prevTrack: () => h.prevTrack(), seek: (time: number) => h.seek(time), toggleShuffle: () => h.toggleShuffle(), cycleRepeat: () => h.cycleRepeat(), playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k), refreshYandexWave: () => h.refreshYandexWave(),
+    get state() { return h.queueState; }, move: (...a: any[]) => h.move(...a), removeAt: (i: number) => h.removeAt(i), jumpTo: (i: number) => h.jumpTo(i) },
   trackOf: (id: string) => h.app.tracks.get(id),
   useApp: { getState: () => h.app, setState: vi.fn(), subscribe: (fn: () => void) => h.listeners.push(fn) },
 }));
@@ -22,7 +24,8 @@ vi.mock('../src/components/VersionPanel.tsx', () => ({
   useVersionPanel: { getState: () => ({ target: null }), subscribe: vi.fn() },
 }));
 vi.mock('../src/lib/api.ts', () => ({ api: { imports: () => h.imports(), react: (...args: any[]) => h.react(...args), yandexWaveSettings: () => h.yandexWaveSettings(),
-  addToPlaylist: (...a: any[]) => h.addToPlaylist(...a), createPlaylist: (...a: any[]) => h.createPlaylist(...a), downloads: () => h.downloads() } }));
+  addToPlaylist: (...a: any[]) => h.addToPlaylist(...a), createPlaylist: (...a: any[]) => h.createPlaylist(...a), downloads: () => h.downloads(),
+  download: (...a: any[]) => h.download(...a), deleteTrack: (id: string) => h.deleteTrack(id) } }));
 vi.mock('../src/store/downloads.ts', () => ({ useDownloads: { getState: () => ({ jobs: new Map(), load: async () => {} }) } }));
 
 const track = (id: string, status = 'ok') => ({ id, title: id.toUpperCase(), artist: 'X', album: '', duration: 100, reaction: 0, coverUrl: null, status });
@@ -275,4 +278,61 @@ it('presents restored metadata and dispatches transport without opening the web 
   expect(h.seek).toHaveBeenCalledWith(45);
   for (const time of [-1, NaN, Infinity, '45']) expect(() => commands.playerCommand({ action: 'seekto', time })).toThrow();
   expect(() => commands.playerCommand({ action: 'invalid' })).toThrow();
+});
+
+it('edits the native player queue by entry ids, never by stale positions', async () => {
+  const { commands } = await import('../src/lib/native-ui.ts');
+  h.queueState = { index: 0, queue: ['cur', 'a', 'b', 'c'].map((entryId) => ({ entryId, trackId: 'a' })) };
+  commands.queueEdit({ action: 'move', entry: 'c', after: 'cur' });
+  expect(h.move).toHaveBeenLastCalledWith(3, 1);
+  commands.queueEdit({ action: 'move', entry: 'a', after: 'b' });
+  expect(h.move).toHaveBeenLastCalledWith(1, 2);
+  commands.queueEdit({ action: 'next', entry: 'c' });
+  expect(h.move).toHaveBeenLastCalledWith(3, 1);
+  h.move.mockClear();
+  commands.queueEdit({ action: 'next', entry: 'a' }); // already next
+  commands.queueEdit({ action: 'move', entry: 'b', after: 'b' });
+  expect(h.move).not.toHaveBeenCalled();
+  commands.queueEdit({ action: 'remove', entry: 'b' });
+  expect(h.removeAt).toHaveBeenCalledWith(2);
+  commands.queueEdit({ action: 'jump', entry: 'c' });
+  expect(h.jumpTo).toHaveBeenCalledWith(3);
+  expect(() => commands.queueEdit({ action: 'remove', entry: 'gone' })).toThrow('нет в очереди');
+  expect(() => commands.queueEdit({ action: 'move', entry: 'a', after: 'gone' })).toThrow('изменилась');
+  expect(() => commands.queueEdit({ action: 'evil', entry: 'a' })).toThrow('Неизвестное');
+});
+
+it('downloads only online tracks that are not on the phone yet, and deletes a selection', async () => {
+  const { commands } = await import('../src/lib/native-ui.ts');
+  h.app.tracks.set('net', { ...track('net'), sourceKind: 'remote', pinned: false });
+  h.app.tracks.set('saved', { ...track('saved'), sourceKind: 'remote', pinned: true });
+  h.app.tracks.set('file', { ...track('file'), sourceKind: 'local' });
+  h.download.mockResolvedValue({});
+  await commands.act({ name: 'downloadTracks', args: { ids: ['net', 'saved', 'file', 'zzz', 5] } });
+  expect(h.download.mock.calls).toEqual([[{ trackId: 'net' }]]);
+  expect(h.toast).toHaveBeenLastCalledWith(expect.stringContaining('Скачиваем: 1 трек'));
+  h.app.loadLibrary = vi.fn(async () => {});
+  h.deleteTrack.mockResolvedValue({});
+  await commands.act({ name: 'deleteTracks', args: { ids: ['net', 'file', 'zzz'] } });
+  expect(h.deleteTrack.mock.calls).toEqual([['net'], ['file']]);
+  expect(h.app.loadLibrary).toHaveBeenCalledTimes(1);
+});
+
+it('describes the equalizer and changes the same tone the web Sound panel does', async () => {
+  const { commands, } = await import('../src/lib/native-ui.ts');
+  const { describe } = await import('../src/lib/native-pages.ts');
+  h.app.settings = { sound: { tone: { enabled: false, gains: Array(10).fill(0) }, presets: [] } };
+  h.app.setTone = vi.fn((tone: any) => { h.app.settings = { ...h.app.settings, sound: { ...h.app.settings.sound, tone } }; });
+  (location as any).hash = '#/sound';
+  const page = await describe() as any;
+  expect(page.sections[0].rows[1]).toMatchObject({ kind: 'choice', value: 'Ровно' });
+  expect(page.sections[1].rows).toHaveLength(10);
+  await commands.act({ name: 'toneBand', args: { band: 1, value: 20 } });
+  expect(h.app.settings.sound.tone).toMatchObject({ enabled: true, gains: [0, 12, 0, 0, 0, 0, 0, 0, 0, 0] });
+  await commands.act({ name: 'toneBand', args: { band: 10, value: 1 } });
+  expect(h.app.setTone).toHaveBeenCalledTimes(1);
+  await commands.act({ name: 'tonePreset', args: { value: 'Больше баса' } });
+  expect(h.app.settings.sound.tone.gains[0]).toBe(4);
+  await commands.act({ name: 'tone', args: { value: false } });
+  expect(h.app.settings.sound.tone.enabled).toBe(false);
 });

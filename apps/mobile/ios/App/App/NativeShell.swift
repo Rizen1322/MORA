@@ -1,5 +1,6 @@
 import Combine
 import MediaPlayer
+import Network
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -290,6 +291,10 @@ extension MoraRootViewController {
             let saved: [String: Any] = ["items": [["entryId": "restored-fixture", "trackId": restoredTrack.id, "origin": "user"]],
                 "index": 0, "position": 0.25, "context": ["type": "library", "label": "Медиатека"], "shuffle": false, "repeat": "off", "volume": 1]
             _ = try await web.callAsyncJavaScript("const r = await fetch('/api/queue',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(saved)}); if(!r.ok)throw Error(r.status); return 0;", arguments: ["saved": saved], in: nil, contentWorld: .page)
+            // The worker writes its database image up to 60 s later; leaving the page (pagehide) flushes it,
+            // as going to the background does on a phone. A reload alone would drop the saved queue.
+            _ = try await web.evaluateJavaScript("window.dispatchEvent(new Event('pagehide'));0")
+            try await Task.sleep(for: .seconds(3))
             _ = try await web.evaluateJavaScript("location.reload();0")
             try await wait { self.shell.ui.now?.entryId == "restored-fixture" && self.shell.ui.loaded }
             try require(shell.ui.now?.playing == false, "Restore started music automatically")
@@ -347,8 +352,11 @@ final class NativeShellStore: ObservableObject {
     @Published var searchScope = "all"
     @Published var waveSource: NativeWaveSource?
     @Published var waveSettingsOpen = false
-    /// «Добавить в плейлист» from the track menu: the sheet picks a playlist for this track.
-    @Published var playlistTarget: NativeTrack?
+    /// «Добавить в плейлист» from a track menu or a selection: the sheet picks a playlist for these tracks.
+    @Published var playlistTarget: [NativeTrack] = []
+    /// No usable network path: online searches and streams fail, downloads still play.
+    @Published private(set) var offline = false
+    private let network = NWPathMonitor()
     var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web }
     var screen: NativeScreen { NativeRoute.screen(path) }
     var tab: NativeTab { NativeRoute.tab(path) }
@@ -359,6 +367,14 @@ final class NativeShellStore: ObservableObject {
         nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.stopPolling() }
         nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in self?.startPolling(); self?.flushReactions() }
         nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.flushReactions() }
+        network.pathUpdateHandler = { [weak self] path in
+            DispatchQueue.main.async {
+                guard let self, (path.status != .satisfied) != self.offline else { return }
+                self.offline.toggle()
+                self.show(self.offline ? "Нет подключения к интернету. Скачанная музыка играет как обычно." : "Сеть снова доступна")
+            }
+        }
+        network.start(queue: DispatchQueue(label: "ru.mora.network"))
     }
 
     /// A snapshot from the page (main thread). Returns whether the shell is on screen.
@@ -651,8 +667,8 @@ struct NativeShellContent: View {
     var body: some View {
         ZStack(alignment: .top) {
             Color.moraBackground.ignoresSafeArea()
-                .sheet(item: $store.playlistTarget) { track in
-                    NativePlaylistPicker(track: track).environmentObject(store)
+                .sheet(isPresented: Binding(get: { !store.playlistTarget.isEmpty }, set: { if !$0 { store.playlistTarget = [] } })) {
+                    NativePlaylistPicker(tracks: store.playlistTarget).environmentObject(store)
                 }
             screen.id(store.path)
                 .transition(.opacity.combined(with: .offset(x: reduceMotion ? 0 : 18)))
@@ -665,6 +681,16 @@ struct NativeShellContent: View {
                     .accessibilityHidden(true) // announced when it appears
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if store.offline {
+                Label("Нет сети — играет то, что на iPhone", systemImage: "wifi.slash")
+                    .font(.footnote.weight(.medium)).foregroundStyle(Color.moraGold)
+                    .frame(maxWidth: .infinity).padding(.vertical, 6)
+                    .background(Color.moraGold.opacity(0.12))
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: store.offline)
         .animation(.easeOut(duration: 0.25), value: store.banner)
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.32), value: store.path)
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }

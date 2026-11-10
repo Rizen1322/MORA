@@ -347,12 +347,19 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         // bound the whole check by wall time without confusing that startup
         // delay with a stopped native queue. MIR stays blocked longer than this
         // entire deadline so progress cannot depend on its completion.
-        let playbackDeadline = ProcessInfo.processInfo.systemUptime + 60
-        while ProcessInfo.processInfo.systemUptime < playbackDeadline {
+        // A slow runner only stretches the run: fail when playback stops advancing, not on wall time alone.
+        let started = ProcessInfo.processInfo.systemUptime
+        var stallDeadline = started + 60, progress = (index: -1, position: -1.0)
+        while ProcessInfo.processInfo.systemUptime < min(stallDeadline, started + 240) {
             last = try await call { host.state($0) }
             let index = last["index"] as? Int ?? -1, count = last["count"] as? Int ?? 0
             try require(last["failed"] as? Bool != true, "Native host failed")
             try require((last["duration"] as? Double ?? 0) == 3, "Duration disappeared")
+            let position = last["position"] as? Double ?? 0
+            if index > progress.index || (index == progress.index && position > progress.position + 0.05) {
+                progress = (index, position)
+                stallDeadline = ProcessInfo.processInfo.systemUptime + 30
+            }
             seen.insert(index)
             if index == 7 && (last["position"] as? Double ?? 0) > 0.1 { break }
             if skip && count > index + 1 {

@@ -181,6 +181,9 @@ struct NativeTrackListView: View {
     let tracks: [NativeTrack]
     @EnvironmentObject private var store: NativeShellStore
     @State private var query = ""
+    /// Non-nil while choosing tracks: rows toggle instead of playing and a bar of bulk actions shows.
+    @State private var selection: Set<String>?
+    @State private var confirmDelete = false
 
     var body: some View {
         let shown = NativeSearchText.filter(tracks, query)
@@ -197,7 +200,11 @@ struct NativeTrackListView: View {
                 } else {
                     Section {
                         ForEach(Array(shown.enumerated()), id: \.element.id) { i, t in
-                            NativeTrackRow(track: t) { store.play(shown, at: i, type: type, label: title) }
+                            if let selection {
+                                NativeTrackRow(track: t, play: { self.selection = selection.symmetricDifference([t.id]) }, selected: selection.contains(t.id))
+                            } else {
+                                NativeTrackRow(track: t) { store.play(shown, at: i, type: type, label: title) }
+                            }
                         }
                     } header: {
                         Text(NativeText.tracks(shown.count)).font(.footnote).foregroundStyle(.white.opacity(0.55))
@@ -208,20 +215,87 @@ struct NativeTrackListView: View {
             .scrollContentBackground(.hidden)
             .background(Color.moraBackground)
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Название, исполнитель, альбом")
-            .navigationTitle(title)
+            .navigationTitle(selection.map { $0.isEmpty ? "Выберите треки" : NativeText.tracks($0.count) } ?? title)
+            .navigationBarTitleDisplayMode(selection == nil ? .automatic : .inline)
+            .safeAreaInset(edge: .bottom) { if let selection { bulkBar(shown.filter { selection.contains($0.id) }) } }
+            .confirmationDialog("Удалить из медиатеки?", isPresented: $confirmDelete, titleVisibility: .visible) {
+                Button("Удалить: " + NativeText.tracks(selection?.count ?? 0), role: .destructive) {
+                    bulk("deleteTracks", shown.filter { selection?.contains($0.id) == true })
+                }
+            } message: { Text("Скачанные копии и файлы в папке приложения тоже удалятся. Исходные файлы на устройстве не затрагиваются.") }
             .toolbar {
-                if type == "library" {
-                    Menu {
-                        Button("Альбомы") { store.go("/library/albums") }
-                        Button("Исполнители") { store.go("/library/artists") }
-                        Button("Плейлисты") { store.go("/library/playlists") }
-                    } label: {
-                        Image(systemName: "square.stack").frame(width: 44, height: 44)
+                ToolbarItem(placement: .topBarLeading) {
+                    if !shown.isEmpty || selection != nil {
+                        Button(selection == nil ? "Выбрать" : "Готово") { selection = selection == nil ? [] : nil }
+                            .frame(minHeight: 44)
                     }
-                    .accessibilityLabel("Разделы медиатеки")
+                }
+                if let selection {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(selection.count == shown.count ? "Снять все" : "Все") {
+                            self.selection = selection.count == shown.count ? [] : Set(shown.map(\.id))
+                        }.frame(minHeight: 44)
+                    }
+                } else if type == "liked" && !tracks.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { store.run("act", ["name": "downloadTracks", "args": ["ids": tracks.map(\.id)]]) } label: {
+                            Image(systemName: "arrow.down.circle").frame(width: 44, height: 44)
+                        }
+                        .accessibilityLabel("Скачать всё любимое на iPhone")
+                    }
+                }
+                if type == "library" && selection == nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Button("Альбомы") { store.go("/library/albums") }
+                            Button("Исполнители") { store.go("/library/artists") }
+                            Button("Плейлисты") { store.go("/library/playlists") }
+                        } label: {
+                            Image(systemName: "square.stack").frame(width: 44, height: 44)
+                        }
+                        .accessibilityLabel("Разделы медиатеки")
+                    }
                 }
             }
         }
+    }
+
+    private func bulkBar(_ chosen: [NativeTrack]) -> some View {
+        let playable = chosen.filter(\.ok)
+        return HStack(spacing: 4) {
+            bulkButton("Следующим", "text.line.first.and.arrowtriangle.forward", disabled: playable.isEmpty) {
+                store.run("queue", ["ids": playable.map(\.id), "next": true]); selection = nil
+            }
+            bulkButton("В очередь", "text.append", disabled: playable.isEmpty) {
+                store.run("queue", ["ids": playable.map(\.id), "next": false]); selection = nil
+            }
+            bulkButton("В плейлист", "text.badge.plus", disabled: chosen.isEmpty) { store.playlistTarget = chosen; selection = nil }
+            bulkButton("Скачать", "arrow.down.circle", disabled: chosen.isEmpty) { bulk("downloadTracks", chosen) }
+            bulkButton("Удалить", "trash", disabled: chosen.isEmpty) { confirmDelete = true }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .moraGlass(Capsule())
+        .padding(.horizontal, 12).padding(.bottom, 8)
+    }
+
+    private func bulkButton(_ title: String, _ symbol: String, disabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: symbol).font(.body.weight(.semibold))
+                Text(title).font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.4 : 1)
+    }
+
+    private func bulk(_ action: String, _ chosen: [NativeTrack]) {
+        guard !chosen.isEmpty else { return }
+        store.run("act", ["name": action, "args": ["ids": chosen.map(\.id)]])
+        selection = nil
     }
 }
 
@@ -230,11 +304,18 @@ struct NativeTrackRow: View {
     let play: () -> Void
     /// A page's own action for the row (remove from a playlist, delete a download).
     var remove: (title: String, symbol: String, run: () -> Void)? = nil
+    /// Set while the list is choosing tracks: a tap toggles this row.
+    var selected: Bool? = nil
     @EnvironmentObject private var store: NativeShellStore
 
     var body: some View {
         Button(action: play) {
             HStack(spacing: 12) {
+                if let selected {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle").font(.title3)
+                        .foregroundStyle(selected ? Color.moraMint : .white.opacity(0.4))
+                        .accessibilityHidden(true)
+                }
                 NativeCover(url: track.cover, size: 48)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.title).font(.body.weight(.medium)).lineLimit(1)
@@ -249,14 +330,15 @@ struct NativeTrackRow: View {
             }
             .frame(minHeight: 56)
             .contentShape(Rectangle())
-            .opacity(track.ok ? 1 : 0.45)
+            .opacity(track.ok || selected != nil ? 1 : 0.45)
         }
         .buttonStyle(.plain)
-        .disabled(!track.ok)
+        .disabled(!track.ok && selected == nil)
         .listRowBackground(Color.clear)
         .accessibilityLabel("\(track.title), \(track.artist)\(track.liked ? ", в любимом" : "")")
         .accessibilityValue(NativePlayerTime.text(track.duration))
-        .accessibilityHint(track.ok ? "Играть" : "Файл недоступен")
+        .accessibilityHint(selected != nil ? "Выбрать" : track.ok ? "Играть" : "Файл недоступен")
+        .accessibilityAddTraits(selected == true ? .isSelected : [])
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             Button { store.queue(track, next: true) } label: { Label("Следующим", systemImage: "text.line.first.and.arrowtriangle.forward") }
                 .tint(.moraMint)
@@ -291,7 +373,7 @@ struct NativeTrackActions: View {
         Button(action: play) { Label("Играть", systemImage: "play") }.disabled(!track.ok)
         Button { store.queue(track, next: true) } label: { Label("Играть следующим", systemImage: "text.line.first.and.arrowtriangle.forward") }.disabled(!track.ok)
         Button { store.queue(track, next: false) } label: { Label("Добавить в очередь", systemImage: "text.append") }.disabled(!track.ok)
-        Button { store.playlistTarget = track } label: { Label("Добавить в плейлист", systemImage: "text.badge.plus") }
+        Button { store.playlistTarget = [track] } label: { Label("Добавить в плейлист", systemImage: "text.badge.plus") }
         Divider()
         Button { store.react(track, track.liked ? 0 : 1) } label: {
             Label(track.liked ? "Убрать из любимого" : "Нравится", systemImage: track.liked ? "heart.slash" : "heart")
@@ -311,7 +393,7 @@ struct NativeTrackActions: View {
 
 /// «Добавить в плейлист» from the track menu: an existing playlist or a new one, without leaving the screen.
 struct NativePlaylistPicker: View {
-    let track: NativeTrack
+    let tracks: [NativeTrack]
     @EnvironmentObject private var store: NativeShellStore
     @Environment(\.dismiss) private var dismiss
     @State private var creating = false
@@ -324,7 +406,7 @@ struct NativePlaylistPicker: View {
                     Button { name = ""; creating = true } label: { Label("Новый плейлист", systemImage: "plus") }
                         .accessibilityIdentifier("playlist.new")
                 } footer: {
-                    Text("«\(track.title)» — \(track.artist)")
+                    Text(subject)
                 }
                 Section("Мои плейлисты") {
                     if store.playlists.isEmpty {
@@ -359,7 +441,7 @@ struct NativePlaylistPicker: View {
                 TextField("Название", text: $name)
                 Button("Создать") { create() }
                 Button("Отмена", role: .cancel) { name = "" }
-            } message: { Text("«\(track.title)» попадёт в новый плейлист.") }
+            } message: { Text(subject + " — в новый плейлист.") }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
@@ -367,15 +449,17 @@ struct NativePlaylistPicker: View {
         .preferredColorScheme(.dark)
     }
 
+    private var subject: String { tracks.count == 1 ? "«\(tracks[0].title)» — \(tracks[0].artist)" : NativeText.tracks(tracks.count) }
+
     private func add(to playlistId: String) {
-        store.run("addToPlaylist", ["ids": [track.id], "playlistId": playlistId])
+        store.run("addToPlaylist", ["ids": tracks.map(\.id), "playlistId": playlistId])
         dismiss()
     }
 
     private func create() {
         let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
-        store.run("addToPlaylist", ["ids": [track.id], "name": value])
+        store.run("addToPlaylist", ["ids": tracks.map(\.id), "name": value])
         dismiss()
     }
 }
@@ -626,6 +710,7 @@ struct NativeMoreView: View {
                 Section("Приложение") {
                     link("/sources", "Источники музыки", "Файлы, серверы и Яндекс Музыка", "powerplug")
                     link("/settings", "Настройки", "Переходы, громкость и офлайн", "gearshape")
+                    link("/sound", "Звук", "Эквалайзер и пресеты", "slider.vertical.3")
                     link("/diagnostics", "Диагностика AutoMix", "Всё ли в порядке со звуком и переходами", "waveform.path.ecg")
                 }
                 Section {

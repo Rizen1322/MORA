@@ -156,7 +156,7 @@ enum NativeRoute {
         case "/library", "/library/tracks", "/library/search": return .library
         case "/search", "/yandex": return .search
         // Described by the page (apps/web/src/lib/native-pages.ts `describe`, same routes).
-        case "/library/albums", "/library/artists", "/library/playlists", "/history", "/wave", "/downloads", "/import", "/sources", "/settings", "/diagnostics":
+        case "/library/albums", "/library/artists", "/library/playlists", "/history", "/wave", "/downloads", "/import", "/sources", "/settings", "/diagnostics", "/sound":
             return .page
         default:
             let parts = path.split(separator: "/")

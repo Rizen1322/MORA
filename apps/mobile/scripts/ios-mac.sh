@@ -18,6 +18,9 @@ case "${1:-}" in
   *) sh apps/mobile/scripts/build-rust-ios.sh iphoneos iphonesimulator ;;
 esac
 cd apps/mobile
+# The app version lives only in package.json; the build number follows the patch (1.0.38 → 39).
+# shortcut: patch+1 restarts at a minor bump; switch to a running counter if TestFlight ever needs it.
+node -e "const fs=require('fs'),v=require('./package.json').version,f='ios/App/App.xcodeproj/project.pbxproj';fs.writeFileSync(f,fs.readFileSync(f,'utf8').replace(/MARKETING_VERSION = [^;]+;/g,'MARKETING_VERSION = '+v+';').replace(/CURRENT_PROJECT_VERSION = [^;]+;/g,'CURRENT_PROJECT_VERSION = '+(+v.split('.')[2]+1)+';'))"
 npx cap sync ios
 
 if [ "${1:-}" = "--check" ]; then
