@@ -386,9 +386,8 @@ final class NativeShellStore: ObservableObject {
         if let rows = value["playlists"] as? [[String: Any]] { playlists = rows.compactMap(NativePlaylist.init) }
         if let rows = value["queue"] as? [[String: Any]] { queue = rows.compactMap(NativeQueuedTrack.init) }
         let next = NativeUiState(value)
-        let nowChanged = next.now?.id != ui.now?.id || next.now?.playing != ui.now?.playing
+        let widgetChanged = value["library"] != nil || next.now?.id != ui.now?.id || next.now?.playing != ui.now?.playing
         if next.loaded && !ui.loaded && offline { sendNetwork() } // a page that (re)loaded without a network
-        defer { if value["library"] != nil || nowChanged { publishWidget() } }
         if next.toast != ui.toast, let toast = next.toast, screen != .web { show(toast.text) }
         if next.path != ui.path || next.searchQuery != ui.searchQuery || next.searchSource != ui.searchSource || next.searchScope != ui.searchScope {
             if let query = next.searchQuery { searchQuery = query }
@@ -405,6 +404,7 @@ final class NativeShellStore: ObservableObject {
             if let index = library.firstIndex(where: { $0.id == id }) { library[index].reaction = value }
         }
         flushReactions()
+        if widgetChanged { publishWidget() }
         revision &+= 1
         startPolling()
         return shown
