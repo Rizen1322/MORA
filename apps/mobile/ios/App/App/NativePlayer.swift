@@ -31,6 +31,7 @@ final class NativePlayerModel: ObservableObject {
     @Published private(set) var modes = NativePlaybackModes()
     @Published private(set) var changingMode = false
     @Published var modeError: String?
+    @Published private(set) var banner: String?
     /// When `state.position` was read: the scrubber runs the clock on from there between polls.
     private(set) var receivedAt = Date()
     weak var controller: UIViewController?
@@ -43,6 +44,7 @@ final class NativePlayerModel: ObservableObject {
     init(host: NativeMixHost) {
         self.host = host
         NativeShellStore.shared?.$ui.map(\.playback).removeDuplicates().assign(to: &$modes)
+        NativeShellStore.shared?.$banner.assign(to: &$banner)
     }
     #if DEBUG
     var visualCheck = false
@@ -246,6 +248,14 @@ struct NativePlayerView: View {
         .foregroundStyle(.white)
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         .background { backdrop.ignoresSafeArea() }
+        .overlay(alignment: .top) {
+            if let text = model.banner {
+                Text(text).font(.footnote).padding(12).background(.ultraThinMaterial, in: Capsule())
+                    .padding(.top, 58).padding(.horizontal, 20).allowsHitTesting(false)
+                    .transition(.opacity).accessibilityHidden(true)
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: model.banner)
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.48, dampingFraction: 0.86), value: queueOpen)
         .animation(.easeInOut(duration: 0.3), value: s.entryId)
         .transaction { if reduceMotion { $0.animation = nil } }
