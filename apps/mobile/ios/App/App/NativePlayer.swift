@@ -133,6 +133,11 @@ final class NativePlayerModel: ObservableObject {
         }
     }
 
+    func open(_ destination: String) {
+        let id = state.trackId
+        controller?.presentingViewController?.dismiss(animated: true) { NativeShellStore.shared?.run("open", ["id": id, "to": destination]) }
+    }
+
     func versions() {
         NativeShellStore.shared?.presentVersions(id: state.trackId, from: controller)
     }
@@ -205,7 +210,8 @@ struct NativePlayerView: View {
                 Spacer()
                 Menu {
                     Button("Другая версия", systemImage: "arrow.triangle.swap") { model.versions() }
-                    Button("Ещё", systemImage: "ellipsis") { model.close("more") }
+                    Button("Перейти к исполнителю", systemImage: "music.mic") { model.open("artist") }
+                    Button("Перейти к альбому", systemImage: "square.stack") { model.open("album") }
                 } label: {
                     Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
                 }.accessibilityLabel("Действия с треком")
@@ -258,7 +264,7 @@ struct NativePlayerView: View {
         .animation(.easeOut(duration: 0.25), value: model.banner)
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.48, dampingFraction: 0.86), value: queueOpen)
         .animation(.easeInOut(duration: 0.3), value: s.entryId)
-        .transaction { if reduceMotion { $0.animation = nil } }
+        .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
         .alert("Не удалось изменить режим", isPresented: Binding(get: { model.modeError != nil }, set: { if !$0 { model.modeError = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(model.modeError ?? "") }
         .onAppear {
             model.start()

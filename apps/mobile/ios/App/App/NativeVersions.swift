@@ -180,7 +180,9 @@ private struct NativeVersionChoice: Identifiable {
     @State private var query: String
     @State private var variant = ""
     @State private var source = "all"
+    private let yandex: Bool
     init(track: NativeTrack, store: NativeShellStore) {
+        yandex = store.ui.wave.yandex
         _model = StateObject(wrappedValue: NativeVersionModel(target: track, store: store))
         _query = State(initialValue: "\(track.artist) \(track.title)".trimmingCharacters(in: .whitespaces))
     }
@@ -197,8 +199,9 @@ private struct NativeVersionChoice: Identifiable {
                     }
                     Text("Название и обложка сохранятся").font(.footnote).foregroundStyle(.secondary)
                     Picker("Источник", selection: $source) {
-                        Text("Все").tag("all"); Text("YouTube Music").tag("ytmusic")
+                        Text("Все").tag("all"); Text("Медиатека").tag("local"); Text("YouTube Music").tag("ytmusic")
                         Text("YouTube").tag("youtube"); Text("SoundCloud").tag("soundcloud")
+                        if yandex { Text("Яндекс Музыка").tag("yandex") }
                     }
                     Picker("Версия", selection: $variant) {
                         Text("Как есть").tag(""); Text("Explicit").tag("explicit"); Text("Без цензуры").tag("uncensored")

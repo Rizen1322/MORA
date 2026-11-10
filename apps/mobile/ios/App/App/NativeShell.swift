@@ -154,7 +154,7 @@ extension MoraRootViewController {
         do {
             try await wait { self.shell.ui.loaded && self.shell.webView != nil }
             let web = shell.webView!
-            _ = try await web.evaluateJavaScript("window.__uiQueries=[]; window.__uiOriginal=window.moraNativeUi; window.moraNativeUi=async (n,a)=>{if(n==='search'){window.__uiQueries.push(a.q);return [];}return window.__uiOriginal(n,a);}; 0")
+            _ = try await web.evaluateJavaScript("window.__uiQueries=[]; window.__uiOriginal=window.moraNativeUi; window.moraNativeUi=async(n,a)=>{if(n==='search'){window.__uiQueries.push(a.q);return {session:'fixture-'+a.source,tracks:[{id:'fixture',title:'Native Song',artist:'Native Artist',album:'Native Album',duration:180,explicit:true,ok:true}],artists:a.source==='yandex'?[{id:'77',title:'Native Artist',detail:'Исполнитель',path:'/catalog/artist/77'}]:[],albums:a.source==='yandex'?[{id:'88',title:'Native Album',detail:'2026',path:'/catalog/album/88'}]:[],more:false};}if(n==='page'&&location.hash.includes('/catalog/'))return{title:location.hash.includes('/artist/')?'Native Artist':'Native Album',sections:[{title:'Треки',rows:[{kind:'item',title:'Native Song',subtitle:'Native Artist',tag:'3:00'}]}]};if(n==='versionTarget')return{id:'fixture',title:'Native Song',artist:'Native Artist',album:'Native Album',duration:180,ok:true};if(n==='versionSearch')return{session:'versions-fixture',rows:[{key:'yandex:1',id:'ya-1',title:'Native Song Live',artist:'Native Artist',duration:180,ok:true,source:'Яндекс Музыка',tags:'live'}],errors:[]};return window.__uiOriginal(n,a);};0")
             shell.go("/search")
             try await wait { self.shell.ui.path == "/search" && descendants(self.content!.view).contains { $0 is UISearchTextField } }
             try await Task.sleep(for: .seconds(2))
@@ -170,6 +170,29 @@ extension MoraRootViewController {
             try require(query, "UIKit input did not reach SwiftUI and the search bridge")
             report["search"] = "typed MORA through UIKit into SwiftUI and bridge; no automatic focus"
             try capture("native-search")
+            view.endEditing(true)
+            _ = shell.receive(["path": "/search", "loaded": true, "wave": ["yandex": true]])
+            shell.searchSource = "yandex"; shell.searchQuery = "Каталог"
+            try await Task.sleep(for: .seconds(2))
+            try require(try await web.evaluateJavaScript("window.__uiQueries.includes('Каталог')") as? Bool == true, "Yandex query did not reach the native bridge")
+            try capture("native-search-yandex")
+            shell.go("/catalog/artist/77")
+            try await wait { self.shell.ui.path == "/catalog/artist/77" }
+            try await Task.sleep(for: .seconds(1))
+            try require(shell.nativeContentVisible && shell.screen == .page, "Artist fell back to a web page")
+            try capture("native-catalog-artist")
+            shell.go("/catalog/album/88")
+            try await wait { self.shell.ui.path == "/catalog/album/88" }
+            try await Task.sleep(for: .seconds(1))
+            try capture("native-catalog-album")
+            _ = shell.receive(["path": "/catalog/album/88", "loaded": true, "wave": ["yandex": true]])
+            shell.presentVersions(id: "fixture")
+            try await wait { self.presentedViewController != nil }
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-versions")
+            presentedViewController?.dismiss(animated: false)
+            try await wait { self.presentedViewController == nil }
+            report["catalog"] = "native Yandex search, artist, album and version sheet rendered with fixtures"
             shell.go("/")
             try await wait { self.shell.ui.path == "/" }
             shell.waveSource = .own
@@ -249,6 +272,8 @@ final class NativeShellStore: ObservableObject {
     private var sheetOpen = false
     private var pending: (path: String, at: Date)?
 
+    @Published var searchQuery = ""
+    @Published var searchSource = "all"
     @Published var waveSource: NativeWaveSource?
     @Published var waveSettingsOpen = false
     var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web }
@@ -271,6 +296,10 @@ final class NativeShellStore: ObservableObject {
         if let rows = value["queue"] as? [[String: Any]] { queue = rows.compactMap(NativeQueuedTrack.init) }
         let next = NativeUiState(value)
         if next.toast != ui.toast, let toast = next.toast, screen != .web { show(toast.text) }
+        if next.path != ui.path || next.searchQuery != ui.searchQuery || next.searchSource != ui.searchSource {
+            if let query = next.searchQuery { searchQuery = query }
+            if let source = next.searchSource { searchSource = source }
+        }
         if next != ui { ui = next }
         // A push sent before the page saw native's own navigation must not jump back.
         if let pending, pending.path != next.path, Date().timeIntervalSince(pending.at) < 2 {} else {
@@ -346,6 +375,10 @@ final class NativeShellStore: ObservableObject {
     func go(_ path: String) {
         presenter?.view.endEditing(true)
         if path == "/wave" { waveSettingsOpen = true; return }
+        let url = URLComponents(string: path)
+        if let query = url?.queryItems?.first(where: { $0.name == "q" })?.value { searchQuery = String(query.prefix(200)) }
+        if path.hasPrefix("/yandex") { searchSource = "yandex" }
+        else if let source = url?.queryItems?.first(where: { $0.name == "src" })?.value, ["all", "local", "ytmusic", "youtube", "soundcloud", "yandex"].contains(source) { searchSource = source }
         self.path = path.components(separatedBy: "?")[0]
         pending = (self.path, Date())
         run("go", ["path": path])
@@ -556,7 +589,7 @@ struct NativeShellContent: View {
         }
         .animation(.easeOut(duration: 0.25), value: store.banner)
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.32), value: store.path)
-        .transaction { if reduceMotion { $0.animation = nil } }
+        .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
         .foregroundStyle(.white)
         .tint(.moraMint)
         .environmentObject(store)

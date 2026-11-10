@@ -1,14 +1,14 @@
-import { api, type PublicSource, type PublicTrack, type Track } from './api.ts';
+import { api, type Track } from './api.ts';
 import { nativePlaybackControls } from './playback-trace.ts';
 import { startRadio, useRadio } from './radio.ts';
 import { trackAlbumHref, trackArtistHref } from './router.ts';
 import { controller, phone, trackOf, useApp } from '../store/app.ts';
-import { publicPlayer, usePublicPlayback } from '../store/catalog.ts';
+import { usePublicPlayback, useCatalogPlayback } from '../store/catalog.ts';
 import { react } from '../components/TrackList.tsx';
-import { asCatalog, SOURCE_LABEL } from '../pages/Search.tsx';
 import { useVersionPanel, openVersionPanel } from '../components/VersionPanel.tsx';
 import { actions, describe, describeWaveSettings, type ActResult } from './native-pages.ts';
 import { nativeVersionCommands } from './native-versions.ts';
+import { nativeCatalogCommands } from './native-catalog.ts';
 
 /**
  * iPhone native shell (ios/App/App/NativeShell.swift). Data path: this page stays the only owner of
@@ -27,12 +27,16 @@ export const uiTrack = (t: Track): NativeUiTrack => ({
 
 /** Everything but the library and playlists, which are sent only when they change. */
 export function uiState(s = useApp.getState(), radio = useRadio.getState(), preparing = usePublicPlayback.getState()) {
+  const catalogPreparation = useCatalogPlayback.getState();
   const p = s.player, ctx = p.context?.type;
+  const [path, query] = (location.hash.replace(/^#/, '') || '/').split('?');
+  const params = new URLSearchParams(query);
   const current = trackOf(p.queue[p.index]?.trackId);
   const playing = p.status === 'playing' || p.status === 'buffering';
   const toast = s.toasts.at(-1);
   return {
-    path: (location.hash.replace(/^#/, '') || '/').split('?')[0],
+    path,
+    search: { q: params.get('q'), source: path === '/yandex' ? 'yandex' : params.get('src') },
     loaded: s.loaded,
     // The web full player, side panels and the version picker cover everything: native steps aside while they are open.
     overlay: s.fullPlayer || s.queueOpen || s.panel !== null || useVersionPanel.getState().target !== null,
@@ -47,17 +51,9 @@ export function uiState(s = useApp.getState(), radio = useRadio.getState(), prep
     playback: { shuffle: p.shuffle, repeat: p.repeat, automix: s.settings?.automix.enabled ?? true, canShuffle: !radio.active && !['wave', 'yandex-wave', 'online-radio'].includes(ctx ?? '') },
     now: current ? { id: current.id, title: current.title, artist: current.artist, cover: current.coverUrl, playing, label: p.context?.label ?? '' } : null,
     toast: toast ? { id: toast.id, text: toast.text, kind: toast.kind } : null,
-    preparing: preparing.phase === 'starting' ? preparing.title : null,
+    preparing: catalogPreparation.phase === 'starting' ? catalogPreparation.title : preparing.phase === 'starting' ? preparing.title : null,
   };
 }
-
-const results = new Map<PublicSource, { q: string; items: PublicTrack[] }>();
-const publicItem = (source: PublicSource, id: string) => {
-  const r = results.get(source);
-  const index = r?.items.findIndex((t) => t.externalId === id) ?? -1;
-  if (!r || index < 0) throw new Error('Результат поиска устарел');
-  return { ...r, index };
-};
 
 async function base64(blob: Blob): Promise<string> {
   const url = await new Promise<string>((resolve, reject) => {
@@ -71,14 +67,10 @@ async function base64(blob: Blob): Promise<string> {
 
 type Args = Record<string, unknown>;
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
-const source = (v: unknown): PublicSource => {
-  if (v === 'ytmusic' || v === 'youtube' || v === 'soundcloud') return v;
-  throw new Error('Неизвестный источник');
-};
-
 /** Native → page. Arguments come from our own Swift code, but are still checked: a wrong call must fail, not misplay. */
 export const commands: Record<string, (a: Args) => unknown> = {
   ...nativeVersionCommands,
+  ...nativeCatalogCommands,
   go: (a) => { location.hash = str(a.path) || '/'; },
   back: () => history.back(),
   open: (a) => {
@@ -146,27 +138,13 @@ export const commands: Record<string, (a: Args) => unknown> = {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return base64(await res.blob());
   },
-  search: async (a) => {
-    const src = source(a.source), q = str(a.q).trim().slice(0, 200);
-    const { items } = await api.publicSearch(src, q);
-    results.set(src, { q, items });
-    return items.map((t) => ({ id: t.externalId, title: t.title, artist: t.artist, album: t.album, duration: t.duration, reaction: 0, cover: t.coverUrl, ok: t.playable }));
-  },
   /** «Заменить трек»: the web version picker takes over the screen (uiState.overlay), native steps aside. */
   versions: (a) => {
     const t = trackOf(str(a.id));
     if (!t) throw new Error('Трек не найден');
     openVersionPanel({ trackId: t.id, title: t.title, artist: t.artist, duration: t.duration });
   },
-  publicPlay: (a) => {
-    const src = source(a.source), { q, items, index } = publicItem(src, str(a.id));
-    return publicPlayer.play(items.map(asCatalog), index, { type: 'search', label: `${SOURCE_LABEL[src]} · ${q}` });
-  },
-  publicQueue: async (a) => {
-    const { items, index } = publicItem(source(a.source), str(a.id));
-    await publicPlayer.enqueue(asCatalog(items[index]));
-    useApp.getState().toast('Добавлено в очередь');
-  },
+
 };
 
 declare global { interface Window { moraNativeUi?: (name: string, args: Args) => Promise<unknown> } }
@@ -214,6 +192,7 @@ export function startNativeUi(): void {
   useApp.subscribe(schedule);
   useRadio.subscribe(schedule);
   usePublicPlayback.subscribe(schedule);
+  useCatalogPlayback.subscribe(schedule);
   useVersionPanel.subscribe(schedule);
   window.addEventListener('hashchange', schedule);
   schedule();

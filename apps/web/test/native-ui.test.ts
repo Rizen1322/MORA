@@ -11,7 +11,7 @@ vi.mock('../src/store/app.ts', () => ({
   useApp: { getState: () => h.app, setState: vi.fn(), subscribe: (fn: () => void) => h.listeners.push(fn) },
 }));
 vi.mock('../src/lib/radio.ts', () => ({ startRadio: () => h.startRadio(), useRadio: { getState: () => h.radio, subscribe: vi.fn() } }));
-vi.mock('../src/store/catalog.ts', () => ({ publicPlayer: {}, usePublicPlayback: { getState: () => ({ phase: 'idle', title: '' }), subscribe: vi.fn() } }));
+vi.mock('../src/store/catalog.ts', () => ({ catalogPlayer: {}, publicPlayer: {}, useCatalogPlayback: { getState: () => ({ phase: 'idle', title: '' }), subscribe: vi.fn() }, usePublicPlayback: { getState: () => ({ phase: 'idle', title: '' }), subscribe: vi.fn() } }));
 vi.mock('../src/pages/Search.tsx', () => ({ asCatalog: (t: any) => t, SOURCE_LABEL: {} }));
 vi.mock('../src/components/TrackList.tsx', () => ({ react: vi.fn() }));
 vi.mock('../src/components/VersionPanel.tsx', () => ({
@@ -58,7 +58,7 @@ describe('native shell bridge (page side)', () => {
     commands.wave({ source: 'online' });
     expect(h.toggle).toHaveBeenCalledTimes(1);
     expect(h.startRadio).toHaveBeenCalledTimes(1);
-    expect(() => commands.publicPlay({ source: 'ytmusic', id: 'x' })).toThrow('устарел');
+    await expect(commands.searchAction({ session: 'stale', id: 'x', kind: 'play' })).rejects.toThrow('устарел');
     await expect(commands.cover({ url: 'https://evil/' })).rejects.toThrow();
   });
 
@@ -125,7 +125,7 @@ it('gives focus exclusively to native content and restores web inputs for web sc
   vi.useFakeTimers();
   let shown = true;
   const root = { inert: false }, blur = vi.fn();
-  const push = vi.fn(async (state: any) => ({ shown, nativeContent: shown && !state.overlay && state.path !== '/yandex' }));
+  const push = vi.fn(async (state: any) => ({ shown, nativeContent: shown && !state.overlay && state.path !== '/diagnostics/charts' }));
   vi.stubGlobal('window', { moraNativePlayback: { uiState: push }, addEventListener: vi.fn() });
   vi.stubGlobal('document', { getElementById: () => root, activeElement: { blur }, documentElement: { classList: { toggle: vi.fn() } } });
   const { startNativeUi } = await import('../src/lib/native-ui.ts');
@@ -135,7 +135,7 @@ it('gives focus exclusively to native content and restores web inputs for web sc
   expect(blur).toHaveBeenCalledTimes(1); // State refreshes must not dismiss the native keyboard.
   h.app = { ...h.app, fullPlayer: true }; h.listeners.forEach(fn => fn()); await vi.advanceTimersByTimeAsync(200);
   expect(root.inert).toBe(false);
-  h.app = { ...h.app, fullPlayer: false }; (location as any).hash = '#/yandex';
+  h.app = { ...h.app, fullPlayer: false }; (location as any).hash = '#/diagnostics/charts';
   h.listeners.forEach(fn => fn()); await vi.advanceTimersByTimeAsync(200); expect(root.inert).toBe(false);
   (location as any).hash = '#/search'; h.listeners.forEach(fn => fn()); await vi.advanceTimersByTimeAsync(200);
   expect(root.inert).toBe(true); expect(blur).toHaveBeenCalledTimes(2);

@@ -1,4 +1,5 @@
 import { keyNameRu } from '@automix/core';
+import { describeNativeCatalog, nativeCatalogCommands } from './native-catalog.ts';
 import { api, type ExternalTrack, type HealthStatus, type ImportJob, type ImportRow, type ProviderInfo, type Track, type TransitionLogItem } from './api.ts';
 import { trackArtists, hasTrackArtist } from './artists.ts';
 import { addBatch } from './batchImport.ts';
@@ -45,7 +46,7 @@ export type Row =
 export interface Section { title?: string; footer?: string; rows: Row[]; play?: { type: string; id?: string; label: string }; reorder?: Act }
 export interface Screen { title: string; sections: Section[]; search?: string; refresh?: number }
 /** What an action asks native to do after it ran (it always reloads the screen). */
-export interface ActResult { go?: string; share?: { name: string; text: string } }
+export interface ActResult { versions?: string; go?: string; share?: { name: string; text: string } }
 
 const st = () => useApp.getState();
 const library = () => { const s = st(); return s.order.map((id) => s.tracks.get(id)).filter((t): t is Track => !!t); };
@@ -575,6 +576,7 @@ async function trackAnalysis(id: string): Promise<Screen> {
 export function describe(): Promise<Screen> | Screen | null {
   const { parts } = route();
   const [a, b, c] = parts;
+  if (['catalog', 'public', 'soundcloud'].includes(a) && parts.length === 3) return describeNativeCatalog(parts);
   if (a === 'library' && !c) return b === 'albums' ? albums() : b === 'artists' ? artists() : b === 'playlists' ? playlists() : null;
   if (a === 'album' && parts.length === 3) return album(b, c);
   if (a === 'artist' && parts.length === 2) return artist(b);
@@ -603,6 +605,8 @@ const SETTING_GROUPS = ['automix', 'wave', 'ui', 'downloads', 'yandex'] as const
 async function importBody(body: Parameters<typeof api.startImport>[0]) { importJob = await api.startImport(body); }
 
 export const actions: Record<string, (a: Args) => unknown> = {
+  searchItem: (a) => nativeCatalogCommands.searchAction(a),
+  catalogMore: (a) => nativeCatalogCommands.catalogMore(a),
   playAll: (a) => {
     const list = ids(a.ids).filter((id) => trackOf(id)?.status === 'ok');
     if (!list.length) return;

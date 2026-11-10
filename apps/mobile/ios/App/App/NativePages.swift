@@ -92,7 +92,10 @@ struct NativePageView: View {
 
     private func dialogs(_ list: some View) -> some View {
         list
-            .refreshable { await load() }
+            .refreshable {
+                if ["/catalog/", "/public/", "/soundcloud/"].contains(where: { store.path.hasPrefix($0) }) { _ = try? await store.call("catalogRefresh") }
+                await load()
+            }
             .task(id: "\(store.path)|\(store.revision)|\(reload)|\(waveSource?.wrappedValue.rawValue ?? "")") { await load() }
             .task(id: page?.refresh) {
                 guard let seconds = page?.refresh else { return }
@@ -364,6 +367,7 @@ struct NativePageView: View {
                 let result = try await store.call("act", ["name": act.name, "args": args], timeout: 120) as? [String: Any]
                 if let share = result?["share"] as? [String: Any], let name = share["name"] as? String, let text = share["text"] as? String { self.share(name, text) }
                 if let path = result?["go"] as? String { store.go(path) }
+                if let id = result?["versions"] as? String { store.presentVersions(id: id) }
             } catch {
                 store.show(Self.message(error))
             }

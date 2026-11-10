@@ -312,127 +312,222 @@ struct NativeTrackActions: View {
 
 /// Catalog search: the collection, YouTube Music and SoundCloud (the web /search page, without its extras).
 struct NativeSearchView: View {
-    private static let sources: [(String, String)] = [("ytmusic", "YouTube Music"), ("soundcloud", "SoundCloud")]
+    private static let publicSources = ["ytmusic", "youtube", "soundcloud"]
     @EnvironmentObject private var store: NativeShellStore
-    @State private var query = ""
-    @State private var results: [String: [NativeTrack]] = [:]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var scope = "all"
+    @State private var results: [String: NativeSearchResults] = [:]
     @State private var errors: [String: String] = [:]
     @State private var searching: Set<String> = []
+    @State private var recent = UserDefaults.standard.stringArray(forKey: "mora.nativeSearchRecent") ?? []
+    @State private var busy = false
+    @State private var failure: String?
+    private var query: String { store.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var source: String { store.searchSource }
+    private var key: String { query + "|" + source + "|" + scope }
+    private var sources: [String] { source == "all" ? Self.publicSources + (store.ui.wave.yandex ? ["yandex"] : []) : source == "local" ? [] : [source] }
+    private var local: [NativeTrack] { query.isEmpty ? [] : NativeSearchText.filter(store.library, query) }
 
     var body: some View {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let local = trimmed.isEmpty ? [] : Array(NativeSearchText.filter(store.library, trimmed).prefix(4))
         NavigationStack {
             List {
+                filters
                 if let title = store.ui.preparing {
-                    Label("Подготавливаем «\(title)»…", systemImage: "arrow.down.circle").foregroundStyle(Color.moraMint)
-                        .listRowBackground(Color.clear)
+                    HStack {
+                        ProgressView()
+                        Text("Подготавливаем «\(title)»…").font(.subheadline)
+                        Spacer()
+                        Button("Отмена") { store.run("searchCancel") }
+                    }.listRowBackground(Color.clear)
                 }
-                if trimmed.isEmpty {
-                    Text("Ищите исполнителей, треки или вставьте ссылку. Найденное можно сразу слушать или добавить в очередь.")
-                        .foregroundStyle(.white.opacity(0.6)).listRowBackground(Color.clear)
-                }
-                if !local.isEmpty {
-                    Section("Моя музыка") {
-                        ForEach(Array(local.enumerated()), id: \.element.id) { i, t in
-                            NativeTrackRow(track: t) { store.play(local, at: i, type: "search", label: trimmed) }
-                        }
+                if query.isEmpty { history }
+                if source == "yandex" && !store.ui.wave.yandex {
+                    ContentUnavailableView("Подключите Яндекс Музыку", systemImage: "music.note", description: Text("Войдите в аккаунт для поиска по каталогу."))
+                    Button("Подключить") { store.go("/sources") }
+                } else {
+                    if !query.isEmpty && (source == "all" || source == "local") { localSection }
+                    ForEach(sources, id: \.self) { value in
+                        if !query.isEmpty || source == "yandex" { remoteSection(value) }
                     }
-                }
-                if !trimmed.isEmpty {
-                    ForEach(Self.sources, id: \.0) { source, label in
-                        Section(label) {
-                            if let error = errors[source] {
-                                Text(error).font(.footnote).foregroundStyle(.white.opacity(0.6)).listRowBackground(Color.clear)
-                            } else if searching.contains(source) && results[source] == nil {
-                                ProgressView().frame(maxWidth: .infinity).listRowBackground(Color.clear)
-                            } else if results[source]?.isEmpty == true {
-                                Text("Ничего не найдено").foregroundStyle(.white.opacity(0.6)).listRowBackground(Color.clear)
-                            }
-                            ForEach(results[source] ?? []) { t in publicRow(t, source: source) }
-                        }
-                    }
-                }
-                if store.ui.wave.yandex {
-                    Button { store.go("/yandex?" + Self.form(["q": trimmed, "type": "all"])) } label: {
-                        Label("Искать в Яндекс Музыке", systemImage: "arrow.up.right.square").frame(minHeight: 44)
-                    }
-                    .listRowBackground(Color.clear)
                 }
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .background(Color.moraBackground)
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Исполнитель, трек или ссылка")
-            .autocorrectionDisabled()
-            .navigationTitle("Поиск")
-            .task(id: trimmed) { await search(trimmed) }
+            .listStyle(.plain).scrollContentBackground(.hidden).background(Color.moraBackground)
+            .scrollDismissesKeyboard(.interactively)
+            .searchable(text: $store.searchQuery, placement: .navigationBarDrawer(displayMode: .always), prompt: "Исполнитель, трек, альбом или ссылка")
+            .autocorrectionDisabled().textInputAutocapitalization(.never).submitLabel(.search)
+            .onSubmit(of: .search) { remember() }
+            .navigationTitle(source == "yandex" ? "Яндекс Музыка" : "Поиск")
+            .task(id: key) { await search() }
+            .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: source)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: scope)
+            .onChange(of: store.searchQuery) { _, value in if value.count > 200 { store.searchQuery = String(value.prefix(200)) } }
+            .alert("Не удалось выполнить", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(failure ?? "") }
         }
     }
-
-    private func publicRow(_ t: NativeTrack, source: String) -> some View {
-        Button { store.run("publicPlay", ["source": source, "id": t.id]) } label: {
+    private static func title(_ value: String) -> String {
+        switch value {
+        case "all": return "Все источники"
+        case "local": return "Моя музыка"
+        case "ytmusic": return "YouTube Music"
+        case "youtube": return "YouTube"
+        case "soundcloud": return "SoundCloud"
+        default: return "Яндекс Музыка"
+        }
+    }
+    private var filters: some View {
+        Section {
+            Picker("Где искать", selection: $store.searchSource) {
+                ForEach(["all", "local"] + Self.publicSources + ["yandex"], id: \.self) { value in Text(Self.title(value)).tag(value) }
+            }.accessibilityIdentifier("search.source")
+            if source == "yandex" {
+                Picker("Что искать", selection: $scope) {
+                    Text("Всё").tag("all"); Text("Треки").tag("track"); Text("Артисты").tag("artist"); Text("Альбомы").tag("album")
+                }.pickerStyle(.segmented).accessibilityIdentifier("search.scope")
+            }
+        }.listRowBackground(Color.clear)
+    }
+    @ViewBuilder private var history: some View {
+        if recent.isEmpty && source != "yandex" {
+            ContentUnavailableView("Найдите свою музыку", systemImage: "magnifyingglass", description: Text("Поиск по медиатеке, YouTube Music, YouTube, SoundCloud и Яндексу. Можно вставить ссылку на трек."))
+                .listRowBackground(Color.clear)
+        } else if !recent.isEmpty {
+            Section {
+                ForEach(recent, id: \.self) { text in
+                    Button { store.searchQuery = text } label: { Label(text, systemImage: "clock").frame(minHeight: 36) }
+                        .swipeActions { Button("Удалить", role: .destructive) { recent.removeAll { $0 == text }; saveRecent() } }
+                }
+            } header: {
+                HStack { Text("Недавно искали"); Spacer(); Button("Очистить") { recent = []; saveRecent() } }
+            }
+        }
+    }
+    private var localSection: some View {
+        let matches = local
+        return Section("Моя музыка") {
+            if matches.isEmpty { Text("Ничего не найдено").foregroundStyle(.secondary) }
+            ForEach(Array(matches.prefix(source == "all" ? 4 : matches.count).enumerated()), id: \.element.id) { index, track in
+                NativeTrackRow(track: track) { remember(); store.play(matches, at: index, type: "search", label: query) }
+            }
+            if source == "all" && matches.count > 4 { Button("Все треки медиатеки") { store.searchSource = "local" } }
+        }
+    }
+    private func remoteSection(_ value: String) -> some View {
+        Section(Self.title(value)) {
+            if let error = errors[value] {
+                Text(error).font(.footnote).foregroundStyle(.secondary)
+                Button("Повторить") { retry(value) }
+            }
+            if searching.contains(value) { ProgressView("Ищем…").frame(maxWidth: .infinity).listRowBackground(Color.clear) }
+            if let found = results[value] {
+                if found.isEmpty && !searching.contains(value) { Text("Ничего не найдено").foregroundStyle(.secondary) }
+                ForEach(Array(found.artists.prefix(source == "all" ? 4 : found.artists.count))) { item in linkRow(item, symbol: "music.mic") }
+                ForEach(Array(found.albums.prefix(source == "all" ? 4 : found.albums.count))) { item in linkRow(item, symbol: "square.stack") }
+                ForEach(Array(found.tracks.prefix(source == "all" ? 6 : found.tracks.count))) { item in hitRow(item, source: value, session: found.session) }
+                if source == "all" && (!found.artists.isEmpty || !found.albums.isEmpty || found.tracks.count > 6) {
+                    Button("Все результаты · " + Self.title(value)) { store.searchSource = value }
+                } else if source == "yandex" && found.more {
+                    Button("Показать ещё") { retry(value, more: true) }.disabled(searching.contains(value))
+                }
+            }
+        }
+    }
+    private func linkRow(_ item: NativeSearchLink, symbol: String) -> some View {
+        Button { remember(); store.go(item.path) } label: {
             HStack(spacing: 12) {
-                NativeCover(url: t.cover, size: 48)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(t.title).font(.body.weight(.medium)).lineLimit(1)
-                    Text(t.artist).font(.subheadline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                NativeCover(url: item.cover, size: 48, radius: symbol == "music.mic" ? 24 : 8)
+                VStack(alignment: .leading, spacing: 3) { Text(item.title).fontWeight(.medium); Text(item.detail).font(.caption).foregroundStyle(.secondary) }
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+            }.frame(minHeight: 56)
+        }.buttonStyle(.plain).listRowBackground(Color.clear)
+    }
+    private func hitRow(_ hit: NativeSearchHit, source: String, session: String) -> some View {
+        let track = hit.track
+        return Button { act("play", track: track, source: source, session: session) } label: {
+            HStack(spacing: 12) {
+                NativeCover(url: track.cover, size: 48, radius: 8)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 5) { Text(track.title).font(.body.weight(.medium)).lineLimit(1); if hit.explicit { Text("E").font(.caption2.bold()).foregroundStyle(.secondary) } }
+                    Text(track.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    if !hit.tags.isEmpty { Text(hit.tags).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
                 }
-                Spacer(minLength: 4)
-                Text(NativePlayerTime.text(t.duration)).font(.footnote.monospacedDigit()).foregroundStyle(.white.opacity(0.5))
-                    .accessibilityHidden(true)
-            }
-            .frame(minHeight: 56)
-            .contentShape(Rectangle())
-            .opacity(t.ok ? 1 : 0.45)
+                Spacer(minLength: 0)
+                if track.liked { Image(systemName: "heart.fill").font(.caption).foregroundStyle(Color.moraMint) }
+                if hit.saved { Image(systemName: "checkmark").font(.caption).foregroundStyle(.secondary) }
+                Text(NativePlayerTime.text(track.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            }.frame(minHeight: 56).contentShape(Rectangle()).opacity(track.ok ? 1 : 0.45)
         }
-        .buttonStyle(.plain)
-        .disabled(!t.ok)
-        .listRowBackground(Color.clear)
-        .accessibilityLabel("\(t.title), \(t.artist)")
-        .accessibilityHint(t.ok ? "Играть" : "Недоступно")
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button { store.run("publicQueue", ["source": source, "id": t.id]) } label: { Label("В очередь", systemImage: "text.append") }
-                .tint(.indigo)
-        }
+        .buttonStyle(.plain).disabled(!track.ok || busy).listRowBackground(Color.clear)
         .contextMenu {
-            Button { store.run("publicPlay", ["source": source, "id": t.id]) } label: { Label("Играть", systemImage: "play") }
-            Button { store.run("publicQueue", ["source": source, "id": t.id]) } label: { Label("Добавить в очередь", systemImage: "text.append") }
-        }
-        .accessibilityAction(named: "Добавить в очередь") { store.run("publicQueue", ["source": source, "id": t.id]) }
-    }
-
-    private static func form(_ items: [String: String]) -> String {
-        var c = URLComponents()
-        c.queryItems = items.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
-        return c.percentEncodedQuery ?? ""
-    }
-
-    /// Debounced; a newer query cancels this task, and its late results are dropped.
-    @MainActor private func search(_ q: String) async {
-        results = [:]; errors = [:]; searching = []
-        guard !q.isEmpty else { return }
-        try? await Task.sleep(for: .milliseconds(350))
-        guard !Task.isCancelled else { return }
-        searching = Set(Self.sources.map(\.0))
-        await withTaskGroup(of: Void.self) { group in
-            for (source, _) in Self.sources {
-                group.addTask { @MainActor in
-                    do {
-                        let rows = try await store.call("search", ["source": source, "q": q]) as? [[String: Any]] ?? []
-                        if !Task.isCancelled { results[source] = rows.compactMap(NativeTrack.init) }
-                    } catch {
-                        if !Task.isCancelled { errors[source] = "Поиск недоступен: \(Self.message(error))" }
-                    }
-                    searching.remove(source)
+            actionButton("Играть следующим", "text.line.first.and.arrowtriangle.forward", "next", track, source, session)
+            actionButton("В очередь", "text.append", "queue", track, source, session)
+            actionButton(track.liked ? "Убрать лайк" : "Нравится", "heart", "like", track, source, session)
+            actionButton(track.reaction < 0 ? "Убрать дизлайк" : "Не нравится", "hand.thumbsdown", "dislike", track, source, session)
+            if !hit.saved { actionButton("Сохранить в медиатеку", "plus", "save", track, source, session) }
+            if !store.playlists.isEmpty {
+                Menu("В плейлист", systemImage: "music.note.list") {
+                    ForEach(store.playlists) { playlist in Button(playlist.name) { act("playlist", track: track, source: source, session: session, playlist: playlist.id) } }
                 }
             }
+            actionButton("Скачать", "arrow.down.circle", "download", track, source, session)
+            actionButton("Другая версия", "arrow.triangle.swap", "versions", track, source, session)
+            actionButton("Исполнитель", "music.mic", "artist", track, source, session)
+            if !track.album.isEmpty { actionButton("Альбом", "square.stack", "album", track, source, session) }
+            actionButton("Радио по треку", "dot.radiowaves.left.and.right", "radio", track, source, session)
+        }
+        .swipeActions(edge: .leading) { actionButton("Следующим", "text.line.first.and.arrowtriangle.forward", "next", track, source, session).tint(.moraMint) }
+        .swipeActions(edge: .trailing) { actionButton(track.liked ? "Убрать лайк" : "Нравится", "heart", "like", track, source, session).tint(.moraGold) }
+        .accessibilityLabel(track.title + ", " + track.artist)
+    }
+    private func actionButton(_ title: String, _ symbol: String, _ kind: String, _ track: NativeTrack, _ source: String, _ session: String) -> some View {
+        Button { act(kind, track: track, source: source, session: session) } label: { Label(title, systemImage: symbol) }
+    }
+    private func act(_ kind: String, track: NativeTrack, source: String, session: String, playlist: String? = nil) {
+        guard !busy else { return }
+        remember(); busy = true
+        let requested = key, origin = store.path
+        Task { @MainActor in
+            defer { busy = false }
+            do {
+                var args: [String: Any] = ["kind": kind, "id": track.id, "session": session]
+                if let playlist { args["playlist"] = playlist }
+                let value = try await store.call("searchAction", args, timeout: 180) as? [String: Any]
+                guard key == requested, store.path == origin else { return }
+                if let path = value?["go"] as? String { store.go(path) }
+                if let id = value?["versions"] as? String { store.presentVersions(id: id) }
+                if ["like", "dislike", "save", "playlist"].contains(kind) { await load(source, key: key) }
+            } catch { failure = Self.message(error) }
         }
     }
-
-    private static func message(_ error: Error) -> String {
-        (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription
+    private func remember() {
+        guard !query.isEmpty else { return }
+        recent = [query] + Array(recent.filter { $0 != query }.prefix(11)); saveRecent()
     }
+    private func saveRecent() { UserDefaults.standard.set(recent, forKey: "mora.nativeSearchRecent") }
+    private func retry(_ source: String, more: Bool = false) { Task { @MainActor in await load(source, key: key, more: more) } }
+    @MainActor private func search() async {
+        results = [:]; errors = [:]; searching = []
+        guard !query.isEmpty || source == "yandex", source != "local", source != "yandex" || store.ui.wave.yandex else { return }
+        do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+        let requested = key
+        await withTaskGroup(of: Void.self) { group in
+            for source in sources { group.addTask { @MainActor in await load(source, key: requested) } }
+        }
+    }
+    @MainActor private func load(_ source: String, key requested: String, more: Bool = false) async {
+        guard key == requested, !searching.contains(source) else { return }
+        searching.insert(source); errors[source] = nil
+        defer { if key == requested && !Task.isCancelled { searching.remove(source) } }
+        do {
+            var args: [String: Any] = ["source": source, "q": query, "scope": source == "yandex" ? scope : "all", "more": more]
+            if more { args["session"] = results[source]?.session }
+            let value = try await store.call("search", args, timeout: 60)
+            guard key == requested, !Task.isCancelled else { return }
+            guard let found = NativeSearchResults(value) else { throw NativeShellError.page }
+            results[source] = found
+        } catch { if key == requested && !Task.isCancelled { errors[source] = Self.message(error) } }
+    }
+    private static func message(_ error: Error) -> String { (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription }
 }
 
 // MARK: «Ещё»

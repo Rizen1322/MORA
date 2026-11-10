@@ -2,19 +2,20 @@ import { beforeEach, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   tracks: new Map<string, any>(), current: null as any,
-  search: vi.fn(), ensure: vi.fn(), bind: vi.fn(), track: vi.fn(), save: vi.fn(), upsert: vi.fn(), start: vi.fn(), changed: vi.fn(),
+  catalogSearch: vi.fn(), catalogEnsure: vi.fn(), providers: [] as any[], search: vi.fn(), ensure: vi.fn(), bind: vi.fn(), track: vi.fn(), save: vi.fn(), upsert: vi.fn(), start: vi.fn(), changed: vi.fn(),
 }));
-vi.mock('../src/lib/api.ts', () => ({ api: { publicSearch: (...a: any[]) => h.search(...a), bindRecording: (...a: any[]) => h.bind(...a),
+vi.mock('../src/lib/api.ts', () => ({ api: { catalogSearch: (...a: any[]) => h.catalogSearch(...a), publicSearch: (...a: any[]) => h.search(...a), bindRecording: (...a: any[]) => h.bind(...a),
   track: (...a: any[]) => h.track(...a), saveTrack: (...a: any[]) => h.save(...a) } }));
 vi.mock('../src/store/app.ts', () => ({
-  useApp: { getState: () => ({ tracks: h.tracks, order: [...h.tracks.keys()], upsertTrack: h.upsert }) },
+  useApp: { getState: () => ({ providers: h.providers, tracks: h.tracks, order: [...h.tracks.keys()], upsertTrack: h.upsert }) },
   controller: { get currentEntry() { return h.current; }, state: { index: 2 }, startAt: (...a: any[]) => h.start(...a), onRecordingChanged: (...a: any[]) => h.changed(...a) },
 }));
 vi.mock('../src/pages/Search.tsx', () => ({ ensurePublic: (...a: any[]) => h.ensure(...a), SOURCE_LABEL: { ytmusic: 'YouTube Music', youtube: 'YouTube', soundcloud: 'SoundCloud' } }));
+vi.mock('../src/store/catalog.ts', () => ({ catalogPlayer: { ensure: (...a: any[]) => h.catalogEnsure(...a) } }));
 vi.mock('../src/components/VersionPanel.tsx', () => ({ sameSong: (a: string, b: string) => b.includes(a) }));
 
 beforeEach(() => {
-  vi.resetModules(); vi.clearAllMocks(); h.current = null;
+  vi.resetModules(); vi.clearAllMocks(); h.current = null; h.providers = [];
   h.tracks = new Map([['original', { id: 'original', title: 'Song', artist: 'Artist', coverUrl: 'original-cover', duration: 100, status: 'ok' }],
     ['local', { id: 'local', title: 'Song live', artist: 'Artist', coverUrl: 'live-cover', duration: 130, status: 'ok' }]]);
   h.search.mockResolvedValue({ items: [{ externalId: 'remote', title: 'Song remix', artist: 'Remixer', duration: 140, playable: true, labels: [] },
@@ -72,4 +73,25 @@ it('opens the current wave recording even when it is not saved in the library ta
   h.tracks.set('wave', { id: 'wave', title: 'Wave title', artist: 'Artist', coverUrl: 'wave-cover', status: 'ok', saved: false, binding: { assetId: 'other' } });
   expect(c.versionTarget({ target: 'wave' })).toMatchObject({ id: 'wave', title: 'Wave title', cover: 'wave-cover', binding: 'other' });
   expect(() => c.versionTarget({ target: 'missing' })).toThrow('Трек не найден');
+});
+it('searches Yandex versions and binds their audio to the original identity', async () => {
+  h.providers = [{ id: 'yandex', status: 'connected' }];
+  h.catalogSearch.mockResolvedValue({ tracks: [{ externalId: 'ya', title: 'Song album version', artist: 'Artist', duration: 100, playable: true }] });
+  h.catalogEnsure.mockResolvedValue('asset');
+  const { nativeVersionCommands: c } = await import('../src/lib/native-versions.ts');
+  const found = await c.versionSearch({ target: 'original', query: 'Song', source: 'yandex', request: 'ya-search' });
+  h.tracks.set('asset', { id: 'asset', title: 'Song album version', status: 'ok' });
+  expect(found.rows.map(row => row.key)).toEqual(['local:local', 'yandex:ya']);
+  expect(h.search).not.toHaveBeenCalled();
+  await c.versionApply({ target: 'original', session: 'ya-search', key: 'yandex:ya' });
+  expect(h.catalogEnsure).toHaveBeenCalledOnce();
+  expect(h.bind).toHaveBeenCalledWith('original', 'asset');
+  expect(h.upsert).toHaveBeenCalledWith(expect.objectContaining({ id: 'original', title: 'Song', coverUrl: 'original-cover' }));
+});
+it('offers a local-only version search without a network request', async () => {
+  const { nativeVersionCommands: c } = await import('../src/lib/native-versions.ts');
+  const found = await c.versionSearch({ target: 'original', query: 'Song', source: 'local', request: 'local-only' });
+  expect(found.rows.map(row => row.key)).toEqual(['local:local']);
+  expect(h.search).not.toHaveBeenCalled(); expect(h.catalogSearch).not.toHaveBeenCalled();
+  await expect(c.versionSearch({ target: 'original', source: 'yandex', request: 'offline' })).rejects.toThrow('Подключите Яндекс');
 });

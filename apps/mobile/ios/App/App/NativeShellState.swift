@@ -116,6 +116,7 @@ struct NativeUiState: Equatable {
     var now: NativeNow?
     var toast: NativeToast?
     var preparing: String?
+    var searchQuery: String?, searchSource: String?
 
     init() {}
     init(_ value: [String: Any]) {
@@ -132,6 +133,9 @@ struct NativeUiState: Equatable {
             self.toast = NativeToast(id: id, text: text, error: toast["kind"] as? String == "error")
         }
         preparing = value["preparing"] as? String
+        let search = value["search"] as? [String: Any] ?? [:]
+        if let query = search["q"] as? String { searchQuery = String(query.prefix(200)) }
+        if let source = search["source"] as? String, ["all", "local", "ytmusic", "youtube", "soundcloud", "yandex"].contains(source) { searchSource = source }
     }
 }
 
@@ -146,12 +150,13 @@ enum NativeRoute {
         case "/more": return .more
         case "/liked": return .liked
         case "/library", "/library/tracks", "/library/search": return .library
-        case "/search": return .search
+        case "/search", "/yandex": return .search
         // Described by the page (apps/web/src/lib/native-pages.ts `describe`, same routes).
         case "/library/albums", "/library/artists", "/library/playlists", "/history", "/wave", "/downloads", "/import", "/sources", "/settings", "/diagnostics":
             return .page
         default:
             let parts = path.split(separator: "/")
+            if parts.count == 3 && (["catalog", "public"].contains(parts.first) && ["artist", "album"].contains(parts[1]) || parts.first == "soundcloud" && parts[1] == "artist") { return .page }
             if (parts.first == "album" && parts.count == 3) || (["artist", "playlist"].contains(parts.first) && parts.count == 2) { return .page }
             return .web
         }
@@ -349,4 +354,34 @@ enum NativePreviewResume {
             && current["entryId"] as? String == entry && current["controlRevision"] as? Int == revision
             && current["epoch"] as? Int == paused["epoch"] as? Int
     }
+}
+struct NativeSearchLink: Identifiable {
+    let id: String, title: String, detail: String, path: String
+    let cover: String?
+    init?(_ value: [String: Any]) {
+        guard let id = value["id"] as? String, let path = value["path"] as? String, path.hasPrefix("/") else { return nil }
+        self.id = id; self.path = path; title = value["title"] as? String ?? ""
+        detail = value["detail"] as? String ?? ""; cover = value["cover"] as? String
+    }
+}
+struct NativeSearchHit: Identifiable {
+    var id: String { track.id }
+    let track: NativeTrack, explicit: Bool, saved: Bool, tags: String
+    init?(_ value: [String: Any]) {
+        guard let track = NativeTrack(value) else { return nil }
+        self.track = track; explicit = value["explicit"] as? Bool == true
+        saved = value["saved"] as? Bool == true; tags = value["tags"] as? String ?? ""
+    }
+}
+struct NativeSearchResults {
+    let session: String, tracks: [NativeSearchHit], artists: [NativeSearchLink], albums: [NativeSearchLink], more: Bool
+    init?(_ value: Any?) {
+        guard let value = value as? [String: Any], let session = value["session"] as? String, !session.isEmpty else { return nil }
+        self.session = session
+        tracks = (value["tracks"] as? [[String: Any]] ?? []).compactMap(NativeSearchHit.init)
+        artists = (value["artists"] as? [[String: Any]] ?? []).compactMap(NativeSearchLink.init)
+        albums = (value["albums"] as? [[String: Any]] ?? []).compactMap(NativeSearchLink.init)
+        more = value["more"] as? Bool == true
+    }
+    var isEmpty: Bool { tracks.isEmpty && artists.isEmpty && albums.isEmpty }
 }

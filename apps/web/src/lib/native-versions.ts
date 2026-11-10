@@ -1,10 +1,12 @@
+import type { CatalogTrack } from '@automix/core';
+import { catalogPlayer } from '../store/catalog.ts';
 import { api, type PublicSource, type PublicTrack, type Track } from './api.ts';
 import { controller, useApp } from '../store/app.ts';
 import { sameSong } from '../components/VersionPanel.tsx';
 import { ensurePublic, SOURCE_LABEL } from '../pages/Search.tsx';
 
 type Args = Record<string, unknown>;
-type Choice = { local?: Track; remote?: PublicTrack };
+type Choice = { local?: Track; remote?: PublicTrack; yandex?: CatalogTrack };
 const searches = new Map<string, AbortController>();
 const sessions = new Map<string, { target: string; choices: Map<string, Choice> }>();
 const text = (value: unknown) => typeof value === 'string' ? value : '';
@@ -12,7 +14,9 @@ const resolve = async (args: Args) => {
   const session = sessions.get(text(args.session));
   const choice = session?.choices.get(text(args.key));
   if (!session || session.target !== args.target || !choice) throw Error('Результат поиска устарел. Повторите поиск.');
-  return choice.local ?? ensurePublic(choice.remote!);
+  if (choice.local) return choice.local;
+  if (choice.yandex) { const id = await catalogPlayer.ensure(choice.yandex); return useApp.getState().tracks.get(id) ?? await api.track(id); }
+  return ensurePublic(choice.remote!);
 };
 
 export const nativeVersionCommands = {
@@ -29,11 +33,17 @@ export const nativeVersionCommands = {
     const cancel = new AbortController();
     searches.set(target.id, cancel);
     const query = text(args.query).trim().slice(0, 200);
-    const sources: PublicSource[] = ['ytmusic', 'youtube', 'soundcloud'];
-    const selected = sources.includes(args.source as PublicSource) ? [args.source as PublicSource] : sources;
+    const sources: (PublicSource | 'yandex')[] = ['ytmusic', 'youtube', 'soundcloud'];
+    const connected = useApp.getState().providers?.some(p => p.id === 'yandex' && p.status === 'connected');
+    if (connected) sources.push('yandex');
+    const source = text(args.source) || 'all';
+    if (!['all', 'local', 'ytmusic', 'youtube', 'soundcloud', 'yandex'].includes(source)) throw Error('Неизвестный источник');
+    if (source === 'yandex' && !connected) throw Error('Подключите Яндекс Музыку в разделе «Источники»');
+    const selected = source === 'local' ? [] : source === 'all' ? sources : [source as PublicSource | 'yandex'];
+    const sourceLabel = (value: PublicSource | 'yandex') => value === 'yandex' ? 'Яндекс Музыка' : SOURCE_LABEL[value];
     const choices = new Map<string, Choice>();
     const rows: Record<string, unknown>[] = [];
-    const row = (key: string, track: Track | PublicTrack, source: string) => ({
+    const row = (key: string, track: Track | PublicTrack | CatalogTrack, source: string) => ({
       key, source, id: key, title: track.title, artist: track.artist, album: track.album, duration: track.duration,
       cover: track.coverUrl, ok: 'status' in track ? track.status === 'ok' : track.playable,
       tags: 'labels' in track ? track.labels.map(label => label.tag).join(' · ') : '',
@@ -44,15 +54,15 @@ export const nativeVersionCommands = {
       const key = `local:${id}`;
       choices.set(key, { local: track }); rows.push(row(key, track, 'Медиатека'));
     }
-    const results = await Promise.allSettled(selected.map(async source => ({ source, items: (await api.publicSearch(source, query, cancel.signal)).items })));
+    const results = await Promise.allSettled(selected.map(async source => ({ source, items: source === 'yandex' ? (await api.catalogSearch(query, 'track', 0, cancel.signal)).tracks : (await api.publicSearch(source, query, cancel.signal)).items })));
     if (searches.get(target.id) === cancel) searches.delete(target.id);
     const errors: string[] = [];
     for (let index = 0; index < results.length; index++) {
       const result = results[index];
-      if (result.status === 'rejected') { errors.push(`${SOURCE_LABEL[selected[index]]}: ${(result.reason as Error).message}`); continue; }
+      if (result.status === 'rejected') { errors.push(`${sourceLabel(selected[index])}: ${(result.reason as Error).message}`); continue; }
       for (const track of result.value.items.filter(track => sameSong(target.title, track.title)).slice(0, 8)) {
         const key = `${result.value.source}:${track.externalId}`;
-        choices.set(key, { remote: track }); rows.push(row(key, track, SOURCE_LABEL[result.value.source]));
+        choices.set(key, result.value.source === 'yandex' ? { yandex: track as CatalogTrack } : { remote: track as PublicTrack }); rows.push(row(key, track, sourceLabel(result.value.source)));
       }
     }
     const session = text(args.request);
