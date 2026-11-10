@@ -95,7 +95,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: MORA-native-ui-check
-          path: ${{ runner.temp }}/mora-native-home.png
+          path: |
+            ${{ runner.temp }}/mora-native-home.png
+            ${{ runner.temp }}/mora-ui-console.log
           if-no-files-found: error
 
   ui:

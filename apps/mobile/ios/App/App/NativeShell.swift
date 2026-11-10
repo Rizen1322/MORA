@@ -7,10 +7,21 @@ import WebKit
 /// iPhone app root: the Capacitor web view with the native SwiftUI shell over it.
 /// Three layers: the WKWebView (always in the window, so the page keeps running), the native screens
 /// (hidden on routes that stay web) and the floating tab bar with the mini player.
-/// Hidden layers take no touches, so there is no pass-through hit testing.
-final class MoraRootViewController: UITabBarController, UITabBarControllerDelegate {
+/// The live WebView keeps its original parent. UIKit owns a full-size tab controller above it;
+/// only its bar receives touches, while the native pages underneath remain interactive.
+private final class NativeTabsOverlay: UIView {
+    weak var bar: UITabBar?
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        guard let bar, !bar.isHidden else { return false }
+        return bar.convert(bar.bounds, to: self).contains(point)
+    }
+}
+
+final class MoraRootViewController: UIViewController, UITabBarControllerDelegate {
     let bridge = MoraBridgeViewController()
     let shell = NativeShellStore()
+    private let tabs = UITabBarController()
+    private let tabsOverlay = NativeTabsOverlay()
     private var content: UIViewController?
     private var bar: UIViewController?
     private var observer: AnyCancellable?
@@ -19,22 +30,29 @@ final class MoraRootViewController: UITabBarController, UITabBarControllerDelega
         super.viewDidLoad()
         overrideUserInterfaceStyle = .dark
         view.backgroundColor = UIColor(Color.moraBackground)
-        delegate = self
-        tabBar.tintColor = UIColor(Color.moraMint)
-        viewControllers = NativeTab.allCases.enumerated().map { index, tab in
+        embed(bridge)
+        bridge.view.frame = view.bounds
+        bridge.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        tabs.delegate = self
+        tabs.viewControllers = NativeTab.allCases.enumerated().map { index, tab in
             let page = UIViewController()
             page.view.backgroundColor = .clear
             page.tabBarItem = UITabBarItem(title: tab.item.0, image: UIImage(systemName: tab.item.1), tag: index)
             return page
         }
-        if #available(iOS 26.0, *) { setTabBarHidden(true, animated: false) }
-        else { tabBar.isHidden = true }
-        embed(bridge, into: selectedViewController?.view)
-        bridge.view.frame = selectedViewController?.view.bounds ?? view.bounds
-        bridge.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        tabs.view.backgroundColor = .clear
+        tabs.tabBar.tintColor = UIColor(Color.moraMint)
+        tabsOverlay.backgroundColor = .clear
+        tabsOverlay.frame = view.bounds
+        tabsOverlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        tabsOverlay.bar = tabs.tabBar
+        view.addSubview(tabsOverlay)
+        embed(tabs, into: tabsOverlay)
+        tabs.view.frame = tabsOverlay.bounds
+        tabs.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        tabsOverlay.isHidden = true
     }
 
-    /// Built on the page's first snapshot: until then (and if it never comes) the app is the web UI.
     func installShell(host: NativeMixHost, webView: WKWebView?) {
         shell.host = host
         host.onReaction = { [weak shell] id, desired in
@@ -50,10 +68,9 @@ final class MoraRootViewController: UITabBarController, UITabBarControllerDelega
         let content = UIHostingController(rootView: NativeShellContent(store: shell))
         content.view.backgroundColor = UIColor(Color.moraBackground)
         content.overrideUserInterfaceStyle = .dark
-        embed(content, into: selectedViewController?.view)
-        content.view.frame = selectedViewController?.view.bounds ?? view.bounds
+        embed(content)
+        content.view.frame = view.bounds
         content.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-
         let bar = UIHostingController(rootView: NativeShellBar(store: shell))
         bar.view.backgroundColor = .clear
         bar.overrideUserInterfaceStyle = .dark
@@ -64,10 +81,9 @@ final class MoraRootViewController: UITabBarController, UITabBarControllerDelega
         NSLayoutConstraint.activate([
             bar.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bar.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bar.view.bottomAnchor.constraint(equalTo: tabBar.topAnchor, constant: -8),
+            bar.view.bottomAnchor.constraint(equalTo: tabs.tabBar.topAnchor, constant: -8),
         ])
-        self.content = content
-        self.bar = bar
+        self.content = content; self.bar = bar
         shell.presenter = self
         observer = shell.objectWillChange.sink { [weak self] in DispatchQueue.main.async { self?.layoutShell() } }
         layoutShell()
@@ -78,40 +94,29 @@ final class MoraRootViewController: UITabBarController, UITabBarControllerDelega
         (container ?? view).addSubview(child.view)
         child.didMove(toParent: self)
     }
-
     private func layoutShell() {
         guard let content, let bar else { return }
         let visible = shell.shown && !shell.ui.overlay
         content.view.isHidden = !visible || shell.screen == .web
+        tabsOverlay.isHidden = !visible
         bar.view.isHidden = !visible || shell.miniTitle == nil
-        if #available(iOS 26.0, *) { setTabBarHidden(!visible, animated: false) }
-        else { tabBar.isHidden = !visible }
-        if let index = NativeTab.allCases.firstIndex(of: shell.tab), selectedIndex != index { selectedIndex = index }
+        if let index = NativeTab.allCases.firstIndex(of: shell.tab), tabs.selectedIndex != index { tabs.selectedIndex = index }
+        view.bringSubviewToFront(tabsOverlay)
+        view.bringSubviewToFront(bar.view)
         view.setNeedsLayout()
     }
-
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // One live WebView and native screen move together under the selected system tab.
-        if let surface = selectedViewController?.view {
-            let layers: [UIViewController?] = [bridge, content]
-            for child in layers.compactMap({ $0 }) {
-                if child.view.superview !== surface { surface.addSubview(child.view) }
-                child.view.frame = surface.bounds
-            }
-        }
         guard let content, let bar else { return }
-        view.bringSubviewToFront(bar.view)
-        let inset = bar.view.isHidden ? 0 : bar.view.frame.height + 8
+        tabs.view.layoutIfNeeded()
+        let top = tabs.tabBar.convert(tabs.tabBar.bounds, to: view).minY
+        let inset = tabsOverlay.isHidden ? 0 : max(0, view.safeAreaLayoutGuide.layoutFrame.maxY - top) + (bar.view.isHidden ? 0 : bar.view.frame.height + 8)
         if content.additionalSafeAreaInsets.bottom != inset { content.additionalSafeAreaInsets.bottom = inset }
     }
-
     func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
-        guard NativeTab.allCases.indices.contains(selectedIndex) else { return }
-        shell.select(NativeTab.allCases[selectedIndex])
-        view.setNeedsLayout()
+        guard NativeTab.allCases.indices.contains(tabs.selectedIndex) else { return }
+        shell.select(NativeTab.allCases[tabs.selectedIndex])
     }
-
     override var childForStatusBarStyle: UIViewController? { bridge }
     override var childForStatusBarHidden: UIViewController? { bridge }
     override var childForHomeIndicatorAutoHidden: UIViewController? { bridge }
