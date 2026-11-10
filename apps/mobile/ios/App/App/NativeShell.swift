@@ -154,6 +154,15 @@ extension MoraRootViewController {
         do {
             try await wait { self.shell.ui.loaded && self.shell.webView != nil }
             let web = shell.webView!
+            func waitForQuery(_ query: String) async throws {
+                let encoded = String(data: try JSONSerialization.data(withJSONObject: query, options: .fragmentsAllowed), encoding: .utf8)!
+                for _ in 0..<40 {
+                    if try await web.evaluateJavaScript("window.__uiQueries.includes(" + encoded + ")") as? Bool == true { return }
+                    try await Task.sleep(for: .milliseconds(250))
+                }
+                let seen = try await web.evaluateJavaScript("JSON.stringify(window.__uiQueries)") as? String ?? "unknown"
+                try require(false, "Search query missing; native=" + shell.searchQuery + "; bridge=" + seen)
+            }
             _ = try await web.evaluateJavaScript("window.__uiQueries=[]; window.__uiOriginal=window.moraNativeUi; window.moraNativeUi=async(n,a)=>{if(n==='search'){window.__uiQueries.push(a.q);return {session:'fixture-'+a.source,tracks:[{id:'fixture',title:'Native Song',artist:'Native Artist',album:'Native Album',duration:180,explicit:true,ok:true}],artists:a.source==='yandex'?[{id:'77',title:'Native Artist',detail:'Исполнитель',path:'/catalog/artist/77'}]:[],albums:a.source==='yandex'?[{id:'88',title:'Native Album',detail:'2026',path:'/catalog/album/88'}]:[],more:false};}if(n==='page'&&location.hash.includes('/catalog/'))return{title:location.hash.includes('/artist/')?'Native Artist':'Native Album',sections:[{title:'Треки',rows:[{kind:'item',title:'Native Song',subtitle:'Native Artist',tag:'3:00'}]}]};if(n==='versionTarget')return{id:'fixture',title:'Native Song',artist:'Native Artist',album:'Native Album',duration:180,ok:true};if(n==='versionSearch')return{session:'versions-fixture',rows:[{key:'yandex:1',id:'ya-1',title:'Native Song Live',artist:'Native Artist',duration:180,ok:true,source:'Яндекс Музыка',tags:'live'}],errors:[]};return window.__uiOriginal(n,a);};0")
             shell.go("/search")
             try await wait { self.shell.ui.path == "/search" && descendants(self.content!.view).contains { $0 is UISearchTextField } }
@@ -166,15 +175,16 @@ extension MoraRootViewController {
             field.insertText("MORA")
             try await Task.sleep(for: .seconds(2))
             try require(field.text == "MORA", "Typed text is missing from native search")
-            let query = try await web.evaluateJavaScript("window.__uiQueries.includes('MORA')") as? Bool == true
-            try require(query, "UIKit input did not reach SwiftUI and the search bridge")
+            try await waitForQuery("MORA")
+            report["nativeQuery"] = shell.searchQuery
             report["search"] = "typed MORA through UIKit into SwiftUI and bridge; no automatic focus"
             try capture("native-search")
             view.endEditing(true)
             _ = shell.receive(["path": "/search", "loaded": true, "wave": ["yandex": true]])
             shell.searchSource = "yandex"; shell.searchQuery = "Каталог"
             try await Task.sleep(for: .seconds(2))
-            try require(try await web.evaluateJavaScript("window.__uiQueries.includes('Каталог')") as? Bool == true, "Yandex query did not reach the native bridge")
+            try await waitForQuery("Каталог")
+            try await Task.sleep(for: .seconds(1))
             try capture("native-search-yandex")
             shell.go("/catalog/artist/77")
             try await wait { self.shell.ui.path == "/catalog/artist/77" }

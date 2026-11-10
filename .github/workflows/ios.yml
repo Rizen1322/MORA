@@ -55,6 +55,12 @@ jobs:
           "$RUNNER_TEMP/mora-shell-check"
       - name: Build unsigned device IPA
         run: sh apps/mobile/scripts/ios-mac.sh --ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MORA-unsigned-ipa
+          path: apps/mobile/MORA-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
       - name: Test native UI bridge and recording replacement
         run: npx vitest run apps/mobile/test/native-mix-client.test.ts apps/server/test/yandex-wave.test.ts apps/web/test/native-ui.test.ts apps/web/test/native-catalog.test.ts apps/web/test/native-versions.test.ts apps/web/test/native-controller.test.ts apps/server/test/library-dto.test.ts apps/server/test/yandex-catalog.test.ts apps/server/test/native-sources.test.ts
       - name: Compare compiled Rust MIR with the bundled analyzer
@@ -71,12 +77,6 @@ jobs:
         run: node apps/mobile/scripts/check-native-host.mjs
       - name: Test the native queue on PCM files
         run: node apps/mobile/scripts/check-native-mix.mjs
-      - uses: actions/upload-artifact@v4
-        with:
-          name: MORA-unsigned-ipa
-          path: apps/mobile/MORA-unsigned.ipa
-          if-no-files-found: error
-          retention-days: 14
       - name: Launch the complete native app in the simulator
         run: |
           sh apps/mobile/scripts/build-rust-ios.sh iphonesimulator
