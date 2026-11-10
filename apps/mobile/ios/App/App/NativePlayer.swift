@@ -526,14 +526,6 @@ private struct NativeScrubber: View {
                         Capsule().fill(.white.opacity(state.blending ? 0.95 : 0.65))
                             .frame(width: x, height: drag == nil ? 6 : 10)
                             .shadow(color: .white.opacity(state.blending ? 0.65 : 0), radius: 5)
-                        if state.blending && !reduceMotion && drag == nil {
-                            let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.8) / 1.8
-                            LinearGradient(colors: [.clear, .white, .clear], startPoint: .leading, endPoint: .trailing)
-                                .frame(width: width * 0.3, height: 6)
-                                .offset(x: width * (phase * 1.3 - 0.3))
-                                .frame(width: width, alignment: .leading).clipShape(Capsule())
-                                .allowsHitTesting(false)
-                        }
                         if drag != nil {
                             Circle().fill(.white).frame(width: 20, height: 20).offset(x: x - 10)
                         }
@@ -561,6 +553,7 @@ private struct NativeScrubber: View {
                     if state.blending {
                         Text("Микширование").font(.caption2.weight(.medium))
                             .foregroundStyle(.white.opacity(reduceMotion || !state.playing ? 0.8 : 0.65 + 0.35 * sin(context.date.timeIntervalSinceReferenceDate * 3)))
+                            .shadow(color: .white.opacity(0.25), radius: 3)
                             .transition(.opacity)
                         Spacer()
                     }
