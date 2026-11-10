@@ -424,7 +424,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
                   let bridge = self.bridge?.viewController else {
                 call.reject("Native player unavailable"); return
             }
-            let vc = (bridge.parent as? MoraRootViewController) ?? bridge
+            let vc = bridge.parent ?? bridge
             guard vc.presentedViewController == nil else { call.reject("Native player already presented"); return }
             NativePlayerSheet.present(host: self.nativeMix, from: vc) { call.resolve(["action": $0]) }
         }
