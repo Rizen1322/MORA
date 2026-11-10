@@ -10,7 +10,17 @@ enum NativeIntentError: Error, CustomLocalizedStringResourceConvertible {
     var localizedStringResource: LocalizedStringResource { "MORA ещё загружается — попробуйте через пару секунд" }
 }
 
-@MainActor private enum NativeIntentShell {
+@MainActor enum NativeIntentShell {
+    /// Starts the selected wave unless one already plays (the page's `wave` command toggles a playing wave).
+    /// Returns false when it was already playing.
+    @discardableResult static func startWave(_ store: NativeShellStore, source: NativeWaveSource? = nil) -> Bool {
+        let wave = store.ui.wave
+        let chosen = source ?? wave.active ?? wave.preferred
+        if wave.active == chosen && wave.playing { return false }
+        store.run("wave", ["source": chosen.rawValue])
+        return true
+    }
+
     /// The shell once the page has loaded (a cold start from Siri needs a few seconds).
     static func ready() async -> NativeShellStore? {
         for _ in 0..<80 {
@@ -34,6 +44,26 @@ enum NativeIntentError: Error, CustomLocalizedStringResourceConvertible {
     }
 }
 
+/// `mora://wave|player|liked|search` from the widgets (MORAWidgets): the same actions as the app's own buttons.
+enum NativeDeepLink {
+    static let scheme = "mora"
+
+    static func open(_ url: URL) {
+        guard url.scheme == scheme else { return }
+        Task { @MainActor in
+            guard let store = await NativeIntentShell.ready() else { return }
+            switch url.host {
+            case "wave": NativeIntentShell.startWave(store)
+            // «Продолжить»: resume what was paused, or show what already plays.
+            case "player": if store.miniPlaying { store.openPlayer() } else if store.miniTitle != nil { store.togglePlayback() }
+            case "liked": store.go("/liked")
+            case "search": store.go("/search")
+            default: break
+            }
+        }
+    }
+}
+
 struct StartWaveIntent: AppIntent {
     static let title: LocalizedStringResource = "Включить волну"
     static let description = IntentDescription("Запускает «Мою волну» в MORA с источником, выбранным на главной.")
@@ -41,11 +71,7 @@ struct StartWaveIntent: AppIntent {
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
         guard let store = await NativeIntentShell.ready() else { throw NativeIntentError.notReady }
-        let wave = store.ui.wave
-        // The page's `wave` command toggles a wave that already plays.
-        if wave.active != nil && wave.playing { return .result(dialog: "Волна уже играет") }
-        store.run("wave", ["source": (wave.active ?? wave.preferred).rawValue])
-        return .result(dialog: "Включаю волну")
+        return NativeIntentShell.startWave(store) ? .result(dialog: "Включаю волну") : .result(dialog: "Волна уже играет")
     }
 }
 

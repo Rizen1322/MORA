@@ -18,11 +18,13 @@ import { nativeCatalogCommands } from './native-catalog.ts';
  * which is the only time native screens can be touched; native keeps the last snapshot meanwhile.
  */
 
-export interface NativeUiTrack { id: string; title: string; artist: string; album: string; duration: number; reaction: number; likedAt?: number; addedAt?: number; cover: string | null; ok: boolean; binding?: string }
+export interface NativeUiTrack { id: string; title: string; artist: string; album: string; duration: number; reaction: number; likedAt?: number; addedAt?: number; cover: string | null; ok: boolean; binding?: string; offline?: boolean }
 type Wave = 'own' | 'yandex' | 'online';
 
 export const uiTrack = (t: Track): NativeUiTrack => ({
   id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration, reaction: t.reaction, likedAt: t.likedAt, addedAt: t.addedAt, cover: t.coverUrl, ok: t.status === 'ok', binding: t.binding?.assetId,
+  // Plays without the internet: a downloaded online track or a file of the library (CarPlay «Загрузки»).
+  offline: t.status === 'ok' && (!!t.pinned || t.sourceKind !== 'remote'),
 });
 
 /** Everything but the library and playlists, which are sent only when they change. */

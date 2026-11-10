@@ -36,6 +36,15 @@ if [ "${1:-}" = "--ipa" ]; then
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
   mkdir -p build/ipa/Payload
   cp -R build/ipa/dd/Build/Products/Release-iphoneos/App.app build/ipa/Payload/
+  # Sideloadly/AltStore read the requested entitlements from the bundle and re-sign with them:
+  # an ad-hoc signature carries the App Group the widgets share data through.
+  # MORA_CARPLAY=1 also asks for CarPlay audio — only for an Apple account that Apple granted it to.
+  APP=build/ipa/Payload/App.app
+  ENTITLEMENTS=ios/App/App/App.entitlements
+  [ "${MORA_CARPLAY:-}" = 1 ] && ENTITLEMENTS=ios/App/App/CarPlay.entitlements
+  find "$APP/Frameworks" -maxdepth 1 \( -name '*.framework' -o -name '*.dylib' \) -exec codesign --force --sign - {} \; 2>/dev/null || true
+  codesign --force --sign - --entitlements ios/App/MORAWidgets/MORAWidgets.entitlements "$APP/PlugIns/MORAWidgets.appex"
+  codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP"
   (cd build/ipa && zip -qry ../../MORA-unsigned.ipa Payload)
   echo "Готово: apps/mobile/MORA-unsigned.ipa — установите через Sideloadly."
   exit 0

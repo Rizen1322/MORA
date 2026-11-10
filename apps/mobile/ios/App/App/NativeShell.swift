@@ -5,6 +5,7 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 import WebKit
+import WidgetKit
 
 /// iPhone app root: the Capacitor web view with the native SwiftUI shell over it.
 /// Three layers: the WKWebView (always in the window, so the page keeps running), the native screens
@@ -384,6 +385,8 @@ final class NativeShellStore: ObservableObject {
         if let rows = value["playlists"] as? [[String: Any]] { playlists = rows.compactMap(NativePlaylist.init) }
         if let rows = value["queue"] as? [[String: Any]] { queue = rows.compactMap(NativeQueuedTrack.init) }
         let next = NativeUiState(value)
+        let nowChanged = next.now?.id != ui.now?.id || next.now?.playing != ui.now?.playing
+        defer { if value["library"] != nil || nowChanged { publishWidget() } }
         if next.toast != ui.toast, let toast = next.toast, screen != .web { show(toast.text) }
         if next.path != ui.path || next.searchQuery != ui.searchQuery || next.searchSource != ui.searchSource || next.searchScope != ui.searchScope {
             if let query = next.searchQuery { searchQuery = query }
@@ -547,6 +550,7 @@ final class NativeShellStore: ObservableObject {
             let next = NativePlayerState(value)
             if next.title != self.player.title || next.artist != self.player.artist || next.playing != self.player.playing || next.active != self.player.active {
                 self.player = next
+                self.publishWidget()
             }
             let key = "\(next.entryId)|\(next.artworkReady)"
             if key != self.artworkKey {
@@ -554,6 +558,18 @@ final class NativeShellStore: ObservableObject {
                 self.artwork = (value["artwork"] as? MPMediaItemArtwork)?.image(at: CGSize(width: 120, height: 120))
             }
         }
+    }
+
+    /// Home-screen widgets: the playing (or last) track and the newest likes; redrawn only when they change.
+    private var widget: NativeWidgetData?
+    private func publishWidget() {
+        let liked = self.liked
+        var next = NativeWidgetData(playing: miniPlaying, liked: liked.prefix(6).map { .init(title: $0.title, artist: $0.artist) }, likedCount: liked.count)
+        if let title = miniTitle, !title.isEmpty { next.now = .init(title: title, artist: miniArtist) } else { next.now = widget?.now }
+        guard next != widget else { return }
+        widget = next
+        next.save()
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     var nativePlaying: Bool { host?.active == true && player.active }

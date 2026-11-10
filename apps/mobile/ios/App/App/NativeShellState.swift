@@ -11,6 +11,8 @@ struct NativeTrack: Equatable, Identifiable {
     let cover: String?
     let ok: Bool
     let binding: String?
+    /// Plays without the internet (downloaded, or a file of the library).
+    let offline: Bool
     /// Lowercased, ё → е: what search-as-you-type matches against.
     let key: String
 
@@ -26,7 +28,8 @@ struct NativeTrack: Equatable, Identifiable {
         cover = value["cover"] as? String
         ok = value["ok"] as? Bool ?? true
         binding = value["binding"] as? String
-        key = NativeSearchText.normalize("\(title) \(artist) \(album)")
+        offline = value["offline"] as? Bool == true
+        key =NativeSearchText.normalize("\(title) \(artist) \(album)")
     }
     var liked: Bool { reaction > 0 }
 
