@@ -153,7 +153,7 @@ extension MoraRootViewController {
         do {
             try await wait { self.shell.ui.loaded && self.shell.webView != nil }
             let web = shell.webView!
-            _ = try await web.evaluateJavaScript("window.__uiQueries=[]; window.__uiOriginal=window.moraNativeUi; window.moraNativeUi=async (n,a)=>{if(n==='search'){window.__uiQueries.push(a.q);return [];}return window.__uiOriginal(n,a);}")
+            _ = try await web.evaluateJavaScript("window.__uiQueries=[]; window.__uiOriginal=window.moraNativeUi; window.moraNativeUi=async (n,a)=>{if(n==='search'){window.__uiQueries.push(a.q);return [];}return window.__uiOriginal(n,a);}; 0")
             shell.go("/search")
             try await wait { self.shell.ui.path == "/search" && descendants(self.content!.view).contains { $0 is UISearchTextField } }
             try await Task.sleep(for: .seconds(2))
