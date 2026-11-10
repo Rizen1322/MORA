@@ -22,6 +22,7 @@ const str = (v: unknown) => typeof v === 'string' ? v : '';
 const label = (source: Source) => source === 'yandex' ? 'Яндекс Музыка' : SOURCE_LABEL[source];
 const catalog = (item: Item): CatalogTrack => 'audioProvider' in item ? asCatalog(item) : item;
 const player = (source: Source) => source === 'yandex' ? catalogPlayer : publicPlayer;
+const checkPlayback = (transport: typeof catalogPlayer) => { if (transport.state.error) throw Error(transport.state.error); };
 function remember(value: Session) {
   const id = crypto.randomUUID();
   sessions.set(id, value);
@@ -88,7 +89,7 @@ export const nativeCatalogCommands = {
     if (kind === 'playAll' || kind === 'shuffleAll') {
       const items = value.items.map(catalog);
       if (kind === 'shuffleAll') for (let i = items.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [items[i], items[j]] = [items[j], items[i]]; }
-      await player(value.source).play(items, 0, value.context); return {};
+      await player(value.source).play(items, 0, value.context); checkPlayback(player(value.source)); return {};
     }
     if (!item) throw Error('Трек не найден в результатах');
     if (kind === 'artist' || kind === 'album') {
@@ -104,11 +105,10 @@ export const nativeCatalogCommands = {
       return { go: path?.replace(/^#/, '') ?? '/search?' + new URLSearchParams({ q: kind === 'artist' ? item.artist : item.album, src: value.source }) };
     }
     const track = catalog(item), transport = player(value.source);
-    if (kind === 'play') { await transport.play(value.items.map(catalog), value.items.indexOf(item), value.context); return {}; }
-    if (kind === 'next' || kind === 'queue') { await transport.enqueue(track, kind === 'next'); return {}; }
-    if (kind === 'save') { await transport.save(track); return {}; }
+    if (kind === 'play') { await transport.play(value.items.map(catalog), value.items.indexOf(item), value.context); checkPlayback(transport); return {}; }
+    if (kind === 'next' || kind === 'queue') { await transport.enqueue(track, kind === 'next'); checkPlayback(transport); return {}; }
     if (kind === 'radio') { await startRadio({ title: item.title, artist: item.artist }); return {}; }
-    if (!['like', 'dislike', 'download', 'playlist', 'versions'].includes(kind)) throw Error('Неизвестное действие');
+    if (!['save', 'like', 'dislike', 'download', 'playlist', 'versions'].includes(kind)) throw Error('Неизвестное действие');
     if ((kind === 'like' || kind === 'dislike') && value.source === 'yandex' && !transport.known(track)) {
       const wanted = kind === 'like' ? 1 : -1;
       const response = await api.catalogReact(item.externalId, (item as CatalogTrack).reaction === wanted ? 0 : wanted);
@@ -121,6 +121,7 @@ export const nativeCatalogCommands = {
     const id = await transport.ensure(track);
     const local = useApp.getState().tracks.get(id) ?? await api.track(id);
     if (kind === 'versions') return { versions: id };
+    if (kind === 'save') { await api.saveTrack(id); useApp.getState().upsertTrack({ ...local, saved: true }); useApp.getState().toast('Трек сохранён в медиатеку'); }
     if (kind === 'download') { await api.download({ trackId: id }); useApp.getState().toast('Скачиваем — прогресс в «Загрузках»'); }
     if (kind === 'playlist') {
       const playlist = str(args.playlist);

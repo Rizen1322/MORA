@@ -2,9 +2,9 @@ import { beforeEach, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   app: {} as any,
   api: { publicSearch: vi.fn(), catalogSearch: vi.fn(), catalogHome: vi.fn(), catalogArtist: vi.fn(), catalogAlbum: vi.fn(),
-    publicCatalog: vi.fn(), soundCloudArtist: vi.fn(), track: vi.fn(), catalogReact: vi.fn(), download: vi.fn(), addToPlaylist: vi.fn() },
-  catalog: { known: vi.fn(), ensure: vi.fn(), play: vi.fn(), enqueue: vi.fn(), save: vi.fn(), cancel: vi.fn() },
-  public: { known: vi.fn(), ensure: vi.fn(), play: vi.fn(), enqueue: vi.fn(), save: vi.fn(), cancel: vi.fn() },
+    publicCatalog: vi.fn(), soundCloudArtist: vi.fn(), track: vi.fn(), catalogReact: vi.fn(), download: vi.fn(), saveTrack: vi.fn(), addToPlaylist: vi.fn() },
+  catalog: { state: { error: null as string | null }, known: vi.fn(), ensure: vi.fn(), play: vi.fn(), enqueue: vi.fn(), save: vi.fn(), cancel: vi.fn() },
+  public: { state: { error: null as string | null }, known: vi.fn(), ensure: vi.fn(), play: vi.fn(), enqueue: vi.fn(), save: vi.fn(), cancel: vi.fn() },
   react: vi.fn(), radio: vi.fn(),
 }));
 vi.mock('../src/lib/api.ts', () => ({ api: h.api }));
@@ -18,8 +18,8 @@ const item = (id: string) => ({ externalId: id, title: id, artist: 'Artist', alb
 const found = (ids: string[], page = 0, more = false) => ({ tracks: ids.map(item), artists: [{ id: 'artist', name: 'Artist' }],
   albums: [{ id: 'album', title: 'Album', year: 2026 }], page, hasMore: { tracks: more, artists: false, albums: false } });
 beforeEach(() => {
-  vi.resetModules(); vi.resetAllMocks();
-  h.app = { tracks: new Map(), playlists: [{ id: 'playlist' }], toast: vi.fn(), loadLibrary: vi.fn() };
+  vi.resetModules(); vi.resetAllMocks(); h.catalog.state.error = null; h.public.state.error = null;
+  h.app = { tracks: new Map(), playlists: [{ id: 'playlist' }], toast: vi.fn(), upsertTrack: vi.fn(), loadLibrary: vi.fn() };
   h.catalog.known.mockReturnValue(null); h.public.known.mockReturnValue(null);
   h.catalog.ensure.mockResolvedValue('asset'); h.public.ensure.mockResolvedValue('asset');
   h.api.track.mockResolvedValue({ id: 'asset', title: 'A', reaction: 0 });
@@ -111,4 +111,23 @@ it('does not cache a failed catalog request', async () => {
   await expect(describeNativeCatalog(['catalog', 'album', 'album'])).rejects.toThrow('offline');
   await expect(describeNativeCatalog(['catalog', 'album', 'album'])).resolves.toMatchObject({ title: 'Album' });
   expect(h.api.catalogAlbum).toHaveBeenCalledTimes(2);
+});
+it('persists a prepared public result in the visible library rather than only caching audio', async () => {
+  const { nativeCatalogCommands: c } = await import('../src/lib/native-catalog.ts');
+  const value = await c.search({ source: 'youtube', q: 'Song' });
+  await c.searchAction({ session: value.session, id: 'public', kind: 'save' });
+  expect(h.api.saveTrack).toHaveBeenCalledWith('asset');
+  expect(h.app.upsertTrack).toHaveBeenCalledWith(expect.objectContaining({ id: 'asset', saved: true }));
+  h.api.saveTrack.mockRejectedValueOnce(new Error('disk full'));
+  h.app.upsertTrack.mockClear();
+  await expect(c.searchAction({ session: value.session, id: 'public', kind: 'save' })).rejects.toThrow('disk full');
+  expect(h.app.upsertTrack).not.toHaveBeenCalled();
+});
+it('surfaces preparation failures from catalog transports to the native error dialog', async () => {
+  const { nativeCatalogCommands: c } = await import('../src/lib/native-catalog.ts');
+  const value = await c.search({ source: 'yandex', q: 'Song' });
+  h.catalog.enqueue.mockImplementationOnce(() => { h.catalog.state.error = 'offline'; });
+  await expect(c.searchAction({ session: value.session, id: 'a', kind: 'queue' })).rejects.toThrow('offline');
+  h.catalog.play.mockImplementationOnce(() => { h.catalog.state.error = 'audio unavailable'; });
+  await expect(c.searchAction({ session: value.session, id: 'a', kind: 'play' })).rejects.toThrow('audio unavailable');
 });
