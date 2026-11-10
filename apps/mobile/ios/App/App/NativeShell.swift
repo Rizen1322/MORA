@@ -265,6 +265,7 @@ extension MoraRootViewController {
             try require(cancelled, "File picker did not report cancellation")
             try require(picker.allowsMultipleSelection, "File picker lost multiple selection")
             documentPicker.present(from: self)
+            try await wait { self.presentedViewController === picker && picker.viewIfLoaded?.window != nil && !picker.isBeingPresented }
             try await Task.sleep(for: .seconds(2))
             try capture("native-file-picker")
             documentPicker.documentPicker(picker, didPickDocumentsAt: [file])
