@@ -569,7 +569,7 @@ export class PlayerController {
     this.maxPos = Math.max(this.maxPos, s.position);
     this.set({ position: s.position, duration: s.duration || this.state.duration, status, ...this.nativeTransition(s) });
     if (status === 'playing') void this.topUpWave();
-    if (s.ended || (!this.nativeManifestKey && !this.nativeSyncing)) void this.nativeSync();
+    if (s.ended) void this.nativeSync();
     if (performance.now() - this.lastSaved > POSITION_SAVE_MS && status === 'playing') this.scheduleSave(true);
   }
 

@@ -409,10 +409,13 @@ final class NativeMixHost {
                 }
                 let analysis = self.analysisWorker
                 self.skipTarget = -1 // A replacement manifest owns new navigation intent.
-                let referenced = Set((items + (manifest["loopItems"] as? [[String: Any]] ?? [])).compactMap { item -> Int? in
+                let retained = manifest["retainedSources"] as? [Int] ?? []
+                guard retained.count <= 20000, retained.allSatisfy({ (0..<500000).contains($0) }) else { throw Failure.invalid }
+                var referenced = Set((items + (manifest["loopItems"] as? [[String: Any]] ?? [])).compactMap { item -> Int? in
                     guard let source = item["source"] as? [String: Any], source["kind"] as? String == "local" else { return nil }
                     return source["file"] as? Int
                 })
+                referenced.formUnion(retained)
                 // A replacement owns these source leases; obsolete uploads stop counting
                 // against the budget. Repeat/duplicate references keep their shared file.
                 for key in self.sourceBytes.keys where !referenced.contains(key) {

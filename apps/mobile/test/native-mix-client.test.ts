@@ -239,3 +239,28 @@ it('hands the first songs over before resolving the tail, including lists larger
   release(); await job;
   expect(handoff.mock.calls.at(-1)![0].manifest.items.map(t => t.entryId)).toEqual(entries.map(e => e.entryId));
 });
+
+it('keeps earlier uploads alive during queue edits and bounds metadata over all batches', async () => {
+  let key = 0;
+  const handoff = vi.fn(async () => state);
+  const mix = createNativeMix({ ...port(), nativeSourceReserve: async ({ count }) => ({ keys: Array.from({ length: count }, () => key++) }),
+    nativeSourceAppend: vi.fn(), nativePrepareQueue: handoff }, {
+    prepare: async () => {}, restore: () => {},
+    sourceFile: async () => new Response(new Uint8Array([1, 2, 3]), { status: 206, headers: { 'Content-Range': 'bytes 0-2/3', 'X-Native-Length': '3' } }),
+    sources: async entries => ({ items: entries.map(e => ({ ...e, title: e.trackId, artist: '', duration: 180, mixingAllowed: true,
+      source: { kind: 'upload' as const, trackId: e.trackId }, analysis: { data: 'x'.repeat(750000) } as any,
+      artwork: { base64: 'A'.repeat(500000), mime: 'image/png' } })), previous: { trackId: 'seed', duration: 180, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS }),
+  });
+  await mix.start({ sampleRate: 48000, position: 0, tracks: [track(0)] });
+  const entries = Array.from({ length: 6 }, (_, i) => ({ trackId: 't' + i, entryId: 'e' + i }));
+  await mix.prepareQueue!(1, entries, 'seed');
+  const final = handoff.mock.calls.at(-1)![0].manifest;
+  const metadata = final.items.reduce((sum, item) => sum + (item.analysis ? JSON.stringify(item.analysis).length : 0) + (item.artwork?.base64.length ?? 0), 0);
+  expect(metadata).toBeLessThanOrEqual(4 * 1024 * 1024);
+  expect(final.items).toHaveLength(6);
+  handoff.mockClear();
+  await mix.prepareQueue!(1, entries.slice().reverse(), 'seed', [], undefined, true);
+  expect(handoff.mock.calls[0][0].manifest.retainedSources).toHaveLength(6);
+  expect(handoff.mock.calls.at(-1)![0].manifest.retainedSources).toEqual([]);
+  expect(handoff.mock.calls.at(-1)![0].manifest.items.map(item => item.entryId)).toEqual(entries.map(e => e.entryId).reverse());
+});

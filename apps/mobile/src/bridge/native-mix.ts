@@ -161,13 +161,28 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
       if (unique.length > 10000) throw Error('В очереди больше 10000 треков');
       const items = new Map<string, NativePreparationManifest['items'][number]>();
       let state: NativeMixState | undefined;
+      let metadataBytes = 0;
+      // shortcut: local sources retain the native 512 MiB upload budget; use shared native storage for larger offline handoffs.
       // Give native the next two songs before resolving/copying the rest of a large likes list.
       for (let offset = 0; offset < Math.max(1, unique.length);) {
         const batch = unique.slice(offset, offset + (offset === 0 ? 2 : 32));
-        const manifest = await sourceManifest(batch, previousId, signal);
+        const before = new Set(assets.keys());
+        let manifest: Awaited<ReturnType<typeof sourceManifest>>;
+        try { manifest = await sourceManifest(batch, previousId, signal); }
+        catch (error) { for (const key of assets.keys()) if (!before.has(key)) assets.delete(key); throw error; }
         signal?.throwIfAborted();
-        for (const item of manifest.items) items.set(item.entryId, item);
+        for (const item of manifest.items) {
+          // Keep the original whole-manifest metadata budget across source batches.
+          const size = item.analysis ? JSON.stringify(item.analysis).length : 0;
+          if (metadataBytes + size <= 2 * 1024 * 1024) metadataBytes += size;
+          else item.analysis = null;
+          const cover = item.artwork?.base64.length ?? 0;
+          if (metadataBytes + cover <= 4 * 1024 * 1024) metadataBytes += cover;
+          else delete item.artwork;
+          items.set(item.entryId, item);
+        }
         state = await port.nativePrepareQueue({ id, manifest: { ...manifest, from, replaceFuture,
+          retainedSources: offset + batch.length < unique.length ? [...assets.values()] : [],
           items: entries.flatMap(e => items.get(entryKey(e)) ?? []), loopItems: loopEntries.flatMap(e => items.get(entryKey(e)) ?? []) } });
         offset += Math.max(1, batch.length);
       }
