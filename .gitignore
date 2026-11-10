@@ -18,3 +18,10 @@ examples/transitions/
 # third-party design skills (own licenses) and local agent state
 skill/
 .claude/scheduled_tasks.lock
+
+# Rust build output (iOS static library, desktop host)
+packages/audio-rust/target/
+
+# Local release artifacts (IPAs, installers) and build scratch, never published
+builds/
+.mora-merge/

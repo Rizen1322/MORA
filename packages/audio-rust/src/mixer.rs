@@ -1,13 +1,13 @@
 use crate::{
-    dsp::{number, Echo, Isolator, Limiter, Reverb, Sweep, Tone},
+    dsp::{Echo, Isolator, Limiter, Reverb, Sweep, Tone, number},
     playback::Playback,
-    source::{Loop, Store, Tape, CHUNK},
-    vocal::{source_map, Fit, Heard, Mask},
-    wsola::{round, Wsola},
+    source::{CHUNK, Loop, Store, Tape},
+    vocal::{Fit, Heard, Mask, source_map},
+    wsola::{Wsola, round},
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
 
 type Points = Vec<[f64; 2]>;
@@ -61,9 +61,8 @@ pub struct Transition {
     echo_delay_frames: Option<f64>,
     echo_feedback: Option<f64>,
     #[serde(default)]
-    echo_lowpass_hz: Option<f64>,
-    #[serde(default)]
-    echo_width: Option<f64>,
+    echo_delay_points_frames: Points,
+    echo_clear_frame: Option<f64>,
     #[serde(default)]
     vocal_a: Option<Points>,
     #[serde(default)]
@@ -73,7 +72,7 @@ pub struct Transition {
     voice_echo_clear_frame: Option<f64>,
 }
 impl Transition {
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self, sr: f64) -> Result<(), String> {
         let nonnegative = [
             self.trigger_frame,
             self.entry_frame,
@@ -134,8 +133,13 @@ impl Transition {
         {
             return Err("Invalid tempo".into());
         }
-        if self.echo_lowpass_hz.into_iter().chain(self.echo_width).any(|x| !x.is_finite() || x < 0.) {
-            return Err("Invalid echo".into());
+        if self.echo_delay_points_frames.len() > 64
+            || self.echo_delay_points_frames.iter().any(|p| !p[0].is_finite() || !p[1].is_finite()
+                || p[0] < 0. || p[0] > self.duration_frames || p[1] < 1. || p[1] > (sr * 2.5).ceil() - 1.)
+            || self.echo_delay_points_frames.windows(2).any(|w| w[0][0] > w[1][0])
+            || self.echo_clear_frame.is_some_and(|v| !v.is_finite() || v < 0. || v > self.duration_frames)
+        {
+            return Err("Invalid creative automation".into());
         }
         Ok(())
     }
@@ -637,12 +641,13 @@ impl Musical {
             });
         }
         if let Some(delay) = tr.echo_delay_frames.filter(|d| *d != 0.) {
-            self.echo.configure_with(
-                delay,
-                tr.echo_feedback.unwrap_or(0.5),
-                tr.echo_lowpass_hz.unwrap_or(6000.),
-                tr.echo_width.unwrap_or(0.),
-            );
+            self.echo.configure(delay, tr.echo_feedback.unwrap_or(0.5));
+        }
+        if !tr.echo_delay_points_frames.is_empty() {
+            self.echo.set_delay_map(tr.echo_delay_points_frames.clone(), self.clock);
+        }
+        if let Some(end) = tr.echo_clear_frame {
+            self.echo.limit_tail_at(self.clock + end, round(self.sr * 0.05));
         }
         let throw = tr
             .lanes
@@ -863,7 +868,7 @@ impl Musical {
             }
             off += len;
         }
-        self.echo.process(&self.el[..n], &self.er[..n], l, r);
+        self.echo.process_at(&self.el[..n], &self.er[..n], l, r, self.clock - n as f64);
         self.voice_echo
             .process_at(&self.vl[..n], &self.vr[..n], l, r, self.clock - n as f64);
     }
@@ -1233,30 +1238,6 @@ impl Mixer {
                 d.playing = false;
                 d.requested.clear();
             }
-            "feedFile" => {
-                let chunk = v["chunk"]
-                    .as_u64()
-                    .filter(|n| *n <= 9_007_199_254_740_991 / CHUNK as u64)
-                    .ok_or("Invalid chunk")? as usize;
-                let d = &mut m.decks[deck];
-                if d.token.as_deref() != Some(token) {
-                    return Ok(());
-                }
-                let expected =
-                    (d.store.total - (chunk as i64 * CHUNK as i64)).clamp(0, CHUNK as i64) as usize;
-                let frames = v["frames"].as_u64().ok_or("Invalid PCM length")? as usize;
-                if frames != expected || frames == 0 {
-                    return Err("Invalid PCM length".into());
-                }
-                let (l, r) = crate::source::read_pcm_file(
-                    v["path"].as_str().ok_or("Missing PCM path")?,
-                    v["format"].as_str().ok_or("Missing PCM format")?,
-                    chunk,
-                    frames,
-                )?;
-                d.store.chunks.insert(chunk, (l, r));
-                d.requested.remove(&chunk);
-            }
             "feed" | "feedVocal" => {
                 let chunk = v["chunk"]
                     .as_u64()
@@ -1405,9 +1386,8 @@ impl Mixer {
             "seek" => {
                 if let Some(i) = m.index(token) {
                     self.playback.reset();
-                    // Seek can race the controller receiving the previous transition's end.
-                    m.decks[1 - i].fade_stop(sr, 0.25);
                     if m.active {
+                        m.decks[1 - i].fade_stop(sr, 0.25);
                         let id = m.armed.take().map_or(String::new(), |t| t.plan_id);
                         m.active = false;
                         for d in &mut m.decks {
@@ -1462,7 +1442,7 @@ impl Mixer {
             "arm" => {
                 let tr: Transition = serde_json::from_value(v["transition"].clone())
                     .map_err(|e| format!("Invalid transition: {e}"))?;
-                tr.validate()?;
+                tr.validate(m.sr)?;
                 if !m.active {
                     for d in &mut m.decks {
                         d.store.clear_effects();
@@ -1770,19 +1750,22 @@ mod tests {
     fn validates_commands_and_pcm_without_poisoning_the_transport() {
         let mut m = Mixer::new(48000).unwrap();
         assert!(Mixer::new(0).is_err());
-        assert!(m
-            .command(&json!({"cmd":"load","deck":2,"token":"T","totalFrames":100}))
-            .is_err());
-        assert!(m
-            .command(&json!({"cmd":"load","deck":0,"token":"T","totalFrames":0}))
-            .is_err());
+        assert!(
+            m.command(&json!({"cmd":"load","deck":2,"token":"T","totalFrames":100}))
+                .is_err()
+        );
+        assert!(
+            m.command(&json!({"cmd":"load","deck":0,"token":"T","totalFrames":0}))
+                .is_err()
+        );
         m.command(&json!({"cmd":"load","deck":0,"token":"T","totalFrames":1000,"gainDb":0}))
             .unwrap();
         assert!(m.command(&json!({"cmd":"feed","deck":0,"token":"T","chunk":u64::MAX,"L":"AAAAAA==","R":"AAAAAA=="})).is_err());
         let nan = STANDARD.encode(f32::NAN.to_le_bytes());
-        assert!(m
-            .command(&json!({"cmd":"feed","deck":0,"token":"T","chunk":0,"L":nan,"R":nan}))
-            .is_err());
+        assert!(
+            m.command(&json!({"cmd":"feed","deck":0,"token":"T","chunk":0,"L":nan,"R":nan}))
+                .is_err()
+        );
         let good = STANDARD.encode([0.1f32.to_le_bytes(); 1000].concat());
         m.command(&json!({"cmd":"feed","deck":0,"token":"T","chunk":0,"L":good,"R":good}))
             .unwrap();
@@ -1791,10 +1774,11 @@ mod tests {
         let (mut l, mut r) = ([0f32; 128], [0f32; 128]);
         for _ in 0..10 {
             m.process(&mut l, &mut r);
-            assert!(l
-                .iter()
-                .chain(r.iter())
-                .all(|v| v.is_finite() && v.abs() <= 1.));
+            assert!(
+                l.iter()
+                    .chain(r.iter())
+                    .all(|v| v.is_finite() && v.abs() <= 1.)
+            );
         }
         assert!(l.iter().any(|v| v.abs() > 0.01));
         m.command(&json!({"cmd":"pause","paused":true})).unwrap();
@@ -1802,23 +1786,6 @@ mod tests {
             m.process(&mut l, &mut r);
         }
         assert!(l.iter().chain(r.iter()).all(|v| *v == 0.));
-    }
-    #[test]
-    fn file_feed_requires_current_token_and_complete_chunk() {
-        let path = std::env::temp_dir().join(format!("mora-mixer-test-{}", std::process::id()));
-        std::fs::write(&path, [0.25f32.to_le_bytes(), (-0.25f32).to_le_bytes()].concat()).unwrap();
-        let mut m = Mixer::new(48000).unwrap();
-        m.command(&json!({"cmd":"load","deck":0,"token":"new","totalFrames":1})).unwrap();
-        let mut feed = json!({"cmd":"feedFile","deck":0,"token":"old","chunk":0,"path":path,"format":"f32le","frames":1});
-        m.command(&feed).unwrap();
-        assert!(m.musical.borrow().decks[0].store.chunks.is_empty());
-        feed["token"] = json!("new");
-        feed["frames"] = json!(2);
-        assert!(m.command(&feed).is_err());
-        feed["frames"] = json!(1);
-        m.command(&feed).unwrap();
-        assert_eq!(m.musical.borrow().decks[0].store.chunks[&0], (vec![0.25], vec![-0.25]));
-        std::fs::remove_file(path).unwrap();
     }
     #[test]
     fn malformed_loop_cannot_overflow() {

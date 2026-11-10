@@ -1,3 +1,4 @@
+import { networkFetch as fetch } from './rust-network.ts';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';

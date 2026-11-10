@@ -1,7 +1,5 @@
 # Native DSP portability preflight
 
-Historical preflight for 1.0.10. The current native Swift host and first-source migration are described in [the mobile README](../apps/mobile/README.md) and [the 2026-11-01 continuation](ios-native-first-source-2026-11-01.md).
-
 The independent native player in 1.0.10 now has phone confirmation of Play/Pause, seeking, resuming after a pause longer than three minutes, and track skipping. The main MORA music path still renders in an AudioWorklet. Its migration must preserve the existing AutoMix rather than replace it with a basic crossfade.
 
 ## Automated check

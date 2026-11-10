@@ -34,20 +34,23 @@ export function rankRadio<T extends PublicTrack>(items: T[], library: Track[], s
   const known = (t: Song & { libraryTrackId?: string | null }) => byKey.get(radioIdentity(t)) ?? (t.libraryTrackId ? byId.get(t.libraryTrackId) : undefined)
     ?? byTitle.get(normalizeMusic(t.title))?.find(x => artistsOf(x.artist).some(a => artistsOf(t.artist).includes(a)));
   let previous = anchor ? known(anchor) : undefined;
-  const blocked = (t: PublicTrack) => byTitle.get(normalizeMusic(t.title))?.some(x => x.reaction < 0 && artistsOf(x.artist).some(a => artistsOf(t.artist).includes(a)));
+  const blocked = (t: PublicTrack) => (t.libraryTrackId && (byId.get(t.libraryTrackId)?.reaction ?? 0) < 0) || byTitle.get(normalizeMusic(t.title))?.some(x => x.reaction < 0 && artistsOf(x.artist).some(a => artistsOf(t.artist).includes(a)));
   const unique = new Set<string>();
   const pool = items.filter(t => {
     const key = radioIdentity(t), id = `${t.audioProvider}:${t.externalId}`;
     if (!t.playable || seen.has(key) || seen.has(id) || unique.has(key) || blocked(t)) return false;
     unique.add(key); return true;
   });
-  const out: T[] = [], recent = recentArtists.map(a => artistsOf(a)[0] ?? '');
+  const out: T[] = [], recent = recentArtists.map(artistsOf);
   while (pool.length && out.length < 18) {
     const familiarOpening = out.filter(t => { const k = known(t); return k && (k.reaction > 0 || k.playCount > 0); }).length;
-    let best = -1, bestScore = -Infinity;
+    let best = -1, bestScore = -Infinity, bestSpacing = -1;
     for (let i = 0; i < pool.length; i++) {
-      const t = pool[i], k = known(t), artists = artistsOf(t.artist), artist = artists[0] || '';
-      if (recent.length >= 2 && artist && recent.slice(-2).every(a => a === artist)) continue;
+      const t = pool[i], k = known(t), artists = artistsOf(t.artist);
+      const overlaps = (previous: string[]) => artists.some(a => previous.includes(a));
+      if (recent.length >= 2 && artists.some(a => recent.slice(-2).every(previous => previous.includes(a)))) continue;
+      const last = recent.slice(-4).reverse().findIndex(overlaps);
+      const spacing = last < 0 ? 4 : last;
       // A recent repeat never wins merely because it is liked. Backfill older items when possible.
       if (byTitle.get(normalizeMusic(t.title))?.some(x => x.lastPlayedAt && now - x.lastPlayedAt < 2 * 3600000 && artistsOf(x.artist).some(a => artists.includes(a)))) continue;
       const familiarity = Math.min(1, Math.max(0, ...artists.map(a => (affinity.get(a) ?? 0) / 8)));
@@ -57,7 +60,7 @@ export function rankRadio<T extends PublicTrack>(items: T[], library: Track[], s
       if (!k || !k.playCount) score += tuning.diversity === 'discover' ? 1 : .15;
       // Balanced starts with a discovery and avoids a wall of favourites when alternatives exist.
       if (tuning.diversity === 'balanced' && out.length < 5 && (out.length === 0 || familiarOpening >= 2) && k && (k.reaction > 0 || k.playCount > 0)) score -= 4;
-      score -= recent.slice(-5).filter(a => a === artist).length * .7;
+      score -= recent.slice(-5).filter(overlaps).length * .7;
       const energy = k?.analysis?.energy;
       if (typeof energy === 'number' && tuning.mood !== 'normal') score += tuning.mood === 'calm' ? (1 - energy) * 1.2 : energy * 1.2;
       if (tuning.mode === 'mix' && previous?.analysis?.bpm && k?.analysis?.bpm) {
@@ -66,10 +69,11 @@ export function rankRadio<T extends PublicTrack>(items: T[], library: Track[], s
         score += Math.max(-1, 1.5 - distance * 8);
         if (previous.analysis.camelot && k.analysis.camelot === previous.analysis.camelot) score += .3;
       }
-      if (score > bestScore) { bestScore = score; best = i; }
+      // Artist spacing wins over affinity; relax only when the candidate pool lacks alternatives.
+      if (spacing > bestSpacing || spacing === bestSpacing && score > bestScore) { bestSpacing = spacing; bestScore = score; best = i; }
     }
     if (best < 0) break;
-    const [t] = pool.splice(best, 1); out.push(t); recent.push(artistsOf(t.artist)[0] ?? ''); previous = known(t) ?? previous;
+    const [t] = pool.splice(best, 1); out.push(t); recent.push(artistsOf(t.artist)); previous = known(t) ?? previous;
     seen.add(radioIdentity(t)); seen.add(`${t.audioProvider}:${t.externalId}`);
   }
   return out;

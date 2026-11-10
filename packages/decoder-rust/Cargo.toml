@@ -1,0 +1,26 @@
+[package]
+name = "mora-decode"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+symphonia = { version = "=0.6.1", features = ["all"] }
+rubato = "=5.0.1"
+audioadapter-buffers = "=5.2.0"
+bytemuck = "1"
+serde_json = "1"
+symphonia-adapter-libopus = "=0.3.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+
+
+
+
+
+
+[patch.crates-io]
+symphonia-format-mkv = { path = 'vendor/symphonia-format-mkv' }

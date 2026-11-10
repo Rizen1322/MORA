@@ -305,14 +305,13 @@ pub struct Echo {
     lp: [f64; 2],
     ha: f64,
     la: f64,
-    /// L<->R cross-feed of the repeats, 0..1 (1 = ping-pong)
-    width: f64,
-    sr: f64,
     zeros: usize,
     out: f64,
     out_step: f64,
     deadline: Option<f64>,
     deadline_fade: f64,
+    delay_map: Vec<[f64; 2]>,
+    delay_origin: f64,
 }
 impl Echo {
     pub fn new(sr: f64) -> Self {
@@ -328,13 +327,13 @@ impl Echo {
             lp: [0.; 2],
             ha: (-2. * PI * 250. / sr).exp(),
             la: 1. - (-2. * PI * 6000. / sr).exp(),
-            width: 0.,
-            sr,
             zeros: n,
             out: 1.,
             out_step: 0.,
             deadline: None,
             deadline_fade: 1.,
+            delay_map: Vec::new(),
+            delay_origin: 0.,
         }
     }
     pub fn reset(&mut self) {
@@ -348,21 +347,20 @@ impl Echo {
         self.out = 1.;
         self.out_step = 0.;
         self.deadline = None;
+        self.delay_map.clear();
     }
     pub fn configure(&mut self, delay: f64, feedback: f64) {
-        self.configure_with(delay, feedback, 6000., 0.);
-    }
-    /// `lowpass` (Hz) damps the repeats inside the feedback loop; `width` cross-feeds them L<->R.
-    pub fn configure_with(&mut self, delay: f64, feedback: f64, lowpass: f64, width: f64) {
         self.reset();
-        self.la = 1. - (-2. * PI * lowpass.clamp(200., 16000.) / self.sr).exp();
-        self.width = width.clamp(0., 1.);
         self.delay = (round(delay) as usize).clamp(1, self.l.len() - 1);
         // 0.85 keeps runaway away: the ring is high-passed (250 Hz) and low-passed (6 kHz) on every pass
         self.feedback = feedback.clamp(0., 0.85);
     }
     pub fn process(&mut self, il: &[f32], ir: &[f32], l: &mut [f32], r: &mut [f32]) {
         self.process_at(il, ir, l, r, 0.);
+    }
+    pub fn set_delay_map(&mut self, points: Vec<[f64; 2]>, origin: f64) {
+        self.delay_map = points;
+        self.delay_origin = origin;
     }
     pub fn fade_out(&mut self, frames: f64) {
         self.out_step = 1. / frames.max(1.);
@@ -388,8 +386,23 @@ impl Echo {
             if tail == 0. {
                 return;
             }
-            let at = (self.pos + self.l.len() - self.delay) % self.l.len();
-            let y = [self.l[at] as f64, self.r[at] as f64];
+            let delay = if self.delay_map.is_empty() { self.delay as f64 } else {
+                let t = clock + i as f64 - self.delay_origin;
+                let hi = self.delay_map.partition_point(|p| p[0] <= t);
+                if hi == 0 { self.delay_map[0][1] }
+                else if hi == self.delay_map.len() { self.delay_map[hi - 1][1] }
+                else {
+                    let [t0, v0] = self.delay_map[hi - 1];
+                    let [t1, v1] = self.delay_map[hi];
+                    v0 + (v1 - v0) * (t - t0) / (t1 - t0)
+                }
+            };
+            let rp = (self.pos as f64 - delay + self.l.len() as f64) % self.l.len() as f64;
+            let at = rp.floor() as usize;
+            let fraction = rp - at as f64;
+            let next = (at + 1) % self.l.len();
+            let y = [self.l[at] as f64 + (self.l[next] as f64 - self.l[at] as f64) * fraction,
+                self.r[at] as f64 + (self.r[next] as f64 - self.r[at] as f64) * fraction];
             if self.out_step > 0. {
                 self.out = (self.out - self.out_step).max(0.);
                 if self.out == 0. {
@@ -405,17 +418,8 @@ impl Echo {
                 self.hp[c] = h;
                 self.lp[c] += self.la * (h - self.lp[c]);
             }
-            let w = self.width;
-            if w == 0. {
-                self.l[self.pos] = (il[i] as f64 + self.lp[0] * self.feedback) as f32;
-                self.r[self.pos] = (ir[i] as f64 + self.lp[1] * self.feedback) as f32;
-            } else {
-                // ping-pong: the send leans into the left ring and each pass swaps sides by width
-                let (xl, xr) = (il[i] as f64, ir[i] as f64);
-                let m = (xl + xr) * 0.5;
-                self.l[self.pos] = (xl * (1. - w) + m * w + (self.lp[0] * (1. - w) + self.lp[1] * w) * self.feedback) as f32;
-                self.r[self.pos] = (xr * (1. - w) + (self.lp[1] * (1. - w) + self.lp[0] * w) * self.feedback) as f32;
-            }
+            self.l[self.pos] = (il[i] as f64 + self.lp[0] * self.feedback) as f32;
+            self.r[self.pos] = (ir[i] as f64 + self.lp[1] * self.feedback) as f32;
             self.zeros = if self.l[self.pos] == 0. && self.r[self.pos] == 0. {
                 self.zeros + 1
             } else {

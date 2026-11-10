@@ -1,5 +1,32 @@
 import Foundation
 
+// Model the actual dataPlayedBack credit: the engine needs new audio before the car reports playback.
+func outputGaps(sampleRate: Double, latency: Double, count: Int) -> Int {
+    let block = 8192.0 / sampleRate
+    var end = Double(count) * block
+    var callbacks = (1...count).map { Double($0) * block + latency + 0.02 }
+    var gaps = 0
+    for i in 0..<1800 {
+        let callback = callbacks[i]
+        if callback > end + 0.000001 { gaps += 1 }
+        end = max(end, callback) + block
+        callbacks.append(end + latency + (i % 9 == 0 ? 0.12 : 0.02))
+    }
+    return gaps
+}
+for rate in [44100.0, 48000.0] {
+    for latency in [0.0, 0.02, 0.2, 0.7, 1.5, 2.0, 4.0, 8.0] {
+        let count = NativeMixTimeline.outputBufferCount(sampleRate: rate, frames: 8192, latency: latency)
+        precondition(outputGaps(sampleRate: rate, latency: latency, count: count) == 0, "Route \(rate)/\(latency) starved")
+        if latency >= 0.7 { precondition(outputGaps(sampleRate: rate, latency: latency, count: 5) > 0, "The old queue should reproduce the dropout") }
+    }
+}
+precondition(NativeMixTimeline.outputBufferCount(sampleRate: 48000, frames: 8192, latency: .nan) == 5)
+precondition(NativeMixTimeline.outputBufferCount(sampleRate: 48000, frames: 8192, latency: -1) == 5)
+precondition(NativeMixTimeline.outputBufferCount(sampleRate: 48000, frames: 8192, latency: 1000) == 52)
+precondition(NativeMixTimeline.outputBufferCount(sampleRate: .infinity, frames: 8192, latency: 1) == 5)
+print("Native output buffering: former CarPlay starvation reproduced; latency-aware queue stays fed at 44.1/48 kHz")
+
 // Native preparation inserts Swift Int values; bridge/JSON inserts NSNumber values.
 let frames = 357 * 48000
 for value in [frames as Any, Double(frames) as Any, NSNumber(value: frames) as Any] {
@@ -32,13 +59,11 @@ precondition(preserved.count == 73 && preserved.last?["entryId"] as? String == "
 partial["replaceFuture"] = true
 precondition((NativeMixTimeline.preservingTail(partial, after: original)["items"] as! [[String: Any]]).count == 2)
 partial["replaceFuture"] = false; partial["items"] = [["entryId": "other", "trackId": "other"]]
-let unaligned = NativeMixTimeline.preservingTail(partial, after: original)["items"] as! [[String: Any]]
-precondition(unaligned.count == 74 && unaligned.first?["entryId"] as? String == "other" && unaligned.last?["entryId"] as? String == "E74")
-// Restored page: stale order plus the native next appended at the end; nothing native is dropped or duplicated.
-let restored: [String: Any] = ["from": 2, "items": [full[2], full[3], full[1]]]
-let restoredTail = (NativeMixTimeline.preservingTail(restored, after: original, currentEntryId: "E1")["items"] as! [[String: Any]]).map { $0["entryId"] as! String }
-precondition(restoredTail.count == 73 && Array(restoredTail.prefix(3)) == ["E3", "E4", "E2"] && restoredTail.last == "E74" && Set(restoredTail).count == 73)
-print("Native manifest: 74-track tail survives partial and unaligned refreshes; only explicit replacement truncates")
+precondition((NativeMixTimeline.preservingTail(partial, after: original)["items"] as! [[String: Any]]).count == 74, "Unaligned page list dropped the native tail")
+let restored: [String: Any] = ["from": 2, "items": [full[1], full[4], full[2]]]
+let reordered = NativeMixTimeline.preservingTail(restored, after: original)["items"] as! [[String: Any]]
+precondition(reordered.count == 73 && Set(reordered.map { $0["entryId"] as! String }).count == 73, "Stale restored order lost or duplicated entries")
+print("Native manifest: 74-track tail survives partial, unaligned and reordered refreshes; explicit replacement respected")
 
 // B failed decoding, so C is native index 1 even though it was manifest item 2.
 let skippedItems: [[String: Any]] = ["B", "C", "D", "E", "F"].map { ["entryId": $0, "trackId": $0] }
@@ -65,3 +90,46 @@ precondition(NativeMixTimeline.consumedPrefix([["entryId": "new"]], currentEntry
 precondition(NativeMixTimeline.consumedPrefix([], currentEntryId: "D", requestedFrom: 4, currentIndex: 3) == 0) // Repeat-one lives in loopItems.
 precondition(NativeMixTimeline.consumedPrefix([["entryId": "new"]], currentEntryId: "D", requestedFrom: 2, currentIndex: 3) == nil)
 print("Native manifest: audible identity rebases stale page entries even with a fresh native index")
+
+func nowPlayingPublishes(rate: Double, sourceRate: Double, seekAt: Double? = nil) -> Int {
+    var sent = (position: 0.0, at: 0.0), count = 1, position = 0.0
+    for tick in 1...120 {
+        let now = Double(tick) * 0.5
+        position += 0.5 * sourceRate
+        if let seekAt, now == seekAt { position = 100 }
+        if !NativeMixTimeline.nowPlayingCurrent(sentPosition: sent.position, sentAt: sent.at, rate: rate, position: position, now: now) {
+            sent = (position, now); count += 1
+        }
+    }
+    return count
+}
+precondition(nowPlayingPublishes(rate: 1, sourceRate: 1) == 1, "Steady playback republished Now Playing")
+precondition(nowPlayingPublishes(rate: 1.25, sourceRate: 1.25) == 1, "DSP speed is not extrapolated")
+precondition((2...6).contains(nowPlayingPublishes(rate: 1, sourceRate: 1.03)), "Tempo stretch drift is not corrected")
+precondition(nowPlayingPublishes(rate: 1, sourceRate: 1, seekAt: 20) == 2, "A jump was not republished")
+precondition(nowPlayingPublishes(rate: 1, sourceRate: 0) == 121, "A stalled clock was not corrected")
+print("Native Now Playing: one publish for a steady minute, bounded drift corrections, jumps and stalls republished")
+
+precondition(NativeMixTimeline.aheadDepth(["kind": "local", "file": 1]) == 2)
+precondition(NativeMixTimeline.aheadDepth(["kind": "upload"]) == 2)
+precondition(NativeMixTimeline.aheadDepth(["kind": "direct", "url": "https://example.com/a"]) == 4)
+precondition(NativeMixTimeline.aheadDepth(["kind": "hls"]) == 4 && NativeMixTimeline.aheadDepth(nil) == 4)
+print("Native preparation depth: two ahead for local files, four for downloads")
+
+precondition(NativeMixTimeline.pendingSkips(0, ahead: 0, remaining: 5) == 1)
+precondition(NativeMixTimeline.pendingSkips(1, ahead: 0, remaining: 5) == 2)
+precondition(NativeMixTimeline.pendingSkips(2, ahead: 1, remaining: 1) == 2, "Skip target passed the end of the queue")
+precondition(NativeMixTimeline.pendingSkips(0, ahead: 0, remaining: 0) == 0, "Next accepted with nothing left")
+precondition(NativeMixTimeline.pendingSkips(NativeMixTimeline.maxPendingSkips, ahead: 0, remaining: 50) == NativeMixTimeline.maxPendingSkips)
+var presses = 0
+for _ in 0..<5 { presses = NativeMixTimeline.pendingSkips(presses, ahead: 0, remaining: 3) }
+precondition(presses == 3, "Five quick presses over three remaining songs: \(presses)")
+print("Native skips: each press moves the target, bounded by remaining songs and storage")
+
+precondition((0..<5).map { NativeMixTimeline.retryDelay("network_-1001", attempt: $0) } == [2, 5, 15, 30, 30], "Offline songs must be retried, not skipped")
+precondition(NativeMixTimeline.retryDelay("http_503", attempt: 3) == nil)
+precondition(NativeMixTimeline.retryDelay("http_503", attempt: 0) == 2)
+for reason in ["http_404", "http_403", "http_0", "decode_-11829", "preparation", "encrypted", "size_limit", "commit"] {
+    precondition(NativeMixTimeline.retryDelay(reason, attempt: 0) == nil, "\(reason) was retried")
+}
+print("Native retry: network and server errors back off 2/5/15 s, unavailable sources are skipped")

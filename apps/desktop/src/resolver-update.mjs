@@ -42,7 +42,7 @@ export class ResolverUpdater {
   }
 
   async bytes(url, limit, signal) {
-    const response = await this.fetcher(url, { signal, headers: { 'User-Agent': 'MORA-resolver-updater', Accept: url.startsWith('https://api.github.com/') ? 'application/vnd.github+json' : 'application/octet-stream' } });
+    const response = await this.fetcher(url, { signal, headers: { 'User-Agent': 'MORA-resolver-updater', Accept: url.startsWith('https://api.github.com/') ? 'application/vnd.github+json' : 'application/octet-stream' } }, limit);
     if (!response.ok || !response.body) throw new Error(`Сервер обновлений ответил ${response.status}`);
     if (Number(response.headers.get('content-length')) > limit) throw new Error('Обновление слишком большое');
     const reader = response.body.getReader(); const chunks = []; let size = 0;

@@ -39,18 +39,3 @@ describe('bounded wave audio preparation', () => {
     expect(provider.importTrack).not.toHaveBeenCalled();
   });
 });
-
-describe('metadata-only import (iPhone)', () => {
-  it('records the track without downloading its MP3', async () => {
-    const provider = Object.create(YandexProvider.prototype) as YandexProvider;
-    const prepare = vi.fn().mockRejectedValue(new Error('must not download'));
-    const added = vi.fn((input: { duration: number; meta: Record<string, unknown> }) => ({ id: 'row', ...input }));
-    const track = { id: 7, title: 'T', durationMs: 200000, available: true, artists: [{ id: 1, name: 'A' }], albums: [{ id: 9, title: 'Al' }] };
-    Object.assign(provider, { metadataOnlyImport: true, audio: { prepare, cover: async () => null }, imports: new Map(), store: { load: () => ({ secret: { token: 't' } }) },
-      lib: { tracksBySource: () => [], addRemote: added }, call: async () => [track], checkedId: (id: string) => id });
-    await provider.importTrack({ externalId: '7:9', title: '', artist: '', album: '', duration: 0, coverUrl: null, pageUrl: null, license: null, playable: true });
-    expect(prepare).not.toHaveBeenCalled();
-    expect(added.mock.calls[0][0].duration).toBe(200);
-    expect(added.mock.calls[0][0].meta.audioHash).toBeUndefined();
-  });
-});

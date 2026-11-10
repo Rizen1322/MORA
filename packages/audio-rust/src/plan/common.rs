@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-pub const VERSION: &str = "am-planner-v18-drum-window-1";
+pub const VERSION: &str = "am-planner-v18-echo-entry-2";
 pub type Points = Vec<[f64; 2]>;
 pub fn n(v: &Value, k: &str) -> f64 {
     v[k].as_f64().unwrap_or(f64::NAN)

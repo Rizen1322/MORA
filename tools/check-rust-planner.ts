@@ -62,22 +62,17 @@ for (const mode of ['normal', 'finalists', 'requested']) {
   cases.push({ name: `calm-wash-${mode}`, from: track('a', { duration: aa.duration, analysis: aa }), to: track('b', { duration: bb.duration, analysis: bb }),
     settings: settings({ mixOnNext: true }), mode, position: mode === 'requested' ? 120.4 : undefined });
 }
-// v20 echo-out flavors: drum drop (dub/brake by pair id), calm intro (washout), harsh opening (eased),
-// a late first downbeat (pre-rolled pickup), a loose A grid (no brake), weak onsets (no drop)
-for (const variant of ['drop', 'calm', 'harsh', 'pickup', 'loose', 'onsets']) for (const id of ['b', 'c', 'd', 'e']) {
-  const aa: any = measured(124), bb: any = measured(160);
-  // A thins out at its phrase starts: a clean echo exit, not a loop roll
-  aa.curves.midDensity = aa.curves.midDensity.map((_: number, k: number) => aa.phrases.some((t: number) => Math.abs(k / 20 - t) < 1) ? .05 : .3);
-  if (variant === 'calm') for (const key of ['rmsDb', 'lowDb', 'midDb', 'highDb']) for (let i = 0; i < 30 * 20; i++) bb.curves[key][i] -= 5;
-  if (variant === 'harsh') for (let i = 0; i < 30 * 20; i++) bb.curves.lowDb[i] -= 6;
-  if (variant === 'pickup') { bb.beat.downbeats = bb.beat.downbeats.map((t: number) => t + .3); bb.phrases = bb.phrases.map((t: number) => t + .3); }
-  if (variant === 'loose') aa.beat.jitterMs = 15;
-  if (variant === 'onsets') bb.local = { rate: 1, camelot: [], keyConfidence: [], transients: Array.from({ length: 160 }, () => .1) };
-  cases.push({ name: `echo-flavor-${variant}-${id}`, from: track('a', { duration: aa.duration, analysis: aa }), to: track(id, { duration: bb.duration, analysis: bb }), settings: settings() });
-}
 
 function addMeasured(name: string, aa: TrackAnalysis, bb: TrackAnalysis, extra: Partial<AutoMixSettings> = {}, mode = 'normal', position?: number, feedback?: any): void {
   cases.push({ name, from: track('a', { duration: aa.duration, analysis: aa }), to: track('b', { duration: bb.duration, analysis: bb }), settings: settings(extra), mode, position, feedback });
+}
+// Soft echo keeps B's opening, including leading silence handling; Next keeps an energetic entry.
+for (const audibleStart of [0, 0.05, 2.3]) for (const mode of ['normal', 'finalists', 'requested']) {
+  const aa = measured(120), bb = measured(88);
+  aa.curves.midDensity = aa.curves.midDensity.map((_, i) => aa.phrases.some(t => Math.abs(i / aa.curves.rate - t) < 2 * aa.beat!.period) ? 0.05 : 0.2);
+  bb.audibleStart = audibleStart;
+  bb.cues.entry.push({ time: 16, score: 0.95, kind: 'section', tags: [] });
+  addMeasured(`soft-echo-${audibleStart}-${mode}`, aa, bb, { mixOnNext: true }, mode, mode === 'requested' ? 120.4 : undefined);
 }
 function voice(an: TrackAnalysis, phase = 0): TrackAnalysis {
   an.vocalActivity = { rate: 2, source: 'demucs', model: 'parity', values: Array.from({ length: Math.ceil(an.duration * 2) }, (_, i) => (i + phase) % 32 > 16 ? .8 : 0) };

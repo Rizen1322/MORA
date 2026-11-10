@@ -1,4 +1,6 @@
 import type { SourceRow } from '../library.ts';
+import { nativeDownload, networkFetch } from '../rust-network.ts';
+import { SharedPreparation } from '../public/shared-preparation.ts';
 
 export interface Capabilities {
   search: boolean;
@@ -85,7 +87,7 @@ export const NO_CAPS: Capabilities = {
 };
 
 export async function httpJson<T>(url: string, init: RequestInit & { timeoutMs?: number } = {}): Promise<{ status: number; body: T | null; text: string }> {
-  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(init.timeoutMs ?? 12000) });
+  const res = await networkFetch(url, { ...init, signal: AbortSignal.timeout(init.timeoutMs ?? 12000) });
   const text = await res.text();
   let body: T | null = null;
   try {
@@ -96,29 +98,26 @@ export async function httpJson<T>(url: string, init: RequestInit & { timeoutMs?:
   return { status: res.status, body, text };
 }
 
-const downloads = new Map<string, Promise<void>>();
+const downloads = new SharedPreparation<void>();
 
 /** Downloads a URL to a file, never logging the URL (it may contain credentials). Concurrent calls for one file share a transfer. */
-export function downloadTo(url: string, file: string, maxBytes = 1024 * 1024 * 1024): Promise<void> {
-  let running = downloads.get(file);
-  if (!running) {
-    running = download(url, file, maxBytes).finally(() => downloads.delete(file));
-    downloads.set(file, running);
-  }
-  return running;
+export function downloadTo(url: string, file: string, maxBytes = 1024 * 1024 * 1024, options: { signal?: AbortSignal; priority?: 0 | 1 | 2 | 3 } = {}): Promise<void> {
+  return downloads.run(file, options, signal => download(url, file, maxBytes, signal, options.priority ?? 0));
 }
 
-async function download(url: string, file: string, maxBytes: number): Promise<void> {
+async function download(url: string, file: string, maxBytes: number, signal: AbortSignal, priority: 0 | 1 | 2 | 3): Promise<void> {
   const { createWriteStream } = await import('node:fs');
   const { mkdir, rm, rename } = await import('node:fs/promises');
   const { pipeline } = await import('node:stream/promises');
   const { randomUUID } = await import('node:crypto');
   const path = await import('node:path');
   await mkdir(path.dirname(file), { recursive: true });
-  const res = await fetch(url, { signal: AbortSignal.timeout(120000) });
-  if (!res.ok || !res.body) throw new Error(`сервер источника ответил ${res.status}`);
   const part = `${file}.${randomUUID()}.part`;
   try {
+    const native = nativeDownload(url, part, { timeoutMs: 120000, maxBytes, priority, signal });
+    if (native) { await native; await rename(part, file); return; }
+    const res = await networkFetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(120000)]) });
+    if (!res.ok || !res.body) { await res.body?.cancel(); throw new Error(`сервер источника ответил ${res.status}`); }
     let n = 0;
     await pipeline(res.body, async function* (chunks: AsyncIterable<Uint8Array>) {
       for await (const chunk of chunks) {

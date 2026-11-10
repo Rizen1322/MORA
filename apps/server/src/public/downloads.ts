@@ -149,6 +149,21 @@ export class Downloads {
     void this.evict().catch(() => {});
   }
 
+  /** A downloaded track keeps its offline copy when another version is chosen: the new recording is fetched and the old job forgotten. */
+  follow(trackId: string): void {
+    if (!this.lib.get(trackId)?.pinned) return;
+    const src = this.lib.sources(this.lib.mediaId(trackId)).find((x) => x.kind === 'remote');
+    const key = src && (src.provider === 'youtube' || src.provider === 'soundcloud') ? `${src.provider}:${src.external_id}` : `track:${trackId}`;
+    for (const j of [...this.jobs.values()]) {
+      if (j.trackId !== trackId || j.key === key) continue;
+      if (j.state === 'done') this.jobs.delete(j.id); // the old recording is not wanted anymore
+      else this.cancel(j.id);
+    }
+    // A file from this disk is offline already; anything else has to be downloaded for the chosen version.
+    if (this.lib.get(this.lib.mediaId(trackId))?.provider !== 'local') this.add({ trackId });
+    this.save();
+  }
+
   private pump(): void {
     if (this.stopped) return;
     const now = Date.now();

@@ -1,0 +1,9 @@
+/toolchain/
+/build/
+/probe-profile/
+/probe-import/
+/probe-backend.mjs
+/probe-out.txt
+/probe-err.txt
+/src-tauri/target/
+/src-tauri/gen/

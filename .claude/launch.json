@@ -2,37 +2,77 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "web-dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "name": "automix-test",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "tsx",
+        "apps/server/src/index.ts"
+      ],
+      "port": 4731,
+      "env": {
+        "PORT": "4731",
+        "AUTOMIX_DATA_DIR": "data-dev"
+      }
+    },
+    {
+      "name": "automix-design",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "tsx",
+        "apps/server/src/index.ts"
+      ],
+      "port": 4732,
+      "env": {
+        "PORT": "4732",
+        "AUTOMIX_DATA_DIR": "data-dev"
+      }
+    },
+    {
+      "name": "automix-algo",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "tsx",
+        "apps/server/src/index.ts"
+      ],
+      "port": 4733,
+      "env": {
+        "PORT": "4733",
+        "AUTOMIX_DATA_DIR": "data-dev"
+      }
+    },
+    {
+      "name": "automix-planner-check",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "tsx",
+        "apps/server/src/index.ts"
+      ],
+      "port": 4734,
+      "env": {
+        "PORT": "4734",
+        "AUTOMIX_DATA_DIR": "data-dev",
+        "STEMS_PYTHON": "",
+        "ANALYSIS_WORKERS": "1"
+      }
+    },
+    {
+      "name": "mora-web-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "tools/dev.mjs"
+      ],
       "port": 5173
     },
     {
-      "name": "mobile-dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "run",
-        "mobile:dev"
-      ],
-      "port": 4741
-    },
-    {
-      "name": "mobile-redesign",
+      "name": "mora-ios-harness",
       "runtimeExecutable": "node",
       "runtimeArgs": [
-        "-e",
-        "require('http').createServer((q,s)=>{s.setHeader('content-type','text/html; charset=utf-8');s.end(require('fs').readFileSync('F:/вин/ПРОЕКТЫ/music/docs/mobile-redesign/index.html'))}).listen(4750,'127.0.0.1')"
+        "apps/mobile/dev/serve.mjs"
       ],
-      "port": 4750
-    },
-    {
-      "name": "mobile-1022",
-      "runtimeExecutable": "node",
-      "runtimeArgs": [
-        "-e",
-        "process.env.PORT=\"4752\";import(require(\"url\").pathToFileURL(\"F:/вин/ПРОЕКТЫ/music/tools/.cache/ios-native-first-source-2026-11-01/apps/mobile/dev/serve.mjs\").href)"
-      ],
-      "port": 4752
+      "port": 4741,
+      "env": {
+        "PORT": "4741"
+      }
     }
   ]
 }

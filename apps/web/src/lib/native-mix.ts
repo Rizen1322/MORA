@@ -68,8 +68,6 @@ export interface NativeMixState {
   ended?: boolean;
 }
 export interface NativeMix {
-  /** iOS: ~20 Hz band levels of the audible output (same contract as `DesktopAnalyser.levels`). */
-  onLevels?(cb: (event: { rms: number; bands: number[] }) => void): () => void;
   startStation?(station: NativeRadioConfig, config: NativeSourceConfig): Promise<NativeMixState>;
   setStation?(station: NativeRadioConfig | null, context?: import('./queue-types.ts').PlayContext | null): Promise<NativeMixState>;
   /** Native download/decode and playback of the first recording, without page-side PCM. */

@@ -12,7 +12,7 @@ vi.mock('../src/lib/api.ts', async (original) => {
 });
 
 const seconds = 20, frames = seconds * 48000;
-const state = (patch: Partial<NativeMixState> = {}): NativeMixState => ({ active: true, playing: true, index: 0, position: 0, duration: seconds, blend: null, ...patch });
+const state = (patch: Partial<NativeMixState> = {}): NativeMixState => ({ active: true, playing: true, index: 0, position: 0, duration: seconds, ...patch });
 let timer: (() => void) | undefined;
 
 beforeEach(() => {
@@ -35,21 +35,6 @@ beforeEach(() => {
   vi.stubGlobal('navigator', {});
 });
 afterEach(() => { timer?.(); vi.unstubAllGlobals(); });
-it('uses the desktop native queue bridge without sending PCM through the page', async () => {
-  const currentTrack = { trackId: 'a', entryId: 'entry-a', title: 'a', artist: '', totalFrames: frames, gainDb: 0 };
-  const mix = { startSource: vi.fn(async () => state({ currentTrack })), prepareQueue: vi.fn(async () => state({ currentTrack })),
-    settings: vi.fn(async () => {}), stop: vi.fn(async () => {}), state: vi.fn(async () => state({ currentTrack })), command: vi.fn(async () => state({ currentTrack })) };
-  vi.stubGlobal('window', { automixDesktop: { nativeMix: mix } });
-  const controller = new PlayerController(id => ({ id, title: id, duration: seconds, status: 'ok', analysis: {} } as Track), vi.fn());
-  const h = controller as unknown as { nativeTimer: ReturnType<typeof setInterval>; saveTimer: ReturnType<typeof setTimeout> | null; nativeSyncing: Promise<void> | null };
-  timer = () => { clearInterval(h.nativeTimer); if (h.saveTimer) clearTimeout(h.saveTimer); };
-  controller.state = { ...controller.state, queue: [{ trackId: 'a', entryId: 'entry-a', origin: 'user' }] };
-  await controller.startAt(0, 0); await h.nativeSyncing;
-  expect(mix.startSource).toHaveBeenCalledOnce();
-  expect(controller.state.status).toBe('playing');
-  expect(fetch).not.toHaveBeenCalled();
-  expect(api.prepare).not.toHaveBeenCalled();
-});
 it('starts through native source preparation and sends Pause while it is downloading', async () => {
   let finish!: (s: NativeMixState) => void;
   const startSource = vi.fn(() => new Promise<NativeMixState>(resolve => { finish = resolve; }));
@@ -69,26 +54,6 @@ it('starts through native source preparation and sends Pause while it is downloa
   expect(startSource.mock.calls[0][0]).toMatchObject({ trackId: 'a', entryId: 'entry-a' });
   expect(api.prepare).not.toHaveBeenCalled();expect(mix.upload).not.toHaveBeenCalled();expect(mix.start).not.toHaveBeenCalled();
   expect(fetch).not.toHaveBeenCalled();
-});
-it('seeks the selected native track while its paused start is still pending', async () => {
-  const pending: Array<(s: NativeMixState) => void> = [];
-  const mix = { startSource: vi.fn((_entry: unknown, _config: unknown) => new Promise<NativeMixState>(resolve => pending.push(resolve))), prepareQueue: vi.fn(async () => state()),
-    settings: vi.fn(async () => {}), stop: vi.fn(async () => {}), state: vi.fn(async () => state()), command: vi.fn(async () => state()) };
-  vi.stubGlobal('window', { moraNativePlayback: { route: 'native', mix, mixActive: true } });
-  const controller = new PlayerController(id => ({ id, title: id, duration: seconds, status: 'ok', analysis: {} } as Track), vi.fn());
-  const h = controller as unknown as { nativeTimer: ReturnType<typeof setInterval>; saveTimer: ReturnType<typeof setTimeout> | null; nativeSyncing: Promise<void> | null };
-  timer = () => { clearInterval(h.nativeTimer); if (h.saveTimer) clearTimeout(h.saveTimer); };
-  controller.state = { ...controller.state, queue: [{ trackId: 'a', entryId: 'entry-a', origin: 'user' }] };
-  const first = controller.startAt(0, 0, 'skip', true);
-  controller.seek(7);
-  expect(mix.startSource).toHaveBeenCalledTimes(2);
-  expect(mix.startSource.mock.calls[1][1]).toMatchObject({ position: 7, paused: true });
-  const currentTrack = { trackId: 'a', entryId: 'entry-a', title: 'a', artist: '', totalFrames: frames, gainDb: 0 };
-  pending[1](state({ playing: false, position: 7, currentTrack }));
-  pending[0](state({ playing: false, position: 0, currentTrack }));
-  await first;
-  await vi.waitFor(() => expect(controller.state.position).toBe(7));
-  expect(controller.state.status).toBe('paused');
 });
 it('hydrates a reloaded page from the audible native track and controls it without restarting audio', async () => {
   const entries = ['a', 'b', 'c', 'd', 'e', 'f'].map(trackId => ({ trackId, entryId: `entry-${trackId}`, origin: 'user' as const }));
@@ -218,7 +183,7 @@ it('plays the queue natively: uploads tracks with their blends ahead and follows
   h.onNativeState(state({ index: 0, position: blend.triggerFrame / 48000 - 2, entryId: controller.state.queue[0].entryId }));
   expect(controller.state.nextPlan?.toTrackId).toBe('b');
   expect(controller.state.transition).toMatchObject({ active: false, startsIn: expect.closeTo(2, 3) });
-  h.onNativeState(state({ index: 0, position: blend.triggerFrame / 48000 + .1, blend: { index: 1, progress: .01 }, entryId: controller.state.queue[0].entryId }));
+  h.onNativeState(state({ index: 0, position: blend.triggerFrame / 48000 + .1, entryId: controller.state.queue[0].entryId }));
   expect(controller.state.transition?.active).toBe(true);
   // Analysis finishing later plans the blend again.
   controller.onAnalysisDone('b');

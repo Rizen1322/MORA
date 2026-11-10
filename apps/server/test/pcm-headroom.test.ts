@@ -41,8 +41,22 @@ describe('playback decoder headroom', () => {
       expect(float.statusCode, float.body.slice(0, 80)).toBe(200);
       expect(float.headers['x-pcm-format']).toBe('f32le');
       expect(float.rawPayload.length).toBe(frames * 8);
-      const reference = execFileSync('ffmpeg', ['-v', 'error', '-i', source, '-ac', '2', '-ar', String(sr), '-f', 'f32le', 'pipe:1'], { windowsHide: true });
-      expect(float.rawPayload.equals(reference.subarray(start * 8, (start + frames) * 8))).toBe(true);
+      const reference = execFileSync(app.services.cfg.ffmpeg, ['-v', 'error', '-i', source, '-ac', '2', '-ar', String(sr), '-f', 'f32le', 'pipe:1'], { windowsHide: true });
+      expect(reference.length).toBe(sr * 8);
+      const expected = reference.subarray(start * 8, (start + frames) * 8);
+      if (sr === 44100) expect(float.rawPayload.equals(expected)).toBe(true);
+      else {
+        let maxError = 0;
+        for (let i = 0; i < expected.length; i += 4) {
+          const difference = Math.abs(float.rawPayload.readFloatLE(i) - expected.readFloatLE(i));
+          if (!Number.isFinite(difference)) throw new Error('Non-finite PCM sample');
+          maxError = Math.max(maxError, difference);
+        }
+        expect(maxError).toBeLessThanOrEqual(2e-5);
+      }
+      const whole = await app.app.inject(`/api/tracks/${id}/pcm?sr=${sr}&start=0&frames=${sr + 1}&format=f32le`);
+      expect(whole.rawPayload.length).toBe(reference.length);
+      expect(whole.rawPayload.subarray(start * 8, (start + frames) * 8).equals(float.rawPayload)).toBe(true);
       let peak = 0;
       for (let i = 0; i < float.rawPayload.length; i += 4) peak = Math.max(peak, Math.abs(float.rawPayload.readFloatLE(i)));
       expect(peak).toBeGreaterThan(1.24);
@@ -85,7 +99,7 @@ describe('playback decoder headroom', () => {
     // a float file from the desktop format is never read as 16-bit
     fs.writeFileSync(path.join(folder, 'hot16_44100.f32'), Buffer.alloc(400));
     const cache = new PcmCache(cfg, ff);
-    const reference = execFileSync('ffmpeg', ['-v', 'error', '-i', source, '-ac', '2', '-ar', '44100', '-f', 'f32le', 'pipe:1'], { windowsHide: true });
+    const reference = execFileSync(cfg.ffmpeg, ['-v', 'error', '-i', source, '-ac', '2', '-ar', '44100', '-f', 'f32le', 'pipe:1'], { windowsHide: true });
     try {
       const e = cache.open('hot16', 44100, async () => source, 1);
       const r = await cache.read(e, 1000, 4096);

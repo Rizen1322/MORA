@@ -6,6 +6,12 @@
   --titlebar-h: 40px;
 }
 
+/* An app, not a page: links and images are not dragged out as URLs; explicit drag sources still are. */
+.desktop a:not([draggable="true"]),
+.desktop img {
+  -webkit-user-drag: none;
+}
+
 .desktop .app {
   grid-template-rows: var(--titlebar-h) minmax(0, 1fr) var(--player-h);
   grid-template-areas:
@@ -29,6 +35,15 @@
 .titlebar button {
   -webkit-app-region: no-drag;
 }
+
+.window-controls { position: fixed; top: 0; right: 0; height: var(--titlebar-h); display: flex; z-index: 1000; -webkit-app-region: no-drag; }
+.window-controls button { width: 46px; height: 100%; display: grid; place-items: center; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--text-2); cursor: default; }
+.window-controls button:hover { background: #ffffff14; }
+.window-controls .window-close:hover { background: #c42b1c; color: #fff; }
+.window-controls svg { fill: none; stroke: currentColor; stroke-width: 1; }
+.titlebar:has(.window-controls), .desktop .fp-top:has(.window-controls) { padding-right: 150px; }
+.desktop .fp-top:has(.window-controls) .fp-source { inset-inline: 150px; }
+.compact .titlebar > .window-controls { display: flex !important; height: 34px; }
 
 .titlebar .icon-btn {
   width: 30px;
@@ -163,7 +178,7 @@
   grid-template-areas: 'title' 'mini';
 }
 .compact .titlebar { padding-left: 8px; }
-.compact .titlebar > :not(.titlebar-compact), .compact .sidebar, .compact .main, .compact .queue-panel, .compact .tabbar, .compact .player-bar,
+.compact .titlebar > :not(.titlebar-compact):not(.window-controls), .compact .sidebar, .compact .main, .compact .queue-panel, .compact .tabbar, .compact .player-bar,
 .compact .version-panel, .compact .toasts, .compact .upload-card, .compact .full-player { display: none !important; }
 .compact .mini-player { display: grid !important; grid-area: mini; margin: 0 6px 6px; align-self: stretch; }
 /* The mobile mini player highlights its last button; here that is "Next", so move the accent to Play. */

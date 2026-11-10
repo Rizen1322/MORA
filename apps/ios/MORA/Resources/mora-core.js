@@ -31,7 +31,7 @@ var MoraCore = (() => {
 
   // packages/core/src/types.ts
   var ANALYZER_VERSION = "am-analyzer-14";
-  var PLANNER_VERSION = "am-planner-v18-drum-window-1";
+  var PLANNER_VERSION = "am-planner-v18-echo-entry-2";
   var VOICE_LIFT_MAX = 2.5;
   var DEFAULT_AUTOMIX_SETTINGS = {
     enabled: true,
@@ -2587,7 +2587,7 @@ var MoraCore = (() => {
       const echo = planEchoOut({ ...basePlan(ctx, "echo_out"), keyInfo, fallbackReason }, A, B, settings, tempoRelation(A.beat.bpm, B.beat.bpm).stretchPercent);
       if (echo) return echo;
     }
-    if (ctx.requestedAt === void 0 && settings.eqHandoff && fadeA.length < 3 && A.rhythmStrength > 0.45 && B.rhythmStrength > 0.45 && !(settings.stemMixing !== false && A.vocalActivity && B.vocalActivity) && [A.beat, B.beat].every((g) => g && g.stable && g.confidence >= 0.6 && g.jitterMs <= 20) && A.beat.downbeatConfidence >= 0.3) {
+    if (settings.eqHandoff && (ctx.requestedAt !== void 0 || fadeA.length < 3) && A.rhythmStrength > 0.45 && B.rhythmStrength > 0.45 && !(settings.stemMixing !== false && A.vocalActivity && B.vocalActivity) && [A.beat, B.beat].every((g) => g && g.stable && g.confidence >= 0.6 && g.jitterMs <= 20) && A.beat.downbeatConfidence >= 0.3) {
       const swap = planDropSwap(ctx, A, B, keyInfo, fallbackReason);
       if (swap) return swap;
     }
@@ -3128,7 +3128,7 @@ var MoraCore = (() => {
     const match = pattern && ((_a = drumAlignment(a, pattern)) == null ? void 0 : _a[rotation]);
     return match !== null && match !== void 0 && Number.isFinite(match) && Number.isFinite(originalMatch) && match >= DRUM_SHIFT_MIN && match - originalMatch >= DRUM_SHIFT_MARGIN ? match : null;
   }
-  function planBeatmatch(ctx, A, B, rel, keyInfo, minBars = 1, maxBars = Infinity) {
+  function planBeatmatch(ctx, A, B, rel, keyInfo, minBars = 1, maxBars = Infinity, vocalAware = false) {
     var _a, _b, _c, _d;
     const s = ctx.s;
     const pA = A.beat.period;
@@ -3206,16 +3206,16 @@ var MoraCore = (() => {
           const voiceScore = s.stemMixing !== false ? vocalEntryScore(A, B, e.time + nativeA / 2, n.time + nativeB / 2) : 0;
           const fadeStart = Math.max(0.5, (bars2 - 2) / bars2);
           const clash = s.stemMixing !== false ? voiceClash(A, B, e.time, nativeA, n.time, nativeB, D2, s.eqHandoff ? (x) => [x <= fadeStart ? 1 : cosDown((x - fadeStart) / (1 - fadeStart)), sinUp(clamp4(x / 0.5))] : void 0) : 0;
-          const score = 0.1 * closure + 0.1 * e.score + 0.1 * n.score + 0.28 * cs + 0.12 * lenPref + 0.12 * (1 - conflict) + 0.11 * arrival.score + 0.08 * energyFit + 0.09 * phraseBonus - entrySkipCost(B, n.time, true, unknownB) - 0.45 * continuityCost + 0.2 * voiceScore + (n.tags.includes("measured-vocal-lead") ? 0.18 : 0) - Math.min(0.4, 0.02 * clash) - (unknownB ? 0.12 * pickupLost(B, n.time) : 0) - 0.1 * localClash;
+          const score = 0.1 * closure + 0.1 * e.score + 0.1 * n.score + 0.28 * cs + 0.12 * lenPref + 0.12 * (1 - conflict) + 0.11 * arrival.score + 0.08 * energyFit + 0.09 * phraseBonus - entrySkipCost(B, n.time, true, unknownB) - 0.45 * continuityCost + 0.2 * voiceScore + (n.tags.includes("measured-vocal-lead") ? 0.18 : 0) - Math.min(0.4, 0.02 * clash) - (unknownB ? 0.12 * pickupLost(B, n.time) : 0) - 0.1 * localClash - (vocalAware ? 0.2 * clamp4(curveMean(A.curves.midDensity, A.curves.rate, e.time + nativeA / 2 - pA, e.time + nativeA / 2 + pA) / Math.max(1e-6, bodyDensity(A)) - 0.8) : 0);
           tried.push({ exit: e.time, entry: n.time, bars: bars2, cut: r32(A.audibleEnd - e.time - nativeA), score: r32(score), continuityCost: r32(continuityCost) });
           if (!best || score > best.score) best = { score, e, n, bars: bars2, conflict, cut: A.audibleEnd - e.time - nativeA, arrival: arrival.time, localClash };
         }
       }
     }
     if (!best) return null;
-    if (best.bars > 8 && fullEnergy(best.e.time, best.bars * barA)) {
-      const shorter = planBeatmatch(ctx, A, B, rel, keyInfo, minBars, 8);
-      if (shorter) return shorter;
+    if (!vocalAware && fullEnergy(best.e.time, best.bars * barA)) {
+      const again = planBeatmatch(ctx, A, B, rel, keyInfo, minBars, Math.min(maxBars, 8), true);
+      if (again) return again;
     }
     if (!ctx.vocalRepair && !ctx.fixed && rel.m === 1) {
       const nativeA = best.bars * barA, nativeB = nativeA * r5;
@@ -3281,19 +3281,23 @@ var MoraCore = (() => {
     const reasons = [];
     let echoSafe = true, filterHandoff = false;
     if (ctx.s.eqHandoff) {
-      const fadeStart = Math.max(swap, barOut(bars - 2));
+      filterHandoff = vocalAware || fullEnergy(best.e.time, bars * barA);
+      const fadeStart = Math.max(swap, barOut(bars - (filterHandoff ? 1 : 2)));
       lanes.push(lane("B", "gain", shape(0, swap, sinUp, 8)));
       lanes.push(lane("A", "gain", [[0, 1]], shape(fadeStart, D, cosDown, 8)));
       lanes.push(lane("A", "low", [[0, 1]], [[r32(swap - beat / 2), 1], [r32(swap + beat / 2), 0]]));
       lanes.push(lane("B", "low", [[0, 0]], [[r32(swap - beat / 2), 0], [r32(swap + beat / 2), 1]]));
       lanes.push(lane("B", "high", shape(0, swap, (x) => 0.25 + 0.75 * smoothstep(x))));
-      lanes.push(lane("A", "high", [[0, 1]], shape(swap, D, (x) => 1 - 0.75 * smoothstep(x))));
+      lanes.push(lane("A", "high", [[0, 1]], shape(swap, D, (x) => 1 - (filterHandoff ? 0.4 : 0.75) * smoothstep(x))));
       const midDuck = best.conflict > 0.35 || keyInfo.compatibility < 0.5 || best.localClash >= 0.5;
-      const bMid0 = s.stemMixing !== false && A.vocalActivity && B.vocalActivity ? keyClash ? 0.4 : 0.7 : midDuck ? 0.18 : fullEnergy(best.e.time, bars * barA) ? 0.25 : 0.4;
-      filterHandoff = fullEnergy(best.e.time, bars * barA);
+      const bMid0 = s.stemMixing !== false && A.vocalActivity && B.vocalActivity ? keyClash ? 0.4 : 0.7 : midDuck ? 0.18 : filterHandoff ? 0.25 : 0.4;
       const turns = keyClash || best.localClash >= 0.5 || filterHandoff;
-      if (filterHandoff) lanes.push(lane("A", "filter", [[0, 0]], shape(swap, D, (x) => 0.65 * smoothstep(x), 8)));
-      if (turns) {
+      if (filterHandoff) lanes.push(lane("A", "filter", [[0, 0]], shape(swap, D, (x) => 0.8 * smoothstep(x), 12)));
+      if (filterHandoff) {
+        lanes.push(lane("B", "mid", [[0, bMid0]], shape(Math.max(0, swap - beat), Math.min(D, swap + 3 * beat), (x) => bMid0 + (1 - bMid0) * smoothstep(x))));
+        const nativeB = bars * barA * r5, bDense = curveMean(B.curves.midDensity, B.curves.rate, best.n.time + nativeB / 2, best.n.time + nativeB) / Math.max(1e-6, bodyDensity(B)) > 0.9;
+        lanes.push(lane("A", "mid", [[0, 1]], bDense ? shape(swap, Math.min(D, swap + beat), (x) => 1 - 0.7 * smoothstep(x)) : shape(swap, Math.min(D, barOut(halfBars + 2)), (x) => 1 - 0.45 * smoothstep(x))));
+      } else if (turns) {
         const t0 = Math.max(0, swap - beat);
         lanes.push(lane("B", "mid", [[0, bMid0]], shape(t0, Math.min(D, swap + beat), (x) => bMid0 + (1 - bMid0) * sinUp(x))));
         lanes.push(lane("A", "mid", [[0, 1]], shape(t0, Math.max(t0 + beat, Math.min(D, barOut(halfBars + 2))), (x) => 0.2 + 0.8 * cosDown(x))));
@@ -3429,59 +3433,113 @@ var MoraCore = (() => {
     return p;
   }
   function planDropSwap(ctx, A, B, keyInfo, fallbackReason) {
-    const ga = A.beat, gb = B.beat, beat = ga.period, bar = 4 * beat;
+    const ga = A.beat, gb = B.beat, beat = ga.period, bar = 4 * beat, barB = 4 * gb.period;
     const S = 2 * bar >= 3 ? 2 * bar : 4 * bar;
-    const tail = Math.max(3, Math.min(6, 8 * gb.period));
-    if (S + tail > ctx.s.maxBlendSeconds) return null;
+    const tail = ctx.requestedAt === void 0 ? Math.max(3, Math.min(6, 2 * barB)) : 3;
+    const L = Math.round(bar * 75) / 75;
+    const rollable = ga.confidence >= 0.8 && ga.jitterMs <= 12 && ctx.s.loopBridges !== false && ctx.s.djPhrasing !== false && L >= 1.2 && L <= 8 && 3 * L + tail <= ctx.s.maxBlendSeconds;
+    if (S + tail > ctx.s.maxBlendSeconds && !rollable) return null;
     const phraseSet = new Set((A.phraseConfidence >= 0.2 ? A.phrases : []).map((t) => Math.round(t * 1e3)));
     const bodyDens = curveMean(A.curves.midDensity, A.curves.rate, A.audibleStart, A.audibleEnd);
+    const lead = Math.max(S, bar);
     let best = null;
+    const now = ctx.requestedAt;
     for (let i = 0; i < ga.downbeats.length; i++) {
       const d2 = ga.downbeats[i], phrase2 = phraseSet.has(Math.round(d2 * 1e3));
-      if (!phrase2 && i % 4 !== 0 || d2 - S < A.audibleStart + (A.audibleEnd - A.audibleStart) * 0.5 || d2 > A.audibleEnd - 0.5 || A.audibleEnd - d2 > 24) continue;
-      if (!measuredCurves(A, d2 - S, d2) || powerLevel(A, d2 - S, d2) < A.bodyRmsDb - 6) continue;
+      if (now === void 0 ? !phrase2 && i % 4 !== 0 || d2 - lead < A.audibleStart + (A.audibleEnd - A.audibleStart) * 0.5 || d2 > A.audibleEnd - 0.5 || A.audibleEnd - d2 > 24 : d2 - lead < now + 0.15 || d2 - lead > now + 0.15 + bar + 0.02 || d2 > A.audibleEnd - 0.5) continue;
+      if (!measuredCurves(A, d2 - lead, d2) || powerLevel(A, d2 - lead, d2) < A.bodyRmsDb - 6) continue;
       if (A.vocalActivity && vocalMean(A, d2 - 0.2, d2 + 0.25) >= 0.2) continue;
-      const dens = curveMean(A.curves.midDensity, A.curves.rate, d2 - beat, d2 + beat) / Math.max(1e-6, bodyDens);
-      const score = (phrase2 ? 0.3 : 0) - 0.5 * clamp4((A.audibleEnd - d2) / 24) - 0.3 * clamp4(dens - 0.7);
-      if (!best || score > best.score) best = { d: d2, score, phrase: phrase2 };
+      const dens2 = curveMean(A.curves.midDensity, A.curves.rate, d2 - beat, d2 + beat) / Math.max(1e-6, bodyDens);
+      const score = (phrase2 ? 0.3 : 0) - 0.5 * clamp4((A.audibleEnd - d2) / 24) - 0.3 * clamp4(dens2 - 0.7);
+      if (!best || score > best.score) best = { d: d2, score, phrase: phrase2, dens: dens2 };
     }
     if (!best) return null;
-    const { d, phrase } = best;
+    const { d, phrase, dens } = best;
+    const loop = rollable && (!phrase || dens > 0.9);
+    if (!loop && S + tail > ctx.s.maxBlendSeconds) return null;
     const picked = gb.downbeatConfidence >= 0.5 ? pickHandoffEntry(ctx, A, B, d, 0, tail, true) : null;
     const entry = (picked == null ? void 0 : picked.aligned) ? picked.cue : { time: B.audibleStart, score: 0.6, kind: "start", tags: ["drop-swap-start"] };
     if (powerLevel(B, entry.time, entry.time + 1) < B.bodyRmsDb - 6 || entry.time + tail > B.audibleEnd) return null;
-    let delay = beat;
-    while (delay < 0.3) delay *= 2;
-    while (delay > 0.8) delay /= 2;
-    const send = 0.6, D = r32(S + tail);
+    const energyDelta = powerLevel(B, entry.time, entry.time + 8 * barB) + ctx.gainB - (powerLevel(A, d - 2 * bar, d) + ctx.gainA);
+    const calm = gb.bpm < 0.85 * ga.bpm && energyDelta <= -3;
+    const wash = loop && calm, roll = loop && !calm;
+    const opening = B.audibleStart;
+    const bIn = loop || now !== void 0 ? entry : { time: opening, score: 0.6, kind: "start", tags: ["drop-swap-start"] };
+    const echoSpan = loop ? 0 : now !== void 0 ? Math.min(barB, tail) : Math.min(2 * barB, ctx.s.maxBlendSeconds - S);
+    const softTail = wash ? Math.min(Math.max(tail, Math.min(8, 3 * barB)), ctx.s.maxBlendSeconds - 2 * L) : Math.max(tail, echoSpan);
+    if (wash && (softTail < tail || entry.time + softTail > B.audibleEnd)) return null;
+    const T = roll ? 3 * L : wash ? 2 * L : S;
+    let delay = roll ? beat / 2 : beat * 0.75;
+    while (delay < 0.25) delay *= 2;
+    while (delay > 0.6) delay /= 2;
+    const feedback = Math.min(roll || wash ? 0.72 : 0.78, Math.pow(10, -1.5 / ((wash ? 2.5 : roll ? 1.5 : 3) * bar / delay)));
+    const D = r32(T + softTail);
     const p = basePlan(ctx, "echo_out");
-    p.aExit = r32(d - S);
-    p.bEntry = r32(entry.time);
+    p.bEntry = r32(bIn.time);
     p.duration = D;
-    p.swapAt = r32(S);
-    p.bDelay = r32(S);
-    p.echo = { delay: r32(delay), feedback: r32(Math.min(0.45, Math.pow(0.01 / send, delay / 2.5))) };
-    p.automation = [
-      lane("A", "gain", [[0, 1], [r32(S - 0.03), 1], [r32(S), 0], [D, 0]]),
-      lane("A", "low", [[0, 1], [r32(S - beat), 1], [r32(S - beat / 2), 0], [D, 0]]),
-      lane("A", "filter", shape(0, S, (x) => 0.5 * smoothstep(x), 8), [[D, 0.5]]),
-      // pre-fader send: open over the last beat, closed at the cut so A's next bar never feeds it
-      lane("A", "echo", [[0, 0], [r32(S - beat), 0], [r32(S - 0.05), send], [r32(S), send], [r32(S + 0.02), 0], [D, 0]]),
-      // B runs on its own clock after bDelay
-      lane("B", "gain", [[0, 0], [0.02, 1], [r32(D - S), 1]])
-    ];
+    p.swapAt = r32(T);
+    p.bDelay = r32(T);
+    p.echo = { delay: r32(delay), feedback: r32(feedback) };
+    if (wash) {
+      const start = Math.round((d - L) * 300) / 300;
+      p.aExit = r32(start);
+      p.loopA = { start, end: start + L, until: start + 2 * L, crossfade: 6e-3 };
+      p.automation = [
+        lane("A", "gain", [[0, 1], [r32(T - 0.03), 1], [r32(T), 0], [D, 0]]),
+        // wash-out: a low-pass closes (no hype high-pass) while the echo send rises
+        lane("A", "filter", [[0, 0]], shape(L / 2, T, (x) => -0.5 * smoothstep(x), 8), [[D, -0.5]]),
+        lane("A", "echo", [[0, 0], [r32(L), 0]], shape(L, T - 0.05, (x) => 0.7 * smoothstep(x), 6), [[r32(T), 0.7], [r32(T + 0.02), 0], [D, 0]]),
+        // B's soft intro rises under the tail over two of its bars and opens from a low-pass
+        lane("B", "gain", [[0, 0], [0.02, 0.6]], shape(0.02, Math.min(2 * barB, D - T), (x) => 0.6 + 0.4 * sinUp(x), 8), [[r32(D - T), 1]]),
+        lane("B", "filter", shape(0, Math.min(barB, D - T), (x) => -0.35 * (1 - smoothstep(x)), 6), [[r32(D - T), 0]])
+      ];
+    } else if (roll) {
+      const start = Math.round((d - L) * 300) / 300;
+      p.aExit = r32(start);
+      p.loopA = {
+        start,
+        end: start + L,
+        until: start + 3 * L,
+        crossfade: 6e-3,
+        roll: [{ at: start + L, length: L / 2 }, { at: start + 2 * L, length: L / 4 }, { at: start + 2.5 * L, length: L / 8 }]
+      };
+      p.automation = [
+        lane("A", "gain", [[0, 1], [r32(T - 0.03), 1], [r32(T), 0], [D, 0]]),
+        lane("A", "filter", [[0, 0]], shape(L, T, (x) => 0.6 * smoothstep(x), 8), [[D, 0.6]]),
+        // wash-out: the send rises through the last bar of the roll and closes on the one
+        lane("A", "echo", [[0, 0], [r32(2 * L), 0]], shape(2 * L, T - 0.05, (x) => 0.8 * smoothstep(x), 6), [[r32(T), 0.8], [r32(T + 0.02), 0], [D, 0]]),
+        lane("B", "gain", [[0, 0], [0.02, 1], [r32(D - T), 1]])
+      ];
+    } else {
+      p.aExit = r32(d - S);
+      p.automation = [
+        lane("A", "gain", [[0, 1], [r32(S - 0.03), 1], [r32(S), 0], [D, 0]]),
+        // v19.4 soft echo out (A/B-approved renders): a gentle low-pass eases in over the sweep and muffles
+        // the echo tail after the cut (-0.25 -> -0.3); no high-pass sweep
+        lane("A", "filter", [[0, 0], [r32(S), -0.25], [r32(S + 0.4), -0.3], [D, -0.3]]),
+        // pre-fader send: open over the last beat (0.6), then 0.4, 0.2 and closed three beats after the cut
+        lane("A", "echo", [[0, 0], [r32(S - beat), 0], [r32(S - 0.05), 0.6], [r32(S), 0.6], [r32(S + beat), 0.4], [r32(S + 2 * beat), 0.2], [r32(S + 3 * beat), 0]]),
+        // B's own beat sets the attack; a short fade keeps its opening audible under the echo.
+        lane(
+          "B",
+          "gain",
+          shape(0, Math.min(0.4, barB / 8, D - T), (x) => 0.8 * sinUp(x)),
+          [[r32(Math.min(barB, D - T)), 1], [r32(D - T), 1]]
+        )
+      ];
+    }
     p.confidence = r32(Math.min(0.7, ga.confidence, gb.confidence));
     p.keyInfo = keyInfo;
     p.fallbackReason = fallbackReason;
     const cut = Math.max(0, A.audibleEnd - d);
     p.reasons = [
-      `\u0441\u043C\u0435\u043D\u0430 \u043D\u0430 \u0441\u0438\u043B\u044C\u043D\u043E\u0439 \u0434\u043E\u043B\u0435: \u0442\u0435\u043C\u043F\u044B ${ga.bpm.toFixed(0)} \u0438 ${gb.bpm.toFixed(0)} BPM \u043D\u0435 \u0441\u0432\u043E\u0434\u044F\u0442\u0441\u044F \u2014 \u0442\u0435\u043A\u0443\u0449\u0438\u0439 \u0442\u0440\u0435\u043A \u0443\u0445\u043E\u0434\u0438\u0442 \u0447\u0435\u0440\u0435\u0437 \u0444\u0438\u043B\u044C\u0442\u0440 \u0438 \u044D\u0445\u043E \u043D\u0430 \u0433\u0440\u0430\u043D\u0438\u0446\u0435 ${phrase ? "\u0444\u0440\u0430\u0437\u044B" : "\u0447\u0435\u0442\u044B\u0440\u0451\u0445 \u0442\u0430\u043A\u0442\u043E\u0432"}, \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u0432\u0445\u043E\u0434\u0438\u0442 \u0432 \u043F\u043E\u043B\u043D\u0443\u044E \u0441\u0438\u043B\u0443 \u043D\u0430 \u0441\u0432\u043E\u0435\u0439 \u0441\u0438\u043B\u044C\u043D\u043E\u0439 \u0434\u043E\u043B\u0435`,
+      wash ? `\u043F\u0435\u0442\u043B\u044F \u0441 \u0440\u0430\u0437\u043C\u044B\u0432\u043E\u043C: \u0442\u0435\u043C\u043F\u044B ${ga.bpm.toFixed(0)} \u0438 ${gb.bpm.toFixed(0)} BPM \u043D\u0435 \u0441\u0432\u043E\u0434\u044F\u0442\u0441\u044F, \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u0442\u0440\u0435\u043A \u0441\u043F\u043E\u043A\u043E\u0439\u043D\u0435\u0435 \u2014 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0442\u0430\u043A\u0442 \u0442\u0435\u043A\u0443\u0449\u0435\u0433\u043E \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0435\u0442\u0441\u044F \u0431\u0435\u0437 \u0443\u0441\u043A\u043E\u0440\u0435\u043D\u0438\u044F, \u0443\u0445\u043E\u0434\u0438\u0442 \u0432 \u0444\u0438\u043B\u044C\u0442\u0440 \u0438 \u044D\u0445\u043E, \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u043C\u044F\u0433\u043A\u043E \u043F\u043E\u0434\u043D\u0438\u043C\u0430\u0435\u0442\u0441\u044F \u043F\u043E\u0434 \u0445\u0432\u043E\u0441\u0442` : roll ? `\u043F\u0435\u0442\u043B\u044F \u0441 \u0443\u0441\u043A\u043E\u0440\u0435\u043D\u0438\u0435\u043C: \u0442\u0435\u043C\u043F\u044B ${ga.bpm.toFixed(0)} \u0438 ${gb.bpm.toFixed(0)} BPM \u043D\u0435 \u0441\u0432\u043E\u0434\u044F\u0442\u0441\u044F \u2014 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0442\u0430\u043A\u0442 \u0442\u0435\u043A\u0443\u0449\u0435\u0433\u043E \u0442\u0440\u0435\u043A\u0430 \u043F\u0435\u0440\u0435\u0434 \u0433\u0440\u0430\u043D\u0438\u0446\u0435\u0439 ${phrase ? "\u0444\u0440\u0430\u0437\u044B" : "\u0447\u0435\u0442\u044B\u0440\u0451\u0445 \u0442\u0430\u043A\u0442\u043E\u0432"} \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0435\u0442\u0441\u044F \u0438 \u0434\u0440\u043E\u0431\u0438\u0442\u0441\u044F \u0434\u043E 1/8 \u0442\u0430\u043A\u0442\u0430 \u043F\u043E\u0434 \u043D\u0430\u0440\u0430\u0441\u0442\u0430\u044E\u0449\u0438\u0439 \u0444\u0438\u043B\u044C\u0442\u0440, \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u0432\u0441\u0442\u0443\u043F\u0430\u0435\u0442 \u0432 \u043F\u043E\u043B\u043D\u0443\u044E \u0441\u0438\u043B\u0443 \u043D\u0430 \u0441\u0432\u043E\u0435\u0439 \u0441\u0438\u043B\u044C\u043D\u043E\u0439 \u0434\u043E\u043B\u0435` : `\u0441\u043C\u0435\u043D\u0430 \u043D\u0430 \u0441\u0438\u043B\u044C\u043D\u043E\u0439 \u0434\u043E\u043B\u0435: \u0442\u0435\u043C\u043F\u044B ${ga.bpm.toFixed(0)} \u0438 ${gb.bpm.toFixed(0)} BPM \u043D\u0435 \u0441\u0432\u043E\u0434\u044F\u0442\u0441\u044F \u2014 \u0442\u0435\u043A\u0443\u0449\u0438\u0439 \u0442\u0440\u0435\u043A \u0443\u0445\u043E\u0434\u0438\u0442 \u0432 \u044D\u0445\u043E \u043D\u0430 \u0433\u0440\u0430\u043D\u0438\u0446\u0435 ${phrase ? "\u0444\u0440\u0430\u0437\u044B" : "\u0447\u0435\u0442\u044B\u0440\u0451\u0445 \u0442\u0430\u043A\u0442\u043E\u0432"}, \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u0432\u0445\u043E\u0434\u0438\u0442 \u0441\u043E \u0441\u0432\u043E\u0435\u0433\u043E \u043D\u0430\u0447\u0430\u043B\u0430`,
       ...fallbackReason ? [fallbackReason] : [],
-      "\u0434\u0432\u0430 \u0440\u0438\u0442\u043C\u0430 \u043D\u0435 \u0437\u0432\u0443\u0447\u0430\u0442 \u043E\u0434\u043D\u043E\u0432\u0440\u0435\u043C\u0435\u043D\u043D\u043E: \u0431\u0430\u0441 \u0442\u0435\u043A\u0443\u0449\u0435\u0433\u043E \u0443\u0445\u043E\u0434\u0438\u0442 \u043D\u0430 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u0439 \u0434\u043E\u043B\u0435 \u043F\u0435\u0440\u0435\u0434 \u0441\u043C\u0435\u043D\u043E\u0439, \u043F\u043E\u0434 \u043F\u0435\u0440\u0432\u044B\u043C \u0442\u0430\u043A\u0442\u043E\u043C \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0433\u043E \u0437\u0432\u0443\u0447\u0438\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u0435\u0433\u043E \u043E\u0442\u0444\u0438\u043B\u044C\u0442\u0440\u043E\u0432\u0430\u043D\u043D\u043E\u0435 \u044D\u0445\u043E",
+      roll || wash ? "\u0434\u0432\u0430 \u0440\u0438\u0442\u043C\u0430 \u043D\u0435 \u0437\u0432\u0443\u0447\u0430\u0442 \u043E\u0434\u043D\u043E\u0432\u0440\u0435\u043C\u0435\u043D\u043D\u043E: \u043F\u043E\u0434 \u043F\u0435\u0440\u0432\u044B\u043C \u0442\u0430\u043A\u0442\u043E\u043C \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0433\u043E \u0437\u0432\u0443\u0447\u0438\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u043E\u0442\u0444\u0438\u043B\u044C\u0442\u0440\u043E\u0432\u0430\u043D\u043D\u044B\u0439 \u0445\u0432\u043E\u0441\u0442 \u044D\u0445\u0430" : "\u0434\u0432\u0430 \u0440\u0438\u0442\u043C\u0430 \u043D\u0435 \u0437\u0432\u0443\u0447\u0430\u0442 \u043E\u0434\u043D\u043E\u0432\u0440\u0435\u043C\u0435\u043D\u043D\u043E: \u044D\u0445\u043E \u0442\u0435\u043A\u0443\u0449\u0435\u0433\u043E \u043D\u0430 3/4 \u0434\u043E\u043B\u0438, \u043F\u0440\u0438\u0433\u043B\u0443\u0448\u0451\u043D\u043D\u043E\u0435 \u0444\u0438\u043B\u044C\u0442\u0440\u043E\u043C, \u0437\u0432\u0443\u0447\u0438\u0442 \u043F\u043E\u0434 \u043F\u0435\u0440\u0432\u044B\u043C \u0442\u0430\u043A\u0442\u043E\u043C \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0433\u043E",
       cut > 2 ? `\u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u0435\u0442\u0441\u044F ${Math.round(cut)} \u0441 \u0444\u0438\u043D\u0430\u043B\u0430` : "\u0442\u0435\u043A\u0443\u0449\u0438\u0439 \u0442\u0440\u0435\u043A \u0437\u0432\u0443\u0447\u0438\u0442 \u043F\u043E\u0447\u0442\u0438 \u0434\u043E \u043A\u043E\u043D\u0446\u0430"
     ];
-    describeEntry(p, B, entry);
-    p.debug = { variant: "drop-swap", style: "drop-swap", cut: r32(cut), dropSwap: { cutSource: r32(d), phrase, sweep: r32(S), entryAligned: !!(picked == null ? void 0 : picked.aligned) } };
+    describeEntry(p, B, bIn);
+    p.debug = wash ? { variant: "loop-wash", style: "loop-wash", cut: r32(cut), loopWash: { exitSource: r32(d), phrase, dens: r32(dens), bar: r32(L), energyDelta: r32(energyDelta), entryAligned: !!(picked == null ? void 0 : picked.aligned) } } : roll ? { variant: "loop-roll", style: "loop-roll", cut: r32(cut), loopRoll: { exitSource: r32(d), phrase, dens: r32(dens), bar: r32(L), entryAligned: !!(picked == null ? void 0 : picked.aligned) } } : { variant: "drop-swap", style: "drop-swap", cut: r32(cut), dropSwap: { cutSource: r32(d), phrase, sweep: r32(S), entryAligned: bIn.kind === "downbeat" } };
     return p;
   }
   function planCrossfade(ctx, A, B, keyInfo, fallbackReason) {

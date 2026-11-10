@@ -1,11 +1,9 @@
 import { AnalysisAccumulator } from '../../../packages/core/src/mir/analyzePcm.ts';
 import { planTransition } from '../../../packages/core/src/plan/planner.ts';
-import { compilePhraseMix } from '../../../packages/core/src/plan/phrase-mix.ts';
-import type { RatingStats } from '../../../packages/core/src/plan/feedback.ts';
+import { creativeFinalists } from '../../../packages/core/src/plan/creative-selection.ts';
 import { fallbackWithoutVocalStems } from '../../../packages/core/src/plan/first-words.ts';
 import { planToArmed } from '../../../packages/core/src/engine/arm.ts';
 import { ANALYZER_VERSION, DEFAULT_AUTOMIX_SETTINGS, type AutoMixSettings, type PlannerTrack } from '../../../packages/core/src/types.ts';
-import type { NativePreparationItem } from '../../../packages/core/src/native-preparation.ts';
 
 // Runs on the native preparation queue in app-process JavaScriptCore, never in
 // WebContent and never in the Swift audio producer. DSP playback remains Swift.
@@ -48,15 +46,9 @@ export function analyzeJSON(input: string): string {
   return JSON.stringify(acc.finish({ checkCancel, onProgress: (_, stage) => moraPreparationProgress(stage) }));
 }
 export function planJSON(input: string): string {
-  const request = JSON.parse(input) as { a: PlannerTrack & { entryId?: string }; b: PlannerTrack; settings?: AutoMixSettings; sampleRate: number;
-    phraseTransition?: NativePreparationItem['phraseTransition']; feedback?: RatingStats | null };
+  const request = JSON.parse(input) as { a: PlannerTrack; b: PlannerTrack; settings?: AutoMixSettings; sampleRate: number };
   const settings = { ...DEFAULT_AUTOMIX_SETTINGS, ...request.settings };
-  let plan = fallbackWithoutVocalStems(planTransition(request.a, request.b, settings, undefined, request.feedback));
-  if (settings.enabled && request.phraseTransition?.fromTrackId === request.a.id
-    && typeof request.a.entryId === 'string' && request.a.entryId.length > 0
-    && request.phraseTransition.fromEntryId === request.a.entryId) {
-    try { plan = compilePhraseMix(plan, request.phraseTransition.recipe, request.a.analysis, request.b.analysis); }
-    catch { /* Changed source duration/grid: keep the valid automatic plan. */ }
-  }
+  const base = fallbackWithoutVocalStems(planTransition(request.a, request.b, settings));
+  const plan = creativeFinalists([base], request.a, request.b, settings, null)[0];
   return JSON.stringify({ plan, transition: planToArmed(plan, request.sampleRate, 'A', 'B'), gainDb: plan.gainB });
 }

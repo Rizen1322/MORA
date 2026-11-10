@@ -1,6 +1,13 @@
 import Foundation
 
 enum NativeMixTimeline {
+    /// dataPlayedBack includes route latency; those in-flight blocks cannot refill the player yet.
+    static func outputBufferCount(sampleRate: Double, frames: Int, latency: Double) -> Int {
+        guard [44100.0, 48000.0].contains(sampleRate), frames > 0 else { return 5 }
+        let seconds = latency.isFinite ? max(0, min(8, latency)) : 0
+        return 5 + Int((seconds * sampleRate / Double(frames)).rounded(.up))
+    }
+
     static func preservingTail(_ incoming: [String: Any], after old: [String: Any]?, currentEntryId: String? = nil) -> [String: Any] {
         guard incoming["replaceFuture"] as? Bool != true, let old,
               let start = incoming["from"] as? Int, let oldStart = old["from"] as? Int, start >= oldStart,
@@ -63,6 +70,36 @@ enum NativeMixTimeline {
                 ["deck": lane["deck"]!, "lane": 0, "points": (lane["points"] as! [[Double]]).map { [($0[0] * 48000).rounded(), $0[1]] }]
             }]
         return ["plan": plan, "transition": transition]
+    }
+
+    /// iOS advances Now Playing elapsed time by the published rate; true while that
+    /// extrapolation is still within 0.5 s of the audible position.
+    static func nowPlayingCurrent(sentPosition: Double, sentAt: Double, rate: Double, position: Double, now: Double) -> Bool {
+        abs(sentPosition + (now - sentAt) * rate - position) < 0.5
+    }
+
+    /// Remote sources are downloaded in full before decoding, so quick skips need more of them ready.
+    /// Storage stays bounded: prune() keeps only the previous track onward: depth + 2 files, plus pending skips.
+    static func aheadDepth(_ source: [String: Any]?) -> Int {
+        ["local", "upload"].contains(source?["kind"] as? String ?? "") ? 2 : 4
+    }
+
+    /// Lock-screen Next presses while the target song is still preparing: each moves it one further,
+    /// bounded by the songs that can still arrive and by storage (skipped songs stay on disk until the target plays).
+    static let maxPendingSkips = 8
+    static func pendingSkips(_ current: Int, ahead: Int, remaining: Int) -> Int {
+        max(current, min(current + 1, maxPendingSkips, max(0, ahead) + max(0, remaining)))
+    }
+
+    /// Seconds before preparing a failed song again, nil to skip it. Network/transport and server
+    /// errors are retried three times (2, 5, 15 s); unavailable sources, HTTP 4xx and decode errors are skipped.
+    static func retryDelay(_ reason: String, attempt: Int) -> Double? {
+        let delays: [Double] = [2, 5, 15]
+        // Offline, every song would fail alike: wait on the same song instead of skipping through the queue.
+        if reason.hasPrefix("network_") { return delays.indices.contains(attempt) ? delays[attempt] : 30 }
+        guard delays.indices.contains(attempt) else { return nil }
+        if reason.hasPrefix("http_"), let status = Int(reason.dropFirst(5)), status >= 500 { return delays[attempt] }
+        return nil
     }
 
     static func duration(_ track: [String: Any], sampleRate: Double) -> Double {

@@ -89,6 +89,7 @@ export function registerSearchRoutes(app: FastifyInstance, s: Services): void {
       if (!asset || asset.status !== 'ok') return reply.code(404).send({ error: 'запись не найдена' });
       lib.bind(track.id, asset.id === track.id ? null : asset.id);
     } else lib.bind(track.id, null);
+    s.downloads.follow(track.id); // a downloaded track keeps playing offline, now with the chosen version
     return { ok: true, mediaId: lib.mediaId(track.id) };
   });
 

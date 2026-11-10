@@ -6,7 +6,7 @@ guard CommandLine.arguments.count == 2 else { fatalError("Expected the output pa
 var json = "["
 var firstCase = true
 for sr in [44100.0, 48000.0] {
-    for kind in ["transport", "transition", "effects", "tape"] {
+    for kind in ["transport", "transition", "effects", "tape", "moving-echo"] {
         let m = MixerCore(sr)
         var events: [String] = []
         m.emit = { events.append($0.fields["type"] as! String) }
@@ -77,7 +77,7 @@ for sr in [44100.0, 48000.0] {
         } else {
             source(1, "B", 456)
             let duration = jsRound(1.2 * sr)
-            guard let plan = ArmedTransition([
+            var raw: [String: Any] = [
                 "planId": "native-parity", "method": "beatmatch_blend", "fromToken": "A", "toToken": "B",
                 "triggerFrame": jsRound(0.25 * sr), "entryFrame": jsRound(0.4 * sr),
                 "durationFrames": duration, "gapFrames": 0.0, "swapFrame": jsRound(duration / 2),
@@ -91,7 +91,12 @@ for sr in [44100.0, 48000.0] {
                     ["deck": "A", "lane": 4, "points": [[0.0, 0.0], [duration / 2, 0.3], [duration, 0.0]]],
                     ["deck": "B", "lane": 6, "points": [[0.0, 0.3], [duration, 0.0]]],
                 ],
-            ]) else { fatalError("Invalid transition plan") }
+            ]
+            if kind == "moving-echo" {
+                raw["echoDelayPointsFrames"] = [[0.0, jsRound(sr * 0.125)], [duration * 0.7, jsRound(sr * 0.25)], [duration, jsRound(sr * 0.25)]]
+                raw["echoClearFrame"] = jsRound(duration * 0.9)
+            }
+            guard let plan = ArmedTransition(raw) else { fatalError("Invalid transition plan") }
             m.arm(plan)
             render(1.9, "afterTransition")
         }

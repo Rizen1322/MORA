@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { parentPort, workerData } from 'node:worker_threads';
 import { AnalysisAccumulator } from '@automix/core';
+import { FfmpegTools } from './ffmpeg.ts';
 
 /**
  * Worker thread: decodes a file with ffmpeg (f32le stereo 44.1 kHz) and runs
@@ -13,6 +14,19 @@ interface Job {
   input: string;
   duration: number;
   ffmpeg: string;
+  ffprobe?: string;
+  decoder?: string;
+}
+
+async function decode(job: Job, state: NonNullable<typeof current>) {
+  const tools = new FfmpegTools(job.ffmpeg, job.ffprobe ?? 'ffprobe', job.decoder);
+  if (job.decoder) {
+    const abort = new AbortController();
+    state.kill = () => abort.abort();
+    await tools.probe(job.input, abort.signal).catch(() => {});
+    if (state.cancelled) throw new Cancelled();
+  }
+  return tools.decode(job.input, { sampleRate: 44100, channels: 2, format: 'f32le' });
 }
 
 let current: { jobId: number; cancelled: boolean; kill: () => void } | null = null;
@@ -44,10 +58,8 @@ async function run(job: Job): Promise<void> {
       return;
     }
     const acc = new AnalysisAccumulator(Math.max(30, job.duration + 5));
-    const proc = spawn(job.ffmpeg, ['-v', 'error', '-nostdin', '-i', job.input, '-vn', '-ac', '2', '-ar', '44100', '-f', 'f32le', 'pipe:1'], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
+    const proc = await decode(job, state);
+    if (state.cancelled) { proc.kill('SIGKILL'); throw new Cancelled(); }
     state.kill = () => proc.kill('SIGKILL');
     let stderr = '';
     proc.stderr.on('data', (d: Buffer) => (stderr = (stderr + d.toString()).slice(-1500)));
@@ -106,8 +118,9 @@ async function run(job: Job): Promise<void> {
 /** Pipe decoder PCM directly to the native accumulator; never retain full-rate stereo in JS. */
 async function runNative(job: Job, state: NonNullable<typeof current>, post: (message: object) => void) {
   if (cancelFlag && Atomics.load(cancelFlag, 0) === job.jobId) throw new Cancelled();
+  const decoder = await decode(job, state);
+  if (state.cancelled) { decoder.kill('SIGKILL'); throw new Cancelled(); }
   const native = spawn(process.env.AUTOMIX_RUST_CORE!, ['--analyze', '-', '-', String(job.duration)], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-  const decoder = spawn(job.ffmpeg, ['-v', 'error', '-nostdin', '-i', job.input, '-vn', '-ac', '2', '-ar', '44100', '-f', 'f32le', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   state.kill = () => { decoder.kill('SIGKILL'); native.kill('SIGKILL'); };
   let error = '', decodeError = '', bytes = 0, size = 0, progress = 0;
   const output: Buffer[] = [];

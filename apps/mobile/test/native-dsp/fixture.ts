@@ -3,7 +3,7 @@ import { MixerCore, type ArmedTransition, type MixerEvent } from '../../../../pa
 
 // The Node reference for the Swift port (test/native-dsp/main.swift repeats these steps).
 export function run() {
-  return [44100, 48000].flatMap(sr => ['transport', 'transition', 'effects', 'tape'].map(kind => {
+  return [44100, 48000].flatMap(sr => ['transport', 'transition', 'effects', 'tape', 'moving-echo'].map(kind => {
     const events: MixerEvent[] = [];
     const m = new MixerCore(sr, e => { if (e.type !== 'need') events.push(e); });
     const pcm: number[] = [];
@@ -80,6 +80,7 @@ export function run() {
         durationFrames: duration, gapFrames: 0, swapFrame: Math.round(duration / 2),
         tempoB: [[0, 1.016], [duration, 1]],
         echoDelayFrames: Math.round(sr * .125), echoFeedback: .25,
+        ...(kind === 'moving-echo' ? { echoDelayPointsFrames: [[0, Math.round(sr * .125)], [duration * .7, Math.round(sr * .25)], [duration, Math.round(sr * .25)]] as [number, number][], echoClearFrame: Math.round(duration * .9) } : {}),
         lanes: [
           { deck: 'A', lane: 0, points: [[0, 1], [duration, 0]] },
           { deck: 'B', lane: 0, points: [[0, 0], [duration, 1]] },

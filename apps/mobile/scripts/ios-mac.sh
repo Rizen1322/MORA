@@ -12,6 +12,11 @@ command -v xcodebuild >/dev/null || { echo "Нужен Xcode 26+ из App Store 
 # Electron (desktop app) is not needed for the iPhone build: skip its ~100 MB download.
 ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
 npm run build -w @automix/mobile
+case "${1:-}" in
+  --check) sh apps/mobile/scripts/build-rust-ios.sh iphonesimulator ;;
+  --ipa) sh apps/mobile/scripts/build-rust-ios.sh iphoneos ;;
+  *) sh apps/mobile/scripts/build-rust-ios.sh iphoneos iphonesimulator ;;
+esac
 cd apps/mobile
 npx cap sync ios
 

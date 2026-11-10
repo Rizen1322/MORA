@@ -995,6 +995,7 @@ pub fn dispatch(input: &Value) -> Result<Value, String> {
         "finalists" => json!(finalists(a, b, settings, &input["feedback"])),
         "skip" => simple::skip(a, b, n(input, "position"), settings),
         "requested" => requested(a, b, n(input, "position"), settings),
+        "creative" => super::creative::plan(a, b, settings, s(input, "style"), input["handoffA"].as_f64()),
         _ => return Err("Unknown planner mode".into()),
     })
 }

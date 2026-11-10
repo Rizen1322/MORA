@@ -5,7 +5,7 @@
  */
 
 export const ANALYZER_VERSION = 'am-analyzer-14';
-export const PLANNER_VERSION = 'am-planner-v18-drum-window-1';
+export const PLANNER_VERSION = 'am-planner-v18-echo-entry-2';
 
 /** Frame rate of the per-track feature curves (energy, bands, waveform). */
 export const CURVE_RATE = 20;
@@ -353,11 +353,8 @@ export interface TransitionPlan {
   vocalA?: [number, number][];
   vocalB?: [number, number][];
   automation: AutomationLane[];
-  /** Tempo-synced echo used by the 'echo' send lane (echo-out of A). `lowpass` (Hz, default 6000) damps
-   * the repeats inside the feedback loop; `width` (0..1, default 0) cross-feeds them L<->R (1 = ping-pong). */
-  echo?: { delay: number; feedback: number; lowpass?: number; width?: number };
-  /** Character of an automatic drop-swap echo out: damped freeze wash, dub ping-pong, or tape brake. */
-  echoFlavor?: 'washout' | 'dub' | 'brake';
+  /** Tempo-synced echo used by the 'echo' send lane (echo-out of A). */
+  echo?: { delay: number; feedback: number; delayPoints?: [number, number][]; clearAt?: number };
   /** Echo used by the 'voiceEcho' lane: repeats A's last sung word and dies out before B's voice opens. */
   voiceEcho?: { delay: number; feedback: number; clearAt?: number };
   /** Static loudness normalization gains, dB. */

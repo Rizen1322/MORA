@@ -38,3 +38,15 @@ it('reserves a slot for playback and promotes queued or not-yet-queued shared wo
   finish.get('background')!(); finish.get('early promotion')!();
   await Promise.all([first, third]);
 });
+
+it('impersonates Chrome only for YouTube and only when the binary supports it', async () => {
+  const runner = new YtDlp({ bin: process.execPath, jsRuntime: null, runtimeIsElectron: false, ffmpegDir: null, cacheDir: '', concurrency: 1 });
+  const internals = runner as unknown as { baseArgs(target: string, chrome: boolean): string[]; impersonation(): Promise<boolean> };
+  const youtube = internals.baseArgs('https://music.youtube.com/watch?v=x', true);
+  expect(youtube).toEqual(expect.arrayContaining(['--impersonate', 'chrome']));
+  expect(youtube[youtube.indexOf('--socket-timeout') + 1]).toBe('8');
+  expect(internals.baseArgs('https://soundcloud.com/a/b', true)).not.toContain('--impersonate');
+  expect(internals.baseArgs('https://music.youtube.com/watch?v=x', false)).not.toContain('--impersonate');
+  // A binary without curl_cffi targets (here: plain Node) keeps the previous arguments.
+  expect(await internals.impersonation()).toBe(false);
+});

@@ -66,6 +66,8 @@ export class DesktopPlayback {
   private stationAbort = new AbortController();
   private stationLoading = false;
   private stationRetryAt = 0;
+  private dislikes = new Set<string>();
+  private resumeAfterDislike = false;
   private listening: NativeListening;
 
   constructor(private audio: Audio, private options: Options) {
@@ -101,6 +103,45 @@ export class DesktopPlayback {
   private resetStation(): void {
     this.stationRevision++; this.stationAbort.abort(); this.stationAbort = new AbortController();
     this.station = null; this.stationLoading = false; this.stationRetryAt = 0;
+  }
+  /** Persisted reactions come from the backend, even while the page is suspended. */
+  applyDislikes(trackIds: string[]): Promise<void> {
+    if (trackIds.length === this.dislikes.size && trackIds.every(id => this.dislikes.has(id)) && !this.dislikes.has(this.current?.trackId ?? '')) return Promise.resolve();
+    this.dislikes = new Set(trackIds);
+    this.manifestRevision++;
+    const work = this.commandTail.then(async () => {
+      const allowed = (entry: NativeQueueEntry) => !this.dislikes.has(entry.trackId);
+      this.future = this.future.filter(allowed); this.loop = this.loop.filter(allowed);
+      if (this.manifest) this.manifest = this.manifest.filter((e, i) => i <= (this.current?.index ?? -1) || allowed(e));
+      this.manifestRevision++;
+      if (this.incoming && this.incoming !== this.current && !allowed(this.incoming)) {
+        const incoming = this.incoming;
+        if (this.tick?.transition?.active && this.current) await this.audio.command({ cmd: 'start', deck: this.current.deck, token: this.current.token, frame: Math.round(this.position() * this.sampleRate) });
+        else await this.audio.command({ cmd: 'disarm' });
+        if (incoming !== this.current) incoming.abort.abort();
+        if (this.incoming === incoming) this.incoming = null;
+      }
+      if (this.current && !allowed(this.current)) {
+        // A dislike is an explicit cut, regardless of the musical Next setting.
+        if (this.incoming === this.current) {
+          await this.audio.command({ cmd: 'start', deck: this.current.deck, token: this.current.token, frame: Math.round(this.position() * this.sampleRate) });
+          this.incoming = null;
+        }
+        this.resumeAfterDislike ||= !this.paused;
+        if (!this.incoming && this.audio.process) await this.audio.command({ cmd: 'pause', paused: this.paused = true });
+        if (!this.incoming) { await this.refillStation(); await this.prepare(); }
+        if (this.current && !allowed(this.current) && this.incoming && allowed(this.incoming)) {
+          await this.advance(true);
+          if (this.resumeAfterDislike) await this.audio.command({ cmd: 'pause', paused: this.paused = false });
+          this.resumeAfterDislike = false;
+        }
+      }
+      await this.refillStation();
+      await this.prepare();
+      this.focus();
+    });
+    this.commandTail = work.catch(() => {});
+    return work;
   }
   async setStation(station: NativeRadioConfig | null, context?: NativeRecoverySnapshot['context']): Promise<NativeMixState> {
     if (station && !['own', 'yandex', 'online'].includes(station.kind)) throw Error('Неизвестный источник волны');
@@ -143,13 +184,14 @@ export class DesktopPlayback {
       let added = 0;
       for (const entry of result.entries) {
         this.valid(entry);
-        if (!have.has(entry.trackId)) { this.future.push({ ...entry }); have.add(entry.trackId); added++; }
+        if (!have.has(entry.trackId) && !this.dislikes.has(entry.trackId)) { this.future.push({ ...entry }); have.add(entry.trackId); added++; }
       }
       if (result.yandexSessionId) station.yandexSessionId = result.yandexSessionId;
       this.context ??= result.context; this.manifestRevision++;
       if (!added) this.stationRetryAt = Date.now() + 15000;
       void this.prepare().catch(e => this.preparationError(e));
       this.focus();
+      if (this.dislikes.has(this.current?.trackId ?? '')) void this.applyDislikes([...this.dislikes]).catch(e => this.preparationError(e));
     } catch {
       if (revision === this.stationRevision) this.stationRetryAt = Date.now() + 15000;
     } finally { if (revision === this.stationRevision) this.stationLoading = false; }
@@ -161,6 +203,10 @@ export class DesktopPlayback {
       device: this.device, loop: this.loop, ...(this.station ? { station: this.station } : {}), ...(this.context ? { context: this.context } : {}) };
   }
   async restoreRecovery(snapshot: NativeRecoverySnapshot): Promise<void> {
+    const next = snapshot.queue.findIndex((e, i) => i >= snapshot.index && !this.dislikes.has(e.trackId));
+    if (next < 0) throw Error('В сохранённой очереди остались только треки с дизлайком');
+    snapshot = { ...snapshot, queue: snapshot.queue.filter((e, i) => i < next || !this.dislikes.has(e.trackId)), index: next,
+      position: next === snapshot.index ? snapshot.position : 0, loop: snapshot.loop?.filter(e => !this.dislikes.has(e.trackId)) };
     await this.setDevice(snapshot.device);
     await this.startSource(snapshot.queue[snapshot.index], { ...snapshot.settings, sampleRate: this.sampleRate, position: snapshot.position });
     if (!this.current) return;
@@ -175,13 +221,14 @@ export class DesktopPlayback {
 
   async startSource(entry: NativeQueueEntry, config: NativeSourceConfig): Promise<NativeMixState> {
     this.valid(entry);
+    if (this.dislikes.has(entry.trackId)) throw Error('Эта песня отмечена дизлайком');
     if (!config || !Number.isFinite(config.position) || config.position < 0) throw Error('Некорректная позиция');
     this.resetStation(); this.context = undefined; this.manifest = null;
     const generation = ++this.generation;
     this.abort.abort(); this.abort = new AbortController();
     this.manifestRevision++; clearTimeout(this.refreshTimer);
     this.future = []; this.loop = []; this.ended = false; this.failed = false; this.error = undefined; this.failureStreak = 0;
-    this.starting = true; this.paused = !!config.paused;
+    this.starting = true; this.paused = !!config.paused; this.resumeAfterDislike = false;
     this.values = { volume: config.volume, userVolume: config.userVolume, muted: config.muted, tone: config.tone, preDb: config.preDb, playback: config.playback };
     try {
       if (!this.audio.process) {
@@ -196,6 +243,7 @@ export class DesktopPlayback {
       if (generation !== this.generation) throw Error('Запуск отменён');
       await this.audio.command({ cmd: 'pause', paused: this.paused });
       if (generation !== this.generation) throw Error('Запуск отменён');
+      if (this.dislikes.has(item.trackId)) throw Error('Эта песня отмечена дизлайком');
       const confirmed = this.confirm(item.token);
       void confirmed.catch(() => {});
       await this.audio.command({ cmd: 'start', deck, token: item.token, frame: Math.min(item.totalFrames - 1, Math.round(config.position * this.sampleRate)) });
@@ -224,6 +272,9 @@ export class DesktopPlayback {
     const cur = this.current;
     // A handoff queued before an audible swap may not resurrect its old future.
     if (!cur || previousId !== cur.trackId || from !== cur.index + 1) return this.state();
+    entries = entries.filter(e => !this.dislikes.has(e.trackId));
+    loop = loop.filter(e => !this.dislikes.has(e.trackId));
+    manifest = manifest?.filter((e, i) => i <= cur.index || !this.dislikes.has(e.trackId));
     if (manifest && !this.station) {
       this.manifest = manifest.map(e => this.queueEntry(e));
       const at = manifest.findIndex(e => e.entryId === cur.entryId);
@@ -299,12 +350,12 @@ export class DesktopPlayback {
 
   private prepare(): Promise<void> {
     if (this.preparing) return this.preparing;
-    const generation = this.generation, revision = this.manifestRevision;
+    const generation = this.generation, revision = this.manifestRevision, current = this.current;
     this.preparing = this.doPrepare().catch(error => {
       if (generation === this.generation && revision === this.manifestRevision) throw error;
     }).finally(() => {
       this.preparing = null;
-      if (revision !== this.manifestRevision && this.current && !this.incoming && this.future.length && !this.error && !this.starting)
+      if ((revision !== this.manifestRevision || current !== this.current) && this.current && !this.incoming && this.future.length && !this.error && !this.starting)
         void this.prepare().catch(e => this.preparationError(e));
     });
     return this.preparing;
@@ -312,11 +363,12 @@ export class DesktopPlayback {
   private async doPrepare(): Promise<void> {
     const cur = this.current;
     if (!cur || this.incoming || this.starting) return;
-    if (!this.future.length && this.loop.length) this.future = this.loop.map(e => ({ ...e }));
+    this.future = this.future.filter(e => !this.dislikes.has(e.trackId));
+    if (!this.future.length && this.loop.length) this.future = this.loop.filter(e => !this.dislikes.has(e.trackId)).map(e => ({ ...e }));
     const entry = this.future[0];
     if (!entry) return;
     const generation = this.generation, revision = this.manifestRevision;
-    const relevant = () => this.current === cur && generation === this.generation && revision === this.manifestRevision;
+    const relevant = () => this.current === cur && generation === this.generation && revision === this.manifestRevision && !this.dislikes.has(entry.trackId);
     // v19.4: the real (usually cached) plan is asked for while B loads. Arming the no-analysis fallback
     // first lost the race after a seek near the end: утекай → ДИНАСТИЯ played it (#114-#116) although
     // its echo out was cached.
@@ -345,10 +397,16 @@ export class DesktopPlayback {
     if (plan === fallback || early?.pending.length) void this.refresh(cur, item, entry, generation, early ? undefined : planned);
     // Only two future starts are warmed; the shared cache still enforces its disk budget.
     for (const future of this.future.slice(1, 1 + this.budget.candidates())) void this.source(future, 'candidate').catch(() => {});
-    if (this.waiting && this.current === cur) await this.advance(false);
+    if (this.current === cur && (this.waiting || this.dislikes.has(cur.trackId))) {
+      await this.advance(this.dislikes.has(cur.trackId));
+      if (this.resumeAfterDislike && !this.dislikes.has(this.current?.trackId ?? '')) {
+        await this.audio.command({ cmd: 'pause', paused: this.paused = false });
+        this.resumeAfterDislike = false;
+      }
+    }
   }
   private async arm(cur: Item, item: Item, raw: TransitionPlan): Promise<void> {
-    if (this.current !== cur || this.incoming !== item || this.tick?.transition?.active) return;
+    if (this.current !== cur || this.incoming !== item || this.tick?.transition?.active || this.dislikes.has(item.trackId)) return;
     if (item.source.gainDb !== undefined) item.gainDb = item.source.gainDb;
     // Replanning a future transition must never renormalize the audible recording.
     let plan = { ...fallbackWithoutVocalStems(raw), gainA: cur.gainDb, gainB: item.gainDb };
@@ -481,7 +539,7 @@ export class DesktopPlayback {
   private async advance(manual: boolean): Promise<void> {
     if (!this.incoming) await this.prepare();
     const item = this.incoming;
-    if (!item) return;
+    if (!item || this.dislikes.has(item.trackId)) return;
     const generation = this.generation, old = this.current;
     const confirmed = this.confirm(item.token);
     void confirmed.catch(() => {});
@@ -511,6 +569,8 @@ export class DesktopPlayback {
     const cur = this.current;
     if (!['play', 'pause', 'nexttrack', 'previoustrack', 'seekto', 'seekbackward', 'seekforward'].includes(action)) throw Error('Неизвестная команда');
     if (action === 'play' || action === 'pause') {
+      if (action === 'play' && cur && this.dislikes.has(cur.trackId)) return this.state();
+      this.resumeAfterDislike = false;
       this.paused = action === 'pause';
       if (this.audio.process) await this.audio.command({ cmd: 'pause', paused: this.paused });
     } else if (action === 'nexttrack') {
@@ -536,11 +596,12 @@ export class DesktopPlayback {
       }
     } else if (action === 'previoustrack') {
       if (cur && this.position(cur) <= 3 && cur.index > 0) {
-        const previous = this.history[cur.index - 1];
+        const previousIndex = this.history.findLastIndex((entry, i) => i < cur.index && !this.dislikes.has(entry.trackId));
+        const previous = this.history[previousIndex];
         if (previous) {
-          const history = this.history.slice(0, cur.index);
+          const history = this.history.slice(0, previousIndex + 1);
           const future = [cur, ...this.future].map(e => this.queueEntry(e));
-          const loop = this.loop, station = this.station, context = this.context, previousIndex = cur.index - 1, manifest = this.manifest;
+          const loop = this.loop, station = this.station, context = this.context, manifest = this.manifest;
           await this.startSource(previous, { sampleRate: this.sampleRate, position: 0, paused: this.paused, ...this.values });
           if (this.current) { this.current.index = previousIndex; history[previousIndex] = this.current; this.history = history; }
           this.future = future; this.loop = loop; this.manifest = manifest; await this.setStation(station, context); void this.prepare().catch(e => this.preparationError(e));
@@ -573,7 +634,7 @@ export class DesktopPlayback {
     this.listening.tick(cur.position, false);
     if (this.incoming) {
       const item = this.incoming; this.incoming = null;
-      // After the swap the incoming track is the audible one: aborting it stopped its feeds (silence until a skip).
+      // After the swap the incoming track is audible and must keep receiving PCM.
       if (item !== cur) item.abort.abort();
       this.retireUntil[1 - cur.deck] = Date.now() + 400;
       void this.prepare().catch(e => this.preparationError(e));
@@ -617,7 +678,7 @@ export class DesktopPlayback {
     this.generation++; this.manifestRevision++; this.abort.abort(); clearTimeout(this.refreshTimer);
     for (const item of this.slots) item?.abort.abort();
     this.slots = [null, null]; this.current = null; this.incoming = null; this.future = []; this.loop = []; this.history = []; this.tick = null;
-    this.starting = false; this.waiting = false; this.ended = false; this.failed = false; this.error = undefined;
+    this.starting = false; this.waiting = false; this.ended = false; this.failed = false; this.error = undefined; this.resumeAfterDislike = false;
     await this.audio.stop();
   }
 }

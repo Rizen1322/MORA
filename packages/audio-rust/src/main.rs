@@ -1,8 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use mora_audio::{analysis::Fft, levels::{BLOCK, band_levels}, mixer::Mixer};
+use mora_audio::mixer::Mixer;
 use serde_json::{Value, json};
 use std::{
-    collections::VecDeque,
     fs::File,
     io::{self, BufRead, BufReader, BufWriter, Read, Write},
     sync::{
@@ -46,17 +45,20 @@ fn config(device: &cpal::Device, sr: Option<u32>) -> Result<cpal::SupportedStrea
         .supported_output_configs()
         .map_err(|e| e.to_string())?
         .collect();
-    for rate in sr.map_or(vec![48000, 44100, 96000, 88200], |s| vec![s]) {
-        if let Some(r) = ranges.iter().find(|r| {
-            r.channels() == 2
-                && r.min_sample_rate().0 <= rate
-                && r.max_sample_rate().0 >= rate
-                && r.sample_format() == cpal::SampleFormat::F32
-        }) {
-            return Ok((*r).with_sample_rate(cpal::SampleRate(rate)));
+    // Stereo first; a surround device (e.g. a 7.1 headset in shared mode) gets L/R on its front pair.
+    for stereo_only in [true, false] {
+        for rate in sr.map_or(vec![48000, 44100, 96000, 88200], |s| vec![s]) {
+            if let Some(r) = ranges.iter().find(|r| {
+                (if stereo_only { r.channels() == 2 } else { r.channels() > 2 })
+                    && r.min_sample_rate().0 <= rate
+                    && r.max_sample_rate().0 >= rate
+                    && r.sample_format() == cpal::SampleFormat::F32
+            }) {
+                return Ok((*r).with_sample_rate(cpal::SampleRate(rate)));
+            }
         }
     }
-    Err("Audio output must support stereo float PCM at 44.1, 48, 88.2 or 96 kHz".into())
+    Err("Audio output must support float PCM with at least two channels at 44.1, 48, 88.2 or 96 kHz".into())
 }
 struct Output {
     _stream: cpal::Stream,
@@ -75,24 +77,26 @@ fn output(device: &cpal::Device, c: &cpal::SupportedStreamConfig) -> Result<Outp
     let p = presented.clone();
     let error = Arc::new(std::sync::Mutex::new(None));
     let err = error.clone();
+    let channels = c.channels() as usize;
     // The device callback only moves fixed-size frames. DSP, JSON, I/O and allocations run on the producer.
     let stream = device
         .build_output_stream(
             &c.config(),
             move |data: &mut [f32], _| {
                 let mut missed = false;
-                for frame in data.chunks_exact_mut(2) {
+                for frame in data.chunks_exact_mut(channels) {
                     let sample = consumer.pop().unwrap_or_else(|_| {
                         missed = true;
                         [0., 0.]
                     });
-                    frame.copy_from_slice(&sample);
+                    frame[..2].copy_from_slice(&sample);
+                    frame[2..].fill(0.);
                     let _ = monitor.push(sample);
                 }
                 if missed {
                     u.fetch_add(1, Ordering::Relaxed);
                 }
-                p.fetch_add((data.len() / 2) as u64, Ordering::Relaxed);
+                p.fetch_add((data.len() / channels) as u64, Ordering::Relaxed);
             },
             move |e| {
                 if let Ok(mut slot) = err.lock() {
@@ -169,20 +173,6 @@ fn offline(input: &str, pcm: &str, report: &str) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())
 }
-/// Sends queued acks/errors/events in order without ever blocking the render loop.
-fn flush(wire: &mpsc::SyncSender<Value>, backlog: &mut VecDeque<Value>) -> Result<(), String> {
-    while let Some(v) = backlog.pop_front() {
-        match wire.try_send(v) {
-            Ok(()) => {}
-            Err(mpsc::TrySendError::Full(v)) => {
-                backlog.push_front(v);
-                break;
-            }
-            Err(mpsc::TrySendError::Disconnected(_)) => return Err("stdout closed".into()),
-        }
-    }
-    Ok(())
-}
 fn realtime(id: &str) -> Result<(), String> {
     let device = select(id)?;
     let c = config(&device, None)?;
@@ -228,13 +218,10 @@ fn realtime(id: &str) -> Result<(), String> {
     let mut last = Instant::now();
     let mut times = Vec::with_capacity(sr as usize / 128 + 32);
     let mut rendered = 0u64;
-    let mut block = Vec::with_capacity(BLOCK);
-    let fft = Fft::new(BLOCK);
-    let mut backlog = VecDeque::<Value>::new();
+    let mut waveform = Vec::with_capacity(2048);
     let mut quitting = false;
     let mut suspended = false;
     while !quitting {
-        flush(&wire, &mut backlog)?;
         for _ in 0..64 {
             let v = match receive.try_recv() {
                 Ok(v) => v,
@@ -270,10 +257,11 @@ fn realtime(id: &str) -> Result<(), String> {
                 }
                 _ => mixer.command(&v),
             };
-            backlog.push_back(match result {
+            wire.send(match result {
                 Ok(()) => json!({"type":"ack","request":v["request"]}),
                 Err(e) => json!({"type":"error","request":v["request"],"error":e}),
-            });
+            })
+            .map_err(|e| e.to_string())?;
         }
         if quitting {
             break;
@@ -294,24 +282,18 @@ fn realtime(id: &str) -> Result<(), String> {
             }
         }
         for event in mixer.take_events() {
-            if event["type"] == "tick" {
-                let _ = wire.try_send(event); // telemetry: dropped when the pipe is full
-            } else {
-                backlog.push_back(event);
-            }
+            wire.send(event).map_err(|e| e.to_string())?;
         }
-        flush(&wire, &mut backlog)?;
         while let Ok(frame) = sink.capture.pop() {
-            block.push((frame[0] as f64 + frame[1] as f64) * 0.5);
-            if block.len() == BLOCK {
-                let (rms, bands) = band_levels(&fft, &block, sr);
-                let _ = wire.try_send(json!({"type":"levels","rms":rms,"bands":bands}));
-                block.clear();
+            if waveform.len() == 2048 {
+                let _ = wire.try_send(json!({"type":"waveform","samples":waveform}));
+                waveform.clear();
             }
+            waveform.push((frame[0] as f64 + frame[1] as f64) * 0.5);
         }
         if last.elapsed() >= Duration::from_secs(1) {
             let metrics = stats(&mut times, rendered, sr);
-            let _ = wire.try_send(json!({"type":"audioHealth","maxRenderMs":metrics["maxMs"],"slowBlocks":times.iter().filter(|t|**t>128000./sr as f64).count(),"p95Ms":metrics["p95Ms"],"p99Ms":metrics["p99Ms"],"deviceUnderruns":sink.underruns.load(Ordering::Relaxed),"presentedFrames":sink.presented.load(Ordering::Relaxed)})); // telemetry: dropped when the pipe is full
+            wire.send(json!({"type":"audioHealth","maxRenderMs":metrics["maxMs"],"slowBlocks":times.iter().filter(|t|**t>128000./sr as f64).count(),"p95Ms":metrics["p95Ms"],"p99Ms":metrics["p99Ms"],"deviceUnderruns":sink.underruns.load(Ordering::Relaxed),"presentedFrames":sink.presented.load(Ordering::Relaxed)})).map_err(|e|e.to_string())?;
             times.clear();
             rendered = 0;
             last = Instant::now();
@@ -395,14 +377,12 @@ fn compute() -> Result<(), String> {
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
-    std::panic::set_hook(Box::new(|info| eprintln!("mora-audio panic: {info}")));
     let result=match args.get(1).map(String::as_str) {
         Some("--offline") if args.len()==5=>offline(&args[2],&args[3],&args[4]),
         Some("--devices")=>devices().and_then(|ds| { let list:Vec<_>=ds.iter().map(|(id,name,_)|json!({"deviceId":id,"label":name})).collect();serde_json::to_writer(io::stdout(),&list).map_err(|e|e.to_string()) }),
         Some("--realtime")=>realtime(args.get(2).map_or("",String::as_str)),
         Some("--analyze") if args.len()>=4=>analyze(&args[2],&args[3],args.get(4).and_then(|v|v.parse().ok()).unwrap_or(300.)),
         Some("--compute")=>compute(),
-        Some("--compute-server")=>mora_audio::compute::server(),
         _=>Err("Usage: mora-audio --realtime [device] | --devices | --offline input.json output.f32 report.json | --analyze input.f32 output.json [expectedSeconds] | --compute".into()),
     };
     if let Err(error) = result {

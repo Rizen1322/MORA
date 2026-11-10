@@ -46,9 +46,8 @@ export interface ArmedTransition {
   /** Echo delay (frames) and feedback for the echo send lane. */
   echoDelayFrames?: number;
   echoFeedback?: number;
-  /** Damping low-pass (Hz) inside the echo feedback loop and L<->R cross-feed (0..1). */
-  echoLowpassHz?: number;
-  echoWidth?: number;
+  echoDelayPointsFrames?: [number, number][];
+  echoClearFrame?: number;
   /** Delay/feedback of the separate echo fed only by A's audible voice (lane 5). */
   voiceEchoDelayFrames?: number;
   voiceEchoFeedback?: number;
@@ -141,10 +140,7 @@ export class Echo {
   private lpL = 0;
   private lpR = 0;
   private readonly hpA: number;
-  private lpA: number;
-  /** L<->R cross-feed of the repeats, 0..1 (1 = ping-pong: input enters left, repeats alternate). */
-  private width = 0;
-  private readonly sampleRate: number;
+  private readonly lpA: number;
   /** Consecutive ring writes that were exact zeros on both channels; at the ring length it is empty. */
   private zeros: number;
 
@@ -153,7 +149,6 @@ export class Echo {
     this.L = new Float32Array(n);
     this.R = new Float32Array(n);
     this.zeros = n;
-    this.sampleRate = sampleRate;
     this.hpA = Math.exp((-2 * Math.PI * 250) / sampleRate);
     this.lpA = 1 - Math.exp((-2 * Math.PI * 6000) / sampleRate);
   }
@@ -162,6 +157,17 @@ export class Echo {
   private outStep = 0;
   private deadline: number | null = null;
   private deadlineFadeFrames = 1;
+  private delayMap: [number, number][] = [];
+  private delayOrigin = 0;
+
+  setDelayMap(points: [number, number][], origin: number): void {
+    if (points.length > 64 || !Number.isFinite(origin) || points.some(([t, d], i) =>
+      !Number.isFinite(t) || !Number.isFinite(d) || t < 0 || d < 1 || d > this.L.length - 1 || (i > 0 && t < points[i - 1][0]))) {
+      throw new Error('Invalid echo delay map');
+    }
+    this.delayMap = points;
+    this.delayOrigin = origin;
+  }
 
   /** Absolute output-clock deadline for a voice-only echo. Feedback estimates
    * alone cannot guarantee silence: the repeated word has a finite length. */
@@ -175,11 +181,8 @@ export class Echo {
     this.outStep = 1 / Math.max(1, frames);
   }
 
-  /** lowpassHz damps the repeats in the feedback loop (default 6 kHz); width cross-feeds them. */
-  configure(delayFrames: number, feedback: number, lowpassHz = 6000, width = 0): void {
+  configure(delayFrames: number, feedback: number): void {
     this.reset();
-    this.lpA = 1 - Math.exp((-2 * Math.PI * Math.max(200, Math.min(16000, lowpassHz))) / this.sampleRate);
-    this.width = Math.max(0, Math.min(1, width));
     this.delay = Math.max(1, Math.min(this.L.length - 1, Math.round(delayFrames)));
     // 0.85 keeps runaway away: the ring is high-passed (250 Hz) and low-passed (6 kHz) on every pass
     this.feedback = Math.max(0, Math.min(0.85, feedback));
@@ -201,9 +204,11 @@ export class Echo {
       // Keep the deadline closed until configure/reset; a surviving send can
       // never repopulate the ring and bring the outgoing singer back.
       if(tailGain===0)return;
-      const rp = (this.pos - this.delay + N) % N;
-      const yL = this.L[rp];
-      const yR = this.R[rp];
+      const delay = this.delayMap.length ? evalPoints(this.delayMap, clock + i - this.delayOrigin) : this.delay;
+      const rp = (this.pos - delay + N) % N, at = Math.floor(rp), fraction = rp - at;
+      const next = at + 1 === N ? 0 : at + 1;
+      const yL = this.L[at] + (this.L[next] - this.L[at]) * fraction;
+      const yR = this.R[at] + (this.R[next] - this.R[at]) * fraction;
       if (this.outStep > 0) {
         this.out = Math.max(0, this.out - this.outStep);
         if (this.out === 0) {
@@ -222,16 +227,8 @@ export class Echo {
       this.hpR = hR;
       this.lpL += this.lpA * (hL - this.lpL);
       this.lpR += this.lpA * (hR - this.lpR);
-      const w = this.width;
-      if (w === 0) {
-        this.L[this.pos] = inL[i] + this.lpL * this.feedback;
-        this.R[this.pos] = inR[i] + this.lpR * this.feedback;
-      } else {
-        // ping-pong: the send leans into the left ring and each pass swaps sides by width
-        const m = (inL[i] + inR[i]) * 0.5;
-        this.L[this.pos] = inL[i] * (1 - w) + m * w + (this.lpL * (1 - w) + this.lpR * w) * this.feedback;
-        this.R[this.pos] = inR[i] * (1 - w) + (this.lpR * (1 - w) + this.lpL * w) * this.feedback;
-      }
+      this.L[this.pos] = inL[i] + this.lpL * this.feedback;
+      this.R[this.pos] = inR[i] + this.lpR * this.feedback;
       this.zeros = this.L[this.pos] === 0 && this.R[this.pos] === 0 ? this.zeros + 1 : 0;
       this.pos = this.pos + 1 === N ? 0 : this.pos + 1;
     }
@@ -246,6 +243,7 @@ export class Echo {
     this.out = 1;
     this.outStep = 0;
     this.deadline = null;
+    this.delayMap = [];
   }
 }
 
@@ -915,7 +913,7 @@ export class MixerCore {
       }
       off += len;
     }
-    this.echo.process(this.echoInL, this.echoInR, outL, outR, n);
+    this.echo.process(this.echoInL, this.echoInR, outL, outR, n, this.clock-n);
     this.voiceEcho.process(this.voiceInL, this.voiceInR, outL, outR, n, this.clock-n);
   }
 
@@ -1200,7 +1198,9 @@ export class MixerCore {
     b.stopWhenSilent = false;
     b.pendingSeek = null;
     b.endedNotified = false;
-    if (tr.echoDelayFrames) this.echo.configure(tr.echoDelayFrames, tr.echoFeedback ?? 0.5, tr.echoLowpassHz ?? 6000, tr.echoWidth ?? 0);
+    if (tr.echoDelayFrames) this.echo.configure(tr.echoDelayFrames, tr.echoFeedback ?? 0.5);
+    if (tr.echoDelayPointsFrames) this.echo.setDelayMap(tr.echoDelayPointsFrames, this.clock);
+    if (tr.echoClearFrame !== undefined) this.echo.limitTailAt(this.clock + tr.echoClearFrame, Math.round(this.sampleRate * 0.05));
     const throwLane = tr.lanes.some((l) => l.deck === 'A' && l.lane === 5 && l.points.some(([, v]) => v > 0));
     if (throwLane && tr.voiceEchoDelayFrames && a.vocalSource.getMap()) {
       this.voiceEcho.configure(tr.voiceEchoDelayFrames, tr.voiceEchoFeedback ?? 0.4);

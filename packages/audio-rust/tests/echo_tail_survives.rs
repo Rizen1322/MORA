@@ -6,6 +6,21 @@ use serde_json::json;
 
 const SR: usize = 48000;
 
+#[test]
+fn soft_echo_feedback_reaches_the_ring_and_stays_capped() {
+    let render = |feedback| {
+        let mut echo = mora_audio::dsp::Echo::new(SR as f64);
+        let mut input = vec![0.; 4096];
+        let mut output = vec![0.; 4096];
+        input[0] = 0.5;
+        echo.configure(512., feedback);
+        echo.process(&input, &input, &mut output, &mut vec![0.; 4096]);
+        output
+    };
+    assert_ne!(render(0.78), render(0.75));
+    assert_eq!(render(1.), render(0.85));
+}
+
 fn run(retire: bool) -> Vec<f32> {
     let mut m = Mixer::new(SR as u32).unwrap();
     let frames = 6 * SR;

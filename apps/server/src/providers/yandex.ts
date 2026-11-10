@@ -78,15 +78,13 @@ export class YandexProvider implements Provider {
   private reactionAccounts = new Map<string, Promise<string>>();
   private reactionSnapshot: { key: string; expiresAt: number; values: Map<string, ReactionValue> } | null = null;
   private reactionRead: { key: string; promise: Promise<Map<string, ReactionValue>> } | null = null;
-  /** iPhone: native downloads and decodes each track itself, so import records metadata without fetching the MP3. */
-  metadataOnlyImport = false;
   localReactionFor?: (externalId: string) => ReactionValue | undefined;
   onReactionConnectionChanged?: () => void;
   constructor(
     private readonly store: ProviderStore,
     private readonly lib: Library,
     cfg: AppConfig,
-    ff = new FfmpegTools(cfg.ffmpeg, cfg.ffprobe),
+    ff = new FfmpegTools(cfg.ffmpeg, cfg.ffprobe, cfg.decoderRust),
   ) {
     this.audio = new YandexAudio(cfg, ff, this.base, (id) => this.call<YandexDownloadVariant[]>('GET', `/tracks/${encodeURIComponent(id)}/download-info`));
     this.catalog = new YandexCatalog((method, path, body, form) => this.call(method, path, body, undefined, form), () => !!this.token(), lib, this.base);
@@ -397,16 +395,12 @@ export class YandexProvider implements Provider {
     const session = this.reactionSession();
     if (!session) throw new Error('Подключите Яндекс Музыку');
     const uid = await session.account();
-    const result = await this.call<{ library?: { tracks?: { id: string | number; albumId?: string | number; timestamp?: string }[] } }>('GET', `/users/${uid}/likes/tracks`);
+    const result = await this.call<{ library?: { tracks?: { id: string | number; albumId?: string | number }[] } }>('GET', `/users/${uid}/likes/tracks`);
     if (!session.current()) throw new Error('Подключение Яндекса изменилось');
     const tracks = result.library?.tracks;
     if (!Array.isArray(tracks)) throw new Error('Яндекс не вернул список любимых треков');
     if (tracks.length > 50000) throw new Error('В коллекции больше 50 000 записей. Импорт не начат, список не обрезан.');
-    // Source dates define recency; response order and download completion do not.
-    const ids = tracks.map((t) => {
-      const time = typeof t.timestamp === 'string' ? Date.parse(t.timestamp) : NaN;
-      return { id: this.checkedId(t.albumId ? `${t.id}:${t.albumId}` : String(t.id)), time: Number.isFinite(time) ? time : 0 };
-    }).sort((a, b) => b.time - a.time).map((t) => t.id);
+    const ids = tracks.map((t) => this.checkedId(t.albumId ? `${t.id}:${t.albumId}` : String(t.id)));
     return { key: session.key, ids: [...new Set(ids)] };
   }
 
@@ -493,17 +487,18 @@ export class YandexProvider implements Provider {
     const canonicalId = this.checkedId(ext.externalId);
     const canonical = this.lib.tracksBySource(this.id, canonicalId).find((t) => t.provider === this.id);
     if (canonical) return canonical.id;
-    const media = this.metadataOnlyImport ? null : await this.audio.prepare(canonicalId, ext.duration);
-    const cover = ext.coverUrl ? await this.audio.cover(ext.coverUrl) : null;
-    const coverId = cover ? await this.lib.saveCover(cover.data, cover.type) : null;
-    return this.lib.addRemote({ provider: this.id, externalId: canonicalId, title: ext.title, artist: ext.artist, album: ext.album,
-      duration: media?.probe.duration ?? ext.duration, year: album?.year ?? null, genre: album?.genre ?? '',
+    const media = await this.audio.prepare(canonicalId, ext.duration);
+    // The cover (up to 4 s) must not delay Listen or a wave start; ensureCover fetches it from meta.coverUrl.
+    const { id: trackId } = this.lib.addRemote({ provider: this.id, externalId: canonicalId, title: ext.title, artist: ext.artist, album: ext.album,
+      duration: media.probe.duration, year: album?.year ?? null, genre: album?.genre ?? '',
       trackNo: album?.trackPosition?.index ?? null, discNo: album?.trackPosition?.volume ?? null,
-      coverId,
-      meta: { pageUrl: ext.pageUrl, coverUrl: ext.coverUrl, suffix: 'mp3', ...(media ? { audioHash: media.hash, bitrate: media.bitrate } : {}),
+      coverId: null,
+      meta: { pageUrl: ext.pageUrl, coverUrl: ext.coverUrl, suffix: 'mp3', audioHash: media.hash, bitrate: media.bitrate,
         catalogArtists: (track.artists ?? []).filter((artist) => artist.id !== undefined && /^\d+$/.test(String(artist.id))).map((artist) => ({ id: String(artist.id), name: artist.name })),
         catalogAlbumId: album?.id ? String(album.id) : null },
-      ...(media ? { content: { hash: media.hash, size: media.size, probe: media.probe } } : {}) }).id;
+      content: { hash: media.hash, size: media.size, probe: media.probe } });
+    void this.ensureCover(trackId);
+    return trackId;
   }
 
   /** A transient cover timeout at import must not leave the player without artwork forever. */
@@ -537,12 +532,16 @@ export class YandexProvider implements Provider {
     return work;
   }
 
-  async fetchAudio(src: SourceRow): Promise<string> {
+  async fetchAudio(src: SourceRow, signal?: AbortSignal, priority: 0 | 1 | 2 | 3 = 0): Promise<string> {
     const track = this.lib.get(src.track_id);
+    if (!track) throw new Error('Трек не найден');
     const meta = JSON.parse(src.meta || '{}') as { audioHash?: string };
-    if (!track || !/^[a-f\d]{64}$/.test(track.content_hash)) throw new Error('Аудио Яндекса ещё не проверено. Добавьте трек заново.');
-    if (meta.audioHash && meta.audioHash !== track.content_hash) throw new Error('Версия аудио Яндекса не совпадает с сохранённым анализом');
-    const media = await this.audio.prepare(this.checkedId(String(src.external_id)), track.duration, track.content_hash);
+    // A row imported without audio has no verified hash yet: download the recording and rebind the library to what arrived.
+    const verified = /^[a-f\d]{64}$/.test(track.content_hash);
+    if (verified && meta.audioHash && meta.audioHash !== track.content_hash) throw new Error('Версия аудио Яндекса не совпадает с сохранённым анализом');
+    const media = verified
+      ? await this.audio.prepare(this.checkedId(String(src.external_id)), track.duration, track.content_hash, { signal, priority })
+      : await this.audio.prepare(this.checkedId(String(src.external_id)), track.duration);
     if (media.hash !== track.content_hash) {
       this.lib.rebindContent(track.id, media.hash, media.size, media.probe,
         { id: src.id, meta: { ...meta, audioHash: media.hash, bitrate: media.bitrate } });

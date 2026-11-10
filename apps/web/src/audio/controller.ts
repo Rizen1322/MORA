@@ -148,14 +148,6 @@ export function gainFromSummary(a: AnalysisSummary | undefined, target: number |
  * Owns the AudioContext and the AudioWorklet engine, the play queue, deck
  * bookkeeping, PCM streaming, transition preparation and play history.
  */
-const WAVE_START_MS = 60000;
-/** Rejects with `message` when `work` has not settled in `ms`; the late result is ignored. */
-export function withDeadline<T>(work: Promise<T>, ms: number, message: string, onTimeout?: () => void): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const late = new Promise<never>((_, reject) => { timer = setTimeout(() => { onTimeout?.(); reject(new Error(message)); }, ms); });
-  return Promise.race([work, late]).finally(() => clearTimeout(timer));
-}
-
 export class PlayerController {
   private ctx: AudioContext | DesktopAudioContext | null = null;
   private node: { port: { postMessage(command: EngineCommand, transfer?: Transferable[]): void } } | null = null;
@@ -614,20 +606,13 @@ export class PlayerController {
       this.analyser = analyser;
       this.desktopUnsubscribe = desktop.onAudio(event => {
         if (event.type === 'waveform') analyser.feed(event.samples);
-        else if (event.type === 'levels') analyser.levels(event.rms, event.bands);
         else if (event.type === 'audioHealth') this.onEngine(event);
       });
-    } else if (!desktop && this.nativeMix.onLevels && !this.desktopUnsubscribe) {
-      // iOS mixes natively: band levels of the audible output come from Swift.
-      const analyser = new DesktopAnalyser({ sampleRate, currentTime: 0, baseLatency: 0 });
-      this.analyser = analyser;
-      this.desktopUnsubscribe = this.nativeMix.onLevels(event => analyser.levels(event.rms, event.bands));
     }
     let polling = false;
     this.nativeTimer = setInterval(() => {
-      // A hidden page (if iOS keeps it running) or a paused player checks less often.
-      const idle = document.hidden || !['playing', 'buffering', 'loading'].includes(this.state.status);
-      if (polling || (idle && performance.now() - this.nativePolledAt < 2000)) return;
+      // A hidden page (if iOS keeps it running) checks less often.
+      if (polling || (document.hidden && performance.now() - this.nativePolledAt < 2000)) return;
       polling = true; this.nativePolledAt = performance.now();
       void this.nativeMix.state().then(s => this.onNativeState(s), () => {}).finally(() => { polling = false; });
     }, 500);
@@ -638,8 +623,6 @@ export class PlayerController {
     if (this.nativeAt < 0) return;
     if (!s.active || s.failed) {
       this.nativeRevision++; this.nativeAbort.abort(); this.nativeManifestKey = '';
-      // Every native start calls nativePoll() again.
-      if (this.nativeTimer) { clearInterval(this.nativeTimer); this.nativeTimer = null; }
       this.nativeAt = -1;
       this.nativeFiles.clear();
       this.nativeTracks = [];
@@ -699,15 +682,21 @@ export class PlayerController {
       const plan = item?.plan ?? (item && this.nativePlans.get(item));
       return plan ? { planId: plan.id, plan, active: startsIn === null, late: false, startsIn, progress: Math.max(0, Math.min(1, progress)), fallback: null } : null;
     };
-    const next = this.nativeTracks[s.index + 1];
-    // Both hosts (desktop and iOS) report the audible blend; null means none is playing.
+    const incoming = this.nativeTracks[s.index], next = this.nativeTracks[s.index + 1];
     if (s.blend) {
       const active = view(this.nativeTracks[s.blend.index], s.blend.progress, null);
       if (active) return { transition: active, nextPlan: active.plan };
     }
+    const into = incoming?.transition;
+    // After the swap the incoming track is audible while the blend finishes.
+    if (s.blend === undefined && into && frame < into.entryFrame + into.durationFrames - into.swapFrame) {
+      const active = view(incoming, (frame - into.entryFrame + into.swapFrame) / into.durationFrames, null);
+      if (active) return { transition: active, nextPlan: active.plan };
+    }
     const out = next?.transition;
     if (!out) return { transition: null, nextPlan: null };
-    const pending = view(next, (frame - out.triggerFrame) / out.durationFrames, Math.max(0, (out.triggerFrame - frame) / NATIVE_SR));
+    const pending = view(next, (frame - out.triggerFrame) / out.durationFrames,
+      s.blend === undefined && frame >= out.triggerFrame ? null : Math.max(0, (out.triggerFrame - frame) / NATIVE_SR));
     return { transition: pending, nextPlan: pending?.plan ?? null };
   }
 
@@ -1234,8 +1223,8 @@ export class PlayerController {
     try {
       let entries: QueueEntry[] = [];
       if (kind === 'yandex') {
-        const w = await withDeadline(api.yandexWave(null), WAVE_START_MS, 'Яндекс слишком долго отвечает. Попробуйте ещё раз.');
-        await withDeadline(this.refreshLibrary(), WAVE_START_MS, 'Медиатека не отвечает. Попробуйте ещё раз.');
+        const w = await api.yandexWave(null);
+        await this.refreshLibrary();
         if (revision !== this.previewRevision) return;
         this.yandexSession = { sessionId: w.sessionId, batchId: w.batchId };
         const known = new Set<string>();
@@ -1256,8 +1245,7 @@ export class PlayerController {
       this.originalOrder = null;
       this.queueRevision++;
       this.set({ queue: entries, index: 0, context: { type: kind === 'yandex' ? 'yandex-wave' : 'wave', label: kind === 'yandex' ? 'Моя волна Яндекса' : 'Моя волна' }, shuffle: false });
-      // A native start that never answers must end in an error, not an endless spinner.
-      await withDeadline(this.startAt(0, 0), WAVE_START_MS, 'Не удалось начать воспроизведение волны. Попробуйте ещё раз.', () => this.nativeAbort.abort());
+      await this.startAt(0, 0);
     } catch (e) {
       this.notify((e as Error).message, 'error');
     } finally {
@@ -1441,6 +1429,15 @@ export class PlayerController {
 
   /** Settings: "Next" switches at once (no musical blend) when true. */
   instantNext = false;
+
+  /** Drop future copies and cut the current recording after a saved dislike. */
+  async applyDislike(trackId: string): Promise<void> {
+    // Desktop hosts receive the committed reaction directly from the backend.
+    if (this.autonomousRadio) return;
+    const queue = this.state.queue.filter((entry, i) => i <= this.state.index || entry.trackId !== trackId);
+    if (queue.length !== this.state.queue.length) { this.set({ queue }); this.onQueueChanged(); }
+    if (this.currentEntry?.trackId === trackId) await this.nextTrack('dislike');
+  }
 
   /** User pressed "next". */
   async nextTrack(reason: 'skip' | 'dislike' = 'skip'): Promise<void> {
@@ -2189,6 +2186,16 @@ export class PlayerController {
     for (const id of this.dirtyVocals) this.resourceRevisions.set(id, (this.resourceRevisions.get(id) ?? 0) + 1);
     this.dirtyVocals.clear();
     if (affectsPair) void this.prepareNext();
+  }
+
+  onRecordingChanged(trackId: string): void {
+    this.queueRevision++;
+    this.nativeQueueEditRevision++;
+    this.nativeFiles.delete(trackId);
+    this.nativeManifestKey = '';
+    this.set({ queue: this.state.queue.map((entry, index) => index > this.state.index && entry.trackId === trackId ? { ...entry, entryId: uid() } : entry) });
+    if (this.native) void this.nativeSync();
+    else { this.invalidateNext(); void this.prepareNext(); }
   }
 
   onAnalysisDone(trackId: string): void {

@@ -43,9 +43,10 @@ export function renderMetrics(plan: TransitionPlan, a: PcmSpan, b: PcmSpan): Ren
 }
 
 function* renderMetricsSteps(plan: TransitionPlan, a: PcmSpan, b: PcmSpan): Generator<void, RenderMetrics | null> {
-  if (plan.loopA || plan.tapeStopA || plan.vocalA || plan.vocalB || plan.aExit - PRE < a.start || plan.bEntry < b.start) return null;
+  if (plan.loopA || plan.vocalA || plan.vocalB || plan.aExit - PRE < a.start || plan.bEntry < b.start) return null;
   const sr = a.pcm.sampleRate;
-  const shifted = { ...plan, aExit: plan.aExit - a.start, bEntry: plan.bEntry - b.start };
+  const shifted = { ...plan, aExit: plan.aExit - a.start, bEntry: plan.bEntry - b.start,
+    tapeStopA: plan.tapeStopA ? { ...plan.tapeStopA, start: plan.tapeStopA.start - a.start, end: plan.tapeStopA.end - a.start } : undefined };
   const r = yield* renderTransitionSteps(a.pcm, b.pcm, shifted, PRE, POST);
   yield;
   if (r.transitionStartFrame < 0) return null;
@@ -143,7 +144,7 @@ export function selectRenderedFinalist(rated: RatedPlan[]): RatedPlan {
   const safe = rated.filter(c => c === base || c.m
     && eligible(c.plan)
     && !hasMaterialMixRegression(measuredMixCost(base.plan), measuredMixCost(c.plan))
-    && (c.plan.debug.humanScenario || base.plan.debug.humanScenario
+    && (c.plan.debug.humanScenario || base.plan.debug.humanScenario || c.plan.debug.creativeSelection || base.plan.debug.creativeSelection
       ? c.plan.duration >= 0.5 && c.plan.duration <= 64
       : c.plan.duration >= 0.75 * base.plan.duration && c.plan.duration <= 1.25 * base.plan.duration + 0.5)
     && c.m.underruns <= bm.underruns && c.m.dipLU >= bm.dipLU - 2

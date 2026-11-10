@@ -63,7 +63,9 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativeSourceReserve", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeSourceAppend", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativePrepareQueue", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativePlayerPresent", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeLevels", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeUiState", returnType: CAPPluginReturnPromise),
     ]
 
     private var playing = false
@@ -77,10 +79,10 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private let nativeMix = NativeMixHost()
 
     override public func load() {
-        MoraPlaybackJournal.record("native.load")
         nativeMix.onLevels = { [weak self] rms, bands in
             DispatchQueue.main.async { self?.notifyListeners("levels", data: ["rms": rms, "bands": bands]) }
         }
+        MoraPlaybackJournal.record("native.load")
         let nc = NotificationCenter.default
         let session = AVAudioSession.sharedInstance()
         nc.addObserver(self, selector: #selector(interruption(_:)), name: AVAudioSession.interruptionNotification, object: session)
@@ -415,6 +417,25 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         guard let action = call.getString("action") else { call.reject("Invalid command"); return }
         nativeMix.command(action, time: call.getDouble("seekTime"), source: "page", completion: mixReply(call))
     }
+    /// iPhone full player: resolves with the way the sheet closed; a rejection keeps the web player.
+    @objc func nativePlayerPresent(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard self.nativeMix.active, let vc = self.bridge?.viewController, vc.presentedViewController == nil else {
+                call.reject("Native player unavailable"); return
+            }
+            NativePlayerSheet.present(host: self.nativeMix, from: vc) { call.resolve(["action": $0]) }
+        }
+    }
+    /// iPhone native shell (NativeShell.swift): the page's snapshot; resolves with whether the shell is on screen.
+    @objc func nativeUiState(_ call: CAPPluginCall) {
+        let state = call.options as? [String: Any] ?? [:]
+        DispatchQueue.main.async {
+            guard let root = self.bridge?.viewController?.parent as? MoraRootViewController else { call.resolve(["shown": false]); return }
+            root.installShell(host: self.nativeMix, webView: self.bridge?.webView)
+            let shown = root.shell.receive(state)
+            call.resolve(["shown": shown, "nativeContent": root.shell.nativeContentVisible])
+        }
+    }
 }
 
 /// Private, bounded journal. It never reads the media library or any credentials.
@@ -422,7 +443,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 /// only means that its callback accepted the event, not that WebContent received it.
 enum MoraPlaybackJournal {
     static let enabled = Bundle.main.object(forInfoDictionaryKey: "MoraPlaybackDiagnostics") as? Bool == true
-    private static let queue = DispatchQueue(label: "ru.mora.playback-diagnostics")
+    private static let queue = DispatchQueue(label: "ru.mora.playback-diagnostics", qos: .utility)
     private static let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("MORA/playback-diagnostics.json")
     private static var events: [[String: Any]] = {
@@ -449,9 +470,8 @@ enum MoraPlaybackJournal {
         queue.async {
             events.append(safe)
             if events.count > 1200 { events.removeFirst(events.count - 1200) }
-            // Playback ticks arrive twice a second: rewriting the whole journal (~300 KB JSON,
-            // encrypted, atomic) that often was continuous CPU + flash work. Reports read memory;
-            // entering background flushes at once.
+            // Rewriting the whole journal (up to ~0.5 MB, encrypted) is costly: at most every 10 s,
+            // plus a flush when the app leaves the foreground.
             if write == nil {
                 let job = DispatchWorkItem { persist(); write = nil }
                 write = job

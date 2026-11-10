@@ -48,7 +48,10 @@ final class NativeMixHost {
     private var failed = false
     private var underruns = 0
     private var maxRenderMs = 0.0
+    private var outputBufferCount = 5
+    private var outputLatency = 0.0
     private var lastLogFrame: Int64 = -1
+    private var nowPlaying: (key: String, position: Double, rate: Double, at: Double, row: Double)?
     private var prunedIndex = -1
     private var newestKey = -1
     private var preparation: NativeQueuePreparation?
@@ -61,15 +64,19 @@ final class NativeMixHost {
     private var preparedFileKey = 500000
     private var sourceKey = 0
     private var continueWhenPrepared = false
-    private var nextWhenPrepared = false
+    // Absolute index that waiting Next presses aim for; a crossfade into the next song keeps it.
+    private var skipTarget = -1
+    private var pendingSkips: Int { max(0, skipTarget - index) }
     private var initialTicket: NativePreparationTicket?
     private var knownManifest: [String: Any]?
     private var initialConfig: [String: Any] = [:]
     // Main queue only. Do not remove WebKit's or the baseline probe's targets.
+    var onReaction: ((String, Int) -> Int)?
+    var reactionState: ((String) -> Int)?
+    private var controlRevision = 0
     private var targets: [(MPRemoteCommand, Any)] = []
     private var refillTask: UIBackgroundTaskIdentifier = .invalid // main queue only
     private var refillWaiting = false // one finite assertion per waiting interval
-    private var lastShown = "", lastShownAt = 0.0 // work only: last Now Playing publish
     // Levels for the page visualizer: computed only while the page listens, in the foreground and while playing.
     var onLevels: ((Double, [Double]) -> Void)? // called on work; the plugin hops to main
     private var levelsOn = false, foreground = true
@@ -101,6 +108,10 @@ final class NativeMixHost {
     }
 
     private var sr: Double { config["sampleRate"] as? Double ?? 48000 }
+    private var presentationDelay: Double {
+        let delay = max(AVAudioSession.sharedInstance().outputLatency, player?.outputPresentationLatency ?? 0)
+        return delay.isFinite ? max(0, min(8, delay)) : 0
+    }
     private func file(_ key: Int) -> URL? { folder?.appendingPathComponent("\(key).f32le") }
     private static func key(_ track: [String: Any], _ i: Int) -> Int { track["file"] as? Int ?? i }
     private func available(_ index: Int) -> Bool {
@@ -116,11 +127,12 @@ final class NativeMixHost {
     private func save() {
         let duration = tracks.indices.contains(index) ? NativeMixTimeline.duration(tracks[index], sampleRate: sr) : 0
         let state: [String: Any] = ["active": folder != nil, "playing": wantsPlaying && !failed,
-            "preparing": preparing, "index": index, "position": position, "duration": duration,
+            "preparing": preparing, "controlRevision": controlRevision, "index": index, "position": position, "duration": duration,
             "renderedFrames": rendered, "queuedFrames": queued, "presentedFrames": presented,
             "epoch": epoch, "ownership": ownershipRevision, "underruns": underruns, "maxRenderMs": maxRenderMs, "failed": failed,
+            "outputBufferCount": outputBufferCount, "outputLatency": outputLatency,
             "artworkReady": artworks.indices.contains(index) && artworks[index] != nil, "count": tracks.count, "ended": ended,
-            "waitingForPreparation": continueWhenPrepared && ended, "pendingNext": nextWhenPrepared,
+            "waitingForPreparation": continueWhenPrepared && ended, "pendingSkips": pendingSkips,
             "entryId": tracks.indices.contains(index) ? tracks[index]["entryId"] as? String ?? "" : ""]
         var result = state
         result["stateSavedAt"] = Date().timeIntervalSince1970
@@ -179,8 +191,11 @@ final class NativeMixHost {
         }
     }
     private func artwork(_ track: [String: Any]) -> MPMediaItemArtwork? {
-        guard let artwork = track["artwork"] as? [String: Any], let base64 = artwork["base64"] as? String,
-              let image = NativeArtworkImage.decode(base64) else { return nil }
+        guard let artwork = track["artwork"] as? [String: Any], let base64 = artwork["base64"] as? String else { return nil }
+        return Self.artwork(NativeArtworkImage.decode(base64))
+    }
+    private static func artwork(_ image: CGImage?) -> MPMediaItemArtwork? {
+        guard let image else { return nil }
         let thumbnail = UIImage(cgImage: image)
         return MPMediaItemArtwork(boundsSize: thumbnail.size) { requested in
             let size = CGSize(width: max(1, min(thumbnail.size.width, requested.width.isFinite ? requested.width : 512)),
@@ -197,10 +212,12 @@ final class NativeMixHost {
         let loader = artworkLoader, file = Self.key(track, at), entry = track["entryId"] as? String
         let hosts = Set([track["artworkHTTPHost"] as? String].compactMap { $0 })
         loader.load(url, hosts: hosts, index: at, file: file) { [weak self] at, file, data in
+            // Decode on the loader's utility task, not on the render queue.
+            let artwork = Self.artwork(NativeArtworkImage.decode(data))
             self?.work.async { [weak self] in
                 guard let self, self.artworkLoader === loader, self.tracks.indices.contains(at),
                       Self.key(self.tracks[at], at) == file, self.tracks[at]["entryId"] as? String == entry else { return }
-                self.artworks[at] = self.artwork(["artwork": ["base64": data.base64EncodedString()]])
+                self.artworks[at] = artwork
                 if at == self.index { self.publish("artwork") }
             }
         }
@@ -354,7 +371,7 @@ final class NativeMixHost {
                     currentEntryId: self.tracks.indices.contains(self.index) ? self.tracks[self.index]["entryId"] as? String : nil)
                 guard id == self.id, let folder = self.folder, !self.tracks.isEmpty, !self.preparing, !self.failed,
                       let requestedFrom = manifest["from"] as? Int, requestedFrom > 0,
-                      let items = manifest["items"] as? [[String: Any]], items.count <= 1000,
+                      let items = manifest["items"] as? [[String: Any]], items.count <= 10000,
                       manifest["previous"] is [String: Any], manifest["settings"] is [String: Any],
                       let scriptURL = Bundle.main.url(forResource: "native-preparation", withExtension: "js", subdirectory: "public") else { throw Failure.invalid }
                 let script = try self.preparationScript ?? String(contentsOf: scriptURL, encoding: .utf8)
@@ -391,11 +408,14 @@ final class NativeMixHost {
                     self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis(); self.analysisSettings = settings
                 }
                 let analysis = self.analysisWorker
-                self.nextWhenPrepared = false // A replacement manifest owns new navigation intent.
-                let referenced = Set((items + (manifest["loopItems"] as? [[String: Any]] ?? [])).compactMap { item -> Int? in
+                self.skipTarget = -1 // A replacement manifest owns new navigation intent.
+                let retained = manifest["retainedSources"] as? [Int] ?? []
+                guard retained.count <= 20000, retained.allSatisfy({ (0..<500000).contains($0) }) else { throw Failure.invalid }
+                var referenced = Set((items + (manifest["loopItems"] as? [[String: Any]] ?? [])).compactMap { item -> Int? in
                     guard let source = item["source"] as? [String: Any], source["kind"] as? String == "local" else { return nil }
                     return source["file"] as? Int
                 })
+                referenced.formUnion(retained)
                 // A replacement owns these source leases; obsolete uploads stop counting
                 // against the budget. Repeat/duplicate references keep their shared file.
                 for key in self.sourceBytes.keys where !referenced.contains(key) {
@@ -418,7 +438,7 @@ final class NativeMixHost {
                     }
                 }
                 if future.isEmpty && (manifest["loopItems"] as? [[String: Any]] ?? []).isEmpty {
-                    self.preparation = nil; self.continueWhenPrepared = false; self.nextWhenPrepared = false; self.prune(); self.publish("handoff"); self.reply(completion, .success(self.viewState())); return
+                    self.preparation = nil; self.continueWhenPrepared = false; self.skipTarget = -1; self.prune(); self.publish("handoff"); self.reply(completion, .success(self.viewState())); return
                 }
                 let job = NativeQueuePreparation(index: self.index, remaining: future.count,
                     loopCount: (manifest["loopItems"] as? [[String: Any]] ?? []).count, analysis: self.analysisWorker); self.preparation = job
@@ -451,7 +471,7 @@ final class NativeMixHost {
                                     self.tracks += added; self.config["tracks"] = self.tracks; self.artworks.append(self.artwork(track))
                                     self.requestArtwork(track, at: at)
                                     appended = true
-                                    if self.nextWhenPrepared || (self.done && self.ended && self.continueWhenPrepared) {
+                                    if (self.pendingSkips > 0 ? at >= self.skipTarget : self.done && self.ended && self.continueWhenPrepared) {
                                         try self.select(index: at, position: 0, playing: self.wantsPlaying || self.continueWhenPrepared)
                                     }
                                     else { self.publish("prepared") }
@@ -474,8 +494,14 @@ final class NativeMixHost {
                         self?.work.async { [weak self] in
                             guard let self, self.preparation === job else { return }
                             if kind == "finished" && !job.hasRemaining {
-                                self.nextWhenPrepared = false
-                                if self.ended { self.continueWhenPrepared = false }
+                                // Failed sources left the target unreachable: land on the furthest prepared song.
+                                if self.pendingSkips > 0 && self.tracks.count - 1 > self.index {
+                                    do { try self.select(index: self.tracks.count - 1, position: 0, playing: self.wantsPlaying || self.continueWhenPrepared) }
+                                    catch { self.fail(); return }
+                                }
+                                self.skipTarget = -1
+                                // Nothing more will arrive: release the output held for it.
+                                if self.ended { self.continueWhenPrepared = false; self.engine?.pause() }
                             }
                             if ["ready", "failed", "finished"].contains(kind) { self.publish("preparation") }
                             else { self.save() }
@@ -527,7 +553,18 @@ final class NativeMixHost {
         if tracks.indices.contains(index + 1) { result["nextTrack"] = tracks[index + 1] }
         return result
     }
-    func state(_ completion: @escaping Reply) { work.async { self.reply(completion, .success(self.viewState())) } }
+    func state(_ completion: @escaping Reply) { work.async { self.updatePosition(); self.save(); self.reply(completion, .success(self.viewState())) } }
+    /// Native player sheet (Swift only): the view state with the queue and the current artwork.
+    func playerState(_ completion: @escaping Reply) {
+        work.async {
+            self.updatePosition(); self.save()
+            var value = self.viewState()
+            value["upcoming"] = Array(self.tracks.dropFirst(self.index + 1))
+            value["manifestItems"] = self.knownManifest?["items"] as? [[String: Any]] ?? []
+            if self.artworks.indices.contains(self.index), let artwork = self.artworks[self.index] { value["artwork"] = artwork }
+            self.reply(completion, .success(value))
+        }
+    }
     func diagnosticState(_ completion: @escaping Reply) {
         work.async {
             let previous = self.snapshot["stateSavedAt"]
@@ -585,7 +622,7 @@ final class NativeMixHost {
         player?.stop(); engine?.pause()
         pending = 0; rendered = 0; queued = 0; completed = 0; presented = 0; marks.removeAll(); done = false; ended = false; levelBlocks.removeAll()
         lastLogFrame = -1
-        self.index = index; self.position = position; self.blend = nil; self.nextWhenPrepared = false; self.continueWhenPrepared = false
+        self.index = index; self.position = position; self.blend = nil; self.skipTarget = -1; self.continueWhenPrepared = false
         var next = config; next["index"] = index; next["position"] = position
         guard let folder else { throw Failure.invalid }
         renderer = try NativeQueueRenderer(folder: folder, config: next)
@@ -597,7 +634,13 @@ final class NativeMixHost {
     private func fill() throws {
         guard let renderer, let format, let player else { throw Failure.playback }
         let generation = epoch
-        while pending < 8 && !done {
+        let session = AVAudioSession.sharedInstance()
+        outputLatency = presentationDelay
+        // Some car routes initially report zero before the first audio reaches the receiver.
+        let bufferLatency = session.currentRoute.outputs.contains { $0.portType == .carAudio } ? max(2, outputLatency) : outputLatency
+        outputBufferCount = NativeMixTimeline.outputBufferCount(sampleRate: sr, frames: 8192,
+            latency: bufferLatency + max(0, session.ioBufferDuration))
+        while pending < outputBufferCount && !done {
             let began = ProcessInfo.processInfo.systemUptime
             let block = try autoreleasepool { try renderer.render() }
             maxRenderMs = max(maxRenderMs, (ProcessInfo.processInfo.systemUptime - began) * 1000)
@@ -635,13 +678,18 @@ final class NativeMixHost {
             do { try fill() } catch { fail(); return }
             if done && pending == 0 {
                 // The page appended a track after the renderer finished: continue without a blend.
-                if tracks.indices.contains(index + 1) { do { try select(index: index + 1, position: 0, playing: true) } catch { fail() }; return }
+                if tracks.indices.contains(index + 1) {
+                    let target = skipTarget // The natural advance is one step towards it.
+                    do { try select(index: index + 1, position: 0, playing: true); skipTarget = target } catch { fail() }; return
+                }
                 continueWhenPrepared = preparation?.hasRemaining == true
-                wantsPlaying = false; ended = true; player?.pause(); engine?.pause(); publish("ended"); return
+                wantsPlaying = false; ended = true; player?.pause()
+                if continueWhenPrepared { holdOutput() } else { engine?.pause() }
+                publish("ended"); return
             }
         }
+        // Between ticks state() refreshes the snapshot on demand.
         if presented - lastLogFrame >= Int64(sr / 2) { publish("tick"); lastLogFrame = presented }
-        else { save() }
         // Keep the predecessor for interpolation; storage stays bounded by scheduled audio.
         if let keep = marks.lastIndex(where: { $0.frame < completed - 4096 }), keep > 0 { marks.removeFirst(keep) }
         if levelsOn { levelBlocks.removeAll { $0.start + Int64($0.left.count / 4) <= presented - Int64(NativeLevelMeter.n) } }
@@ -650,12 +698,12 @@ final class NativeMixHost {
         var audible = completed
         if let player, let time = player.lastRenderTime, let played = player.playerTime(forNodeTime: time) {
             // Estimate between dataPlayedBack checkpoints; completion accounts for device latency.
-            let estimated = played.sampleTime - Int64(AVAudioSession.sharedInstance().outputLatency * sr)
+            outputLatency = presentationDelay
+            let estimated = played.sampleTime - Int64(outputLatency * sr)
             audible = max(completed, estimated)
         }
         presented = max(presented, min(queued, max(0, audible)))
-        // update() may truncate tracks that already-rendered marks still reference.
-        guard let at = marks.lastIndex(where: { $0.frame <= presented }), tracks.indices.contains(marks[at].index) else { return }
+        guard let at = marks.lastIndex(where: { $0.frame <= presented }) else { return }
         let a = marks[at]; index = a.index; position = a.position; blend = a.blend
         if at + 1 < marks.count {
             let b = marks[at + 1]
@@ -676,7 +724,7 @@ final class NativeMixHost {
         if index != prunedIndex { prune() }
         let state = snapshot, generation = epoch
         let title = tracks.indices.contains(index) ? tracks[index]["title"] as? String ?? "MORA" : "MORA"
-        let artist = tracks.indices.contains(index) ? tracks[index]["artist"] as? String ?? "" : ""
+        let artist = pendingSkips > 0 ? "Загрузка следующего трека…" : tracks.indices.contains(index) ? tracks[index]["artist"] as? String ?? "" : ""
         var info: [String: Any] = [MPMediaItemPropertyTitle: title, MPMediaItemPropertyArtist: artist,
             MPMediaItemPropertyPersistentID: NSNumber(value: index + 1), MPMediaItemPropertyPlaybackDuration: state["duration"] ?? 0,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: position, MPNowPlayingInfoPropertyPlaybackRate: playbackRate,
@@ -684,18 +732,26 @@ final class NativeMixHost {
             MPNowPlayingInfoPropertyPlaybackQueueIndex: index, MPNowPlayingInfoPropertyPlaybackQueueCount: tracks.count]
         if artworks.indices.contains(index), let artwork = artworks[index] { info[MPMediaItemPropertyArtwork] = artwork }
         let publishedInfo = info
-        let canAdvance = tracks.indices.contains(index + 1) || preparation?.hasRemaining == true
+        let publishedTrackId = tracks.indices.contains(index) ? tracks[index]["trackId"] as? String ?? "" : ""
+        let canAdvance = tracks.indices.contains(index + 1) || preparation?.hasRemaining == true || pendingSkips > 0
         let canReverse = canGoBack
-        // The system extrapolates elapsed time from the rate: a 2 Hz tick need not re-send
-        // Now Playing (IPC + artwork) unless something visible changed; resync every 10 s.
+        // A tick republishes Now Playing only on a visible change or clock drift (tempo
+        // stretch, stall); its journal row is kept every 5 s otherwise.
+        let key = "\(generation)|\(index)|\(title)|\(artist)|\(state["duration"] ?? 0)|\(playbackRate)|\(info[MPMediaItemPropertyArtwork] != nil)|\(tracks.count)|\(canAdvance)|\(canReverse)|\(state["waitingForPreparation"] ?? false)"
         let now = ProcessInfo.processInfo.systemUptime
-        let shown = "\(generation):\(index):\(canAdvance):\(canReverse):\(playbackRate):\(state["waitingForPreparation"] as? Bool == true)"
-        if reason != "tick" || shown != lastShown || now - lastShownAt >= 10 {
-            lastShown = shown; lastShownAt = now
+        if reason == "tick", let sent = nowPlaying, sent.key == key,
+           NativeMixTimeline.nowPlayingCurrent(sentPosition: sent.position, sentAt: sent.at, rate: sent.rate, position: position, now: now) {
+            guard now - sent.row >= 5 else { return }
+            nowPlaying?.row = now
+        } else {
+            nowPlaying = (key, position, playbackRate, now, now)
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.active, self.snapshot["epoch"] as? Int == generation else { return }
                 self.refillLease(waiting: state["waitingForPreparation"] as? Bool == true)
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = publishedInfo
+                let reaction = self.reactionState?(publishedTrackId) ?? 0
+                MPRemoteCommandCenter.shared().likeCommand.isActive = reaction > 0
+                MPRemoteCommandCenter.shared().dislikeCommand.isActive = reaction < 0
                 MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = canAdvance
                 MPRemoteCommandCenter.shared().previousTrackCommand.isEnabled = canReverse
             }
@@ -736,7 +792,7 @@ final class NativeMixHost {
             timer.schedule(deadline: .now(), repeating: .milliseconds(50), leeway: .milliseconds(10))
             timer.setEventHandler { [weak self] in self?.levelTick() }
             timer.resume(); levelTimer = timer
-        } else { levelTimer?.cancel(); levelTimer = nil; }
+        } else { levelTimer?.cancel(); levelTimer = nil }
     }
     /// Levels of the 2048 frames ending at the audible frame, from the blocks already rendered.
     private func levelTick() {
@@ -759,7 +815,7 @@ final class NativeMixHost {
     }
     private func fail() {
         initialTicket?.cancel(); initialTicket = nil; initialConfig = [:]
-        preparation?.cancel(); preparation = nil; continueWhenPrepared = false; nextWhenPrepared = false
+        preparation?.cancel(); preparation = nil; continueWhenPrepared = false; skipTarget = -1
         wantsPlaying = false; failed = true; knownManifest = nil; epoch += 1
         player?.stop(); engine?.pause(); renderer = nil
         save(); MoraPlaybackJournal.record("native.mix.failed")
@@ -785,13 +841,22 @@ final class NativeMixHost {
                 }
                 guard !self.preparing else { throw Failure.invalid }
                 if source == "interruption" && self.mediaResetPending { throw Failure.invalid }
+                if action != "like" && action != "dislike" { self.controlRevision += 1 }
                 self.updatePosition()
                 if source != "interruption" { self.resumeAfterInterruption = false }
                 switch action {
-                case "pause": self.continueWhenPrepared = false; self.wantsPlaying = false; self.player?.pause(); self.engine?.pause()
+                case "like", "dislike":
+                    guard self.tracks.indices.contains(self.index), let trackId = self.tracks[self.index]["trackId"] as? String else { throw Failure.invalid }
+                    DispatchQueue.main.async {
+                        if let value = self.onReaction?(trackId, action == "like" ? 1 : -1) {
+                            MPRemoteCommandCenter.shared().likeCommand.isActive = value > 0
+                            MPRemoteCommandCenter.shared().dislikeCommand.isActive = value < 0
+                        }
+                    }
+                case "pause": self.continueWhenPrepared = false; self.skipTarget = -1; self.wantsPlaying = false; self.player?.pause(); self.engine?.pause()
                 case "play", "toggle":
                     if action == "toggle" && self.wantsPlaying {
-                        self.continueWhenPrepared = false
+                        self.continueWhenPrepared = false; self.skipTarget = -1
                         self.wantsPlaying = false; self.player?.pause(); self.engine?.pause()
                     } else {
                         let wasPlaying = self.wantsPlaying
@@ -807,20 +872,24 @@ final class NativeMixHost {
                             if self.tracks.indices.contains(self.index + 1) { try self.select(index: self.index + 1, position: 0, playing: true) }
                             else if self.preparation?.hasRemaining == true {
                                 self.continueWhenPrepared = true; self.wantsPlaying = false
+                                try self.engine?.start(); self.holdOutput()
                             } else { try self.select(index: self.index, position: 0, playing: true) }
                         }
                         else if !wasPlaying { try self.select(index: self.index, position: self.position, playing: true) }
                         else { self.wantsPlaying = true; try self.fill(); try self.engine?.start(); self.player?.play() }
                     }
                 case "nexttrack":
-                    if self.tracks.indices.contains(self.index + 1) {
+                    if self.pendingSkips == 0 && self.tracks.indices.contains(self.index + 1) {
                         try self.select(index: self.index + 1, position: 0, playing: self.wantsPlaying || self.continueWhenPrepared)
-                    } else if self.preparation?.hasRemaining == true {
-                        // Keep the current audible track running until its replacement is ready.
+                    } else {
+                        // Keep the current audible track running until the target is ready; each press moves it one further.
                         // Stopping the engine here could suspend preparation in the background.
-                        self.nextWhenPrepared = true
-                        self.preparation?.gate.advance(self.index + 1)
-                    } else { throw Failure.invalid }
+                        let skips = NativeMixTimeline.pendingSkips(self.pendingSkips, ahead: self.tracks.count - 1 - self.index,
+                                                                   remaining: self.preparation?.remainingItems ?? 0)
+                        guard skips > 0 else { throw Failure.invalid }
+                        self.skipTarget = self.index + skips
+                        self.preparation?.gate.advance(self.skipTarget)
+                    }
                 case "previoustrack":
                     let previous = self.position > 3 ? self.index : self.index - 1
                     guard self.available(previous) else { throw Failure.invalid }
@@ -848,10 +917,12 @@ final class NativeMixHost {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.active, self.snapshot["epoch"] as? Int == generation else { return }
             let c = MPRemoteCommandCenter.shared()
+            c.likeCommand.localizedTitle = "Нравится"
+            c.dislikeCommand.localizedTitle = "Не нравится"
             c.skipForwardCommand.isEnabled = false; c.skipBackwardCommand.isEnabled = false
             c.seekForwardCommand.isEnabled = false; c.seekBackwardCommand.isEnabled = false
             let bindings: [(MPRemoteCommand, String)] = [(c.playCommand, "play"), (c.pauseCommand, "pause"), (c.togglePlayPauseCommand, "toggle"),
-                (c.nextTrackCommand, "nexttrack"), (c.previousTrackCommand, "previoustrack"), (c.changePlaybackPositionCommand, "seekto")]
+                (c.nextTrackCommand, "nexttrack"), (c.previousTrackCommand, "previoustrack"), (c.changePlaybackPositionCommand, "seekto"), (c.likeCommand, "like"), (c.dislikeCommand, "dislike")]
             for (command, action) in bindings {
                 if action != "nexttrack" && action != "previoustrack" { command.isEnabled = true }
                 let target = command.addTarget { [weak self] event in
@@ -869,7 +940,7 @@ final class NativeMixHost {
     func stop(_ completion: @escaping Reply) {
         work.async {
             self.initialTicket?.cancel(); self.initialTicket = nil; self.initialConfig = [:]; self.knownManifest = nil
-            self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false; self.nextWhenPrepared = false
+            self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false; self.skipTarget = -1
             self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis()
             self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
             DispatchQueue.main.async { [weak self] in self?.refillLease(waiting: false) }
@@ -911,13 +982,19 @@ final class NativeMixHost {
     func routeChange(_ notification: Notification) {
         let reason = (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue
         if active && reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { command("pause", source: "route") { _ in } }
+        else {
+            work.async {
+                guard self.folder != nil, self.wantsPlaying, self.engine?.isRunning == true else { return }
+                do { try self.fill(); self.publish("routeBuffering") } catch { self.fail() }
+            }
+        }
     }
     func mediaReset() {
         work.async {
             guard self.folder != nil, !self.tracks.isEmpty || self.initialTicket != nil else { return }
             if self.initialTicket != nil { self.initialConfig["paused"] = true }
             self.wantsPlaying = false; self.resumeAfterInterruption = false; self.interrupted = false
-            self.continueWhenPrepared = false; self.nextWhenPrepared = false; self.mediaResetPending = true
+            self.continueWhenPrepared = false; self.skipTarget = -1; self.mediaResetPending = true
             self.discardGraph(); self.ownsSession = false
             self.publish("mediaReset") // Preserve the queue; only a subsequent user Play activates audio.
         }
@@ -933,6 +1010,17 @@ final class NativeMixHost {
             guard let self, self.refillTask == task else { return }; self.endRefillLease()
         }
     }
+    /// A track ended before its successor finished downloading. A paused engine lets iOS suspend
+    /// the locked app, and the download freezes with it until the user opens the app again.
+    /// The running engine (silent: nothing is scheduled) keeps the app alive for a bounded wait.
+    private func holdOutput() {
+        let generation = epoch
+        work.asyncAfter(deadline: .now() + Self.holdSeconds) { [weak self] in
+            guard let self, self.epoch == generation, self.ended, self.continueWhenPrepared else { return }
+            self.engine?.pause(); MoraPlaybackJournal.record("native.mix.holdExpired"); self.publish("ended")
+        }
+    }
+    static let holdSeconds: Double = 240
     private func endRefillLease() {
         guard refillTask != .invalid else { return }
         UIApplication.shared.endBackgroundTask(refillTask); refillTask = .invalid
@@ -969,9 +1057,9 @@ final class NativeMixHost {
             self.work.asyncAfter(deadline: .now() + 0.05) {
                 guard self.epoch == generation, self.wantsPlaying, !self.interrupted, !self.mediaResetPending else { return }
                 do {
-                    let pendingNext = self.nextWhenPrepared
+                    let target = self.skipTarget
                     try self.select(index: self.index, position: self.position, playing: true)
-                    self.nextWhenPrepared = pendingNext; self.publish("configurationRecovered")
+                    self.skipTarget = target; self.publish("configurationRecovered")
                 }
                 catch { self.fail() }
             }

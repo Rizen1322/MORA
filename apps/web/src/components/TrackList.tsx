@@ -201,11 +201,7 @@ export async function react(t: Track, value: number): Promise<void> {
     if (result.sync?.status === 'error') st.toast(`Реакция сохранена здесь. ${result.sync.error ?? 'Яндекс пока не принял её; отправка повторится автоматически.'}`, 'error');
     else if (result.sync?.status === 'pending') st.toast('Реакция сохранена. Отправка в Яндекс продолжится автоматически.', 'info');
     else if (value <= 0 && t.reaction > 0 && t.pinned && st.settings?.downloads?.autoLiked) st.toast('Скачанный трек остался на устройстве. Удалить его можно в «Загрузках».', 'info');
-    if (value < 0 && controller.currentEntry?.trackId === t.id) {
-      const wave = controller.state.context?.type === 'wave' || controller.state.context?.type === 'yandex-wave' || controller.state.context?.type === 'online-radio';
-      st.toast(wave ? 'Больше не будет в «Моей волне». Переключаю.' : 'Трек не будет предлагаться в «Моей волне»', 'info');
-      if (wave) void controller.nextTrack('dislike');
-    }
+    if (value < 0) void controller.applyDislike(t.id);
   } catch (e) {
     if (revision !== reactionRequests.get(t.id)) return;
     st.patchTrack(t.id, { reaction: t.reaction });

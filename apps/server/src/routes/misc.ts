@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { existsSync } from 'node:fs';
 import { sanitizeSound } from '@automix/core';
 import { ANALYZER_VERSION, PLANNER_VERSION } from '@automix/core';
 import type { Services } from '../app.ts';
@@ -19,6 +20,7 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
   app.get('/api/health', async () => ({
     ok: true,
     ffmpeg: s.ffmpegVersion,
+    decoder: s.cfg.decoderRust && existsSync(s.cfg.decoderRust) ? 'Symphonia' : null,
     analyzer: ANALYZER_VERSION,
     planner: PLANNER_VERSION,
     analysis: analysis.stats(),

@@ -8,8 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		B2F0C0DE2FF0000100000011 /* NativeMixTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF0000100000012 /* NativeMixTimeline.swift */; };
-		B2F0C0DE2FF0000100000013 /* NativeSpectral.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF0000100000014 /* NativeSpectral.swift */; };
-		B2F0C0DE2FF00001000000F1 /* NativeLevelMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF00001000000F2 /* NativeLevelMeter.swift */; };
 		B2F0C0DE2FF000010000000B /* NativeMediaLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF000010000000C /* NativeMediaLoader.swift */; };
 		B2F0C0DE2FF000010000000D /* NativePreparationCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF000010000000E /* NativePreparationCore.swift */; };
 		B2F0C0DE2FF000010000000F /* NativeQueuePreparation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF0000100000010 /* NativeQueuePreparation.swift */; };
@@ -20,6 +18,14 @@
 		B2F0C0DE2FF0000100000003 /* NativeMixHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF0000100000004 /* NativeMixHost.swift */; };
 		A1F0C0DE2FF0000100000001 /* MoraAudioPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F0C0DE2FF0000100000002 /* MoraAudioPlugin.swift */; };
 		A1F0C0DE2FF0000100000003 /* NativePlaybackProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F0C0DE2FF0000100000004 /* NativePlaybackProbe.swift */; };
+		D4F0C0DE2FF0000100000001 /* NativePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F0C0DE2FF0000100000002 /* NativePlayer.swift */; };
+		B2F0C0DE2FF00001000000F1 /* NativeLevelMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF00001000000F2 /* NativeLevelMeter.swift */; };
+		D4F0C0DE2FF0000100000003 /* NativePlayerState.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F0C0DE2FF0000100000004 /* NativePlayerState.swift */; };
+		E5F0C0DE2FF0000100000001 /* NativeShellState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F0C0DE2FF0000100000002 /* NativeShellState.swift */; };
+		E5F0C0DE2FF0000100000003 /* NativeShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F0C0DE2FF0000100000004 /* NativeShell.swift */; };
+		E5F0C0DE2FF0000100000005 /* NativeScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F0C0DE2FF0000100000006 /* NativeScreens.swift */; };
+		E5F0C0DE2FF0000100000007 /* NativePages.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F0C0DE2FF0000100000008 /* NativePages.swift */; };
+		C3F0C0DE2FF0000100000001 /* NativeRustAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F0C0DE2FF0000100000002 /* NativeRustAnalysis.swift */; };
 		A1F0C0DE2FF0000100000005 /* NativeProbeWave.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F0C0DE2FF0000100000006 /* NativeProbeWave.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
@@ -30,12 +36,11 @@
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
+		F6F0C0DE2FF0000100000001 /* NativeVersions.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6F0C0DE2FF0000100000002 /* NativeVersions.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		B2F0C0DE2FF0000100000012 /* NativeMixTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMixTimeline.swift; sourceTree = "<group>"; };
-		B2F0C0DE2FF0000100000014 /* NativeSpectral.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpectral.swift; sourceTree = "<group>"; };
-		B2F0C0DE2FF00001000000F2 /* NativeLevelMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLevelMeter.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF000010000000C /* NativeMediaLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMediaLoader.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF000010000000E /* NativePreparationCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePreparationCore.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF0000100000010 /* NativeQueuePreparation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeQueuePreparation.swift; sourceTree = "<group>"; };
@@ -46,6 +51,14 @@
 		B2F0C0DE2FF0000100000004 /* NativeMixHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMixHost.swift; sourceTree = "<group>"; };
 		A1F0C0DE2FF0000100000002 /* MoraAudioPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoraAudioPlugin.swift; sourceTree = "<group>"; };
 		A1F0C0DE2FF0000100000004 /* NativePlaybackProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlaybackProbe.swift; sourceTree = "<group>"; };
+		D4F0C0DE2FF0000100000002 /* NativePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlayer.swift; sourceTree = "<group>"; };
+		B2F0C0DE2FF00001000000F2 /* NativeLevelMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLevelMeter.swift; sourceTree = "<group>"; };
+		D4F0C0DE2FF0000100000004 /* NativePlayerState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlayerState.swift; sourceTree = "<group>"; };
+		E5F0C0DE2FF0000100000002 /* NativeShellState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeShellState.swift; sourceTree = "<group>"; };
+		E5F0C0DE2FF0000100000004 /* NativeShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeShell.swift; sourceTree = "<group>"; };
+		E5F0C0DE2FF0000100000006 /* NativeScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeScreens.swift; sourceTree = "<group>"; };
+		E5F0C0DE2FF0000100000008 /* NativePages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePages.swift; sourceTree = "<group>"; };
+		C3F0C0DE2FF0000100000002 /* NativeRustAnalysis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeRustAnalysis.swift; sourceTree = "<group>"; };
 		A1F0C0DE2FF0000100000006 /* NativeProbeWave.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeProbeWave.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
@@ -58,6 +71,7 @@
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		F6F0C0DE2FF0000100000002 /* NativeVersions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeVersions.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -98,6 +112,15 @@
 				A1F0C0DE2FF0000100000002 /* MoraAudioPlugin.swift */,
 				A1F0C0DE2FF0000100000004 /* NativePlaybackProbe.swift */,
 				A1F0C0DE2FF0000100000006 /* NativeProbeWave.swift */,
+				C3F0C0DE2FF0000100000002 /* NativeRustAnalysis.swift */,
+				D4F0C0DE2FF0000100000002 /* NativePlayer.swift */,
+				B2F0C0DE2FF00001000000F2 /* NativeLevelMeter.swift */,
+				D4F0C0DE2FF0000100000004 /* NativePlayerState.swift */,
+				E5F0C0DE2FF0000100000002 /* NativeShellState.swift */,
+				E5F0C0DE2FF0000100000004 /* NativeShell.swift */,
+				E5F0C0DE2FF0000100000006 /* NativeScreens.swift */,
+				F6F0C0DE2FF0000100000002 /* NativeVersions.swift */,
+				E5F0C0DE2FF0000100000008 /* NativePages.swift */,
 				B2F0C0DE2FF0000100000002 /* NativeDSPRenderer.swift */,
 				B2F0C0DE2FF0000100000004 /* NativeMixHost.swift */,
 				B2F0C0DE2FF0000100000006 /* NativeArtworkImage.swift */,
@@ -107,8 +130,6 @@
 				B2F0C0DE2FF000010000000E /* NativePreparationCore.swift */,
 				B2F0C0DE2FF0000100000010 /* NativeQueuePreparation.swift */,
 				B2F0C0DE2FF0000100000012 /* NativeMixTimeline.swift */,
-				B2F0C0DE2FF0000100000014 /* NativeSpectral.swift */,
-				B2F0C0DE2FF00001000000F2 /* NativeLevelMeter.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -204,6 +225,15 @@
 				A1F0C0DE2FF0000100000001 /* MoraAudioPlugin.swift in Sources */,
 				A1F0C0DE2FF0000100000003 /* NativePlaybackProbe.swift in Sources */,
 				A1F0C0DE2FF0000100000005 /* NativeProbeWave.swift in Sources */,
+				C3F0C0DE2FF0000100000001 /* NativeRustAnalysis.swift in Sources */,
+				D4F0C0DE2FF0000100000001 /* NativePlayer.swift in Sources */,
+				B2F0C0DE2FF00001000000F1 /* NativeLevelMeter.swift in Sources */,
+				D4F0C0DE2FF0000100000003 /* NativePlayerState.swift in Sources */,
+				E5F0C0DE2FF0000100000001 /* NativeShellState.swift in Sources */,
+				E5F0C0DE2FF0000100000003 /* NativeShell.swift in Sources */,
+				E5F0C0DE2FF0000100000005 /* NativeScreens.swift in Sources */,
+				F6F0C0DE2FF0000100000001 /* NativeVersions.swift in Sources */,
+				E5F0C0DE2FF0000100000007 /* NativePages.swift in Sources */,
 				B2F0C0DE2FF0000100000001 /* NativeDSPRenderer.swift in Sources */,
 				B2F0C0DE2FF0000100000003 /* NativeMixHost.swift in Sources */,
 				B2F0C0DE2FF0000100000005 /* NativeArtworkImage.swift in Sources */,
@@ -213,8 +243,6 @@
 				B2F0C0DE2FF000010000000D /* NativePreparationCore.swift in Sources */,
 				B2F0C0DE2FF000010000000F /* NativeQueuePreparation.swift in Sources */,
 				B2F0C0DE2FF0000100000011 /* NativeMixTimeline.swift in Sources */,
-				B2F0C0DE2FF0000100000013 /* NativeSpectral.swift in Sources */,
-				B2F0C0DE2FF00001000000F1 /* NativeLevelMeter.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -356,14 +384,18 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 22;
+                CURRENT_PROJECT_VERSION = 36;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.21;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"$(SRCROOT)/../../../../packages/audio-rust/target/ios/$(PLATFORM_NAME)/libmora_audio.a",
+				);
+                MARKETING_VERSION = 1.0.35;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = ru.mora.player;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -378,14 +410,18 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 22;
+                CURRENT_PROJECT_VERSION = 36;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.21;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"$(SRCROOT)/../../../../packages/audio-rust/target/ios/$(PLATFORM_NAME)/libmora_audio.a",
+				);
+                MARKETING_VERSION = 1.0.35;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.mora.player;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";

@@ -7,9 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const dir = await mkdtemp(join(tmpdir(), 'mora-native-host-'));
-const run = (command, args) => {
+const run = (command, args, timeout = 180000) => {
   console.log('[native-host]', command, args.slice(0, 4).join(' '));
-  const result = spawnSync(command, args, { encoding: 'utf8', timeout: 180000, killSignal: 'SIGKILL' });
+  const result = spawnSync(command, args, { encoding: 'utf8', timeout, killSignal: 'SIGKILL' });
   assert.equal(result.status, 0, `${command}: ${result.stderr || result.stdout}`); return result.stdout.trim();
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -39,7 +39,7 @@ try {
   device = candidates.find(d => d.state === 'Booted') ?? candidates[0];
   assert.ok(device, 'An available iPhone simulator is required');
   if (device.state !== 'Booted') run('xcrun', ['simctl', 'boot', device.udid]);
-  run('xcrun', ['simctl', 'bootstatus', device.udid, '-b']);
+  run('xcrun', ['simctl', 'bootstatus', device.udid, '-b'], 600000);
   const app = join(dir, 'HostCheck.app'); await mkdir(join(app, 'public'), { recursive: true });
   const bundle = 'ru.mora.native-host-check';
   await writeFile(join(app, 'Info.plist'), `<?xml version="1.0"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict>

@@ -68,7 +68,7 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
   ensureDirs(cfg);
   const db = openDb(cfg.dataDir);
   const events = new EventHub();
-  const ff = new FfmpegTools(cfg.ffmpeg, cfg.ffprobe);
+  const ff = new FfmpegTools(cfg.ffmpeg, cfg.ffprobe, cfg.decoderRust);
   const ffmpegVersion = await ff.version();
   const lib = new Library(db, cfg, ff, events);
   const ytdlp = new YtDlp({ bin: cfg.ytdlp, jsRuntime: cfg.ytdlpJsRuntime, runtimeIsElectron: cfg.ytdlpRuntimeIsElectron,

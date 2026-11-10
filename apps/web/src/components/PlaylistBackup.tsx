@@ -1,3 +1,4 @@
+import { exportPlaylistBackup } from '../lib/playlist-export.ts';
 import { useRef, useState } from 'react';
 import { DownloadSimple, UploadSimple } from '@phosphor-icons/react';
 import { api } from '../lib/api.ts';
@@ -34,7 +35,7 @@ export function PlaylistBackup() {
     <h2 className="section-title" id="backup-heading">Ваши плейлисты с собой</h2>
     <p className="small muted">Сохраните названия, порядок песен и ссылки на записи. Аудиофайлы и подключения аккаунтов в копию не входят.</p>
     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 16 }}>
-      <a className="btn btn-secondary" href="/api/backup/playlists" download="MORA-playlists.json"><DownloadSimple size={17} /> Сохранить копию</a>
+      <a className="btn btn-secondary" href="/api/backup/playlists" download="MORA-playlists.json" onClick={e => exportPlaylistBackup(e)}><DownloadSimple size={17} /> Сохранить копию</a>
       <button className="btn btn-ghost" disabled={busy} onClick={() => input.current?.click()}><UploadSimple size={17} /> Восстановить из файла</button>
       <input ref={input} type="file" accept=".json,application/json" hidden onChange={(e) => { void inspect(e.target.files?.[0]); e.target.value = ''; }} />
     </div>

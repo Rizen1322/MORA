@@ -231,6 +231,8 @@ export interface StemGpu {
 export interface HealthStatus {
   ok: boolean;
   ffmpeg: string | null;
+  /** Primary native decoder; ffmpeg then only covers formats it lacks (AAC, M4A). */
+  decoder?: string | null;
   analyzer: string;
   planner: string;
   analysis: { queued: number; running: number; workers: number };

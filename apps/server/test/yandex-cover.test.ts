@@ -37,3 +37,26 @@ it('retries a failed Yandex cover and shares concurrent recovery without downloa
   expect(cover).toHaveBeenCalledTimes(2);
   expect(audio).not.toHaveBeenCalled();
 });
+
+it('returns an imported Yandex track before its cover arrives and saves the cover afterwards', async () => {
+  const row = { id: 'imported', provider: 'yandex', cover_id: null as string | null };
+  let release!: (image: { data: Buffer; type: string }) => void;
+  const added: Record<string, unknown>[] = [];
+  const library = { tracksBySource: () => [], get: () => row, coverPath: () => row.cover_id ? '/cached/cover.jpg' : null,
+    addRemote: vi.fn((input: Record<string, unknown>) => { added.push(input); return { id: row.id }; }),
+    sources: () => [{ kind: 'remote', provider: 'yandex', external_id: '123:10', meta: JSON.stringify({ coverUrl: 'https://avatars.yandex.net/fixture/400x400' }) }],
+    saveCover: vi.fn(async () => 'cover.jpg'), setCover: vi.fn((_id: string, coverId: string) => { row.cover_id = coverId; }) } as unknown as Library;
+  const provider = new YandexProvider({ load: () => ({ secret: { token: 'fixture-token' } }) } as unknown as ProviderStore,
+    library, { dataDir: 'unused', ffmpeg: '', ffprobe: '' } as AppConfig);
+  const internals = provider as unknown as { call: (...args: any[]) => Promise<unknown>;
+    audio: { cover(url: string): Promise<{ data: Buffer; type: string } | null>; prepare: (...args: any[]) => Promise<unknown> } };
+  vi.spyOn(internals, 'call').mockResolvedValue([{ id: '123', title: 'Fixture', durationMs: 180000, available: true,
+    artists: [{ name: 'Fixture' }], albums: [{ id: 10, coverUri: 'avatars.yandex.net/fixture/%%' }] }]);
+  vi.spyOn(internals.audio, 'prepare').mockResolvedValue({ file: 'a.mp3', hash: 'a'.repeat(64), size: 1, bitrate: 320, probe: { duration: 180 } });
+  vi.spyOn(internals.audio, 'cover').mockImplementation(() => new Promise(resolve => { release = resolve; }));
+  expect(await provider.importTrack({ externalId: '123:10', title: '', artist: '', album: '', duration: 0, coverUrl: null, pageUrl: null, license: null, playable: true })).toBe('imported');
+  expect(added[0]).toMatchObject({ coverId: null, meta: { coverUrl: 'https://avatars.yandex.net/fixture/400x400' } });
+  expect(row.cover_id).toBeNull();
+  release({ data: Buffer.from('image'), type: 'image/jpeg' });
+  await vi.waitFor(() => expect(row.cover_id).toBe('cover.jpg'));
+});

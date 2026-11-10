@@ -33,15 +33,18 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
       }
       if (b.kind === 'yandex') {
         const queue = [...excluded].flatMap(id => s.lib.sources(id).filter(src => src.provider === 'yandex' && src.kind === 'remote' && isYandexTrackId(src.external_id ?? '')).map(src => src.external_id!)).slice(-200);
-        const result = await s.providers.yandex.wave(b.yandexSessionId, queue, { count: Math.min(count, 4), exclude: queue, seeds: settings.yandexSeeds });
+        // Two full imports run in parallel; a third would add a second serial round before anything plays.
+        const result = await s.providers.yandex.wave(b.yandexSessionId, queue, { count: Math.min(count, 2), exclude: queue, seeds: settings.yandexSeeds });
         abort.signal.throwIfAborted();
-        const entries = result.items.filter(item => item.trackId && !excluded.has(item.trackId)).slice(0, count).map(item => ({ trackId: item.trackId!, entryId: randomUUID(), origin: 'yandex', yandexId: item.yandexId, yandexSessionId: result.sessionId, yandexBatchId: result.batchId }));
+        const disliked = new Set(s.lib.listDTO().filter(t => t.reaction < 0).map(t => t.id));
+        const entries = result.items.filter(item => item.trackId && !excluded.has(item.trackId) && !disliked.has(item.trackId)).slice(0, count).map(item => ({ trackId: item.trackId!, entryId: randomUUID(), origin: 'yandex', yandexId: item.yandexId, yandexSessionId: result.sessionId, yandexBatchId: result.batchId }));
         if (!entries.length) throw new Error('Пока нет рекомендаций Яндекса');
         return { entries, context: { type: 'yandex-wave', label: 'Моя волна Яндекса' }, yandexSessionId: result.sessionId };
       }
       const library = s.lib.listDTO();
       const history = q(s.db, 'SELECT track_id, started_at FROM plays ORDER BY id DESC LIMIT 200').all() as { track_id: string; started_at: number }[];
       const byId = new Map(library.map(t => [t.id, t]));
+      const recentArtists = [...excluded].flatMap(id => { const t = byId.get(id); return t ? [t.artist] : []; }).slice(-5);
       const seen = new Set<string>();
       for (const id of excluded) {
         const t = byId.get(id); if (t) seen.add(radioIdentity(t));
@@ -57,7 +60,8 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
       const found = resolved.flatMap(r => r.status === 'fulfilled' && r.value ? [r.value] : []);
       const first = resolved[0].status === 'fulfilled' ? resolved[0].value : undefined;
       if (initial && b.seed && !first) throw new Error('Не нашли начальную песню для радио');
-      if (!found.length) throw new Error('Не нашли основу радио');
+      if (!found.length) throw new Error(resolved.every(r => r.status === 'rejected')
+        ? 'YouTube Music не отвечает. Проверьте интернет или VPN и попробуйте снова.' : 'Не нашли основу радио');
       const results = await Promise.allSettled([...new Set(found.map(t => t.externalId))].slice(0, 3).map(id => s.publicMusic.radio(id, abort.signal)));
       abort.signal.throwIfAborted();
       const pool = results.flatMap(r => r.status === 'fulfilled' ? r.value.map(t => ({ ...t, libraryTrackId: t.libraryTrackId ?? null })) : []);
@@ -68,7 +72,7 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
         picks = [first, ...rankRadio([...found.slice(1), ...pool], library, seen, [first.artist], settings, primary)];
       } else {
         for (const t of found) { seen.add(radioIdentity(t)); seen.add(`${t.audioProvider}:${t.externalId}`); }
-        picks = rankRadio(pool, library, seen, [], settings, primary);
+        picks = rankRadio(pool, library, seen, recentArtists, settings, primary);
       }
       if (!picks.length) throw new Error('Пока нет свежих рекомендаций');
       const entries = await Promise.all(picks.slice(0, count).map(async t => ({ trackId: await s.publicMusic.prepareProgressive(t.audioProvider, t.externalId), entryId: randomUUID(), origin: 'wave' })));

@@ -96,34 +96,8 @@ it('hands off more than two upcoming sources and preserves repeat order', async 
   await mix.start({ sampleRate: 48000, position: 0, tracks: [track(0)] });
   const entries = Array.from({ length: 7 }, (_, i) => ({ trackId: `track${i}`, entryId: `entry${i}` }));
   await mix.prepareQueue!(1, entries, 'seed', entries.slice().reverse());
-  expect(handoff.mock.calls[0][0].manifest.items.map(t => t.entryId)).toEqual(entries.map(e => e.entryId));
-  expect(handoff.mock.calls[0][0].manifest.loopItems!.map(t => t.entryId)).toEqual(entries.map(e => e.entryId).reverse());
-});
-it('marks only an explicit replacement as allowed to truncate the native tail', async () => {
-  const handoff = vi.fn(async () => state), hooks = sourceHooks();
-  const mix = createNativeMix({ ...port(), nativeSourceReserve: reserve, nativeSourceAppend: vi.fn(), nativePrepareQueue: handoff }, hooks);
-  await mix.start({ sampleRate: 48000, position: 0, tracks: [track(0)] });
-  const entries = Array.from({ length: 74 }, (_, i) => ({ trackId: `t${i}`, entryId: `e${i}` }));
-  await mix.prepareQueue!(1, entries, 'seed');
-  await mix.prepareQueue!(2, entries.slice(1, 3), 't0'); // Restored/partial page list.
-  await mix.prepareQueue!(2, [], 't0', [], undefined, true); // Listener cleared upcoming.
-  expect(handoff.mock.calls.map(([o]) => [o.manifest.from, o.manifest.items.length, o.manifest.replaceFuture]))
-    .toEqual([[1, 74, false], [2, 2, false], [2, 0, true]]);
-});
-it('keeps distinct transition contexts for the same entry in the queue and repeat loop', async () => {
-  const handoff = vi.fn(async () => state), sources = vi.fn(async entries => ({
-    items: entries.map(e => ({ ...e, title: e.trackId, artist: '', duration: 180, mixingAllowed: true,
-      source: { kind: 'direct' as const, url: 'https://audio.test/song.mp3' } })),
-    previous: { trackId: 'seed', duration: 180, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS,
-  }));
-  const mix = createNativeMix({ ...port(), nativeSourceReserve: async ({ count }) => ({ keys: Array.from({ length: count }, (_, i) => i) }),
-    nativeSourceAppend: vi.fn(), nativePrepareQueue: handoff }, { prepare: async () => {}, restore: () => {}, sources });
-  const first = { trackId: 'b', entryId: 'same', fromEntryId: 'a', transitionContext: { playlistId: 'p', fromItemId: 1, toItemId: 2 } };
-  const loop = { trackId: 'b', entryId: 'same' };
-  await mix.prepareQueue!(1, [first], 'seed', [loop]);
-  expect(sources.mock.calls[0][0]).toHaveLength(2);
-  expect(handoff.mock.calls[0][0].manifest.items[0]).toMatchObject({ fromEntryId: 'a', transitionContext: first.transitionContext });
-  expect(handoff.mock.calls[0][0].manifest.loopItems![0]).not.toHaveProperty('fromEntryId');
+  expect(handoff.mock.calls.at(-1)![0].manifest.items.map(t => t.entryId)).toEqual(entries.map(e => e.entryId));
+  expect(handoff.mock.calls.at(-1)![0].manifest.loopItems!.map(t => t.entryId)).toEqual(entries.map(e => e.entryId).reverse());
 });
 it('rebinds a running session before editing its manifest after WebContent reload', async () => {
   const begin = vi.fn(async () => ({ id: 'existing-owner' })), handoff = vi.fn(async () => state), stop = vi.fn();
@@ -207,6 +181,30 @@ it('keeps the playing queue when a replacement start fails', async () => {
   await expect(mix.start({ sampleRate: 48000, position: 0, tracks: [track(1)] })).rejects.toThrow('invalid');
   expect(stop).not.toHaveBeenCalled();
 });
+
+it('hands over only the entries the server kept and reports the dropped ones', async () => {
+  const handoff = vi.fn(async () => state);
+  const mix = createNativeMix({ ...port(), nativeSourceReserve: reserve, nativeSourceAppend: vi.fn(), nativePrepareQueue: handoff }, {
+    prepare: async () => {}, restore: () => {}, sources: async entries => ({
+      items: entries.filter(e => e.entryId !== 'entry1').map(e => ({ ...e, title: e.trackId, artist: '', duration: 180, mixingAllowed: true,
+        source: { kind: 'direct' as const, url: 'https://audio.test/song.mp3' } })),
+      previous: { trackId: 'seed', duration: 180, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS }),
+  });
+  await mix.start({ sampleRate: 48000, position: 0, tracks: [track(0)] });
+  const entries = Array.from({ length: 3 }, (_, i) => ({ trackId: `track${i}`, entryId: `entry${i}` }));
+  const result = await mix.prepareQueue!(1, entries, 'seed');
+  expect(handoff.mock.calls.at(-1)![0].manifest.items.map(t => t.entryId)).toEqual(['entry0', 'entry2']);
+  expect(result.dropped).toEqual(['entry1']);
+});
+it('rejects a manifest with reordered or foreign items', async () => {
+  const hooks = sourceHooks();
+  hooks.sources.mockImplementation(async entries => ({ items: entries.slice().reverse().map(e => ({ ...e, title: '', artist: '', duration: 3, mixingAllowed: true,
+    source: { kind: 'direct' as const, url: 'https://audio.test/song.mp3' } })), previous: { trackId: 'a', duration: 3, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS }));
+  const mix = createNativeMix({ ...port(), nativeSourceReserve: reserve, nativeSourceAppend: vi.fn(), nativePrepareQueue: vi.fn(async () => state) }, hooks);
+  await mix.start({ sampleRate: 48000, position: 0, tracks: [track(0)] });
+  const entries = [0, 1].map(i => ({ trackId: `track${i}`, entryId: `entry${i}` }));
+  await expect(mix.prepareQueue!(1, entries, 'seed')).rejects.toThrow('Изменилась запись');
+});
 it('shares one levels listener and tells Swift to compute only while subscribed', async () => {
   const remove = vi.fn(async () => {}), levels = vi.fn(async () => {});
   let emit!: (e: { rms: number; bands: number[] }) => void;
@@ -217,4 +215,52 @@ it('shares one levels listener and tells Swift to compute only while subscribed'
   emit({ rms: .5, bands: [1] }); expect(a).toHaveBeenCalledWith({ rms: .5, bands: [1] }); expect(b).toHaveBeenCalledTimes(1);
   stopA(); expect(levels).toHaveBeenCalledTimes(1);
   stopB(); await vi.waitFor(() => expect(remove).toHaveBeenCalled()); expect(levels).toHaveBeenLastCalledWith({ on: false });
+});
+
+it('hands the first songs over before resolving the tail, including lists larger than 1000', async () => {
+  const handoff = vi.fn(async () => state);
+  let release!: () => void, calls = 0, file = 0;
+  const tail = new Promise<void>(resolve => { release = resolve; });
+  const mix = createNativeMix({ ...port(), nativeSourceReserve: async ({ count }) => ({ keys: Array.from({ length: count }, () => file++) }),
+    nativeSourceAppend: vi.fn(), nativePrepareQueue: handoff }, {
+    prepare: async () => {}, restore: () => {}, sources: async entries => {
+      if (++calls === 2) await tail;
+      expect(entries.length).toBeLessThanOrEqual(32);
+      return { items: entries.map(e => ({ ...e, title: '', artist: '', duration: 180, mixingAllowed: true,
+        source: { kind: 'direct' as const, url: 'https://audio.test/song.mp3' } })),
+        previous: { trackId: 'seed', duration: 180, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS };
+    },
+  });
+  await mix.start({ sampleRate: 48000, position: 0, tracks: [track(0)] });
+  const entries = Array.from({ length: 1005 }, (_, i) => ({ trackId: 't' + i, entryId: 'e' + i }));
+  const job = mix.prepareQueue!(1, entries, 'seed');
+  await vi.waitFor(() => expect(handoff).toHaveBeenCalledOnce());
+  expect(handoff.mock.calls[0][0].manifest.items.map(t => t.entryId)).toEqual(['e0', 'e1']);
+  release(); await job;
+  expect(handoff.mock.calls.at(-1)![0].manifest.items.map(t => t.entryId)).toEqual(entries.map(e => e.entryId));
+});
+
+it('keeps earlier uploads alive during queue edits and bounds metadata over all batches', async () => {
+  let key = 0;
+  const handoff = vi.fn(async () => state);
+  const mix = createNativeMix({ ...port(), nativeSourceReserve: async ({ count }) => ({ keys: Array.from({ length: count }, () => key++) }),
+    nativeSourceAppend: vi.fn(), nativePrepareQueue: handoff }, {
+    prepare: async () => {}, restore: () => {},
+    sourceFile: async () => new Response(new Uint8Array([1, 2, 3]), { status: 206, headers: { 'Content-Range': 'bytes 0-2/3', 'X-Native-Length': '3' } }),
+    sources: async entries => ({ items: entries.map(e => ({ ...e, title: e.trackId, artist: '', duration: 180, mixingAllowed: true,
+      source: { kind: 'upload' as const, trackId: e.trackId }, analysis: { data: 'x'.repeat(750000) } as any,
+      artwork: { base64: 'A'.repeat(500000), mime: 'image/png' } })), previous: { trackId: 'seed', duration: 180, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS }),
+  });
+  await mix.start({ sampleRate: 48000, position: 0, tracks: [track(0)] });
+  const entries = Array.from({ length: 6 }, (_, i) => ({ trackId: 't' + i, entryId: 'e' + i }));
+  await mix.prepareQueue!(1, entries, 'seed');
+  const final = handoff.mock.calls.at(-1)![0].manifest;
+  const metadata = final.items.reduce((sum, item) => sum + (item.analysis ? JSON.stringify(item.analysis).length : 0) + (item.artwork?.base64.length ?? 0), 0);
+  expect(metadata).toBeLessThanOrEqual(4 * 1024 * 1024);
+  expect(final.items).toHaveLength(6);
+  handoff.mockClear();
+  await mix.prepareQueue!(1, entries.slice().reverse(), 'seed', [], undefined, true);
+  expect(handoff.mock.calls[0][0].manifest.retainedSources).toHaveLength(6);
+  expect(handoff.mock.calls.at(-1)![0].manifest.retainedSources).toEqual([]);
+  expect(handoff.mock.calls.at(-1)![0].manifest.items.map(item => item.entryId)).toEqual(entries.map(e => e.entryId).reverse());
 });

@@ -1,3 +1,4 @@
+import { networkFetch as fetch } from '../rust-network.ts';
 import { normalize, versionLabels, matchConfidence } from './match.ts';
 import { SharedPreparation } from './shared-preparation.ts';
 import { parseDuration, radioYtm, requestYtm, type YtmItem } from './ytmusic.ts';

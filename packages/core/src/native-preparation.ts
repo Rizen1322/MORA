@@ -25,6 +25,8 @@ export interface NativePreparationItem {
 }
 export interface NativePreparationManifest {
   replaceFuture?: boolean;
+  /** Source uploads kept alive until a progressive handoff reaches its final batch. */
+  retainedSources?: number[];
   from: number;
   items: NativePreparationItem[];
   loopItems?: NativePreparationItem[];

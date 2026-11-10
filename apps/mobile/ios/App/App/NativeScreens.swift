@@ -1,0 +1,648 @@
+import SwiftUI
+import UIKit
+
+/// Native screens of the shell (NativeShell.swift). They link to other sections through the page's router;
+/// the page-described ones (albums, playlists, settings…) are drawn by NativePages.swift, the rest stay web.
+
+// MARK: Home
+
+struct NativeHomeView: View {
+    @EnvironmentObject private var store: NativeShellStore
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    header
+                    NativeWaveHero(wave: store.ui.wave)
+                    tiles
+                    if store.ui.loaded && store.library.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Добавьте свою музыку").font(.title3.bold())
+                            Text("Импортируйте файлы или плейлист, либо найдите музыку в поиске.").foregroundStyle(.white.opacity(0.65))
+                            Button("Импорт") { store.go("/import") }.buttonStyle(.borderedProminent).frame(minHeight: 44)
+                        }
+                    }
+                    rail("Недавно добавленные", Array(store.library.prefix(16)), type: "library", all: "/library")
+                    rail("Любимое", Array(store.liked.prefix(16)), type: "liked", all: "/liked")
+                    if !store.playlists.isEmpty { playlists }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.moraBackground)
+            .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide).locale(Locale(identifier: "ru_RU"))))
+                    .font(.subheadline.weight(.medium)).foregroundStyle(.white.opacity(0.6))
+                Text(NativeText.greeting(hour: Calendar.current.component(.hour, from: .now)))
+                    .font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
+            }
+            Spacer()
+            Button { store.go("/more") } label: {
+                Image(systemName: "person.crop.circle").font(.title2).frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("Профиль и настройки")
+        }
+    }
+
+    private var tiles: some View {
+        let items: [(String, String, String, Bool)] = [("/liked", "Любимое", "heart.fill", false), ("/downloads", "Загрузки", "arrow.down.circle.fill", false),
+                                                      ("/history", "История", "clock.arrow.circlepath", true), ("/import", "Импорт", "square.and.arrow.down.fill", true)]
+        return HStack(alignment: .top, spacing: 8) {
+            ForEach(items, id: \.0) { item in
+                Button { store.go(item.0) } label: {
+                    VStack(spacing: 6) {
+                        Image(systemName: item.2).font(.title3)
+                            .foregroundStyle(item.3 ? Color.moraGold : Color.moraMint)
+                            .frame(width: 56, height: 56)
+                            .background((item.3 ? Color.moraGold : Color.moraMint).opacity(0.14), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        Text(item.1).font(.caption.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
+    @ViewBuilder private func rail(_ title: String, _ tracks: [NativeTrack], type: String, all: String) -> some View {
+        if !tracks.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(title).font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                    Spacer()
+                    Button("Показать все") { store.go(all) }.font(.subheadline.weight(.medium)).frame(minHeight: 44)
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(alignment: .top, spacing: 12) {
+                        ForEach(Array(tracks.enumerated()), id: \.element.id) { i, t in
+                            Button { store.play(tracks, at: i, type: type, label: title) } label: {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    NativeCover(url: t.cover, size: 140, radius: 12)
+                                    Text(t.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                                    Text(t.artist).font(.caption).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                                }
+                                .frame(width: 140, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityHint("Играть")
+                            .contextMenu { NativeTrackActions(track: t, play: { store.play(tracks, at: i, type: type, label: title) }) }
+                        }
+                    }
+                }
+                .scrollClipDisabled()
+            }
+        }
+    }
+
+    private var playlists: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Плейлисты").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 12) {
+                    ForEach(store.playlists) { p in
+                        Button { store.go("/playlist/\(p.id)") } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                NativeCover(url: p.cover, size: 140, radius: 12)
+                                Text(p.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                                Text(NativeText.tracks(p.count)).font(.caption).foregroundStyle(.white.opacity(0.6))
+                            }
+                            .frame(width: 140, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+            .scrollClipDisabled()
+        }
+    }
+}
+
+/// «Моя волна»: source switch (Коллекция / Радио / Яндекс) and Play, as the web Home hero.
+struct NativeWaveHero: View {
+    let wave: NativeWave
+    @EnvironmentObject private var store: NativeShellStore
+
+    var body: some View {
+        let selected = store.waveSource.flatMap { wave.sources.contains($0) ? $0 : nil } ?? wave.preferred
+        let button = wave.button(selected)
+        VStack(alignment: .leading, spacing: 14) {
+            (Text("Моя волна") + Text(".").foregroundColor(.moraMint)).font(.title.bold()).accessibilityAddTraits(.isHeader)
+            Text("Знакомое, любимое и то, что ещё предстоит открыть.").foregroundStyle(.white.opacity(0.7))
+            Picker("Источник волны", selection: Binding(get: { selected }, set: { store.waveSource = $0 })) {
+                ForEach(wave.sources, id: \.self) { s in
+                    Text(s == .own ? "Коллекция" : s == .online ? "Радио" : "Яндекс").tag(s)
+                }
+            }
+            .pickerStyle(.segmented)
+            HStack(spacing: 10) {
+                Button { store.run("wave", ["source": selected.rawValue]) } label: {
+                    Label(button.title, systemImage: button.symbol).font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .foregroundStyle(Color.moraBackground)
+                        .background(Color.moraMint.opacity(button.enabled ? 1 : 0.4), in: Capsule())
+                }
+                .disabled(!button.enabled)
+                Button { store.waveSource = selected; store.go("/wave") } label: {
+                    Image(systemName: "slider.horizontal.3").font(.headline).frame(width: 50, height: 50)
+                        .background(.white.opacity(0.1), in: Circle())
+                }
+                .accessibilityLabel("Настроить волну").accessibilityIdentifier("wave.settings")
+            }
+            if let error = wave.error, !error.isEmpty {
+                Text(error).font(.footnote).foregroundStyle(Color(red: 1, green: 0.55, blue: 0.5))
+            }
+        }
+        .padding(20)
+        .background {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(LinearGradient(colors: [Color(red: 0.10, green: 0.30, blue: 0.21), Color(red: 0.04, green: 0.11, blue: 0.08)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.moraMint.opacity(0.18)))
+        }
+        .onChange(of: wave.active) { _, active in if active != nil { store.waveSource = nil } } // follow what plays now
+    }
+}
+
+// MARK: Library and liked tracks
+
+struct NativeTrackListView: View {
+    let title: String
+    let type: String
+    let tracks: [NativeTrack]
+    @EnvironmentObject private var store: NativeShellStore
+    @State private var query = ""
+
+    var body: some View {
+        let shown = NativeSearchText.filter(tracks, query)
+        NavigationStack {
+            List {
+                if !store.ui.loaded {
+                    ProgressView().frame(maxWidth: .infinity).listRowBackground(Color.clear)
+                } else if shown.isEmpty {
+                    let liked = type == "liked"
+                    let title: String = !query.isEmpty ? "Ничего не найдено" : liked ? "Пока ничего любимого" : "Медиатека пуста"
+                    let hint: String = !query.isEmpty ? "Попробуйте другой запрос." : liked ? "Отмечайте треки сердцем — они соберутся здесь." : "Добавьте музыку через импорт или поиск."
+                    ContentUnavailableView(title, systemImage: liked ? "heart" : "music.note.list", description: Text(hint))
+                        .listRowBackground(Color.clear)
+                } else {
+                    Section {
+                        ForEach(Array(shown.enumerated()), id: \.element.id) { i, t in
+                            NativeTrackRow(track: t) { store.play(shown, at: i, type: type, label: title) }
+                        }
+                    } header: {
+                        Text(NativeText.tracks(shown.count)).font(.footnote).foregroundStyle(.white.opacity(0.55))
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color.moraBackground)
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Название, исполнитель, альбом")
+            .navigationTitle(title)
+            .toolbar {
+                if type == "library" {
+                    Menu {
+                        Button("Альбомы") { store.go("/library/albums") }
+                        Button("Исполнители") { store.go("/library/artists") }
+                        Button("Плейлисты") { store.go("/library/playlists") }
+                    } label: {
+                        Image(systemName: "square.stack").frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Разделы медиатеки")
+                }
+            }
+        }
+    }
+}
+
+struct NativeTrackRow: View {
+    let track: NativeTrack
+    let play: () -> Void
+    /// A page's own action for the row (remove from a playlist, delete a download).
+    var remove: (title: String, symbol: String, run: () -> Void)? = nil
+    @EnvironmentObject private var store: NativeShellStore
+
+    var body: some View {
+        Button(action: play) {
+            HStack(spacing: 12) {
+                NativeCover(url: track.cover, size: 48)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(track.title).font(.body.weight(.medium)).lineLimit(1)
+                    Text(track.artist).font(.subheadline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                if track.liked {
+                    Image(systemName: "heart.fill").font(.caption).foregroundStyle(Color.moraMint).accessibilityHidden(true)
+                }
+                Text(NativePlayerTime.text(track.duration)).font(.footnote.monospacedDigit()).foregroundStyle(.white.opacity(0.5))
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: 56)
+            .contentShape(Rectangle())
+            .opacity(track.ok ? 1 : 0.45)
+        }
+        .buttonStyle(.plain)
+        .disabled(!track.ok)
+        .listRowBackground(Color.clear)
+        .accessibilityLabel("\(track.title), \(track.artist)\(track.liked ? ", в любимом" : "")")
+        .accessibilityValue(NativePlayerTime.text(track.duration))
+        .accessibilityHint(track.ok ? "Играть" : "Файл недоступен")
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button { store.queue(track, next: true) } label: { Label("Следующим", systemImage: "text.line.first.and.arrowtriangle.forward") }
+                .tint(.moraMint)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button { store.queue(track, next: false) } label: { Label("В очередь", systemImage: "text.append") }
+                .tint(.indigo)
+            Button { store.react(track, track.liked ? 0 : 1) } label: {
+                Label(track.liked ? "Убрать" : "Нравится", systemImage: track.liked ? "heart.slash" : "heart")
+            }
+            .tint(.moraGold)
+        }
+        .contextMenu {
+            NativeTrackActions(track: track, play: play)
+            if let remove {
+                Divider()
+                Button(role: .destructive, action: remove.run) { Label(remove.title, systemImage: remove.symbol) }
+            }
+        }
+        .accessibilityAction(named: "Играть следующим") { store.queue(track, next: true) }
+        .accessibilityAction(named: "Добавить в очередь") { store.queue(track, next: false) }
+        .accessibilityAction(named: track.liked ? "Убрать из любимого" : "Нравится") { store.react(track, track.liked ? 0 : 1) }
+    }
+}
+
+struct NativeTrackActions: View {
+    let track: NativeTrack
+    let play: () -> Void
+    @EnvironmentObject private var store: NativeShellStore
+
+    var body: some View {
+        Button(action: play) { Label("Играть", systemImage: "play") }.disabled(!track.ok)
+        Button { store.queue(track, next: true) } label: { Label("Играть следующим", systemImage: "text.line.first.and.arrowtriangle.forward") }.disabled(!track.ok)
+        Button { store.queue(track, next: false) } label: { Label("Добавить в очередь", systemImage: "text.append") }.disabled(!track.ok)
+        Divider()
+        Button { store.react(track, track.liked ? 0 : 1) } label: {
+            Label(track.liked ? "Убрать из любимого" : "Нравится", systemImage: track.liked ? "heart.slash" : "heart")
+        }
+        Button { store.react(track, track.reaction < 0 ? 0 : -1) } label: {
+            Label(track.reaction < 0 ? "Убрать «Не нравится»" : "Не нравится", systemImage: "hand.thumbsdown")
+        }
+        Divider()
+        // The page's version picker takes over the screen (lib/native-ui.ts `versions`); the shell steps aside.
+        Button { store.run("versions", ["id": track.id]) } label: { Label("Заменить трек", systemImage: "arrow.triangle.swap") }
+        if !track.album.isEmpty {
+            Button { store.run("open", ["id": track.id, "to": "album"]) } label: { Label("Перейти к альбому", systemImage: "square.stack") }
+        }
+        Button { store.run("open", ["id": track.id, "to": "artist"]) } label: { Label("Перейти к исполнителю", systemImage: "music.mic") }
+    }
+}
+
+// MARK: Search
+
+/// Catalog search: the collection, YouTube Music and SoundCloud (the web /search page, without its extras).
+struct NativeSearchView: View {
+    private static let publicSources = ["ytmusic", "youtube", "soundcloud"]
+    @EnvironmentObject private var store: NativeShellStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var scope = "all"
+    @State private var results: [String: NativeSearchResults] = [:]
+    @State private var errors: [String: String] = [:]
+    @State private var searching: Set<String> = []
+    @State private var recent = UserDefaults.standard.stringArray(forKey: "mora.nativeSearchRecent") ?? []
+    @State private var busy = false
+    @State private var failure: String?
+    private var query: String { store.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var source: String { store.searchSource }
+    private var key: String { query + "|" + source + "|" + scope }
+    private var sources: [String] { source == "all" ? Self.publicSources + (store.ui.wave.yandex ? ["yandex"] : []) : source == "local" ? [] : [source] }
+    private var local: [NativeTrack] { query.isEmpty ? [] : NativeSearchText.filter(store.library, query) }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                filters
+                if let title = store.ui.preparing {
+                    HStack {
+                        ProgressView()
+                        Text("Подготавливаем «\(title)»…").font(.subheadline)
+                        Spacer()
+                        Button("Отмена") { store.run("searchCancel") }
+                    }.listRowBackground(Color.clear)
+                }
+                if query.isEmpty { history }
+                if source == "yandex" && !store.ui.wave.yandex {
+                    ContentUnavailableView("Подключите Яндекс Музыку", systemImage: "music.note", description: Text("Войдите в аккаунт для поиска по каталогу."))
+                    Button("Подключить") { store.go("/sources") }
+                } else {
+                    if !query.isEmpty && (source == "all" || source == "local") { localSection }
+                    ForEach(sources, id: \.self) { value in
+                        if !query.isEmpty || source == "yandex" { remoteSection(value) }
+                    }
+                }
+            }
+            .listStyle(.plain).scrollContentBackground(.hidden).background(Color.moraBackground)
+            .scrollDismissesKeyboard(.interactively)
+            .searchable(text: $store.searchQuery, placement: .navigationBarDrawer(displayMode: .always), prompt: "Исполнитель, трек, альбом или ссылка")
+            .autocorrectionDisabled().textInputAutocapitalization(.never).submitLabel(.search)
+            .onSubmit(of: .search) { remember() }
+            .navigationTitle(source == "yandex" ? "Яндекс Музыка" : "Поиск")
+            .task(id: key) { await search() }
+            .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: source)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: scope)
+            .onChange(of: store.searchQuery) { _, value in if value.count > 200 { store.searchQuery = String(value.prefix(200)) } }
+            .alert("Не удалось выполнить", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(failure ?? "") }
+        }
+    }
+    private static func title(_ value: String) -> String {
+        switch value {
+        case "all": return "Все источники"
+        case "local": return "Моя музыка"
+        case "ytmusic": return "YouTube Music"
+        case "youtube": return "YouTube"
+        case "soundcloud": return "SoundCloud"
+        default: return "Яндекс Музыка"
+        }
+    }
+    private var filters: some View {
+        Section {
+            Picker("Где искать", selection: $store.searchSource) {
+                ForEach(["all", "local"] + Self.publicSources + ["yandex"], id: \.self) { value in Text(Self.title(value)).tag(value) }
+            }.accessibilityIdentifier("search.source")
+            if source == "yandex" {
+                Picker("Что искать", selection: $scope) {
+                    Text("Всё").tag("all"); Text("Треки").tag("track"); Text("Артисты").tag("artist"); Text("Альбомы").tag("album")
+                }.pickerStyle(.segmented).accessibilityIdentifier("search.scope")
+            }
+        }.listRowBackground(Color.clear)
+    }
+    @ViewBuilder private var history: some View {
+        if recent.isEmpty && source != "yandex" {
+            ContentUnavailableView("Найдите свою музыку", systemImage: "magnifyingglass", description: Text("Поиск по медиатеке, YouTube Music, YouTube, SoundCloud и Яндексу. Можно вставить ссылку на трек."))
+                .listRowBackground(Color.clear)
+        } else if !recent.isEmpty {
+            Section {
+                ForEach(recent, id: \.self) { text in
+                    Button { store.searchQuery = text } label: { Label(text, systemImage: "clock").frame(minHeight: 36) }
+                        .swipeActions { Button("Удалить", role: .destructive) { recent.removeAll { $0 == text }; saveRecent() } }
+                }
+            } header: {
+                HStack { Text("Недавно искали"); Spacer(); Button("Очистить") { recent = []; saveRecent() } }
+            }
+        }
+    }
+    private var localSection: some View {
+        let matches = local
+        return Section("Моя музыка") {
+            if matches.isEmpty { Text("Ничего не найдено").foregroundStyle(.secondary) }
+            ForEach(Array(matches.prefix(source == "all" ? 4 : matches.count).enumerated()), id: \.element.id) { index, track in
+                NativeTrackRow(track: track) { remember(); store.play(matches, at: index, type: "search", label: query) }
+            }
+            if source == "all" && matches.count > 4 { Button("Все треки медиатеки") { store.searchSource = "local" } }
+        }
+    }
+    private func remoteSection(_ value: String) -> some View {
+        Section(Self.title(value)) {
+            if let error = errors[value] {
+                Text(error).font(.footnote).foregroundStyle(.secondary)
+                Button("Повторить") { retry(value) }
+            }
+            if searching.contains(value) { ProgressView("Ищем…").frame(maxWidth: .infinity).listRowBackground(Color.clear) }
+            if let found = results[value] {
+                if found.isEmpty && !searching.contains(value) { Text("Ничего не найдено").foregroundStyle(.secondary) }
+                ForEach(Array(found.artists.prefix(source == "all" ? 4 : found.artists.count))) { item in linkRow(item, symbol: "music.mic") }
+                ForEach(Array(found.albums.prefix(source == "all" ? 4 : found.albums.count))) { item in linkRow(item, symbol: "square.stack") }
+                ForEach(Array(found.tracks.prefix(source == "all" ? 6 : found.tracks.count))) { item in hitRow(item, source: value, session: found.session) }
+                if source == "all" && (!found.artists.isEmpty || !found.albums.isEmpty || found.tracks.count > 6) {
+                    Button("Все результаты · " + Self.title(value)) { store.searchSource = value }
+                } else if source == "yandex" && found.more {
+                    Button("Показать ещё") { retry(value, more: true) }.disabled(searching.contains(value))
+                }
+            }
+        }
+    }
+    private func linkRow(_ item: NativeSearchLink, symbol: String) -> some View {
+        Button { remember(); store.go(item.path) } label: {
+            HStack(spacing: 12) {
+                NativeCover(url: item.cover, size: 48, radius: symbol == "music.mic" ? 24 : 8)
+                VStack(alignment: .leading, spacing: 3) { Text(item.title).fontWeight(.medium); Text(item.detail).font(.caption).foregroundStyle(.secondary) }
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+            }.frame(minHeight: 56)
+        }.buttonStyle(.plain).listRowBackground(Color.clear)
+    }
+    private func hitRow(_ hit: NativeSearchHit, source: String, session: String) -> some View {
+        let track = hit.track
+        return Button { act("play", track: track, source: source, session: session) } label: {
+            HStack(spacing: 12) {
+                NativeCover(url: track.cover, size: 48, radius: 8)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 5) { Text(track.title).font(.body.weight(.medium)).lineLimit(1); if hit.explicit { Text("E").font(.caption2.bold()).foregroundStyle(.secondary) } }
+                    Text(track.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    if !hit.tags.isEmpty { Text(hit.tags).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
+                }
+                Spacer(minLength: 0)
+                if track.liked { Image(systemName: "heart.fill").font(.caption).foregroundStyle(Color.moraMint) }
+                if hit.saved { Image(systemName: "checkmark").font(.caption).foregroundStyle(.secondary) }
+                Text(NativePlayerTime.text(track.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            }.frame(minHeight: 56).contentShape(Rectangle()).opacity(track.ok ? 1 : 0.45)
+        }
+        .buttonStyle(.plain).disabled(!track.ok || busy).listRowBackground(Color.clear)
+        .contextMenu {
+            actionButton("Играть следующим", "text.line.first.and.arrowtriangle.forward", "next", track, source, session)
+            actionButton("В очередь", "text.append", "queue", track, source, session)
+            actionButton(track.liked ? "Убрать лайк" : "Нравится", "heart", "like", track, source, session)
+            actionButton(track.reaction < 0 ? "Убрать дизлайк" : "Не нравится", "hand.thumbsdown", "dislike", track, source, session)
+            if !hit.saved { actionButton("Сохранить в медиатеку", "plus", "save", track, source, session) }
+            if !store.playlists.isEmpty {
+                Menu("В плейлист", systemImage: "music.note.list") {
+                    ForEach(store.playlists) { playlist in Button(playlist.name) { act("playlist", track: track, source: source, session: session, playlist: playlist.id) } }
+                }
+            }
+            actionButton("Скачать", "arrow.down.circle", "download", track, source, session)
+            actionButton("Другая версия", "arrow.triangle.swap", "versions", track, source, session)
+            actionButton("Исполнитель", "music.mic", "artist", track, source, session)
+            if !track.album.isEmpty { actionButton("Альбом", "square.stack", "album", track, source, session) }
+            actionButton("Радио по треку", "dot.radiowaves.left.and.right", "radio", track, source, session)
+        }
+        .swipeActions(edge: .leading) { actionButton("Следующим", "text.line.first.and.arrowtriangle.forward", "next", track, source, session).tint(.moraMint) }
+        .swipeActions(edge: .trailing) { actionButton(track.liked ? "Убрать лайк" : "Нравится", "heart", "like", track, source, session).tint(.moraGold) }
+        .accessibilityLabel(track.title + ", " + track.artist)
+    }
+    private func actionButton(_ title: String, _ symbol: String, _ kind: String, _ track: NativeTrack, _ source: String, _ session: String) -> some View {
+        Button { act(kind, track: track, source: source, session: session) } label: { Label(title, systemImage: symbol) }
+    }
+    private func act(_ kind: String, track: NativeTrack, source: String, session: String, playlist: String? = nil) {
+        guard !busy else { return }
+        remember(); busy = true
+        let requested = key, origin = store.path
+        Task { @MainActor in
+            defer { busy = false }
+            do {
+                var args: [String: Any] = ["kind": kind, "id": track.id, "session": session]
+                if let playlist { args["playlist"] = playlist }
+                let value = try await store.call("searchAction", args, timeout: 180) as? [String: Any]
+                guard key == requested, store.path == origin else { return }
+                if let path = value?["go"] as? String { store.go(path) }
+                if let id = value?["versions"] as? String { store.presentVersions(id: id) }
+                if ["like", "dislike", "save", "playlist"].contains(kind) { await load(source, key: key) }
+            } catch { failure = Self.message(error) }
+        }
+    }
+    private func remember() {
+        guard !query.isEmpty else { return }
+        recent = [query] + Array(recent.filter { $0 != query }.prefix(11)); saveRecent()
+    }
+    private func saveRecent() { UserDefaults.standard.set(recent, forKey: "mora.nativeSearchRecent") }
+    private func retry(_ source: String, more: Bool = false) { Task { @MainActor in await load(source, key: key, more: more) } }
+    @MainActor private func search() async {
+        results = [:]; errors = [:]; searching = []
+        guard !query.isEmpty || source == "yandex", source != "local", source != "yandex" || store.ui.wave.yandex else { return }
+        do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+        let requested = key
+        await withTaskGroup(of: Void.self) { group in
+            for source in sources { group.addTask { @MainActor in await load(source, key: requested) } }
+        }
+    }
+    @MainActor private func load(_ source: String, key requested: String, more: Bool = false) async {
+        guard key == requested, !searching.contains(source) else { return }
+        searching.insert(source); errors[source] = nil
+        defer { if key == requested && !Task.isCancelled { searching.remove(source) } }
+        do {
+            var args: [String: Any] = ["source": source, "q": query, "scope": source == "yandex" ? scope : "all", "more": more]
+            if more { args["session"] = results[source]?.session }
+            let value = try await store.call("search", args, timeout: 60)
+            guard key == requested, !Task.isCancelled else { return }
+            guard let found = NativeSearchResults(value) else { throw NativeShellError.page }
+            results[source] = found
+        } catch { if key == requested && !Task.isCancelled { errors[source] = Self.message(error) } }
+    }
+    private static func message(_ error: Error) -> String { (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription }
+}
+
+// MARK: «Ещё»
+
+/// Grouped list of the app's other sections (native pages, NativePages.swift).
+struct NativeMoreView: View {
+    @EnvironmentObject private var store: NativeShellStore
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Музыка") {
+                    link("/wave", "Моя волна", "Бесконечный поток под ваше настроение", "waveform")
+                    link("/history", "История", "Что звучало и как сменялись треки", "clock.arrow.circlepath")
+                    link("/downloads", "Загрузки", "Музыка на этом iPhone", "arrow.down.circle")
+                    link("/import", "Импорт", "Плейлисты из Spotify, Apple Music, YouTube", "square.and.arrow.down")
+                }
+                if !store.playlists.isEmpty {
+                    Section("Плейлисты") {
+                        ForEach(store.playlists) { p in link("/playlist/\(p.id)", p.name, NativeText.tracks(p.count), "music.note.list") }
+                    }
+                }
+                Section("Приложение") {
+                    link("/sources", "Источники музыки", "Файлы, серверы и Яндекс Музыка", "powerplug")
+                    link("/settings", "Настройки", "Переходы, громкость и офлайн", "gearshape")
+                    link("/diagnostics", "Диагностика AutoMix", "Всё ли в порядке со звуком и переходами", "waveform.path.ecg")
+                }
+                Section {
+                    Button { store.setShown(false) } label: {
+                        Label("Перейти на веб-интерфейс", systemImage: "globe").frame(minHeight: 44)
+                    }
+                } footer: {
+                    Text("Вернуть нативный интерфейс можно в «Ещё» веб-версии.\nMORA \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
+                }
+            }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(Color.moraBackground)
+            .navigationTitle("Ещё")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { store.go("/") } label: { Label("Главная", systemImage: "chevron.backward") }
+                        .accessibilityLabel("Назад, на главную")
+                }
+            }
+        }
+    }
+
+    private func link(_ path: String, _ title: String, _ hint: String, _ symbol: String) -> some View {
+        Button { store.go(path) } label: {
+            HStack(spacing: 14) {
+                Image(systemName: symbol).font(.body.weight(.semibold)).foregroundStyle(Color.moraMint).frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).foregroundStyle(.white)
+                    Text(hint).font(.footnote).foregroundStyle(.white.opacity(0.55))
+                }
+                Spacer()
+                Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.35))
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(hint)
+        .listRowBackground(Color.white.opacity(0.06))
+    }
+}
+
+
+struct NativeLibraryView: View {
+    @EnvironmentObject private var store: NativeShellStore
+    private var likedArtists: [NativeTrack] {
+        var seen = Set<String>()
+        return store.liked.filter { !$0.artist.isEmpty && seen.insert($0.artist).inserted }
+            .sorted { $0.artist.localizedCaseInsensitiveCompare($1.artist) == .orderedAscending }
+    }
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    destination("Любимое", "heart", "/liked")
+                    destination("Плейлисты", "music.note.list", "/library/playlists")
+                    destination("Артисты", "music.mic", "/library/artists")
+                    destination("Альбомы", "square.stack", "/library/albums")
+                    destination("Песни", "music.note", "/library/tracks")
+                    destination("Загруженные", "arrow.down.circle", "/downloads")
+                }
+                if !store.liked.isEmpty {
+                    Section("Артисты любимых треков") {
+                        ForEach(likedArtists) { track in
+                            Button { store.run("open", ["id": track.id, "to": "artist"]) } label: {
+                                Label(track.artist, systemImage: "music.mic")
+                            }.listRowBackground(Color.clear)
+                        }
+                    }
+                }
+                Section("Недавно добавлено") {
+                    ForEach(Array(store.library.prefix(8).enumerated()), id: \.element.id) { index, track in
+                        NativeTrackRow(track: track) { store.play(store.library, at: index, type: "library", label: "Медиатека") }
+                    }
+                }
+            }
+            .listStyle(.plain).scrollContentBackground(.hidden)
+            .background(Color.moraBackground).navigationTitle("Медиатека")
+            .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.3), value: store.library.prefix(8).map(\.id))
+            .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.3), value: likedArtists.map(\.id))
+        }
+    }
+    private func destination(_ title: String, _ symbol: String, _ path: String) -> some View {
+        Button { store.go(path) } label: {
+            HStack {
+                Label(title, systemImage: symbol).font(.title3).padding(.vertical, 8)
+                Spacer()
+                Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.secondary)
+            }
+        }.listRowBackground(Color.clear)
+    }
+}

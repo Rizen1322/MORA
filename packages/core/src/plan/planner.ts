@@ -1,4 +1,5 @@
 import { camelotCompatibility } from '../mir/key.ts';
+export { CREATIVE_TRANSITION_STYLES, planCreativeTransition, type CreativeTransitionStyle } from './creative.ts';
 import { closureAt } from '../mir/repetition.ts';
 import { applyVocalHandoff, lyricTiming, vocalEntryScore, vocalMean, vocalPhrases, vocalPowerRetained, vocalStarts } from './vocals.ts';
 import { drain, integrateTempo, linearPower, outputTimeAt, pointValue } from './timing.ts';
@@ -1716,43 +1717,6 @@ function planPhraseCut(
  * rolling, a low-pass closes and the echo rises, with a longer decay over B's soft intro.
  * A Next press (requestedAt) uses the same moves on the next downbeat.
  */
-/**
- * v20 echo-out flavor from B's opening at `opening` (automatic echo out only, else no flavor):
- * - landing: B's first phrase start (else downbeat) at most a bar of A after its opening; the pickup
- *   before it (>= 50 ms) is pre-rolled so that downbeat lands on A's cut;
- * - calm (first two bars >= 4 dB under B’s body, or its bass 9 dB under) -> washout;
- * - a drum drop (loud attack carried by its own kick, onsets present) -> dub or brake (brake needs a
- *   tight grid for a beat-long tape stop); anything else -> washout or dub; dub needs a sure B grid;
- * - harsh: a loud attack that its kick does not carry (B eases in instead of starting dry);
- * - among eligible flavors the pair's id hash picks one, so a set does not repeat one sound.
- */
-function echoFlavor(ctx: Ctx, ga: BeatGrid, B: TrackAnalysis, opening: number, auto: boolean, beat: number, bar: number, barB: number) {
-  const none = { flavor: undefined, pickup: 0, landed: false, harsh: false, introDb: 0, attackDb: 0, kickDb: 0 };
-  const gb = B.beat!;
-  if (!auto) return none;
-  const phrase = B.phraseConfidence >= 0.2 ? B.phrases.find(t => t >= opening - 0.025 && t <= opening + bar) : undefined;
-  const landAt = phrase ?? gb.downbeats.find(t => t >= opening - 0.025);
-  const landed = landAt !== undefined && landAt - opening <= bar;
-  const pickup = landed && landAt - opening >= 0.05 ? r3(landAt - opening) : 0;
-  const land = opening + pickup, bodyLow = powerLevel(B, B.audibleStart, B.audibleEnd, B.curves.lowDb);
-  const introDb = powerLevel(B, land, land + 2 * barB) - B.bodyRmsDb;
-  const introLow = powerLevel(B, land, land + 2 * barB, B.curves.lowDb) - bodyLow;
-  const attackDb = powerLevel(B, land, land + 0.25) - B.bodyRmsDb;
-  const kickDb = powerLevel(B, land, land + 0.25, B.curves.lowDb) - bodyLow;
-  const tr = B.local?.transients, at = tr && B.local!.rate > 0 ? tr[Math.min(tr.length - 1, Math.floor(land * B.local!.rate))] : undefined;
-  const onset = Number.isFinite(at) ? at! : 1;
-  const calm = introDb <= -4 || introLow <= -9;
-  const drop = !calm && attackDb >= -4 && kickDb >= -4 && onset >= 0.25;
-  const harsh = !calm && attackDb >= -6 && kickDb < -4;
-  const dub = gb.confidence >= 0.6 && gb.downbeatConfidence >= 0.5;
-  const brake = ga.confidence >= 0.8 && ga.jitterMs <= 12 && beat >= 0.2 && beat <= 1.4;
-  const eligible: ('washout' | 'dub' | 'brake')[] = calm ? ['washout']
-    : drop ? [...(dub ? ['dub' as const] : []), ...(brake ? ['brake' as const] : [])] : ['washout', ...(dub ? ['dub' as const] : [])];
-  if (!eligible.length) eligible.push('washout');
-  const flavor = eligible[parseInt(fnv1a(`${ctx.a.id}|${ctx.b.id}`), 36) % eligible.length];
-  return { flavor, pickup, landed, harsh, introDb: r3(introDb), attackDb: r3(attackDb), kickDb: r3(kickDb) };
-}
-
 function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: NonNullable<TransitionPlan['keyInfo']>, fallbackReason?: string): TransitionPlan | null {
   const ga = A.beat!, gb = B.beat!, beat = ga.period, bar = 4 * beat, barB = 4 * gb.period;
   const S = 2 * bar >= 3 ? 2 * bar : 4 * bar;
@@ -1795,20 +1759,15 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
   const calm = gb.bpm < 0.85 * ga.bpm && energyDelta <= -3;
   const wash = loop && calm, roll = loop && !calm;
   // v19.4 soft echo out: B enters from its own opening, never a trimmed intro (landing on B's drop made it
-  // "slam in" in every listened variant); after more than 1 s of leading silence, on its first downbeat.
+  // "slam in" in every listened variant); preserve pickups even after leading silence.
   // A Next press keeps its v19.2 rule: B arrives at its energetic section, not inside a quiet intro.
-  const opening = B.audibleStart <= 1 ? B.audibleStart : gb.downbeats.find(t => t >= B.audibleStart - 0.025) ?? B.audibleStart;
-  const bIn = loop || now !== undefined ? entry : { time: opening, score: 0.6, kind: opening === B.audibleStart ? 'start' as const : 'downbeat' as const, tags: ['drop-swap-start'] };
+  const opening = B.audibleStart;
+  const bIn = loop || now !== undefined ? entry : { time: opening, score: 0.6, kind: 'start' as const, tags: ['drop-swap-start'] };
   // v19.3 echo out breathes (listener: "too fast, the echo cut short"): B opens from its muffled intro
   // over 2-4 of its bars (about 4 s), and the transition lasts until it is open; a Next keeps one bar
   // v19.4 (listener: "the effect is too loud, it takes you out of the music"): two bars, not 2-4
-  // v20 echo-out flavors (automatic echo out; listener: "B slams in dry, like hitting play mid-air").
-  // B lands on a downbeat: its first phrase start (else downbeat) within a bar of its opening, the
-  // pickup before it rolling under A's last beats. The flavor follows B's opening.
-  const flavors = echoFlavor(ctx, ga, B, bIn.time, !loop && now === undefined, beat, bar, barB);
-  const { flavor, pickup } = flavors;
   const echoSpan = loop ? 0 : now !== undefined ? Math.min(barB, tail)
-    : Math.min((flavor === 'washout' ? 8 : 2) * barB, ctx.s.maxBlendSeconds - S);
+    : Math.min(2 * barB, ctx.s.maxBlendSeconds - S);
   const softTail = wash ? Math.min(Math.max(tail, Math.min(8, 3 * barB)), ctx.s.maxBlendSeconds - 2 * L) : Math.max(tail, echoSpan);
   if (wash && (softTail < tail || entry.time + softTail > B.audibleEnd)) return null;
   const T = roll ? 3 * L : wash ? 2 * L : S;
@@ -1821,51 +1780,9 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
   const feedback = Math.min(roll || wash ? 0.72 : 0.78, Math.pow(10, -1.5 / ((wash ? 2.5 : roll ? 1.5 : 3) * bar / delay)));
   const D = r3(T + softTail);
   const p = basePlan(ctx, 'echo_out');
-  p.bEntry = r3(bIn.time); p.duration = D; p.swapAt = r3(T); p.bDelay = r3(T - pickup);
+  p.bEntry = r3(bIn.time); p.duration = D; p.swapAt = r3(T); p.bDelay = r3(T);
   p.echo = { delay: r3(delay), feedback: r3(feedback) };
-  // repeats aim at -30 dB `bars` bars of A after the cut
-  const ring = (bars: number, cap: number) => r3(Math.min(cap, Math.pow(10, -1.5 / (bars * bar / delay))));
-  if (flavor === 'washout') p.echo = { delay: r3(delay), feedback: ring(6, 0.85), lowpass: 2500, width: 0.5 };
-  else if (flavor === 'dub') p.echo = { delay: r3(delay), feedback: ring(3, 0.8), width: 1 };
-  else if (flavor === 'brake') p.echo = { delay: r3(delay), feedback: ring(2, 0.72), width: 1 };
-  if (flavor) p.echoFlavor = flavor;
-  if (flavor) {
-    const Lb = pickup, endB = r3(D - p.bDelay), aGain = lane('A', 'gain', [[0, 1], [r3(S - 0.03), 1], [r3(S), 0], [D, 0]]);
-    // a harsh B opening (loud, not carried by its own kick) swells in over 3/4 bar from a short low-pass;
-    // otherwise B lands on the one, its pickup (if any) at half level under A's last beats
-    const bGain = flavors.harsh
-      ? [lane('B', 'gain', [[0, 0], [0.02, 0.4], [Lb, 0.4]], shape(Lb, r3(Lb + 0.75 * barB), x => 0.4 + 0.6 * sinUp(x), 6), [[endB, 1]]),
-        lane('B', 'filter', [[0, -0.3], [Lb, -0.3]], shape(Lb, r3(Lb + barB), x => -0.3 * (1 - smoothstep(x)), 6), [[endB, 0]])]
-      : [lane('B', 'gain', Lb > 0 ? [[0, 0], [0.02, 0.5], [r3(Lb - 0.01), 0.5], [Lb, 1], [endB, 1]] : [[0, 0], [0.01, 1], [endB, 1]])];
-    p.aExit = r3(d - S);
-    if (flavor === 'washout') {
-      p.automation = [
-        aGain,
-        // the last bar sinks into a low-pass that also damps what feeds the freeze
-        lane('A', 'filter', [[0, 0], [r3(S - bar), 0]], shape(r3(S - bar), r3(S), x => -0.35 * smoothstep(x), 6), [[r3(S + 0.4), -0.45], [D, -0.45]]),
-        lane('A', 'echo', [[0, 0], [r3(S - bar), 0]], shape(r3(S - bar), r3(S - 0.05), x => 0.4 * smoothstep(x), 6), [[r3(S), 0.4], [r3(S + beat), 0.2], [r3(S + 2 * beat), 0]]),
-        // B fades in from a low-pass that opens over its first phrase under the wash
-        lane('B', 'gain', [[0, 0], [0.02, 0.5], [Lb, 0.5]], shape(Lb, r3(Lb + Math.min(4 * barB, endB - Lb)), x => 0.5 + 0.5 * sinUp(x), 8), [[endB, 1]]),
-        lane('B', 'filter', [[0, -0.6], [Lb, -0.6]], shape(Lb, endB, x => -0.6 * (1 - smoothstep(x)), 8)),
-      ];
-    } else if (flavor === 'dub') {
-      p.automation = [
-        aGain,
-        // A's last bar: rising high-pass into a ping-pong delay; dry A cut on the one, the repeats bounce on
-        lane('A', 'filter', [[0, 0], [r3(S - bar), 0]], shape(r3(S - bar), r3(S), x => 0.45 * smoothstep(x), 6), [[D, 0.45]]),
-        lane('A', 'echo', [[0, 0], [r3(S - bar - 0.05), 0], [r3(S - bar), 0.45], [r3(S), 0.45], [r3(S + 0.02), 0], [D, 0]]),
-        ...bGain,
-      ];
-    } else {
-      // tape brake on A's final beat, thrown wide into the echo; B starts on the downbeat with no lag
-      p.tapeStopA = { start: r3(d - beat), end: r3(d), crossfade: 0.025 };
-      p.automation = [
-        aGain,
-        lane('A', 'echo', [[0, 0], [r3(S - beat - 0.05), 0], [r3(S - beat), 0.6], [r3(S - 0.03), 0.6], [r3(S), 0], [D, 0]]),
-        ...bGain,
-      ];
-    }
-  } else if (wash) {
+  if (wash) {
     const start = Math.round((d - L) * 300) / 300;
     p.aExit = r3(start);
     p.loopA = { start, end: start + L, until: start + 2 * L, crossfade: 0.006 };
@@ -1899,8 +1816,9 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
       lane('A', 'filter', [[0, 0], [r3(S), -0.25], [r3(S + 0.4), -0.3], [D, -0.3]]),
       // pre-fader send: open over the last beat (0.6), then 0.4, 0.2 and closed three beats after the cut
       lane('A', 'echo', [[0, 0], [r3(S - beat), 0], [r3(S - 0.05), 0.6], [r3(S), 0.6], [r3(S + beat), 0.4], [r3(S + 2 * beat), 0.2], [r3(S + 3 * beat), 0]]),
-      // B runs on its own clock after bDelay: 0.8 at once, full after a bar of A; no bass gate, no filter
-      lane('B', 'gain', [[0, 0], [0.01, 0.8], [r3(bar), 1]]),
+      // B's own beat sets the attack; a short fade keeps its opening audible under the echo.
+      lane('B', 'gain', shape(0, Math.min(0.4, barB / 8, D - T), x => 0.8 * sinUp(x)),
+        [[r3(Math.min(barB, D - T)), 1], [r3(D - T), 1]]),
     ];
   }
   p.confidence = r3(Math.min(0.7, ga.confidence, gb.confidence));
@@ -1914,9 +1832,6 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
       ? `петля с ускорением: темпы ${ga.bpm.toFixed(0)} и ${gb.bpm.toFixed(0)} BPM не сводятся — последний такт текущего трека перед границей ${phrase ? 'фразы' : 'четырёх тактов'} повторяется и дробится до 1/8 такта под нарастающий фильтр, следующий вступает в полную силу на своей сильной доле`
       : `смена на сильной доле: темпы ${ga.bpm.toFixed(0)} и ${gb.bpm.toFixed(0)} BPM не сводятся — текущий трек уходит в эхо на границе ${phrase ? 'фразы' : 'четырёх тактов'}, следующий входит со своего начала`,
     ...(fallbackReason ? [fallbackReason] : []),
-    ...(flavor ? [flavor === 'washout' ? 'размыв: эхо текущего замирает за фильтром и расходится вширь, следующий открывается из фильтра за свою первую фразу'
-      : flavor === 'dub' ? 'даб: последний такт текущего уходит в пинг-понг эхо на 3/16 под растущий фильтр, следующий падает на «раз», повторы скачут поверх его барабанов'
-      : 'тормоз: последняя доля текущего замедляется как плёнка и уходит в широкое эхо, следующий начинается ровно на сильной доле'] : []),
     roll || wash ? 'два ритма не звучат одновременно: под первым тактом следующего звучит только отфильтрованный хвост эха'
       : 'два ритма не звучат одновременно: эхо текущего на 3/4 доли, приглушённое фильтром, звучит под первым тактом следующего',
     cut > 2 ? `пропускается ${Math.round(cut)} с финала` : 'текущий трек звучит почти до конца',
@@ -1926,7 +1841,7 @@ function planDropSwap(ctx: Ctx, A: TrackAnalysis, B: TrackAnalysis, keyInfo: Non
     ? { variant: 'loop-wash', style: 'loop-wash', cut: r3(cut), loopWash: { exitSource: r3(d), phrase, dens: r3(dens), bar: r3(L), energyDelta: r3(energyDelta), entryAligned: !!picked?.aligned } }
     : roll
     ? { variant: 'loop-roll', style: 'loop-roll', cut: r3(cut), loopRoll: { exitSource: r3(d), phrase, dens: r3(dens), bar: r3(L), entryAligned: !!picked?.aligned } }
-    : { variant: 'drop-swap', style: 'drop-swap', cut: r3(cut), dropSwap: { cutSource: r3(d), phrase, sweep: r3(S), entryAligned: bIn.kind === 'downbeat', ...(flavor ? { flavor, pickup, landed: flavors.landed, harsh: flavors.harsh, introDb: flavors.introDb, attackDb: flavors.attackDb, kickDb: flavors.kickDb } : {}) } };
+    : { variant: 'drop-swap', style: 'drop-swap', cut: r3(cut), dropSwap: { cutSource: r3(d), phrase, sweep: r3(S), entryAligned: bIn.kind === 'downbeat' } };
   return p;
 }
 

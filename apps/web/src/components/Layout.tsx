@@ -1,3 +1,4 @@
+import { WindowControls } from './WindowControls.tsx';
 import { useEffect, useState } from 'react';
 import { House, Waveform, Books, Heart, GearSix, Plus, MagnifyingGlass, DotsThreeCircle, X, CheckCircle, WarningCircle, Info, CaretLeft, CaretRight, DownloadSimple } from '@phosphor-icons/react';
 import { api } from '../lib/api.ts';
@@ -96,7 +97,7 @@ export function Sidebar() {
   );
 }
 
-/** Integrated Windows title bar: drag area, in-app history and search. Native caption buttons sit on the right (titleBarOverlay). */
+/** Integrated title bar; Electron supplies native buttons, Tauri uses WindowControls. */
 export function TitleBar() {
   useRoute(); // re-render on navigation so back/forward availability stays current
   if (!desktop) return null;
@@ -115,6 +116,7 @@ export function TitleBar() {
         <span>Поиск музыки</span>
         <kbd>/</kbd>
       </button>
+      <WindowControls />
     </header>
   );
 }

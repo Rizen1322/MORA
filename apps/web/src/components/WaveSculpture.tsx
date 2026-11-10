@@ -98,7 +98,7 @@ export function WaveSculpture({ energy }: { energy: number }) {
         if (disposed || contextLost || !visible || document.hidden) return;
         // Bound GPU work independently of 120–165 Hz display refresh.
         const active = controller.state.status === 'playing';
-        if (last && now - last < 1000 / (active ? 30 : 12) - 2) { raf = requestAnimationFrame(draw); return; }
+        if (last && now - last < 1000 / (active ? 45 : 12) - 2) { raf = requestAnimationFrame(draw); return; }
         const dt = last ? Math.min((now - last) / 1000, .12) : 0;
         last = now;
         const an = controller.analyser;

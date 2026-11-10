@@ -60,8 +60,14 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
       || keys.some(key => !Number.isSafeInteger(key) || key < 0 || key >= 500000)) throw Error('Некорректные файлы нативной очереди');
     signal?.throwIfAborted();
     const manifest = await hooks.sources(entries.map((entry, i) => ({ ...entry, file: keys[i] })), previousId, signal);
-    if (!Array.isArray(manifest.items) || manifest.items.length !== entries.length || manifest.items.some((item, i) =>
-      item.entryId !== entries[i].entryId || item.trackId !== entries[i].trackId || item.file !== keys[i])) throw Error('Изменилась запись для воспроизведения');
+    // Unavailable entries are dropped by the server: items are an in-order subset of entries, matched by entryId.
+    const at = new Map(entries.map((entry, i) => [entry.entryId, i]));
+    let last = -1;
+    if (!Array.isArray(manifest.items) || manifest.items.length > entries.length || manifest.items.some(item => {
+      const i = at.get(item.entryId);
+      if (i === undefined || i <= last || item.trackId !== entries[i].trackId || item.file !== keys[i]) return true;
+      last = i; return false;
+    })) throw Error('Изменилась запись для воспроизведения');
     for (const item of manifest.items) {
       signal?.throwIfAborted();
       if (item.source.kind !== 'upload') continue;
@@ -150,15 +156,40 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
         await session(); // Rebind the existing owner after WebContent reload; begin is idempotent.
       }
       if (!id) throw Error('Нативная сессия недоступна');
-      const entryKey = (entry: NativeQueueEntry) => JSON.stringify([entry.entryId, entry.fromEntryId, entry.transitionContext]);
+      const entryKey = (entry: NativeQueueEntry) => entry.entryId;
       const unique = [...new Map([...entries, ...loopEntries].map(e => [entryKey(e), e])).values()];
-      const manifest = await sourceManifest(unique, previousId, signal);
-      const items = new Map(unique.map((entry, index) => [entryKey(entry), manifest.items[index]]));
-      const state = await port.nativePrepareQueue({ id, manifest: { ...manifest, from, replaceFuture,
-        items: entries.map(e => items.get(entryKey(e))!), loopItems: loopEntries.map(e => items.get(entryKey(e))!) } });
-      const kept = new Set(manifest.items.flatMap(item => item.source.kind === 'local' ? [item.source.file] : []));
+      if (unique.length > 10000) throw Error('В очереди больше 10000 треков');
+      const items = new Map<string, NativePreparationManifest['items'][number]>();
+      let state: NativeMixState | undefined;
+      let metadataBytes = 0;
+      // shortcut: local sources retain the native 512 MiB upload budget; use shared native storage for larger offline handoffs.
+      // Give native the next two songs before resolving/copying the rest of a large likes list.
+      for (let offset = 0; offset < Math.max(1, unique.length);) {
+        const batch = unique.slice(offset, offset + (offset === 0 ? 2 : 32));
+        const before = new Set(assets.keys());
+        let manifest: Awaited<ReturnType<typeof sourceManifest>>;
+        try { manifest = await sourceManifest(batch, previousId, signal); }
+        catch (error) { for (const key of assets.keys()) if (!before.has(key)) assets.delete(key); throw error; }
+        signal?.throwIfAborted();
+        for (const item of manifest.items) {
+          // Keep the original whole-manifest metadata budget across source batches.
+          const size = item.analysis ? JSON.stringify(item.analysis).length : 0;
+          if (metadataBytes + size <= 2 * 1024 * 1024) metadataBytes += size;
+          else item.analysis = null;
+          const cover = item.artwork?.base64.length ?? 0;
+          if (metadataBytes + cover <= 4 * 1024 * 1024) metadataBytes += cover;
+          else delete item.artwork;
+          items.set(item.entryId, item);
+        }
+        state = await port.nativePrepareQueue({ id, manifest: { ...manifest, from, replaceFuture,
+          retainedSources: offset + batch.length < unique.length ? [...assets.values()] : [],
+          items: entries.flatMap(e => items.get(entryKey(e)) ?? []), loopItems: loopEntries.flatMap(e => items.get(entryKey(e)) ?? []) } });
+        offset += Math.max(1, batch.length);
+      }
+      const dropped = unique.filter(e => !items.has(entryKey(e))).map(entryKey);
+      const kept = new Set([...items.values()].flatMap(item => item.source.kind === 'local' ? [item.source.file] : []));
       for (const [trackId, key] of assets) if (!kept.has(key)) assets.delete(trackId);
-      return state;
+      return dropped.length ? { ...state!, dropped } : state!;
     }),
     upload: (file, offset, bytes, signal) => serialize(async () => {
       signal?.throwIfAborted();

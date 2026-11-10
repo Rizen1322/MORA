@@ -337,75 +337,6 @@ fn edit_spans(a: &Value) -> Points {
             .collect()
     })
 }
-/// v20 echo-out flavor from B's opening (planner.ts echoFlavor): B's landing downbeat (first phrase
-/// start, else downbeat, within a bar), its pre-rolled pickup, and washout / dub / brake by B's opening.
-pub(crate) struct Flavor {
-    pub flavor: Option<&'static str>,
-    pub pickup: f64,
-    pub landed: bool,
-    pub harsh: bool,
-    pub intro_db: f64,
-    pub attack_db: f64,
-    pub kick_db: f64,
-}
-#[allow(clippy::too_many_arguments)]
-fn echo_flavor(ctx: &Ctx, ga: &Value, b: &Value, opening: f64, auto: bool, beat: f64, bar: f64, bar_b: f64) -> Flavor {
-    let none = Flavor { flavor: None, pickup: 0., landed: false, harsh: false, intro_db: 0., attack_db: 0., kick_db: 0. };
-    if !auto {
-        return none;
-    }
-    let gb = &b["beat"];
-    let phrase = if n(b, "phraseConfidence") >= 0.2 {
-        nums(&b["phrases"]).into_iter().find(|t| *t >= opening - 0.025 && *t <= opening + bar)
-    } else {
-        None
-    };
-    let land_at = phrase.or_else(|| nums(&gb["downbeats"]).into_iter().find(|t| *t >= opening - 0.025));
-    let landed = land_at.is_some_and(|t| t - opening <= bar);
-    let pickup = match land_at {
-        Some(t) if landed && t - opening >= 0.05 => r3(t - opening),
-        _ => 0.,
-    };
-    let land = opening + pickup;
-    let body_low = power_level(b, n(b, "audibleStart"), n(b, "audibleEnd"), "lowDb");
-    let intro_db = power_level(b, land, land + 2. * bar_b, "rmsDb") - n(b, "bodyRmsDb");
-    let intro_low = power_level(b, land, land + 2. * bar_b, "lowDb") - body_low;
-    let attack_db = power_level(b, land, land + 0.25, "rmsDb") - n(b, "bodyRmsDb");
-    let kick_db = power_level(b, land, land + 0.25, "lowDb") - body_low;
-    let tr = arr(&b["local"]["transients"]);
-    let rate = n(&b["local"], "rate");
-    let at = if !tr.is_empty() && rate > 0. {
-        num(&tr[((land * rate).floor().max(0.) as usize).min(tr.len() - 1)])
-    } else {
-        f64::NAN
-    };
-    let onset = if at.is_finite() { at } else { 1. };
-    let calm = intro_db <= -4. || intro_low <= -9.;
-    let drop = !calm && attack_db >= -4. && kick_db >= -4. && onset >= 0.25;
-    let harsh = !calm && attack_db >= -6. && kick_db < -4.;
-    let dub = n(gb, "confidence") >= 0.6 && n(gb, "downbeatConfidence") >= 0.5;
-    let brake = n(ga, "confidence") >= 0.8 && n(ga, "jitterMs") <= 12. && (0.2..=1.4).contains(&beat);
-    let mut eligible: Vec<&'static str> = if calm {
-        vec!["washout"]
-    } else if drop {
-        [dub.then_some("dub"), brake.then_some("brake")].into_iter().flatten().collect()
-    } else {
-        [Some("washout"), dub.then_some("dub")].into_iter().flatten().collect()
-    };
-    if eligible.is_empty() {
-        eligible.push("washout");
-    }
-    let hash = u64::from_str_radix(&fnv1a(&format!("{}|{}", s(ctx.a, "id"), s(ctx.b, "id"))), 36).unwrap_or(0);
-    Flavor {
-        flavor: Some(eligible[(hash % eligible.len() as u64) as usize]),
-        pickup,
-        landed,
-        harsh,
-        intro_db: r3(intro_db),
-        attack_db: r3(attack_db),
-        kick_db: r3(kick_db),
-    }
-}
 /// Drop swap (v19): steady grooves that cannot be locked never play together. Echo out: A's high-pass
 /// sweeps up over its last two (or four) bars, the high-pass takes its bass, its last beat goes into a
 /// 3/4-beat echo heard over B's first bar. Loop roll (no clean exit, tight grid): A's last bar before
@@ -502,29 +433,21 @@ pub fn plan_drop_swap(
     let calm = n(gb, "bpm") < 0.85 * n(ga, "bpm") && energy_delta <= -3.;
     let wash = looped && calm;
     let roll = looped && !calm;
-    // v19.4 soft echo out: B enters from its own opening, never a trimmed intro; after more than 1 s of
-    // leading silence, on its first downbeat. A Next press keeps B's energetic arrival (v19.2).
+    // Preserve B's opening pickup after leading silence; Next keeps its energetic arrival.
     let start_b = n(b, "audibleStart");
-    let opening = if start_b <= 1. {
-        start_b
-    } else {
-        nums(&gb["downbeats"]).into_iter().find(|t| *t >= start_b - 0.025).unwrap_or(start_b)
-    };
+    let opening = start_b;
     let b_in = if looped || ctx.requested_at.is_some() {
         entry.clone()
     } else {
-        json!({"time":opening,"score":0.6,"kind":if opening == start_b { "start" } else { "downbeat" },"tags":["drop-swap-start"]})
+        json!({"time":opening,"score":0.6,"kind":"start","tags":["drop-swap-start"]})
     };
     // v19.4: an echo out opens B over two of its bars; a Next keeps one bar
-    // v20: the automatic echo out lands B on a downbeat and picks a flavor from B's opening
-    let fl = echo_flavor(ctx, ga, b, n(&b_in, "time"), !looped && ctx.requested_at.is_none(), beat, bar, bar_b);
-    let pickup = fl.pickup;
     let echo_span = if looped {
         0.
     } else if ctx.requested_at.is_some() {
         bar_b.min(tail)
     } else {
-        ((if fl.flavor == Some("washout") { 8. } else { 2. }) * bar_b).min(max_blend - sweep)
+        (2. * bar_b).min(max_blend - sweep)
     };
     let soft_tail = if wash {
         tail.max(8f64.min(3. * bar_b)).min(max_blend - 2. * l)
@@ -563,85 +486,9 @@ pub fn plan_drop_swap(
     p["bEntry"] = json!(r3(n(&b_in, "time")));
     p["duration"] = json!(total);
     p["swapAt"] = json!(r3(t_end));
-    p["bDelay"] = json!(r3(t_end - pickup));
+    p["bDelay"] = json!(r3(t_end));
     p["echo"] = json!({"delay":r3(delay),"feedback":r3(feedback)});
-    // repeats aim at -30 dB `bars` bars of A after the cut
-    let ring = |bars: f64, cap: f64| r3(cap.min(10f64.powf(-1.5 / (bars * bar / delay))));
-    match fl.flavor {
-        Some("washout") => p["echo"] = json!({"delay":r3(delay),"feedback":ring(6., 0.85),"lowpass":2500,"width":0.5}),
-        Some("dub") => p["echo"] = json!({"delay":r3(delay),"feedback":ring(3., 0.8),"width":1}),
-        Some(_) => p["echo"] = json!({"delay":r3(delay),"feedback":ring(2., 0.72),"width":1}),
-        None => {}
-    }
-    if let Some(flavor) = fl.flavor {
-        p["echoFlavor"] = json!(flavor);
-        let s0 = sweep;
-        let lb = pickup;
-        let end_b = r3(total - r3(t_end - pickup));
-        let a_gain = lane("A", "gain", vec![vec![[0., 1.], [r3(s0 - 0.03), 1.], [r3(s0), 0.], [total, 0.]]]);
-        let b_lanes = if fl.harsh {
-            vec![
-                lane("B", "gain", vec![
-                    vec![[0., 0.], [0.02, 0.4], [lb, 0.4]],
-                    shape(lb, r3(lb + 0.75 * bar_b), |x| 0.4 + 0.6 * sin_up(x), 6),
-                    vec![[end_b, 1.]],
-                ]),
-                lane("B", "filter", vec![
-                    vec![[0., -0.3], [lb, -0.3]],
-                    shape(lb, r3(lb + bar_b), |x| -0.3 * (1. - smoothstep(x)), 6),
-                    vec![[end_b, 0.]],
-                ]),
-            ]
-        } else if lb > 0. {
-            vec![lane("B", "gain", vec![vec![[0., 0.], [0.02, 0.5], [r3(lb - 0.01), 0.5], [lb, 1.], [end_b, 1.]]])]
-        } else {
-            vec![lane("B", "gain", vec![vec![[0., 0.], [0.01, 1.], [end_b, 1.]]])]
-        };
-        p["aExit"] = json!(r3(d - s0));
-        let mut lanes = vec![a_gain];
-        match flavor {
-            "washout" => lanes.extend([
-                lane("A", "filter", vec![
-                    vec![[0., 0.], [r3(s0 - bar), 0.]],
-                    shape(r3(s0 - bar), r3(s0), |x| -0.35 * smoothstep(x), 6),
-                    vec![[r3(s0 + 0.4), -0.45], [total, -0.45]],
-                ]),
-                lane("A", "echo", vec![
-                    vec![[0., 0.], [r3(s0 - bar), 0.]],
-                    shape(r3(s0 - bar), r3(s0 - 0.05), |x| 0.4 * smoothstep(x), 6),
-                    vec![[r3(s0), 0.4], [r3(s0 + beat), 0.2], [r3(s0 + 2. * beat), 0.]],
-                ]),
-                lane("B", "gain", vec![
-                    vec![[0., 0.], [0.02, 0.5], [lb, 0.5]],
-                    shape(lb, r3(lb + (4. * bar_b).min(end_b - lb)), |x| 0.5 + 0.5 * sin_up(x), 8),
-                    vec![[end_b, 1.]],
-                ]),
-                lane("B", "filter", vec![
-                    vec![[0., -0.6], [lb, -0.6]],
-                    shape(lb, end_b, |x| -0.6 * (1. - smoothstep(x)), 8),
-                ]),
-            ]),
-            "dub" => {
-                lanes.push(lane("A", "filter", vec![
-                    vec![[0., 0.], [r3(s0 - bar), 0.]],
-                    shape(r3(s0 - bar), r3(s0), |x| 0.45 * smoothstep(x), 6),
-                    vec![[total, 0.45]],
-                ]));
-                lanes.push(lane("A", "echo", vec![vec![
-                    [0., 0.], [r3(s0 - bar - 0.05), 0.], [r3(s0 - bar), 0.45], [r3(s0), 0.45], [r3(s0 + 0.02), 0.], [total, 0.],
-                ]]));
-                lanes.extend(b_lanes);
-            }
-            _ => {
-                p["tapeStopA"] = json!({"start":r3(d - beat),"end":r3(d),"crossfade":0.025});
-                lanes.push(lane("A", "echo", vec![vec![
-                    [0., 0.], [r3(s0 - beat - 0.05), 0.], [r3(s0 - beat), 0.6], [r3(s0 - 0.03), 0.6], [r3(s0), 0.], [total, 0.],
-                ]]));
-                lanes.extend(b_lanes);
-            }
-        }
-        p["automation"] = json!(lanes);
-    } else if wash {
+    if wash {
         let s0 = round((d - l) * 300.) / 300.;
         p["aExit"] = json!(r3(s0));
         p["loopA"] = json!({"start":s0,"end":s0 + l,"until":s0 + 2. * l,"crossfade":0.006});
@@ -683,7 +530,7 @@ pub fn plan_drop_swap(
         p["automation"] = json!([
             lane("A", "gain", vec![vec![[0., 1.], [r3(sweep - 0.03), 1.], [r3(sweep), 0.], [total, 0.]]]),
             // v19.4 soft echo out: a gentle low-pass muffles A's echo tail, the send steps down over three
-            // beats after the cut, B is at 0.8 at once and full after a bar, with no bass gate or filter
+            // beats after the cut; B eases in on its own clock without a bass gate or filter
             lane("A", "filter", vec![vec![[0., 0.], [r3(sweep), -0.25], [r3(sweep + 0.4), -0.3], [total, -0.3]]]),
             lane("A", "echo", vec![vec![
                 [0., 0.],
@@ -694,7 +541,7 @@ pub fn plan_drop_swap(
                 [r3(sweep + 2. * beat), 0.2],
                 [r3(sweep + 3. * beat), 0.],
             ]]),
-            lane("B", "gain", vec![vec![[0., 0.], [0.01, 0.8], [r3(bar), 1.]]]),
+            lane("B", "gain", vec![shape(0., 0.4f64.min(bar_b / 8.).min(total - t_end), |x| 0.8 * sin_up(x), 8), vec![[r3(bar_b.min(total - t_end)), 1.], [r3(total - t_end), 1.]]]),
         ]);
     }
     p["confidence"] = json!(r3(0.7f64.min(n(ga, "confidence")).min(n(gb, "confidence"))));
@@ -724,16 +571,7 @@ pub fn plan_drop_swap(
             )
         },
         reason,
-        [match fl.flavor {
-            Some("washout") => Some("размыв: эхо текущего замирает за фильтром и расходится вширь, следующий открывается из фильтра за свою первую фразу"),
-            Some("dub") => Some("даб: последний такт текущего уходит в пинг-понг эхо на 3/16 под растущий фильтр, следующий падает на «раз», повторы скачут поверх его барабанов"),
-            Some(_) => Some("тормоз: последняя доля текущего замедляется как плёнка и уходит в широкое эхо, следующий начинается ровно на сильной доле"),
-            None => None,
-        }
-        .map(String::from)]
-        .into_iter()
-        .flatten()
-        .chain([
+        vec![
             if roll || wash {
                 "два ритма не звучат одновременно: под первым тактом следующего звучит только отфильтрованный хвост эха".into()
             } else {
@@ -744,8 +582,7 @@ pub fn plan_drop_swap(
             } else {
                 "текущий трек звучит почти до конца".into()
             },
-        ])
-        .collect(),
+        ],
     );
     describe_entry(&mut p, b, &b_in, None);
     p["debug"] = if wash {
@@ -753,15 +590,7 @@ pub fn plan_drop_swap(
     } else if roll {
         json!({"variant":"loop-roll","style":"loop-roll","cut":r3(cut),"loopRoll":{"exitSource":r3(d),"phrase":phrase,"dens":r3(dens),"bar":r3(l),"entryAligned":aligned}})
     } else {
-        let mut debug = json!({"variant":"drop-swap","style":"drop-swap","cut":r3(cut),"dropSwap":{"cutSource":r3(d),"phrase":phrase,"sweep":r3(sweep),"entryAligned":s(&b_in, "kind") == "downbeat"}});
-        if let Some(flavor) = fl.flavor {
-            let ds = &mut debug["dropSwap"];
-            for (k, v) in [("flavor", json!(flavor)), ("pickup", json!(pickup)), ("landed", json!(fl.landed)), ("harsh", json!(fl.harsh)),
-                ("introDb", json!(fl.intro_db)), ("attackDb", json!(fl.attack_db)), ("kickDb", json!(fl.kick_db))] {
-                ds[k] = v;
-            }
-        }
-        debug
+        json!({"variant":"drop-swap","style":"drop-swap","cut":r3(cut),"dropSwap":{"cutSource":r3(d),"phrase":phrase,"sweep":r3(sweep),"entryAligned":s(&b_in, "kind") == "downbeat"}})
     };
     Some(p)
 }

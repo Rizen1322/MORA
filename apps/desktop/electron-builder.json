@@ -6,6 +6,8 @@
   "files": ["src/**", "assets/**", "package.json"],
   "extraResources": [
     { "from": "build/audio", "to": "audio" },
+    { "from": "build/decoder", "to": "decoder" },
+    { "from": "build/network", "to": "network" },
     { "from": "build/playback", "to": "playback" },
     { "from": "build/backend", "to": "backend" },
     { "from": "build/web", "to": "web" },

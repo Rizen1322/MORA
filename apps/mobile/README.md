@@ -38,7 +38,7 @@ WKWebView (Capacitor 8)
 
 ## Сборка на Mac
 
-Нужны macOS с Xcode 26+, Node.js 22.13+, iPhone на iOS 17.4 или новее (рекомендуется 17.5+). CocoaPods не нужен: Capacitor 8 подключается через Swift Package Manager. [Требования Capacitor 8](https://capacitorjs.com/docs/getting-started/environment-setup).
+Нужны macOS с Xcode 26+, Node.js 22.13+, Rust (rustup: скрипт сам добавит iOS-цели и соберёт анализатор `packages/audio-rust` в `libmora_audio.a`; проверка совпадения с JS-анализатором — `node apps/mobile/scripts/check-native-rust-analysis.mjs`), iPhone на iOS 17.4 или новее (рекомендуется 17.5+). CocoaPods не нужен: Capacitor 8 подключается через Swift Package Manager. [Требования Capacitor 8](https://capacitorjs.com/docs/getting-started/environment-setup).
 
 ```sh
 sh apps/mobile/scripts/ios-mac.sh

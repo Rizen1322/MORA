@@ -1,0 +1,113 @@
+{
+  "date": "2026-11-03",
+  "version": "0.3.31-preview.1",
+  "platform": "Windows x64",
+  "installer": {
+    "file": "F:\\вин\\ПРОЕКТЫ\\music\\tools\\.cache\\desktop-0.3.25-source\\apps\\desktop-tauri\\src-tauri\\target\\release\\bundle\\nsis\\MORA Native Preview_0.3.31-preview.1_x64-setup.exe",
+    "bytes": 96134970,
+    "sha256": "14c676dc0ee5583c1bf17557f084f007d1f514da7db76633e42c774d8ed0ef47",
+    "unsigned": true,
+    "installed": false,
+    "published": false
+  },
+  "wholeApp": [
+    {
+      "name": "Electron 0.3.28",
+      "file": "electron-0.3.28-runtime-2026-11-03.json",
+      "hashes": {
+        "executable": "23d52ea8583312a0541d5a7f0b97fe1b97f39b21b6fd364f8a817a3b8d4d482d",
+        "app.asar": "f01e7feb6e128a381d577943d1c0d4cb7b0d29678e4d7d37ce298caa7dbb7486",
+        "backend\\backend.mjs": "148f47e134b82a62748f9fdca6c8ca6b6049d5a083459c981f34ee838fa648c6",
+        "backend\\analysisWorker.mjs": "7956bc9bc521b19224c5a6b14316e5463c6eda7610b8e9cff62b54565d9eeed7",
+        "audio\\mora-audio.exe": "6ea9234b045048f05a89053d375861c5dd590dbb34d8a5f1697ef34418a23f97",
+        "web\\index.html": "79098ab3f66a39d2fd08eec485903ef877520a0009776f408a953a849d157017"
+      },
+      "median": {
+        "startupMs": 376.4268000000011,
+        "commandToConfirmedMs": 171.35599999999977,
+        "idlePrivateMiB": 189.72265625,
+        "playingPrivateMiB": 248.38671875,
+        "idleCpuOneCorePercent": 0.9407340215528696,
+        "playingCpuOneCorePercent": 2.8189342173511016
+      },
+      "startupSamplesMs": [
+        663.6201,
+        376.4268000000011,
+        372.1654999999955
+      ],
+      "playingCpuRange": [
+        2.630067793469065,
+        3.94237619896446
+      ]
+    },
+    {
+      "name": "Electron + Rust 0.3.31-preview.1",
+      "file": "electron-0.3.31-runtime.json",
+      "hashes": {
+        "executable": "da2d2f45fc92a84ff05086e747c87fc0e4f3b3d28f2185e74bd85d73df5a701a",
+        "app.asar": "61e4389560b2f4a9ec36fe98a1a4335cdb065ddb89d21bba56ce970cef9a764d",
+        "backend\\backend.mjs": "cdd8e07fa412a61aeb546e810bf0b159177849e57ddf6c84543b3800dfba6bb9",
+        "backend\\analysisWorker.mjs": "c029ee6527e08e80f43cc516e4950c306d97127e806b82558ccc54f976329107",
+        "audio\\mora-audio.exe": "2969bb6794a95cd13211eebd98e2eb53225fe031832e75f71cdcccb31956e6be",
+        "decoder\\mora-decode.exe": "2640d304062d00f6b8f228e6fcaf1e0399867703ae992758fba6afcba24996ab",
+        "network\\mora-network.exe": "19852b2095ff5699f7df7aaaa0d812207e61ec81f967f1a7d60942b3a136805b",
+        "web\\index.html": "9ffa40b83f6e48ecd62a12ddbda727bdc9d1e410e647122d6b31a5d95a747606"
+      },
+      "median": {
+        "startupMs": 664.1538,
+        "commandToConfirmedMs": 175.64890000000014,
+        "idlePrivateMiB": 192.4296875,
+        "playingPrivateMiB": 249.34375,
+        "idleCpuOneCorePercent": 0.5651160328789389,
+        "playingCpuOneCorePercent": 2.261690742776754
+      },
+      "startupSamplesMs": [
+        3651.0416,
+        664.1538,
+        361.83520000000135
+      ],
+      "playingCpuRange": [
+        1.320538902055844,
+        3.757790726890805
+      ]
+    },
+    {
+      "name": "Tauri 0.3.31-preview.1 (installer payload)",
+      "file": "tauri-0.3.31-installed-payload-runtime.json",
+      "hashes": {
+        "executable": "6431815e3678b3ed98a7ca65ca0b8356e66c97fbb6629e16e605112a913dfcf1",
+        "backend\\tauri-backend.mjs": "a2c7dd56162198b3a386a96442df4cdc52caad5207b4d476a744d6bda3d75b9c",
+        "backend\\analysisWorker.mjs": "c029ee6527e08e80f43cc516e4950c306d97127e806b82558ccc54f976329107",
+        "audio\\mora-audio.exe": "2969bb6794a95cd13211eebd98e2eb53225fe031832e75f71cdcccb31956e6be",
+        "decoder\\mora-decode.exe": "2640d304062d00f6b8f228e6fcaf1e0399867703ae992758fba6afcba24996ab",
+        "network\\mora-network.exe": "19852b2095ff5699f7df7aaaa0d812207e61ec81f967f1a7d60942b3a136805b",
+        "web\\index.html": "9ffa40b83f6e48ecd62a12ddbda727bdc9d1e410e647122d6b31a5d95a747606"
+      },
+      "median": {
+        "startupMs": 779.6318000000028,
+        "commandToConfirmedMs": 176.46279999999388,
+        "idlePrivateMiB": 138.03515625,
+        "playingPrivateMiB": 174.01953125,
+        "idleCpuOneCorePercent": 0.7515543316002248,
+        "playingCpuOneCorePercent": 3.3751198572563723
+      },
+      "startupSamplesMs": [
+        13993.8506,
+        779.6318000000028,
+        690.9049999999988
+      ],
+      "playingCpuRange": [
+        2.363273887265653,
+        3.9419856485412477
+      ]
+    }
+  ],
+  "notes": [
+    "Three serial fresh-profile runs per case; hidden silent playback; CPU percentage is relative to one logical core.",
+    "The Tauri measurement uses the executable and all resources extracted directly from the NSIS installer without running the installer.",
+    "First extracted-payload startup took 13.99 seconds; subsequent startups 0.78 and 0.69 seconds. Cause was not identified. Do not hide this as a steady-state startup guarantee.",
+    "CPU ranges overlap; measurements do not establish a consistent CPU speedup over Electron.",
+    "A prior ancestry sample with a recycled PID was rejected; corrected snapshots validate process creation dates.",
+    "FFmpeg remains the fallback; React and the Node backend remain."
+  ]
+}

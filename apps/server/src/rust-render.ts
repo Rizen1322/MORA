@@ -35,7 +35,8 @@ export async function renderRust(a: StereoPcm, b: StereoPcm, plan: TransitionPla
 }
 
 export async function measureRust(plan: TransitionPlan, a: PcmSpan, b: PcmSpan): Promise<RenderMetrics | null> {
-  if (plan.loopA || plan.tapeStopA || plan.vocalA || plan.vocalB || plan.aExit - 6 < a.start || plan.bEntry < b.start) return null;
-  const shifted = { ...plan, aExit: plan.aExit - a.start, bEntry: plan.bEntry - b.start };
+  if (plan.loopA || plan.vocalA || plan.vocalB || plan.aExit - 6 < a.start || plan.bEntry < b.start) return null;
+  const shifted = { ...plan, aExit: plan.aExit - a.start, bEntry: plan.bEntry - b.start,
+    tapeStopA: plan.tapeStopA ? { ...plan.tapeStopA, start: plan.tapeStopA.start - a.start, end: plan.tapeStopA.end - a.start } : undefined };
   return rustComputeAsync<RenderMetrics | null>('render', { ...request(a.pcm, b.pcm, shifted, 6, 6, DEFAULT_PLAYBACK), measure: true, plan: shifted });
 }

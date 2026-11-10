@@ -5,27 +5,29 @@ import CryptoKit
 /// One sleeping producer, released by native audible-track changes, not by page timers.
 final class NativePreparationGate: @unchecked Sendable {
     private let lock = NSLock()
-    private var upper: Int
+    private var audible: Int
+    private var depth = 2
     private var stopped = false
     private var waiter: (Int, CheckedContinuation<Bool, Never>)?
     var snapshot: [String: Int] {
         lock.lock(); defer { lock.unlock() }
-        return ["gateUpper": upper, "gateWaiting": waiter?.0 ?? -1]
+        return ["gateUpper": audible + depth, "gateWaiting": waiter?.0 ?? -1]
     }
-    init(index: Int) { upper = index + 2 }
+    init(index: Int) { audible = index }
     func advance(_ index: Int) {
-        lock.lock(); upper = max(upper, index + 2)
-        let wake = waiter.flatMap { $0.0 <= upper ? $0.1 : nil }
+        lock.lock(); audible = max(audible, index)
+        let wake = waiter.flatMap { $0.0 <= audible + depth ? $0.1 : nil }
         if wake != nil { waiter = nil }; lock.unlock(); wake?.resume(returning: true)
     }
     func cancel() {
         lock.lock(); stopped = true; let wake = waiter?.1; waiter = nil; lock.unlock(); wake?.resume(returning: false)
     }
-    func wait(_ index: Int) async -> Bool {
+    /// depth: how many songs past the audible one may be prepared (NativeMixTimeline.aheadDepth).
+    func wait(_ index: Int, depth: Int = 2) async -> Bool {
         await withCheckedContinuation { continuation in
-            lock.lock()
+            lock.lock(); self.depth = depth
             if stopped { lock.unlock(); continuation.resume(returning: false) }
-            else if index <= upper { lock.unlock(); continuation.resume(returning: true) }
+            else if index <= audible + depth { lock.unlock(); continuation.resume(returning: true) }
             else { waiter = (index, continuation); lock.unlock() }
         }
     }
@@ -53,6 +55,12 @@ final class NativeQueuePreparation: @unchecked Sendable {
         for (key, value) in gate.snapshot { result[key] = value }; return result
     }
     var hasRemaining: Bool { !ticket.cancelled && snapshot["hasMore"] as? Bool == true }
+    /// Songs not yet handed to the host; a repeating queue never runs out.
+    var remainingItems: Int {
+        guard hasRemaining else { return 0 }
+        lock.lock(); defer { lock.unlock() }
+        return repeats ? NativeMixTimeline.maxPendingSkips : cached["remaining"] as? Int ?? 0
+    }
     init(index: Int, remaining: Int = 0, loopCount: Int = 0, analysis: NativeMixAnalysis = NativeMixAnalysis()) {
         self.analysis = analysis
         gate = NativePreparationGate(index: index); repeats = loopCount > 0
@@ -78,7 +86,7 @@ final class NativeQueuePreparation: @unchecked Sendable {
         })
         let http = NativeMediaHTTP(allowedHTTPHosts: hosts), loader = NativeMediaLoader(http: http)
         defer { http.invalidate() }
-        var produced = 0, processed = 0, consecutiveFailures = 0, at = from
+        var produced = 0, processed = 0, retries = 0, wrapped = -1, at = from
         var batch = raw, cursor = 0
         let loop = manifest["loopItems"] as? [[String: Any]] ?? []
         configure(remaining: raw.count, loopCount: loop.count)
@@ -87,13 +95,14 @@ final class NativeQueuePreparation: @unchecked Sendable {
         do {
             while !ticket.cancelled {
                 if cursor >= batch.count {
-                    if loop.isEmpty { break }
-                    batch = loop; cursor = 0
+                    // A whole repeat pass without one playable song would cycle forever.
+                    if loop.isEmpty || wrapped == produced { break }
+                    batch = loop; cursor = 0; wrapped = produced
                 }
                 let item = batch[cursor]; cursor += 1
                 processed += 1
                 state("waiting", ready: produced, remaining: batch.count - cursor + 1)
-                guard await gate.wait(at), !ticket.cancelled else { break }
+                guard await gate.wait(at, depth: NativeMixTimeline.aheadDepth(item["source"] as? [String: Any])), !ticket.cancelled else { break }
                 guard let fileKey = await allocate(), (0..<1_000_000).contains(fileKey),
                       let source = item["source"] as? [String: Any] else { throw NativeMediaLoader.Failure.source }
                 let downloaded = folder.appendingPathComponent("\(UUID().uuidString).media")
@@ -134,13 +143,12 @@ final class NativeQueuePreparation: @unchecked Sendable {
                     if !ticket.cancelled && (before["mixingAllowed"] as? Bool == true || next["mixingAllowed"] as? Bool == true) {
                         analysis.enqueue(folder: folder, before: before, previousPCM: previousPCM,
                                          next: next, pcm: track, index: at, script: script, settings: settings,
-                                         feedback: manifest["feedback"] as? [String: Any], upgrade: upgrade, event: event)
+                                         upgrade: upgrade, event: event)
                     }
-                    before = next; previousPCM = track; at += 1; produced += 1; consecutiveFailures = 0
+                    before = next; previousPCM = track; at += 1; produced += 1; retries = 0
                     state("ready", ready: produced, remaining: batch.count - cursor); event("ready", "none")
                 } catch {
                     if ticket.cancelled { break }
-                    consecutiveFailures += 1
                     let code: String
                     switch error {
                     case NativeMediaHTTP.Failure.http(let status): code = "http_\(status)"
@@ -152,8 +160,16 @@ final class NativeQueuePreparation: @unchecked Sendable {
                         let native = error as NSError
                         code = [AVFoundationErrorDomain, NSOSStatusErrorDomain].contains(native.domain) ? "decode_\(native.code)" : "preparation"
                     }
+                    if let delay = NativeMixTimeline.retryDelay(code, attempt: retries) {
+                        retries += 1
+                        state("retrying", ready: produced, remaining: batch.count - cursor + 1, reason: code); event("retry", code)
+                        let until = ProcessInfo.processInfo.systemUptime + delay
+                        while !ticket.cancelled && ProcessInfo.processInfo.systemUptime < until { try? await Task.sleep(nanoseconds: 250_000_000) }
+                        cursor -= 1; processed -= 1; continue
+                    }
+                    // An unavailable song is skipped; the producer stops only when the manifest is exhausted.
+                    retries = 0
                     state("failed", ready: produced, remaining: batch.count - cursor, reason: code); event("failed", code)
-                    if consecutiveFailures >= 3 { break }
                 }
             }
             if ticket.cancelled { state("cancelled", ready: produced, remaining: 0) }
@@ -179,11 +195,13 @@ final class NativeMixAnalysis: @unchecked Sendable {
     private static var cache: [String: [String: Any]] = [:]
     private static var cacheOrder: [String] = []
     // Results of the bundled analyzer survive relaunches: playlists are not re-analyzed
-    // in the JIT-less JSContext every session. Test/override scripts stay memory-only.
+    // every session. Test/override scripts stay memory-only.
     private static let disk = try? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         .appendingPathComponent("MORA/mir", isDirectory: true)
     private static let bundledScriptKey: String? = Bundle.main.url(forResource: "native-preparation", withExtension: "js", subdirectory: "public")
         .flatMap { try? Data(contentsOf: $0) }.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
+    /// Set once at launch by the app (NativeRustAnalysis); test hosts without the static library keep the script analyzer.
+    static var compiled: (version: String, analyze: (URL, Int, @escaping () -> Bool) -> [String: Any]?)?
     private let lock = NSLock()
     private var pending: [Request] = []
     private var active: Request?
@@ -205,10 +223,8 @@ final class NativeMixAnalysis: @unchecked Sendable {
             guard let file = pcm["file"] as? Int, let frames = pcm["totalFrames"] as? Int else { throw NativePreparationCore.Failure.analysis }
             self.frames = frames
             // Never retain source URLs or credentials in the analysis queue/cache.
-            var retained: [String: Any] = ["id": pcm["trackId"] ?? "", "entryId": pcm["entryId"] ?? "", "duration": Double(frames) / 48000,
+            self.value = ["id": value["trackId"] ?? "", "entryId": pcm["entryId"] ?? "", "duration": Double(frames) / 48000,
                           "mixingAllowed": value["mixingAllowed"] ?? false, "analysis": value["analysis"] ?? NSNull()]
-            if let phrase = value["phraseTransition"] as? [String: Any] { retained["phraseTransition"] = phrase }
-            self.value = retained
             url = folder.appendingPathComponent("\(UUID().uuidString).mir-pcm")
             // A private hard link pins the PCM independently of playback pruning.
             try FileManager.default.linkItem(at: folder.appendingPathComponent("\(file).f32le"), to: url)
@@ -218,14 +234,12 @@ final class NativeMixAnalysis: @unchecked Sendable {
     private final class Request: @unchecked Sendable {
         let id = UUID().uuidString, ticket = NativePreparationTicket()
         let a: Source, b: Source, index: Int, script: String, settings: [String: Any], pcm: [String: Any]
-        let feedback: [String: Any]?
         let upgrade: @Sendable (Int, [String: Any]) -> Void
         let event: @Sendable (String, String) -> Void
         init(a: Source, b: Source, index: Int, script: String, settings: [String: Any], pcm: [String: Any],
-             feedback: [String: Any]?, upgrade: @escaping @Sendable (Int, [String: Any]) -> Void, event: @escaping @Sendable (String, String) -> Void) {
+             upgrade: @escaping @Sendable (Int, [String: Any]) -> Void, event: @escaping @Sendable (String, String) -> Void) {
             self.a = a; self.b = b; self.index = index; self.script = script; self.settings = settings
             self.pcm = pcm; self.upgrade = upgrade; self.event = event
-            self.feedback = feedback
         }
     }
     func cancel() {
@@ -244,12 +258,11 @@ final class NativeMixAnalysis: @unchecked Sendable {
     }
     func enqueue(folder: URL, before: [String: Any], previousPCM: [String: Any], next: [String: Any], pcm: [String: Any],
                  index: Int, script: String, settings: [String: Any],
-                 feedback: [String: Any]? = nil,
                  upgrade: @escaping @Sendable (Int, [String: Any]) -> Void, event: @escaping @Sendable (String, String) -> Void) {
         do {
             let request = try Request(a: Source(folder: folder, value: before, pcm: previousPCM),
                 b: Source(folder: folder, value: next, pcm: pcm), index: index, script: script, settings: settings,
-                pcm: pcm, feedback: feedback, upgrade: upgrade, event: event)
+                pcm: pcm, upgrade: upgrade, event: event)
             lock.lock()
             guard !stopped, index > audible, allowedFiles == nil || allowedFiles?[index] == pcm["file"] as? Int else { lock.unlock(); return }
             guard !(active?.index == index && active?.pcm["file"] as? Int == pcm["file"] as? Int),
@@ -291,7 +304,7 @@ final class NativeMixAnalysis: @unchecked Sendable {
                 b["analysis"] = try analyze(request.b, core: core, scriptKey: scriptKey, request: request, role: "candidate")
                 if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
                 stage("planning", request)
-                let result = try core.plan(a: a, b: b, settings: request.settings, sampleRate: 48000, feedback: request.feedback)
+                let result = try core.plan(a: a, b: b, settings: request.settings, sampleRate: 48000)
                 if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
                 var track = request.pcm; track["gainDb"] = result["gainDb"] ?? 0.0
                 track.removeValue(forKey: "transition"); track.removeValue(forKey: "plan")
@@ -345,7 +358,16 @@ final class NativeMixAnalysis: @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: temporary) }
         let frames = try NativePCMDecoder.resample(source.url, from: 48000, to: temporary, sampleRate: 44100, cancelled: { request.ticket.cancelled })
         stage("analyzing", request, role: role)
-        let result = try core.analyze(temporary, frames: frames, ticket: request.ticket) { [self] name in pace(request); stage(name, request, role: role) }
+        let result: [String: Any]
+        if let compiled = Self.compiled, compiled.version == core.analyzerVersion {
+            stage("compiledAnalysis", request, role: role)
+            guard let value = compiled.analyze(temporary, frames, { request.ticket.cancelled }) else {
+                throw request.ticket.cancelled ? NativeMediaHTTP.Failure.cancelled : NativePreparationCore.Failure.analysis
+            }
+            result = value
+        } else {
+            result = try core.analyze(temporary, frames: frames, ticket: request.ticket) { [self] name in pace(request); stage(name, request, role: role) }
+        }
         if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
         Self.remember(key, result)
         if let stored { Self.store(result, at: stored) }
@@ -391,7 +413,7 @@ final class NativeQueueArtwork: @unchecked Sendable {
         guard !ticket.cancelled else { lock.unlock(); return }
         let request = ArtworkRequest(url: url, hosts: hosts, index: index, file: file, accept: accept)
         if pendingArtwork >= 2 {
-            // The gate permits current + two upcoming songs. Keep that latest
+            // The gate permits current + up to four upcoming songs. Keep that latest
             // window rather than accumulating the covers of rapidly skipped songs.
             deferredArtwork.append(request)
             if deferredArtwork.count > 3 { deferredArtwork.removeFirst() }

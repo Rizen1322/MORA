@@ -11,6 +11,7 @@ import './styles/listening.css';
 import { App } from './App.tsx';
 import { controller, trackOf, useApp } from './store/app.ts';
 import { desktop } from './lib/desktop.ts';
+import { playSplash, splashEnabled } from './lib/splash.ts';
 
 // handle for debugging from the browser console: automix.state
 (window as unknown as { automix: typeof controller }).automix = controller;
@@ -43,6 +44,16 @@ if (desktop) {
     const report = { playing: s.status === 'playing' || s.status === 'buffering', title: t?.title ?? '', artist: t?.artist ?? '' };
     const key = JSON.stringify(report);
     if (key !== last) { last = key; desktop!.reportPlayer(report); }
+  });
+}
+
+// Launch intro on the desktop app; `?splash` shows it in a browser too.
+if ((desktop && splashEnabled()) || new URLSearchParams(location.search).has('splash')) {
+  let fonts = false;
+  void document.fonts.ready.then(() => { fonts = true; });
+  playSplash({
+    ready: () => fonts && (useApp.getState().loaded || !useApp.getState().serverOnline),
+    target: () => document.querySelector('.wave-hero-title span'),
   });
 }
 

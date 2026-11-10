@@ -33,7 +33,7 @@ export class RustAudio {
     return new Promise((resolve, reject) => {
       const proc = this.launch(this.executable, ['--realtime', device], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
       this.process = proc;
-      let ready = false, finished = false, stderr = '';
+      let ready = false, finished = false;
       const timer = setTimeout(() => fail(new Error('Rust-аудиодвижок не ответил при запуске')), 10000);
       const cancelStartup = () => { finished = true; clearTimeout(timer); reject(new Error('Запуск аудиодвижка отменён')); };
       this.cancelStartup = cancelStartup;
@@ -42,8 +42,6 @@ export class RustAudio {
         finished = true;
         clearTimeout(timer);
         if (this.cancelStartup === cancelStartup) this.cancelStartup = null;
-        if (stderr.trim()) { error.message += `
-${stderr.trim()}`; console.error('[mora-audio stderr]', stderr.trim()); }
         if (!ready) reject(error);
         else if (this.process === proc) this.emit({ type: 'fatal', error: error.message });
         if (this.process === proc) {
@@ -71,8 +69,7 @@ ${stderr.trim()}`; console.error('[mora-audio stderr]', stderr.trim()); }
           if (p) { clearTimeout(p.timer); this.pending.delete(event.request); if (event.type === 'ack') p.resolve(); else p.reject(new Error(event.error)); }
         } else if (ready && this.process === proc) this.emit(event);
       });
-      proc.stderr.setEncoding('utf8');
-      proc.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-8192); });
+      proc.stderr.resume();
       proc.stdin.on('error', () => fail(new Error('Связь с аудиодвижком потеряна')));
       proc.on('error', () => fail(new Error('Не удалось запустить Rust-аудиодвижок. Пересоберите приложение.')));
       proc.on('exit', () => fail(new Error('Rust-аудиодвижок завершился')));

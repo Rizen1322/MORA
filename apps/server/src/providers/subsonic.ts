@@ -1,3 +1,4 @@
+import { networkFetch as fetch } from '../rust-network.ts';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -177,12 +178,12 @@ export class SubsonicProvider implements Provider {
     return row.id;
   }
 
-  async fetchAudio(src: SourceRow): Promise<string> {
+  async fetchAudio(src: SourceRow, signal?: AbortSignal, priority: 0 | 1 | 2 | 3 = 0): Promise<string> {
     const meta = JSON.parse(src.meta || '{}') as { suffix?: string };
     const safeId = String(src.external_id).replace(/[^A-Za-z0-9_-]/g, '_');
     const file = path.join(this.cfg.dataDir, 'remote', 'subsonic', `${safeId}.${(meta.suffix ?? 'bin').replace(/[^a-z0-9]/gi, '')}`);
     if (fs.existsSync(file)) return file;
-    await downloadTo(this.url('download', { id: String(src.external_id) }), file);
+    await downloadTo(this.url('download', { id: String(src.external_id) }), file, undefined, { signal, priority });
     return file;
   }
   async nativeSource(src: SourceRow): Promise<import('@automix/core/native-preparation.ts').NativeMediaSource> {
