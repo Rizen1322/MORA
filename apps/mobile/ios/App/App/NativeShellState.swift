@@ -29,7 +29,7 @@ struct NativeTrack: Equatable, Identifiable {
         ok = value["ok"] as? Bool ?? true
         binding = value["binding"] as? String
         offline = value["offline"] as? Bool == true
-        key =NativeSearchText.normalize("\(title) \(artist) \(album)")
+        key = NativeSearchText.normalize("\(title) \(artist) \(album)")
     }
     var liked: Bool { reaction > 0 }
 
