@@ -32,3 +32,11 @@ it('builds one track exactly as the full list does, without reading the whole li
   expect(a.services.lib.trackDTO('y1')!.reaction).toBe(1);
   expect(a.services.lib.trackDTO('w1')).toMatchObject({ likedAt: 7, binding: { assetId: 'r1', origin: { uploader: 'S' } } });
 });
+
+it('keeps lazy Yandex covers visible and rejects foreign cover origins', () => {
+  const meta = a.services.db.prepare("UPDATE track_sources SET meta = ? WHERE track_id = 'y1'");
+  meta.run(JSON.stringify({ coverUrl: 'https://avatars.mds.yandex.net/get-music-content/1/400x400' }));
+  expect(a.services.lib.trackDTO('y1')!.coverUrl).toBe('https://avatars.mds.yandex.net/get-music-content/1/400x400');
+  meta.run(JSON.stringify({ coverUrl: 'https://foreign.example/image.jpg' }));
+  expect(a.services.lib.trackDTO('y1')!.coverUrl).toBeNull();
+});

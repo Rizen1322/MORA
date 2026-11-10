@@ -105,3 +105,18 @@ it('acknowledges native lock-screen reactions only after persistence succeeds', 
   expect(h.patchTrack).toHaveBeenCalledWith('a', { reaction: 1, reactionSync: { status: 'pending' } });
   await expect(commands.reactSaved({ id: 'a', value: 7 })).rejects.toThrow();
 });
+
+it('publishes queue entries separately when only the continuation changed', async () => {
+  vi.useFakeTimers();
+  const push = vi.fn(async () => ({ shown: true }));
+  vi.stubGlobal('window', { moraNativePlayback: { uiState: push }, addEventListener: vi.fn() });
+  vi.stubGlobal('document', { documentElement: { classList: { toggle: vi.fn() } } });
+  const { startNativeUi } = await import('../src/lib/native-ui.ts');
+  startNativeUi(); await vi.advanceTimersByTimeAsync(200);
+  h.app.player = { ...h.app.player, queue: [{ entryId: 'e-a', trackId: 'a' }, { entryId: 'e-b', trackId: 'b' }] };
+  h.listeners.forEach(fn => fn()); await vi.advanceTimersByTimeAsync(200);
+  expect(push).toHaveBeenCalledTimes(2);
+  expect((push.mock.calls[1] as any)[0].queue).toEqual(h.app.player.queue);
+  expect((push.mock.calls[1] as any)[0].library).toBeUndefined();
+  vi.useRealTimers();
+});

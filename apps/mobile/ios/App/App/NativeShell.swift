@@ -101,6 +101,7 @@ final class NativeShellStore: ObservableObject {
     private(set) var byId: [String: NativeTrack] = [:]
     /// Bumped on every snapshot: native pages reload their description from the page.
     @Published private(set) var revision = 0
+    private(set) var queue: [NativeQueuedTrack] = []
     @Published private(set) var playlists: [NativePlaylist] = []
     @Published private(set) var ui = NativeUiState()
     /// The route on screen: the page's, or the one native just asked for (until the page confirms it).
@@ -135,6 +136,7 @@ final class NativeShellStore: ObservableObject {
         if value["enable"] as? Bool == true { setShown(true, resync: false) }
         if let rows = value["library"] as? [[String: Any]] { library = rows.compactMap(NativeTrack.init) }
         if let rows = value["playlists"] as? [[String: Any]] { playlists = rows.compactMap(NativePlaylist.init) }
+        if let rows = value["queue"] as? [[String: Any]] { queue = rows.compactMap(NativeQueuedTrack.init) }
         let next = NativeUiState(value)
         if next.toast != ui.toast, let toast = next.toast, screen != .web { show(toast.text) }
         if next != ui { ui = next }
@@ -422,12 +424,9 @@ extension NativeTab {
     }
 }
 
-/// Floating glass tab bar (three tabs in a pill, search as its own circle) with the mini player above it.
+/// System tabs with the native mini player above them.
 struct NativeShellBar: View {
     @ObservedObject var store: NativeShellStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Namespace private var thumb
-
 
     var body: some View {
         VStack(spacing: 8) {

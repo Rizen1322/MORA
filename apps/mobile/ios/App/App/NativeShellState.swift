@@ -44,6 +44,14 @@ struct NativePlaylist: Equatable, Identifiable {
     }
 }
 
+struct NativeQueuedTrack {
+    let entryId: String, trackId: String
+    init?(_ value: [String: Any]) {
+        guard let entry = value["entryId"] as? String, let track = value["trackId"] as? String else { return nil }
+        entryId = entry; trackId = track
+    }
+}
+
 enum NativeWaveSource: String, CaseIterable { case own, online, yandex }
 
 struct NativeWave: Equatable {

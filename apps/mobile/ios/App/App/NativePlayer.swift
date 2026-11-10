@@ -52,7 +52,17 @@ final class NativePlayerModel: ObservableObject {
         host.playerState { [weak self] result in
             defer { then?() }
             guard let self, case .success(let value) = result else { return }
-            let next = NativePlayerState(value)
+            var next = NativePlayerState(value)
+            // Show the requested queue immediately, while native resolves/copies its sources in batches.
+            if let store = NativeShellStore.shared, let at = store.queue.firstIndex(where: { $0.entryId == next.entryId }) {
+                let planned = Dictionary(next.upcoming.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                let known = Set(store.queue.dropFirst(at + 1).map(\.entryId))
+                next.upcoming = store.queue.dropFirst(at + 1).compactMap { entry in
+                    if let row = planned[entry.entryId] { return row }
+                    guard let track = store.byId[entry.trackId] else { return nil }
+                    return NativePlayerRow(id: entry.entryId, trackId: track.id, title: track.title, artist: track.artist, automix: false, cover: track.cover, artwork: nil)
+                } + next.upcoming.filter { !known.contains($0.id) }
+            }
             self.reaction = NativeShellStore.shared?.reaction(next.trackId) ?? 0
             if !next.active { self.stop(); self.close("close"); return }
             if next.entryId != self.state.entryId { self.scrub = nil }
@@ -377,7 +387,7 @@ private struct NativeQueueContent: View {
                 if let label = NativeShellStore.shared?.ui.now?.label, !label.isEmpty {
                     Text("Из: \(label)").font(.subheadline).foregroundStyle(.secondary)
                 }
-                if model.state.upcoming.isEmpty { Text("Очередь готовится…").foregroundStyle(.secondary) }
+                if model.state.upcoming.isEmpty { Text("Очередь пуста").foregroundStyle(.secondary) }
                 ForEach(model.state.upcoming) { row in
                     HStack(spacing: 12) {
                         NativeCover(url: row.cover ?? NativeShellStore.shared?.byId[row.trackId]?.cover, size: 48, radius: 7, embedded: row.artwork)

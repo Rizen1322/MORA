@@ -171,25 +171,26 @@ export function startNativeUi(): void {
     if (!fn) throw new Error(`Unknown command ${name}`);
     return (await fn(args ?? {})) ?? null;
   };
-  let tracks: unknown, order: unknown, playlists: unknown, last = '', timer: ReturnType<typeof setTimeout> | null = null;
+  let tracks: unknown, order: unknown, playlists: unknown, queue: unknown, last = '', timer: ReturnType<typeof setTimeout> | null = null;
   const send = (enable = false) => {
     timer = null;
     const s = useApp.getState();
     const state: Record<string, unknown> = uiState(s);
     const key = JSON.stringify(state);
     const libraryChanged = s.tracks !== tracks || s.order !== order;
-    if (!enable && !libraryChanged && s.playlists === playlists && key === last) return;
+    if (!enable && !libraryChanged && s.playlists === playlists && s.player.queue === queue && key === last) return;
     if (libraryChanged) state.library = s.order.map((id) => s.tracks.get(id)).filter((t): t is Track => !!t).map(uiTrack);
     if (s.playlists !== playlists) state.playlists = s.playlists.map((p) => ({ id: p.id, name: p.name, count: p.count, cover: p.coverUrl }));
     if (enable) state.enable = true;
-    tracks = s.tracks; order = s.order; playlists = s.playlists; last = key;
+    if (s.player.queue !== queue) state.queue = s.player.queue.map(({ entryId, trackId }) => ({ entryId, trackId }));
+    tracks = s.tracks; order = s.order; playlists = s.playlists; queue = s.player.queue; last = key;
     push(state).then(({ shown }) => {
       disabled = !shown;
       document.documentElement.classList.toggle('mora-native-shell', shown);
-    }, () => { tracks = order = playlists = undefined; last = ''; }); // resent whole on the next change
+    }, () => { tracks = order = playlists = queue = undefined; last = ''; }); // resent whole on the next change
   };
   const schedule = () => { timer ??= setTimeout(send, 120); };
-  resend = (enable) => { if (timer) clearTimeout(timer); tracks = order = playlists = undefined; send(enable); };
+  resend = (enable) => { if (timer) clearTimeout(timer); tracks = order = playlists = queue = undefined; send(enable); };
   useApp.subscribe(schedule);
   useRadio.subscribe(schedule);
   usePublicPlayback.subscribe(schedule);
