@@ -49,7 +49,10 @@ struct NativePageView: View {
     }
 
     private func waveHeader(_ source: Binding<NativeWaveSource>) -> some View {
-        Section {
+        let wave = store.ui.wave
+        let selected = wave.sources.contains(source.wrappedValue) ? source.wrappedValue : wave.preferred
+        let action = wave.button(selected)
+        return Section {
             VStack(alignment: .leading, spacing: 12) {
                 Label("Ваш ритм", systemImage: "waveform").font(.title2.bold()).foregroundStyle(Color.moraMint)
                 Text("Выберите настроение и характер музыки.").font(.subheadline).foregroundStyle(.secondary)
@@ -58,6 +61,16 @@ struct NativePageView: View {
                         Text(value == .own ? "Коллекция" : value == .online ? "Радио" : "Яндекс").tag(value)
                     }
                 }.pickerStyle(.segmented).disabled(running)
+                // The sheet stands in for the wave page, so it keeps the way to start or pause the wave.
+                Button { store.run("wave", ["source": selected.rawValue]) } label: {
+                    Label(action.title, systemImage: action.symbol).font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                        .foregroundStyle(Color.moraBackground)
+                        .background(Color.moraMint.opacity(action.enabled ? 1 : 0.4), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(!action.enabled || running)
+                .accessibilityIdentifier("wave.play")
             }.padding(.vertical, 6)
         } footer: { Text("Изменения сохраняются автоматически.") }
     }
