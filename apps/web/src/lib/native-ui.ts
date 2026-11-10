@@ -44,6 +44,7 @@ export function uiState(s = useApp.getState(), radio = useRadio.getState(), prep
       loading: !!p.waveLoading || radio.loading,
       error: p.error ?? radio.error,
     },
+    playback: { shuffle: p.shuffle, repeat: p.repeat, automix: s.settings?.automix.enabled ?? true, canShuffle: !radio.active && !['wave', 'yandex-wave', 'online-radio'].includes(ctx ?? '') },
     now: current ? { id: current.id, title: current.title, artist: current.artist, cover: current.coverUrl, playing, label: p.context?.label ?? '' } : null,
     toast: toast ? { id: toast.id, text: toast.text, kind: toast.kind } : null,
     preparing: preparing.phase === 'starting' ? preparing.title : null,
@@ -121,6 +122,16 @@ export const commands: Record<string, (a: Args) => unknown> = {
     const want = a.source === 'yandex' || a.source === 'online' ? a.source : 'own';
     if (uiState().wave.active === want) return controller.toggle();
     return want === 'online' ? startRadio() : controller.startWave(want);
+  },
+  playbackMode: async (a) => {
+    if (a.mode === 'shuffle') { if (uiState().playback.canShuffle) controller.toggleShuffle(); }
+    else if (a.mode === 'repeat') controller.cycleRepeat();
+    else if (a.mode === 'automix') {
+      const settings = useApp.getState().settings;
+      if (!settings) throw Error('Настройки ещё загружаются');
+      await useApp.getState().saveSettings({ automix: { ...settings.automix, enabled: !settings.automix.enabled } });
+    } else throw Error('Неизвестный режим воспроизведения');
+    return uiState().playback;
   },
   toggle: () => controller.toggle(),
   /** Pushes everything again, e.g. after the shell was switched off or on. */

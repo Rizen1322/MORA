@@ -146,7 +146,8 @@ extension MoraRootViewController {
         }
         func descendants(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(descendants) }
         func capture(_ name: String) throws {
-            let image = UIGraphicsImageRenderer(bounds: view.bounds).image { _ in view.drawHierarchy(in: view.bounds, afterScreenUpdates: true) }
+            let window = view.window!
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
             try image.pngData()!.write(to: folder.appendingPathComponent(name + ".png"))
         }
         var report: [String: Any] = [:]
@@ -181,7 +182,34 @@ extension MoraRootViewController {
             // The sheet's play action is a SwiftUI accessibility element, not a UIView, so it cannot be
             // asserted through the UIKit tree; simctl's screenshot of the sheet is the visual evidence.
             report["wave"] = "native sheet presented; Home route preserved; settings loaded"
-            // simctl captures the presented sheet, including its system material and drag indicator.
+            try capture("native-wave")
+            shell.waveSettingsOpen = false
+            try await wait { self.content?.presentedViewController == nil }
+            let player = NativePlayerModel(host: shell.host!)
+            player.installVisualFixture()
+            let sheet = UIHostingController(rootView: NativePlayerView(model: player))
+            sheet.overrideUserInterfaceStyle = .dark
+            sheet.modalPresentationStyle = .pageSheet
+            player.controller = sheet
+            present(sheet, animated: true)
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-player-mixing")
+            try await Task.sleep(for: .seconds(4))
+            try capture("native-player-queue")
+            player.playbackMode("repeat")
+            try await wait { !player.changingMode }
+            try require(player.modeError == nil && player.modes.repeatMode == "all", "Repeat queue did not reach controller")
+            player.playbackMode("repeat")
+            try await wait { !player.changingMode }
+            try require(player.modeError == nil && player.modes.repeatMode == "one", "Repeat one did not reach controller")
+            player.playbackMode("shuffle")
+            try await wait { !player.changingMode }
+            try require(player.modeError == nil && player.modes.shuffle, "Shuffle did not reach controller")
+            player.playbackMode("automix")
+            try await wait { !player.changingMode }
+            try require(player.modeError == nil && !player.modes.automix, "AutoMix did not save settings")
+            try capture("native-player-modes")
+            report["player"] = "visual mixing fixture and animated queue; real shuffle, repeat all/one and AutoMix bridge commands passed"
             report["status"] = "passed"
         } catch { report["status"] = "failed"; report["error"] = error.localizedDescription }
         try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: folder.appendingPathComponent("native-ui-check.json"))
@@ -510,21 +538,13 @@ extension View {
 /// The native screens; `.web` shows nothing (the layer is hidden and the page shows through).
 struct NativeShellContent: View {
     @ObservedObject var store: NativeShellStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack(alignment: .top) {
             Color.moraBackground.ignoresSafeArea()
-            switch store.screen {
-            case .home: NativeHomeView()
-            case .more: NativeMoreView()
-            case .liked: NativeTrackListView(title: "Любимое", type: "liked", tracks: store.liked)
-            case .library:
-                if store.path == "/library" { NativeLibraryView() }
-                else { NativeTrackListView(title: "Песни", type: "library", tracks: store.library) }
-            case .search: NativeSearchView()
-            case .page: NativePageView()
-            case .web: Color.clear
-            }
+            screen.id(store.path)
+                .transition(.opacity.combined(with: .offset(x: reduceMotion ? 0 : 18)))
             if let text = store.banner {
                 Text(text).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
                     .padding(.horizontal, 16).padding(.vertical, 10)
@@ -535,6 +555,8 @@ struct NativeShellContent: View {
             }
         }
         .animation(.easeOut(duration: 0.25), value: store.banner)
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.32), value: store.path)
+        .transaction { if reduceMotion { $0.animation = nil } }
         .foregroundStyle(.white)
         .tint(.moraMint)
         .environmentObject(store)
@@ -546,6 +568,19 @@ struct NativeShellContent: View {
                 .presentationDragIndicator(.visible)
                 .preferredColorScheme(.dark)
         }
+    }
+    @ViewBuilder private var screen: some View {
+        switch store.screen {
+            case .home: NativeHomeView()
+            case .more: NativeMoreView()
+            case .liked: NativeTrackListView(title: "Любимое", type: "liked", tracks: store.liked)
+            case .library:
+                if store.path == "/library" { NativeLibraryView() }
+                else { NativeTrackListView(title: "Песни", type: "library", tracks: store.library) }
+            case .search: NativeSearchView()
+            case .page: NativePageView()
+            case .web: Color.clear
+            }
     }
 }
 
@@ -571,6 +606,8 @@ struct NativeShellBar: View {
         .padding(.bottom, 4)
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge) // the bar keeps its height; screens scale fully
         .foregroundStyle(.white)
+        .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.3), value: store.miniTitle)
+        .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.2), value: store.miniPlaying)
     }
 
     private func mini(_ title: String) -> some View {
@@ -592,7 +629,7 @@ struct NativeShellBar: View {
             .accessibilityLabel("\(title), \(store.miniArtist)")
             .accessibilityHint("Открыть плеер")
             Button { store.togglePlayback() } label: {
-                Image(systemName: store.miniPlaying ? "pause.fill" : "play.fill").font(.title3).frame(width: 44, height: 44)
+                Image(systemName: store.miniPlaying ? "pause.fill" : "play.fill").contentTransition(.symbolEffect(.replace)).font(.title3).frame(width: 44, height: 44)
             }
             .accessibilityLabel(store.miniPlaying ? "Пауза" : "Играть")
             Button { store.next() } label: {

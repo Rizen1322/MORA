@@ -96,10 +96,23 @@ struct NativeNow: Equatable {
 
 struct NativeToast: Equatable { let id: Int, text: String, error: Bool }
 
+struct NativePlaybackModes: Equatable {
+    var shuffle = false, repeatMode = "off", automix = true, canShuffle = true
+    init() {}
+    init(_ value: [String: Any]) {
+        shuffle = value["shuffle"] as? Bool == true
+        if let mode = value["repeat"] as? String, ["off", "all", "one"].contains(mode) { repeatMode = mode }
+        automix = value["automix"] as? Bool ?? true
+        canShuffle = value["canShuffle"] as? Bool ?? true
+    }
+    var repeatLabel: String { repeatMode == "one" ? "Повтор трека" : repeatMode == "all" ? "Повтор очереди" : "Повтор выключен" }
+}
+
 /// The page's small state, sent whenever it changes.
 struct NativeUiState: Equatable {
     var path = "/", loaded = false, overlay = false
     var wave = NativeWave()
+    var playback = NativePlaybackModes()
     var now: NativeNow?
     var toast: NativeToast?
     var preparing: String?
@@ -110,6 +123,7 @@ struct NativeUiState: Equatable {
         loaded = value["loaded"] as? Bool == true
         overlay = value["overlay"] as? Bool == true
         wave = NativeWave(value["wave"] as? [String: Any] ?? [:])
+        playback = NativePlaybackModes(value["playback"] as? [String: Any] ?? [:])
         if let now = value["now"] as? [String: Any], let id = now["id"] as? String {
             self.now = NativeNow(id: id, title: now["title"] as? String ?? "", artist: now["artist"] as? String ?? "",
                                  label: now["label"] as? String ?? "", cover: now["cover"] as? String, playing: now["playing"] as? Bool == true)

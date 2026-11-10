@@ -1,4 +1,5 @@
 import AVKit
+import Combine
 import MediaPlayer
 import SwiftUI
 import UIKit
@@ -27,6 +28,9 @@ final class NativePlayerModel: ObservableObject {
     /// The seek target from the moment the finger lifts until the host reports it.
     @Published var scrub: Double?
     @Published private(set) var reaction = 0
+    @Published private(set) var modes = NativePlaybackModes()
+    @Published private(set) var changingMode = false
+    @Published var modeError: String?
     /// When `state.position` was read: the scrubber runs the clock on from there between polls.
     private(set) var receivedAt = Date()
     weak var controller: UIViewController?
@@ -36,10 +40,30 @@ final class NativePlayerModel: ObservableObject {
     private var timer: Timer?
     private var artworkKey = ""
 
-    init(host: NativeMixHost) { self.host = host }
+    init(host: NativeMixHost) {
+        self.host = host
+        NativeShellStore.shared?.$ui.map(\.playback).removeDuplicates().assign(to: &$modes)
+    }
+    #if DEBUG
+    var visualCheck = false
+    func installVisualFixture() {
+        visualCheck = true
+        state = NativePlayerState(["active": true, "playing": true, "duration": 180.0, "position": 160.0,
+            "entryId": "visual-a", "currentTrack": ["title": "MORA · Native Player", "artist": "Проверка интерфейса", "trackId": "visual-a"],
+            "blend": ["index": 1, "progress": 0.4], "upcoming": [["entryId": "visual-b", "title": "Следующий трек", "artist": "Очередь AutoMix", "transition": ["method": "beatmatch_blend"]]]])
+        modes = NativeShellStore.shared?.ui.playback ?? NativePlaybackModes()
+        artwork = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 600)).image { ctx in
+            UIColor(Color.moraMint).setFill(); ctx.fill(CGRect(x: 0, y: 0, width: 600, height: 600))
+            UIImage(systemName: "waveform", withConfiguration: UIImage.SymbolConfiguration(pointSize: 250))?.withTintColor(.black).draw(in: CGRect(x: 100, y: 170, width: 400, height: 260))
+        }
+    }
+    #endif
 
     /// Polls only while the sheet is on screen and the app is in the foreground.
     func start() {
+        #if DEBUG
+        if visualCheck { return }
+        #endif
         guard timer == nil else { return }
         refresh()
         let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in self?.refresh() }
@@ -96,6 +120,17 @@ final class NativePlayerModel: ObservableObject {
         }
     }
 
+    func playbackMode(_ mode: String) {
+        guard !changingMode, let store = NativeShellStore.shared else { return }
+        changingMode = true
+        UISelectionFeedbackGenerator().selectionChanged()
+        Task { @MainActor in
+            defer { changingMode = false }
+            do { modes = NativePlaybackModes(try await store.call("playbackMode", ["mode": mode]) as? [String: Any] ?? [:]) }
+            catch { modeError = error.localizedDescription }
+        }
+    }
+
     func versions() {
         NativeShellStore.shared?.presentVersions(id: state.trackId, from: controller)
     }
@@ -131,7 +166,7 @@ private struct IconButton: View {
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.title3.weight(.semibold))
+            Image(systemName: symbol).contentTransition(.symbolEffect(.replace)).font(.title3.weight(.semibold))
                 .frame(width: 44, height: 44).contentShape(Rectangle())
         }
         .accessibilityLabel(label)
@@ -155,6 +190,7 @@ struct NativePlayerView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var queueOpen = false
     @State private var showLyrics = false
+    @Namespace private var playerLayout
 
     var body: some View {
         let s = model.state
@@ -176,14 +212,15 @@ struct NativePlayerView: View {
             Spacer(minLength: 12)
             if queueOpen {
                 HStack(spacing: 12) {
-                    NativeCover(url: nil, size: 64, radius: 10, image: model.artwork)
-                    metadata
+                    NativeCover(url: nil, size: 64, radius: 10, image: model.artwork).matchedGeometryEffect(id: "cover", in: playerLayout)
+                    metadata.matchedGeometryEffect(id: "metadata", in: playerLayout)
                 }
                 NativeQueueContent(model: model).frame(maxHeight: .infinity)
+                    .transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : 16)))
             } else {
-                cover(playing: s.playing)
+                cover(playing: s.playing).matchedGeometryEffect(id: "cover", in: playerLayout)
                 Spacer(minLength: 16)
-                metadata
+                metadata.matchedGeometryEffect(id: "metadata", in: playerLayout)
             }
             NativeScrubber(state: s, receivedAt: model.receivedAt, pending: model.scrub) { model.seek(to: $0) }
                 .id(s.entryId).padding(.top, 18)
@@ -209,7 +246,16 @@ struct NativePlayerView: View {
         .foregroundStyle(.white)
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         .background { backdrop.ignoresSafeArea() }
-        .onAppear { model.start() }
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.48, dampingFraction: 0.86), value: queueOpen)
+        .animation(.easeInOut(duration: 0.3), value: s.entryId)
+        .transaction { if reduceMotion { $0.animation = nil } }
+        .alert("Не удалось изменить режим", isPresented: Binding(get: { model.modeError != nil }, set: { if !$0 { model.modeError = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(model.modeError ?? "") }
+        .onAppear {
+            model.start()
+            #if DEBUG
+            if model.visualCheck { Task { @MainActor in try? await Task.sleep(for: .seconds(4)); queueOpen = true } }
+            #endif
+        }
         .onDisappear { model.finish() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in model.stop() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in model.start() }
@@ -219,8 +265,8 @@ struct NativePlayerView: View {
     private var metadata: some View {
         HStack(spacing: 4) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(model.state.title.isEmpty ? "MORA" : model.state.title).font(.title2.bold()).lineLimit(1)
-                Text(model.state.artist).font(.title3).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
+                Text(model.state.title.isEmpty ? "MORA" : model.state.title).contentTransition(.opacity).font(.title2.bold()).lineLimit(1)
+                Text(model.state.artist).contentTransition(.opacity).font(.title3).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
             }.frame(maxWidth: .infinity, alignment: .leading)
             IconButton(symbol: model.reaction > 0 ? "heart.fill" : "heart", label: model.reaction > 0 ? "Убрать лайк" : "Нравится") { model.react(1) }
                 .foregroundStyle(model.reaction > 0 ? Color.moraMint : .white)
@@ -236,6 +282,7 @@ struct NativePlayerView: View {
             LinearGradient(colors: [Color(red: 0.10, green: 0.24, blue: 0.17), .moraBackground], startPoint: .top, endPoint: .bottom)
             if let image = model.artwork {
                 Image(uiImage: image).resizable().scaledToFill().blur(radius: 60).opacity(0.35)
+                    .id(model.state.entryId).transition(.opacity)
             }
         }
     }
@@ -245,8 +292,7 @@ struct NativePlayerView: View {
             .aspectRatio(1, contentMode: .fit)
             .frame(maxWidth: 430)
             .overlay {
-                ZStack(alignment: .bottomTrailing) {
-                    Group {
+                Group {
                         if showLyrics {
                             NativeLyricsView(model: model)
                         } else if let image = model.artwork {
@@ -259,15 +305,8 @@ struct NativePlayerView: View {
                             .accessibilityHidden(true)
                         }
                     }
-                    .transition(.opacity)
-                    Button { showLyrics.toggle() } label: {
-                        Image(systemName: showLyrics ? "square.stack" : "text.alignleft")
-                            .font(.body.weight(.semibold)).frame(width: 44, height: 44)
-                            .background(.ultraThinMaterial, in: Circle())
-                    }
-                    .accessibilityLabel(showLyrics ? "Показать обложку" : "Показать текст песни")
-                    .padding(12)
-                }
+                .id(showLyrics ? "lyrics" : model.state.entryId)
+                .transition(.opacity)
             }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(0.6), radius: playing ? 30 : 14, y: playing ? 20 : 10)
@@ -286,7 +325,7 @@ struct NativePlayerView: View {
             .accessibilityLabel("Предыдущий")
             Spacer()
             Button { model.transport(playing ? "pause" : "play") } label: {
-                Image(systemName: playing ? "pause.fill" : "play.fill").font(.system(size: 48, weight: .semibold))
+                Image(systemName: playing ? "pause.fill" : "play.fill").contentTransition(.symbolEffect(.replace)).font(.system(size: 48, weight: .semibold))
                     .frame(width: 80, height: 80)
             }
             .accessibilityLabel(playing ? "Пауза" : "Играть")
@@ -392,7 +431,8 @@ private struct NativeQueueContent: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
-                Text("Продолжение").font(.title2.bold()).padding(.top, 18)
+                NativeQueueModes(model: model).padding(.top, 16)
+                Text("Продолжение").font(.title2.bold())
                 if let label = NativeShellStore.shared?.ui.now?.label, !label.isEmpty {
                     Text("Из: \(label)").font(.subheadline).foregroundStyle(.secondary)
                 }
@@ -409,9 +449,46 @@ private struct NativeQueueContent: View {
                         }
                         Spacer(minLength: 0)
                     }.accessibilityElement(children: .combine)
+                        .transition(.opacity.combined(with: .offset(y: 10)))
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 16)
+                .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.3), value: model.state.upcoming.map(\.id))
         }
+    }
+}
+
+
+private struct NativeQueueModes: View {
+    @ObservedObject var model: NativePlayerModel
+    var body: some View {
+        HStack(spacing: 10) {
+            mode("shuffle", symbol: "shuffle", label: "Перемешать", on: model.modes.shuffle, disabled: !model.modes.canShuffle)
+            mode("repeat", symbol: model.modes.repeatMode == "one" ? "repeat.1" : "repeat", label: model.modes.repeatLabel, on: model.modes.repeatMode != "off")
+            mode("automix", symbol: "waveform", label: "AutoMix", on: model.modes.automix)
+        }
+        .disabled(model.changingMode)
+        .animation(.easeInOut(duration: 0.2), value: model.modes)
+    }
+    private func mode(_ mode: String, symbol: String, label: String, on: Bool, disabled: Bool = false) -> some View {
+        Button { model.playbackMode(mode) } label: {
+            Group {
+                if mode == "automix" {
+                    HStack(spacing: -7) {
+                        Circle().stroke(lineWidth: 2.5)
+                        Circle().fill().overlay(Circle().fill(on ? Color.moraMint : Color.moraBackground).frame(width: 4, height: 4))
+                    }.frame(width: 30, height: 19)
+                } else { Image(systemName: symbol).font(.title3.weight(.semibold)).contentTransition(.symbolEffect(.replace)) }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .foregroundStyle(on ? Color.moraBackground : Color.white.opacity(0.65))
+            .background(on ? Color.moraMint : Color.white.opacity(0.1), in: Capsule())
+            .opacity(disabled ? 0.35 : 1)
+        }
+        .buttonStyle(.plain).disabled(disabled)
+        .accessibilityLabel(label).accessibilityValue(on ? "Включено" : "Выключено")
+        .accessibilityAddTraits(on ? .isSelected : [])
+        .accessibilityHint(disabled ? "В волне порядок подбирается автоматически" : "Изменить режим воспроизведения")
+        .accessibilityIdentifier("queue." + mode)
     }
 }
 
@@ -446,19 +523,25 @@ private struct NativeScrubber: View {
                     let x = width * min(1, max(0, shown / duration))
                     ZStack(alignment: .leading) {
                         Capsule().fill(.white.opacity(0.18)).frame(height: drag == nil ? 6 : 10)
-                        if let start = state.mixStart {
-                            Capsule().fill(Color.moraGold.opacity(0.85))
-                                .frame(width: max(4, width * state.mixLength / duration), height: drag == nil ? 6 : 10)
-                                .offset(x: width * start / duration)
+                        Capsule().fill(.white.opacity(state.blending ? 0.95 : 0.65))
+                            .frame(width: x, height: drag == nil ? 6 : 10)
+                            .shadow(color: .white.opacity(state.blending ? 0.65 : 0), radius: 5)
+                        if state.blending && !reduceMotion && drag == nil {
+                            let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.8) / 1.8
+                            LinearGradient(colors: [.clear, .white, .clear], startPoint: .leading, endPoint: .trailing)
+                                .frame(width: width * 0.3, height: 6)
+                                .offset(x: width * (phase * 1.3 - 0.3))
+                                .frame(width: width, alignment: .leading).clipShape(Capsule())
+                                .allowsHitTesting(false)
                         }
-                        Capsule().fill(.white).frame(width: x, height: drag == nil ? 6 : 10)
-                        Circle().fill(.white).frame(width: drag == nil ? 14 : 24, height: drag == nil ? 14 : 24)
-                            .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
-                            .offset(x: x - (drag == nil ? 7 : 12))
+                        if drag != nil {
+                            Circle().fill(.white).frame(width: 20, height: 20).offset(x: x - 10)
+                        }
                     }
                     .frame(width: width, height: 44)
                     .contentShape(Rectangle())
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: drag == nil)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: state.blending)
                     // GestureState resets when the sheet's own pan cancels the drag; a @State value stayed stuck there.
                     .gesture(DragGesture(minimumDistance: 4)
                         .updating($drag) { g, value, _ in
@@ -475,12 +558,13 @@ private struct NativeScrubber: View {
                 HStack {
                     Text(NativePlayerTime.text(shown))
                     Spacer()
-                    if let start = state.mixStart {
-                        HStack(spacing: 3) { Image(systemName: "sparkles"); Text("AutoMix \(NativePlayerTime.text(start))") }
-                            .foregroundStyle(Color.moraGold.opacity(0.9))
+                    if state.blending {
+                        Text("Микширование").font(.caption2.weight(.medium))
+                            .foregroundStyle(.white.opacity(reduceMotion || !state.playing ? 0.8 : 0.65 + 0.35 * sin(context.date.timeIntervalSinceReferenceDate * 3)))
+                            .transition(.opacity)
                         Spacer()
                     }
-                    Text(NativePlayerTime.text(state.duration))
+                    Text("−" + NativePlayerTime.text(max(0, state.duration - shown)))
                 }
                 .font(.caption.monospacedDigit().weight(.medium))
                 .foregroundStyle(.white.opacity(0.55))

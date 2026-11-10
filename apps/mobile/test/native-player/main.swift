@@ -46,3 +46,7 @@ print("Native player: AutoMix window")
 precondition(NativePlayerState.mixLabel(["transition": ["method": "echo_out"]]) == "AutoMix · Эхо")
 precondition(NativePlayerState.mixLabel(["plan": ["method": "beatmatch_blend"]]) == "AutoMix · Битматч")
 precondition(NativePlayerState.mixLabel([:]) == "AutoMix · Плавный переход")
+
+precondition(!mix.blending, "A planned transition must not start the mixing animation")
+precondition(NativePlayerState(["blend": ["index": 1, "progress": 0.2]]).blending, "Only a real blend lights the mixing bar")
+precondition(!NativePlayerState(["blend": NSNull()]).blending, "The mixing bar stops when the host clears the blend")

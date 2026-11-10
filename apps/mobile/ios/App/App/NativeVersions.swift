@@ -233,6 +233,8 @@ private struct NativeVersionChoice: Identifiable {
             }
         }
         .tint(.moraMint)
+        .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.25), value: model.selected)
+        .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.25), value: model.rows.map(\.id))
         .task(id: "\(query)|\(variant)|\(source)") {
             do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
             await model.search("\(query) \(variant)".trimmingCharacters(in: .whitespaces), source: source)

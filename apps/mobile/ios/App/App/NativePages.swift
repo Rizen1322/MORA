@@ -195,6 +195,7 @@ struct NativePageView: View {
                         }
                     }.disabled(disabled || running)
                 }.padding(.vertical, 6)
+                    .animation(UIAccessibility.isReduceMotionEnabled ? nil : .easeInOut(duration: 0.2), value: value)
             } else {
                 Picker(selection: Binding(get: { value }, set: { run(act, ["value": $0]) })) {
                     ForEach(options.indices, id: \.self) { i in Text(options[i].label).tag(options[i].value) }

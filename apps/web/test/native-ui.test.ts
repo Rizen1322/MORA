@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   app: {} as any, listeners: [] as (() => void)[], radio: { active: false, loading: false, error: null as string | null },
-  playTracks: vi.fn(), addToQueue: vi.fn(), toggle: vi.fn(), startWave: vi.fn(), startRadio: vi.fn(), toast: vi.fn(),
+  toggleShuffle: vi.fn(), cycleRepeat: vi.fn(), playTracks: vi.fn(), addToQueue: vi.fn(), toggle: vi.fn(), startWave: vi.fn(), startRadio: vi.fn(), toast: vi.fn(),
   openVersionPanel: vi.fn(), yandexWaveSettings: vi.fn(), refreshYandexWave: vi.fn(), react: vi.fn(), patchTrack: vi.fn(),
 }));
 vi.mock('../src/store/app.ts', () => ({
   phone: true,
-  controller: { playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k), refreshYandexWave: () => h.refreshYandexWave() },
+  controller: { toggleShuffle: () => h.toggleShuffle(), cycleRepeat: () => h.cycleRepeat(), playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k), refreshYandexWave: () => h.refreshYandexWave() },
   trackOf: (id: string) => h.app.tracks.get(id),
   useApp: { getState: () => h.app, setState: vi.fn(), subscribe: (fn: () => void) => h.listeners.push(fn) },
 }));
@@ -173,4 +173,28 @@ it('keeps Yandex tuning groups independent and shows an error when its settings 
   h.yandexWaveSettings.mockRejectedValueOnce(new Error('offline'));
   const failed = await commands.waveSettings({ source: 'yandex' }) as any;
   expect(failed.sections[0].rows[0]).toMatchObject({ kind: 'text', tone: 'warn' });
+});
+
+
+it('connects native queue modes to the real command paths and preserves other AutoMix settings', async () => {
+  const { commands, uiState } = await import('../src/lib/native-ui.ts');
+  h.app.player = { ...h.app.player, context: { type: 'liked' }, shuffle: false, repeat: 'off' };
+  h.app.settings = { automix: { enabled: true, mixOnNext: false, loudnessTarget: -14 } };
+  h.app.saveSettings = vi.fn(async (patch: any) => { h.app.settings = { ...h.app.settings, ...patch }; });
+  h.toggleShuffle.mockImplementation(() => { h.app.player.shuffle = !h.app.player.shuffle; });
+  h.cycleRepeat.mockImplementation(() => { h.app.player.repeat = ({ off: 'all', all: 'one', one: 'off' } as any)[h.app.player.repeat]; });
+  expect(uiState().playback).toEqual({ shuffle: false, repeat: 'off', automix: true, canShuffle: true });
+  expect(await commands.playbackMode({ mode: 'shuffle' })).toMatchObject({ shuffle: true });
+  for (const repeat of ['all', 'one', 'off']) expect(await commands.playbackMode({ mode: 'repeat' })).toMatchObject({ repeat });
+  expect(await commands.playbackMode({ mode: 'automix' })).toMatchObject({ automix: false });
+  expect(h.app.saveSettings).toHaveBeenCalledWith({ automix: { enabled: false, mixOnNext: false, loudnessTarget: -14 } });
+  for (const type of ['wave', 'yandex-wave', 'online-radio']) {
+    h.app.player.context = { type };
+    expect(uiState().playback.canShuffle).toBe(false);
+    await commands.playbackMode({ mode: 'shuffle' });
+  }
+  expect(h.toggleShuffle).toHaveBeenCalledOnce();
+  await expect(commands.playbackMode({ mode: 'invalid' })).rejects.toThrow('Неизвестный режим');
+  h.app.settings = null;
+  await expect(commands.playbackMode({ mode: 'automix' })).rejects.toThrow('Настройки ещё загружаются');
 });

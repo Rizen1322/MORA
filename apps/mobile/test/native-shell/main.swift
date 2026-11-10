@@ -103,3 +103,13 @@ precondition(!NativePreviewResume.allowed(previewPaused.merging(["playing": true
 precondition(!NativePreviewResume.allowed(previewPaused, after: [:]))
 
 precondition(!NativePreviewResume.allowed(previewPaused.merging(["epoch": 8]) { _, new in new }, after: previewPaused))
+
+let modes = NativePlaybackModes(["shuffle": true, "repeat": "one", "automix": false, "canShuffle": false])
+precondition(modes.shuffle && modes.repeatMode == "one" && !modes.automix && !modes.canShuffle)
+precondition(modes.repeatLabel == "Повтор трека")
+precondition(NativePlaybackModes(["repeat": "all"]).repeatLabel == "Повтор очереди")
+precondition(NativePlaybackModes(["repeat": 1]).repeatMode == "off")
+precondition(NativePlaybackModes(["repeat": "invalid"]).repeatMode == "off")
+precondition(NativeUiState(["playback": ["shuffle": true]]).playback.shuffle)
+precondition(NativePlaybackModes().automix && NativePlaybackModes().canShuffle)
+print("Native shell: queue modes, defaults and invalid repeat values")

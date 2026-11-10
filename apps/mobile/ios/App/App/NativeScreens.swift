@@ -537,6 +537,8 @@ struct NativeLibraryView: View {
             }
             .listStyle(.plain).scrollContentBackground(.hidden)
             .background(Color.moraBackground).navigationTitle("Медиатека")
+            .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.3), value: store.library.prefix(8).map(\.id))
+            .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.3), value: likedArtists.map(\.id))
         }
     }
     private func destination(_ title: String, _ symbol: String, _ path: String) -> some View {
