@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   app: {} as any, listeners: [] as (() => void)[], radio: { active: false, loading: false, error: null as string | null },
+  resume: vi.fn(), pause: vi.fn(), nextTrack: vi.fn(), prevTrack: vi.fn(), seek: vi.fn(),
   toggleShuffle: vi.fn(), cycleRepeat: vi.fn(), playTracks: vi.fn(), addToQueue: vi.fn(), toggle: vi.fn(), startWave: vi.fn(), startRadio: vi.fn(), toast: vi.fn(),
   importFiles: vi.fn(), imports: vi.fn(), openVersionPanel: vi.fn(), yandexWaveSettings: vi.fn(), refreshYandexWave: vi.fn(), react: vi.fn(), patchTrack: vi.fn(),
 }));
 vi.mock('../src/store/app.ts', () => ({
   phone: true,
-  controller: { toggleShuffle: () => h.toggleShuffle(), cycleRepeat: () => h.cycleRepeat(), playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k), refreshYandexWave: () => h.refreshYandexWave() },
+  controller: { resume: () => h.resume(), pause: () => h.pause(), nextTrack: () => h.nextTrack(), prevTrack: () => h.prevTrack(), seek: (time: number) => h.seek(time), toggleShuffle: () => h.toggleShuffle(), cycleRepeat: () => h.cycleRepeat(), playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k), refreshYandexWave: () => h.refreshYandexWave() },
   trackOf: (id: string) => h.app.tracks.get(id),
   useApp: { getState: () => h.app, setState: vi.fn(), subscribe: (fn: () => void) => h.listeners.push(fn) },
 }));
@@ -226,4 +227,20 @@ it('passes native file bytes and the original name to the importer and surfaces 
   await expect(actions.importAudio({ name: 'empty.wav', base64: '' })).rejects.toThrow('пустой');
   h.importFiles.mockImplementationOnce(() => { h.app.upload = { failed: [{ name: 'broken.mp3', error: 'Не удалось прочитать' }] }; });
   await expect(actions.importAudio({ name: 'broken.mp3', base64: 'AQID' })).rejects.toThrow('broken.mp3: Не удалось прочитать');
+});
+
+
+it('presents restored metadata and dispatches transport without opening the web player', async () => {
+  const { uiState, commands } = await import('../src/lib/native-ui.ts');
+  h.app.player = { ...h.app.player, status: 'idle', position: 37, queue: [{ trackId: 'a', entryId: 'saved-entry' }] };
+  expect(uiState().now).toMatchObject({ id: 'a', entryId: 'saved-entry', position: 37, duration: 100, playing: false });
+  for (const action of ['play', 'pause', 'nexttrack', 'previoustrack']) await commands.playerCommand({ action });
+  expect(h.resume).toHaveBeenCalledTimes(1);
+  expect(h.pause).toHaveBeenCalledTimes(1);
+  expect(h.nextTrack).toHaveBeenCalledTimes(1);
+  expect(h.prevTrack).toHaveBeenCalledTimes(1);
+  commands.playerCommand({ action: 'seekto', time: 45 });
+  expect(h.seek).toHaveBeenCalledWith(45);
+  for (const time of [-1, NaN, Infinity, '45']) expect(() => commands.playerCommand({ action: 'seekto', time })).toThrow();
+  expect(() => commands.playerCommand({ action: 'invalid' })).toThrow();
 });

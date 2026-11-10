@@ -420,9 +420,12 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     /// iPhone full player: resolves with the way the sheet closed; a rejection keeps the web player.
     @objc func nativePlayerPresent(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
-            guard self.nativeMix.active, let vc = self.bridge?.viewController, vc.presentedViewController == nil else {
+            guard self.nativeMix.active || NativeShellStore.shared?.ui.now != nil,
+                  let bridge = self.bridge?.viewController else {
                 call.reject("Native player unavailable"); return
             }
+            let vc = (bridge.parent as? MoraRootViewController) ?? bridge
+            guard vc.presentedViewController == nil else { call.reject("Native player already presented"); return }
             NativePlayerSheet.present(host: self.nativeMix, from: vc) { call.resolve(["action": $0]) }
         }
     }

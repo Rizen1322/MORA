@@ -3,26 +3,30 @@ import UIKit
 import UniformTypeIdentifiers
 
 /// A private copy is available before the delegate fires, including files supplied by iCloud.
-@MainActor struct NativeDocumentPicker: UIViewControllerRepresentable {
-    let types: [UTType], multiple: Bool
-    let complete: (Result<[URL], Error>) -> Void
-    static func controller(types: [UTType], multiple: Bool) -> UIDocumentPickerViewController {
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types.isEmpty ? [.data] : types, asCopy: true)
-        picker.allowsMultipleSelection = multiple
-        return picker
+@MainActor final class NativeDocumentPicker: NSObject, UIDocumentPickerDelegate {
+    let controller: UIDocumentPickerViewController
+    private let complete: (Result<[URL], Error>) -> Void
+    init(types: [UTType], multiple: Bool, complete: @escaping (Result<[URL], Error>) -> Void) {
+        controller = UIDocumentPickerViewController(forOpeningContentTypes: types.isEmpty ? [.data] : types, asCopy: true)
+        controller.allowsMultipleSelection = multiple
+        self.complete = complete
+        super.init()
+        controller.delegate = self
+        controller.modalPresentationStyle = .fullScreen
     }
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let picker = Self.controller(types: types, multiple: multiple); picker.delegate = context.coordinator; return picker
+    func present(from parent: UIViewController) {
+        parent.view.endEditing(true)
+        parent.present(controller, animated: true)
     }
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-    func makeCoordinator() -> Coordinator { Coordinator(complete: complete) }
-    final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let complete: (Result<[URL], Error>) -> Void
-        init(complete: @escaping (Result<[URL], Error>) -> Void) { self.complete = complete }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { complete(.success(urls)) }
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { complete(.failure(CocoaError(.userCancelled))) }
+    private func finish(_ result: Result<[URL], Error>) {
+        if controller.presentingViewController != nil {
+            controller.dismiss(animated: true) { self.complete(result) }
+        } else { complete(result) }
     }
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { finish(.success(urls)) }
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { finish(.failure(CocoaError(.userCancelled))) }
 }
+
 enum NativePickedFile {
     static func discardTemporaryCopy(_ url: URL) {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path
@@ -58,10 +62,8 @@ struct NativePageView: View {
     @State private var confirm: (row: NativePageRow.Confirm, act: NativePageAct)?
     @State private var prompt: (row: NativePageRow.Prompt, act: NativePageAct)?
     @State private var promptText = ""
-    @State private var picker = false
+    @State private var documentPicker: NativeDocumentPicker?
     @State private var importingFile: String?
-    /// Kept after the picker closes: its completion can arrive after `picker` is reset.
-    @State private var pick: (types: [UTType], multiple: Bool, act: NativePageAct)?
 
     var body: some View {
         NavigationStack { dialogs(pageList) }
@@ -154,19 +156,6 @@ struct NativePageView: View {
                 TextField(p.row.placeholder, text: $promptText)
                 Button("Готово") { run(p.act, ["value": promptText]) }
                 Button("Отмена", role: .cancel) {}
-            }
-            .sheet(isPresented: $picker) {
-                if let pick {
-                    NativeDocumentPicker(types: pick.types, multiple: pick.multiple) { result in
-                        picker = false
-                        switch result {
-                        case .success(let urls):
-                            if urls.isEmpty { store.show("Файлы не выбраны") } else { send(urls, pick.act) }
-                        case .failure(let error):
-                            if (error as NSError).code != CocoaError.Code.userCancelled.rawValue { store.show(Self.message(error)) }
-                        }
-                    }.ignoresSafeArea()
-                }
             }
             .onChange(of: store.path) { page = nil; failure = nil; form = [:]; query = "" }
             .onChange(of: waveSource?.wrappedValue) { page = nil; failure = nil }
@@ -316,7 +305,7 @@ struct NativePageView: View {
             }
 
         case .file(let title, let symbol, let types, let multiple, let act):
-            Button { pick = (types.compactMap { UTType(filenameExtension: $0) }, multiple, act); picker = true } label: {
+            Button { chooseFiles(types: types.compactMap { UTType(filenameExtension: $0) }, multiple: multiple, act: act) } label: {
                 Label(title, systemImage: symbol ?? "doc").frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             }
             .disabled(running)
@@ -428,6 +417,23 @@ struct NativePageView: View {
     /// Picked files go to the page one by one as base64.
     /// shortcut: a whole file is read into memory and copied across the bridge; fine for songs, upgrade to a
     /// streamed upload if multi-hundred-megabyte files must be imported.
+    private func chooseFiles(types: [UTType], multiple: Bool, act: NativePageAct) {
+        guard documentPicker == nil, let root = store.presenter else { return }
+        var parent = root
+        while let presented = parent.presentedViewController { parent = presented }
+        let picker = NativeDocumentPicker(types: types, multiple: multiple) { result in
+            documentPicker = nil
+            switch result {
+            case .success(let urls):
+                if urls.isEmpty { store.show("Файлы не выбраны") } else { send(urls, act) }
+            case .failure(let error):
+                if (error as NSError).code != CocoaError.Code.userCancelled.rawValue { store.show(Self.message(error)) }
+            }
+        }
+        documentPicker = picker
+        picker.present(from: parent)
+    }
+
     private func send(_ urls: [URL], _ act: NativePageAct) {
         running = true
         Task { @MainActor in

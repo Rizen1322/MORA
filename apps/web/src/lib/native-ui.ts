@@ -49,7 +49,7 @@ export function uiState(s = useApp.getState(), radio = useRadio.getState(), prep
       error: p.error ?? radio.error,
     },
     playback: { shuffle: p.shuffle, repeat: p.repeat, automix: s.settings?.automix.enabled ?? true, canShuffle: !radio.active && !['wave', 'yandex-wave', 'online-radio'].includes(ctx ?? '') },
-    now: current ? { id: current.id, title: current.title, artist: current.artist, cover: current.coverUrl, playing, label: p.context?.label ?? '' } : null,
+    now: current ? { id: current.id, entryId: p.queue[p.index]?.entryId, position: p.position, duration: current.duration, title: current.title, artist: current.artist, cover: current.coverUrl, playing, label: p.context?.label ?? '' } : null,
     toast: toast ? { id: toast.id, text: toast.text, kind: toast.kind } : null,
     preparing: catalogPreparation.phase === 'starting' ? catalogPreparation.title : preparing.phase === 'starting' ? preparing.title : null,
   };
@@ -130,6 +130,14 @@ export const commands: Record<string, (a: Args) => unknown> = {
       await useApp.getState().saveSettings({ automix: { ...settings.automix, enabled: !settings.automix.enabled } });
     } else throw Error('Неизвестный режим воспроизведения');
     return uiState().playback;
+  },
+  playerCommand: (a) => {
+    if (a.action === 'play') return controller.resume();
+    if (a.action === 'pause') return controller.pause();
+    if (a.action === 'nexttrack') return controller.nextTrack();
+    if (a.action === 'previoustrack') return controller.prevTrack();
+    if (a.action === 'seekto' && typeof a.time === 'number' && Number.isFinite(a.time) && a.time >= 0) return controller.seek(a.time);
+    throw Error('Неизвестная команда плеера');
   },
   toggle: () => controller.toggle(),
   /** Pushes everything again, e.g. after the shell was switched off or on. */

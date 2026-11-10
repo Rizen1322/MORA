@@ -92,6 +92,8 @@ struct NativeNow: Equatable {
     let id: String, title: String, artist: String, label: String
     let cover: String?
     let playing: Bool
+    var entryId = ""
+    var position = 0.0, duration = 0.0
 }
 
 struct NativeToast: Equatable { let id: Int, text: String, error: Bool }
@@ -127,7 +129,8 @@ struct NativeUiState: Equatable {
         playback = NativePlaybackModes(value["playback"] as? [String: Any] ?? [:])
         if let now = value["now"] as? [String: Any], let id = now["id"] as? String {
             self.now = NativeNow(id: id, title: now["title"] as? String ?? "", artist: now["artist"] as? String ?? "",
-                                 label: now["label"] as? String ?? "", cover: now["cover"] as? String, playing: now["playing"] as? Bool == true)
+                                 label: now["label"] as? String ?? "", cover: now["cover"] as? String, playing: now["playing"] as? Bool == true,
+                                 entryId: now["entryId"] as? String ?? "", position: now["position"] as? Double ?? 0, duration: now["duration"] as? Double ?? 0)
         }
         if let toast = value["toast"] as? [String: Any], let id = toast["id"] as? Int, let text = toast["text"] as? String {
             self.toast = NativeToast(id: id, text: text, error: toast["kind"] as? String == "error")

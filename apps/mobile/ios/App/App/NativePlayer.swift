@@ -84,6 +84,12 @@ final class NativePlayerModel: ObservableObject {
             defer { then?() }
             guard let self, case .success(let value) = result else { return }
             var next = NativePlayerState(value)
+            let restored = !next.active ? NativeShellStore.shared?.ui.now : nil
+            if let restored {
+                next = NativePlayerState(["active": true, "playing": restored.playing, "entryId": restored.entryId,
+                    "position": restored.position, "duration": restored.duration,
+                    "currentTrack": ["trackId": restored.id, "title": restored.title, "artist": restored.artist]])
+            }
             // Show the requested queue immediately, while native resolves/copies its sources in batches.
             if let store = NativeShellStore.shared, let at = store.queue.firstIndex(where: { $0.entryId == next.entryId }) {
                 let planned = Dictionary(next.upcoming.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -104,6 +110,12 @@ final class NativePlayerModel: ObservableObject {
             if key != self.artworkKey {
                 self.artworkKey = key
                 self.artwork = (value["artwork"] as? MPMediaItemArtwork)?.image(at: CGSize(width: 600, height: 600))
+                if let cover = restored?.cover {
+                    Task { @MainActor in
+                        let image = await NativeCovers.image(cover)
+                        if self.artworkKey == key { self.artwork = image }
+                    }
+                }
             }
         }
     }
@@ -111,6 +123,17 @@ final class NativePlayerModel: ObservableObject {
     /// The same command path as the lock screen.
     private func send(_ action: String, time: Double? = nil, then: (() -> Void)? = nil) {
         // `then` runs once the post-command state is shown, so a seek target never flashes back to the old position.
+        if !host.active, let store = NativeShellStore.shared {
+            Task { @MainActor in
+                do {
+                    var args: [String: Any] = ["action": action]
+                    if let time { args["time"] = time }
+                    _ = try await store.call("playerCommand", args)
+                } catch { self.actionError = error.localizedDescription }
+                self.refresh(then: then)
+            }
+            return
+        }
         host.command(action, time: time, source: "player") { [weak self] _ in
             if let self { self.refresh(then: then) } else { then?() }
         }

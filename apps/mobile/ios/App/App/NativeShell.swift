@@ -254,25 +254,21 @@ extension MoraRootViewController {
             try NativeProbeWave.make(track: 0, seconds: 1).write(to: file)
             let before = Set(shell.library.map(\.id))
             var selected: [URL] = [], cancelled = false
-            let pickerView = NativeDocumentPicker(types: [.audio], multiple: true) { result in
+            let documentPicker = NativeDocumentPicker(types: [.audio], multiple: true) { result in
                 switch result {
                 case .success(let urls): selected = urls
                 case .failure(let error): cancelled = (error as NSError).code == CocoaError.Code.userCancelled.rawValue
                 }
             }
-            let coordinator = pickerView.makeCoordinator()
-            let picker = NativeDocumentPicker.controller(types: [.audio], multiple: true)
-            picker.delegate = coordinator
-            coordinator.documentPickerWasCancelled(picker)
+            let picker = documentPicker.controller
+            documentPicker.documentPickerWasCancelled(picker)
             try require(cancelled, "File picker did not report cancellation")
             try require(picker.allowsMultipleSelection, "File picker lost multiple selection")
-            present(picker, animated: true)
+            documentPicker.present(from: self)
             try await Task.sleep(for: .seconds(2))
             try capture("native-file-picker")
-            coordinator.documentPicker(picker, didPickDocumentsAt: [file])
-            try require(selected == [file], "File picker did not forward its selection")
-            picker.dismiss(animated: false)
-            try await wait { self.presentedViewController == nil }
+            documentPicker.documentPicker(picker, didPickDocumentsAt: [file])
+            try await wait { selected == [file] && self.presentedViewController == nil }
             NativePickedFile.discardTemporaryCopy(file)
             try require(FileManager.default.fileExists(atPath: file.path), "Import removed the original document")
             let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
@@ -289,6 +285,23 @@ extension MoraRootViewController {
             try await Task.sleep(for: .seconds(1))
             try capture("native-import-library")
             report["import"] = "UIKit picker delegate, copied file read, real WAV upload and visible library row passed"
+            let restoredTrack = shell.library.first { !before.contains($0.id) && $0.duration > 0 }!
+            let saved: [String: Any] = ["items": [["entryId": "restored-fixture", "trackId": restoredTrack.id, "origin": "user"]],
+                "index": 0, "position": 0.25, "context": ["type": "library", "label": "Медиатека"], "shuffle": false, "repeat": "off", "volume": 1]
+            _ = try await web.callAsyncJavaScript("const r = await fetch('/api/queue',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(saved)}); if(!r.ok)throw Error(r.status); return 0;", arguments: ["saved": saved], in: nil, contentWorld: .page)
+            _ = try await web.evaluateJavaScript("location.reload();0")
+            try await wait { self.shell.ui.now?.entryId == "restored-fixture" && self.shell.ui.loaded }
+            try require(shell.ui.now?.playing == false, "Restore started music automatically")
+            shell.openPlayer()
+            try await wait { self.presentedViewController is UIHostingController<NativePlayerView> }
+            try await Task.sleep(for: .seconds(2))
+            guard let restoredPlayer = (presentedViewController as? UIHostingController<NativePlayerView>)?.rootView.model else { throw NativeShellError.page }
+            try require(restoredPlayer.state.trackId == restoredTrack.id && restoredPlayer.state.active, "Restored native player lost track")
+            try require(abs(restoredPlayer.state.position - 0.25) < 0.01 && !restoredPlayer.state.playing, "Restored player lost paused position")
+            try require(!shell.ui.overlay, "Restore opened the web full player")
+            try capture("native-restored-player")
+            restoredPlayer.close("close")
+            report["restore"] = "Persisted paused queue, WebContent reload and native player presentation without autoplay passed"
             report["status"] = "passed"
         } catch { report["status"] = "failed"; report["error"] = error.localizedDescription }
         try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: folder.appendingPathComponent("native-ui-check.json"))
@@ -543,9 +556,9 @@ final class NativeShellStore: ObservableObject {
             host.command("nexttrack", source: "player") { [weak self] _ in self?.refreshPlayer() }
         } else { run("next") }
     }
-    /// The stage-1 SwiftUI player while native playback runs; the web full player otherwise.
+    /// A restored track opens natively before the audio engine starts.
     func openPlayer() {
-        guard nativePlaying, let host, let presenter, presenter.presentedViewController == nil, !sheetOpen else { run("player"); return }
+        guard miniTitle != nil, let host, let presenter, presenter.presentedViewController == nil, !sheetOpen else { return }
         sheetOpen = true
         NativePlayerSheet.present(host: host, from: presenter) { [weak self] action in
             self?.sheetOpen = false
