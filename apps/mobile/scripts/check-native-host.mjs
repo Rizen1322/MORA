@@ -59,7 +59,8 @@ try {
     run('xcrun', ['simctl', 'launch', '--terminate-running-process', device.udid, bundle,
       '--fixture-base', `http://127.0.0.1:${server.address().port}`, ...(mode === 'natural' ? [] : [`--${mode}`])]);
     let report;
-    for (let i = 0; i < 90; i++) {
+    // The app bounds itself by playback progress (up to 240 s on a slow runner); this only catches a hung app.
+    for (let i = 0; i < 300; i++) {
       await sleep(1000);
       try { report = JSON.parse(await readFile(join(container, 'Documents', `${mode}.json`), 'utf8')); } catch { continue; }
       if (report.status === 'failed' || report.status === 'passed') break;
