@@ -132,6 +132,22 @@ describe('Yandex reaction synchronization through local API fixtures', () => {
     expect(response.body + dto.body + status.body).not.toContain(TOKEN);
   });
 
+  it('preserves favorite dates when playback rebinds the current and preloaded tracks', async () => {
+    const nextId = seed('yandex', '101:10');
+    for (const [index, id] of [trackId, nextId].entries()) {
+      await react(1, id);
+      q(a.services.db, 'UPDATE reactions SET updated_at=? WHERE track_id=?').run(100 - index, id);
+    }
+    const before = a.services.lib.listDTO().filter(t => t.reaction > 0);
+    for (const id of [trackId, nextId]) {
+      a.services.lib.rebindContent(id, 'b'.repeat(64), 2000, {
+        duration: 3, codec: 'mp3', sampleRate: 44100, channels: 2, bitrate: 128000, hasAudio: true,
+      });
+    }
+    expect(a.services.lib.listDTO().filter(t => t.reaction > 0).map(t => [t.id, t.likedAt]))
+      .toEqual(before.map(t => [t.id, t.likedAt]));
+  });
+
   it('removes a like before adding a dislike', async () => {
     liked.add('100:10');
     const response = await react(-1);
