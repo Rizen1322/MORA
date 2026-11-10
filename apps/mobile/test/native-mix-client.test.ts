@@ -96,8 +96,8 @@ it('hands off more than two upcoming sources and preserves repeat order', async 
   await mix.start({ sampleRate: 48000, position: 0, tracks: [track(0)] });
   const entries = Array.from({ length: 7 }, (_, i) => ({ trackId: `track${i}`, entryId: `entry${i}` }));
   await mix.prepareQueue!(1, entries, 'seed', entries.slice().reverse());
-  expect(handoff.mock.calls[0][0].manifest.items.map(t => t.entryId)).toEqual(entries.map(e => e.entryId));
-  expect(handoff.mock.calls[0][0].manifest.loopItems!.map(t => t.entryId)).toEqual(entries.map(e => e.entryId).reverse());
+  expect(handoff.mock.calls.at(-1)![0].manifest.items.map(t => t.entryId)).toEqual(entries.map(e => e.entryId));
+  expect(handoff.mock.calls.at(-1)![0].manifest.loopItems!.map(t => t.entryId)).toEqual(entries.map(e => e.entryId).reverse());
 });
 it('rebinds a running session before editing its manifest after WebContent reload', async () => {
   const begin = vi.fn(async () => ({ id: 'existing-owner' })), handoff = vi.fn(async () => state), stop = vi.fn();
@@ -193,7 +193,7 @@ it('hands over only the entries the server kept and reports the dropped ones', a
   await mix.start({ sampleRate: 48000, position: 0, tracks: [track(0)] });
   const entries = Array.from({ length: 3 }, (_, i) => ({ trackId: `track${i}`, entryId: `entry${i}` }));
   const result = await mix.prepareQueue!(1, entries, 'seed');
-  expect(handoff.mock.calls[0][0].manifest.items.map(t => t.entryId)).toEqual(['entry0', 'entry2']);
+  expect(handoff.mock.calls.at(-1)![0].manifest.items.map(t => t.entryId)).toEqual(['entry0', 'entry2']);
   expect(result.dropped).toEqual(['entry1']);
 });
 it('rejects a manifest with reordered or foreign items', async () => {
@@ -215,4 +215,27 @@ it('shares one levels listener and tells Swift to compute only while subscribed'
   emit({ rms: .5, bands: [1] }); expect(a).toHaveBeenCalledWith({ rms: .5, bands: [1] }); expect(b).toHaveBeenCalledTimes(1);
   stopA(); expect(levels).toHaveBeenCalledTimes(1);
   stopB(); await vi.waitFor(() => expect(remove).toHaveBeenCalled()); expect(levels).toHaveBeenLastCalledWith({ on: false });
+});
+
+it('hands the first songs over before resolving the tail, including lists larger than 1000', async () => {
+  const handoff = vi.fn(async () => state);
+  let release!: () => void, calls = 0, file = 0;
+  const tail = new Promise<void>(resolve => { release = resolve; });
+  const mix = createNativeMix({ ...port(), nativeSourceReserve: async ({ count }) => ({ keys: Array.from({ length: count }, () => file++) }),
+    nativeSourceAppend: vi.fn(), nativePrepareQueue: handoff }, {
+    prepare: async () => {}, restore: () => {}, sources: async entries => {
+      if (++calls === 2) await tail;
+      expect(entries.length).toBeLessThanOrEqual(32);
+      return { items: entries.map(e => ({ ...e, title: '', artist: '', duration: 180, mixingAllowed: true,
+        source: { kind: 'direct' as const, url: 'https://audio.test/song.mp3' } })),
+        previous: { trackId: 'seed', duration: 180, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS };
+    },
+  });
+  await mix.start({ sampleRate: 48000, position: 0, tracks: [track(0)] });
+  const entries = Array.from({ length: 1005 }, (_, i) => ({ trackId: 't' + i, entryId: 'e' + i }));
+  const job = mix.prepareQueue!(1, entries, 'seed');
+  await vi.waitFor(() => expect(handoff).toHaveBeenCalledOnce());
+  expect(handoff.mock.calls[0][0].manifest.items.map(t => t.entryId)).toEqual(['e0', 'e1']);
+  release(); await job;
+  expect(handoff.mock.calls.at(-1)![0].manifest.items.map(t => t.entryId)).toEqual(entries.map(e => e.entryId));
 });

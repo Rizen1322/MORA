@@ -473,6 +473,7 @@ export class Library {
 
   dto(t: TrackRow, reaction: number, analysis: AnalysisSummary, src: SourceRow | undefined = this.sources(t.id)[0]): TrackDTO {
     let sourceUrl: string | null = null;
+    let remoteCover: string | null = null;
     let catalog: Pick<TrackDTO, 'catalogArtists' | 'catalogAlbumId'> = {};
     let origin: TrackDTO['origin'];
     if (src?.kind === 'remote') {
@@ -487,6 +488,7 @@ export class Library {
           };
         }
         if (t.provider === 'yandex') {
+          if (typeof m.coverUrl === 'string' && /^https:\/\/avatars\.(?:mds\.yandex\.net|yandex\.net)\//.test(m.coverUrl)) remoteCover = m.coverUrl;
           catalog = {
             catalogArtists: Array.isArray(m.catalogArtists) ? m.catalogArtists.filter((a: { id?: unknown; name?: unknown }) => a && typeof a.id === 'string' && /^\d+$/.test(a.id) && typeof a.name === 'string').slice(0, 20) : [],
             catalogAlbumId: typeof m.catalogAlbumId === 'string' && /^\d+$/.test(m.catalogAlbumId) ? m.catalogAlbumId : null,
@@ -510,7 +512,7 @@ export class Library {
       codec: t.codec,
       sampleRate: t.sample_rate,
       bitrate: t.bitrate,
-      coverUrl: t.cover_id ? `/api/covers/${t.cover_id}` : src?.kind === 'remote' && ['youtube', 'soundcloud'].includes(src.provider) ? `/api/tracks/${t.id}/cover` : null,
+      coverUrl: t.cover_id ? `/api/covers/${t.cover_id}` : src?.kind === 'remote' && ['youtube', 'soundcloud'].includes(src.provider) ? `/api/tracks/${t.id}/cover` : remoteCover,
       provider: t.provider,
       sourceKind: src?.kind ?? 'none',
       sourceUrl,

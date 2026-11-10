@@ -112,7 +112,7 @@ struct NativeUiState: Equatable {
 }
 
 enum NativeScreen: Equatable { case home, more, liked, library, search, page, web }
-enum NativeTab: String, CaseIterable { case home, liked, library, search }
+enum NativeTab: String, CaseIterable { case home, library, search }
 
 /// The page's hash route decides what is on screen: ported routes are native, the rest stay web.
 enum NativeRoute {
@@ -135,7 +135,7 @@ enum NativeRoute {
     /// The highlighted tab, as in the web TabBar (apps/web/src/components/Layout.tsx).
     static func tab(_ path: String) -> NativeTab {
         func under(_ p: String) -> Bool { path == p || path.hasPrefix(p + "/") }
-        if path == "/liked" { return .liked }
+        if path == "/liked" || path == "/downloads" { return .library }
         if path == "/search" || ["/catalog", "/yandex", "/public", "/soundcloud"].contains(where: under) { return .search }
         if under("/library") || under("/playlist") || under("/album") || under("/artist") { return .library }
         return .home
@@ -143,7 +143,6 @@ enum NativeRoute {
     static func root(_ tab: NativeTab) -> String {
         switch tab {
         case .home: return "/"
-        case .liked: return "/liked"
         case .library: return "/library"
         case .search: return "/search"
         }
@@ -294,5 +293,25 @@ enum NativeText {
     }
     static func greeting(hour: Int) -> String {
         hour < 5 ? "Доброй ночи" : hour < 12 ? "Доброе утро" : hour < 18 ? "Добрый день" : "Добрый вечер"
+    }
+}
+
+
+struct NativeReactionOutbox {
+    private let defaults: UserDefaults
+    private(set) var pending: [String: Int]
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        pending = (defaults.dictionary(forKey: "mora.pendingReactions") as? [String: Int] ?? [:]).filter { !$0.key.isEmpty && [-1, 0, 1].contains($0.value) }
+    }
+    mutating func set(_ id: String, _ value: Int) {
+        guard !id.isEmpty, [-1, 0, 1].contains(value) else { return }
+        pending[id] = value
+        defaults.set(pending, forKey: "mora.pendingReactions")
+    }
+    mutating func acknowledge(_ id: String, _ value: Int) {
+        guard pending[id] == value else { return }
+        pending.removeValue(forKey: id)
+        defaults.set(pending, forKey: "mora.pendingReactions")
     }
 }

@@ -31,7 +31,7 @@ precondition(NativeRoute.screen("/album/x/y") == .page && NativeRoute.screen("/s
 precondition(NativeRoute.screen("/playlist/7/mix") == .web && NativeRoute.screen("/diagnostics/charts") == .web && NativeRoute.screen("/album/x") == .web)
 precondition(NativeRoute.screen("/yandex") == .web && NativeRoute.screen("/library/tracks") == .library)
 precondition(NativeRoute.tab("/wave") == .home && NativeRoute.tab("/playlist/1") == .library && NativeRoute.tab("/libraryx") == .home)
-precondition(NativeRoute.tab("/catalog/artist/1") == .search && NativeRoute.tab("/library/albums") == .library && NativeRoute.tab("/liked") == .liked)
+precondition(NativeRoute.tab("/catalog/artist/1") == .search && NativeRoute.tab("/library/albums") == .library && NativeRoute.tab("/liked") == .library)
 precondition(NativeTab.allCases.allSatisfy { NativeRoute.tab(NativeRoute.root($0)) == $0 && NativeRoute.screen(NativeRoute.root($0)) != .web })
 print("Native shell: routes")
 
@@ -80,3 +80,17 @@ precondition(NativeText.tracks(1) == "1 трек" && NativeText.tracks(3) == "3 
 precondition(NativeText.tracks(22) == "22 трека" && NativeText.tracks(105) == "105 треков" && NativeText.tracks(0) == "0 треков")
 precondition(NativeText.greeting(hour: 3) == "Доброй ночи" && NativeText.greeting(hour: 20) == "Добрый вечер")
 print("Native shell: text")
+
+let reactionSuite = "mora-reaction-test-" + UUID().uuidString
+let reactionDefaults = UserDefaults(suiteName: reactionSuite)!
+var outbox = NativeReactionOutbox(defaults: reactionDefaults)
+outbox.set("track", 1)
+precondition(NativeReactionOutbox(defaults: reactionDefaults).pending["track"] == 1)
+outbox.set("track", -1)
+outbox.acknowledge("track", 1)
+precondition(outbox.pending["track"] == -1, "an older response cannot erase the latest reaction")
+outbox.acknowledge("track", -1)
+precondition(NativeReactionOutbox(defaults: reactionDefaults).pending.isEmpty)
+outbox.set("", 1); outbox.set("bad", 7)
+precondition(outbox.pending.isEmpty)
+reactionDefaults.removePersistentDomain(forName: reactionSuite)

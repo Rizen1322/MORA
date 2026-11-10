@@ -7,6 +7,7 @@ struct NativePlayerRow: Equatable, Identifiable {
     let title: String
     let artist: String
     let automix: Bool
+    var mixLabel: String? = nil
     /// HTTPS, or a library cover (/api/...) that the page serves.
     let cover: String?
     /// Embedded cover from the native queue manifest (local files).
@@ -45,6 +46,14 @@ struct NativePlayerState: Equatable {
                               manifest: value["manifestItems"] as? [[String: Any]] ?? [])
     }
 
+    static func mixLabel(_ item: [String: Any]) -> String {
+        let plan = item["plan"] as? [String: Any] ?? [:]
+        let transition = item["transition"] as? [String: Any] ?? [:]
+        let method = plan["method"] as? String ?? transition["method"] as? String ?? ""
+        let names = ["fallback_crossfade": "Резервный кроссфейд", "beatmatch_blend": "Битматч", "tempo_bridge": "Смена темпа", "drop_mix": "Дроп", "phrase_cut": "Срез по фразе", "crossfade": "Кроссфейд", "echo_out": "Эхо", "gapless": "Без паузы", "skip_fade": "Быстрый переход"]
+        return "AutoMix · " + (names[method] ?? (method.isEmpty ? "Плавный переход" : method.replacingOccurrences(of: "_", with: " ").capitalized))
+    }
+
     var automix: Bool { blending || upcoming.first?.automix == true }
     /// The «Далее» pill; nil hides it.
     var nextLabel: String? {
@@ -65,7 +74,7 @@ struct NativePlayerState: Equatable {
         func add(_ item: [String: Any], automix: Bool) {
             guard let id = item["entryId"] as? String, !id.isEmpty, seen.insert(id).inserted else { return }
             rows.append(NativePlayerRow(id: id, trackId: item["trackId"] as? String ?? "", title: item["title"] as? String ?? "", artist: item["artist"] as? String ?? "",
-                                        automix: automix, cover: covers[id], artwork: artworks[id]))
+                                        automix: automix, mixLabel: automix ? Self.mixLabel(item) : nil, cover: covers[id], artwork: artworks[id]))
         }
         for track in prepared { add(track, automix: track["transition"] != nil) }
         // The manifest can still list tracks that were played since it was sent.

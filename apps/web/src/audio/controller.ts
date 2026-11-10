@@ -569,7 +569,7 @@ export class PlayerController {
     this.maxPos = Math.max(this.maxPos, s.position);
     this.set({ position: s.position, duration: s.duration || this.state.duration, status, ...this.nativeTransition(s) });
     if (status === 'playing') void this.topUpWave();
-    if (s.ended) void this.nativeSync();
+    if (s.ended || (!this.nativeManifestKey && !this.nativeSyncing)) void this.nativeSync();
     if (performance.now() - this.lastSaved > POSITION_SAVE_MS && status === 'playing') this.scheduleSave(true);
   }
 
@@ -1071,7 +1071,7 @@ export class PlayerController {
     try {
       let entries: QueueEntry[] = [];
       if (kind === 'yandex') {
-        const w = await withDeadline(api.yandexWave(null), WAVE_START_MS, 'Яндекс слишком долго отвечает. Попробуйте ещё раз.');
+        const w = await withDeadline(api.yandexWave(null, { count: 1 }), WAVE_START_MS, 'Яндекс слишком долго отвечает. Попробуйте ещё раз.');
         await withDeadline(this.refreshLibrary(), WAVE_START_MS, 'Медиатека не отвечает. Попробуйте ещё раз.');
         if (revision !== this.previewRevision) return;
         this.yandexSession = { sessionId: w.sessionId, batchId: w.batchId };

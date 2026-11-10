@@ -26,6 +26,7 @@ final class NativePlayerModel: ObservableObject {
     @Published private(set) var artwork: UIImage?
     /// The seek target from the moment the finger lifts until the host reports it.
     @Published var scrub: Double?
+    @Published private(set) var reaction = 0
     /// When `state.position` was read: the scrubber runs the clock on from there between polls.
     private(set) var receivedAt = Date()
     weak var controller: UIViewController?
@@ -52,6 +53,7 @@ final class NativePlayerModel: ObservableObject {
             defer { then?() }
             guard let self, case .success(let value) = result else { return }
             let next = NativePlayerState(value)
+            self.reaction = NativeShellStore.shared?.reaction(next.trackId) ?? 0
             if !next.active { self.stop(); self.close("close"); return }
             if next.entryId != self.state.entryId { self.scrub = nil }
             self.receivedAt = Date()
@@ -82,6 +84,13 @@ final class NativePlayerModel: ObservableObject {
         send("seekto", time: time) { [weak self] in
             if self?.scrub == time { self?.scrub = nil }
         }
+    }
+
+    func react(_ value: Int) {
+        guard let store = NativeShellStore.shared else { return }
+        reaction = reaction == value ? 0 : value
+        store.react(id: state.trackId, value: reaction)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     func close(_ action: String) {
@@ -146,32 +155,32 @@ struct NativePlayerView: View {
             }
             .padding(.horizontal, -10)
             Spacer(minLength: 12)
-            cover(playing: s.playing)
-            Spacer(minLength: 12)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(s.title.isEmpty ? "MORA" : s.title).font(.title2.bold()).lineLimit(2)
-                Text(s.artist).font(.title3).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
+            if queueOpen {
+                HStack(spacing: 12) {
+                    NativeCover(url: nil, size: 64, radius: 10, image: model.artwork)
+                    metadata
+                }
+                NativeQueueContent(model: model).frame(maxHeight: .infinity)
+            } else {
+                cover(playing: s.playing)
+                Spacer(minLength: 16)
+                metadata
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
             NativeScrubber(state: s, receivedAt: model.receivedAt, pending: model.scrub) { model.seek(to: $0) }
                 .id(s.entryId).padding(.top, 18)
-            transport(playing: s.playing).padding(.vertical, 6)
-            if let label = s.nextLabel {
-                Button { queueOpen = true } label: {
-                    Label(label, systemImage: s.automix ? "sparkles" : "music.note.list")
-                        .font(.footnote.weight(.medium)).lineLimit(1)
-                        .padding(.horizontal, 14).frame(minHeight: 44)
-                        .foregroundStyle(s.automix ? Color.moraGold : Color.white.opacity(0.8))
-                        .background(s.automix ? Color.moraGold.opacity(0.14) : Color.white.opacity(0.08), in: Capsule())
-                }
-                .accessibilityHint("Открыть очередь")
-            }
+            transport(playing: s.playing).padding(.vertical, 12)
+            Spacer(minLength: 8)
+            NativeSystemVolume().frame(height: 32).padding(.top, 12)
             HStack {
+                IconButton(symbol: "quote.bubble", label: "Текст песни") {
+                    queueOpen = false; showLyrics.toggle()
+                }.foregroundStyle(showLyrics ? Color.moraMint : .white.opacity(0.7))
+                Spacer()
                 RoutePicker().frame(width: 44, height: 44)
                 Spacer()
-                IconButton(symbol: "list.bullet", label: "Очередь") { queueOpen = true }
-                    .foregroundStyle(.white.opacity(0.7))
+                IconButton(symbol: "list.bullet", label: queueOpen ? "Показать обложку" : "Очередь") {
+                    queueOpen.toggle()
+                }.foregroundStyle(queueOpen ? Color.moraMint : .white.opacity(0.7))
             }
             .padding(.top, 10)
         }
@@ -185,7 +194,22 @@ struct NativePlayerView: View {
         .onDisappear { model.finish() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in model.stop() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in model.start() }
-        .sheet(isPresented: $queueOpen) { NativeQueueView(model: model) }
+
+    }
+
+    private var metadata: some View {
+        HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(model.state.title.isEmpty ? "MORA" : model.state.title).font(.title2.bold()).lineLimit(1)
+                Text(model.state.artist).font(.title3).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            IconButton(symbol: model.reaction > 0 ? "heart.fill" : "heart", label: model.reaction > 0 ? "Убрать лайк" : "Нравится") { model.react(1) }
+                .foregroundStyle(model.reaction > 0 ? Color.moraMint : .white)
+                .accessibilityValue(model.reaction > 0 ? "Включено" : "Выключено")
+            IconButton(symbol: model.reaction < 0 ? "hand.thumbsdown.fill" : "hand.thumbsdown", label: "Не нравится") { model.react(-1) }
+                .foregroundStyle(model.reaction < 0 ? Color.moraGold : .white.opacity(0.7))
+                .accessibilityValue(model.reaction < 0 ? "Включено" : "Выключено")
+        }
     }
 
     private var backdrop: some View {
@@ -200,7 +224,7 @@ struct NativePlayerView: View {
     private func cover(playing: Bool) -> some View {
         Color.clear
             .aspectRatio(1, contentMode: .fit)
-            .frame(maxWidth: 360)
+            .frame(maxWidth: 430)
             .overlay {
                 ZStack(alignment: .bottomTrailing) {
                     Group {
@@ -243,11 +267,8 @@ struct NativePlayerView: View {
             .accessibilityLabel("Предыдущий")
             Spacer()
             Button { model.transport(playing ? "pause" : "play") } label: {
-                Image(systemName: playing ? "pause.fill" : "play.fill").font(.system(size: 34))
-                    .foregroundStyle(Color.moraBackground)
+                Image(systemName: playing ? "pause.fill" : "play.fill").font(.system(size: 48, weight: .semibold))
                     .frame(width: 80, height: 80)
-                    .background(Color.moraMint, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                    .shadow(color: Color.moraMint.opacity(0.5), radius: 18, y: 10)
             }
             .accessibilityLabel(playing ? "Пауза" : "Играть")
             Spacer()
@@ -347,47 +368,46 @@ private struct NativeLyricsView: View {
     }
 }
 
-private struct NativeQueueView: View {
+private struct NativeQueueContent: View {
     @ObservedObject var model: NativePlayerModel
-    @Environment(\.dismiss) private var dismiss
-
     var body: some View {
-        NavigationStack {
-            List {
-                if model.state.upcoming.isEmpty {
-                    Text("Очередь пуста").foregroundStyle(.secondary).listRowBackground(Color.clear)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 16) {
+                Text("Продолжение").font(.title2.bold()).padding(.top, 18)
+                if let label = NativeShellStore.shared?.ui.now?.label, !label.isEmpty {
+                    Text("Из: \(label)").font(.subheadline).foregroundStyle(.secondary)
                 }
+                if model.state.upcoming.isEmpty { Text("Очередь готовится…").foregroundStyle(.secondary) }
                 ForEach(model.state.upcoming) { row in
                     HStack(spacing: 12) {
-                        NativeCover(url: row.cover ?? NativeShellStore.shared?.byId[row.trackId]?.cover, size: 44, radius: 6, embedded: row.artwork)
-                        VStack(alignment: .leading, spacing: 2) {
+                        NativeCover(url: row.cover ?? NativeShellStore.shared?.byId[row.trackId]?.cover, size: 48, radius: 7, embedded: row.artwork)
+                        VStack(alignment: .leading, spacing: 3) {
                             Text(row.title).font(.body.weight(.medium)).lineLimit(1)
                             Text(row.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                            if row.automix {
-                                HStack(spacing: 4) { Image(systemName: "sparkles"); Text("AutoMix") }
-                                    .font(.caption.weight(.medium)).foregroundStyle(Color.moraGold)
+                            if let label = row.mixLabel {
+                                Label(label, systemImage: "sparkles").font(.caption.weight(.medium)).foregroundStyle(Color.moraGold)
                             }
                         }
-                    }
-                    .frame(minHeight: 56)
-                    .accessibilityElement(children: .combine)
-                    .listRowBackground(Color.clear)
+                        Spacer(minLength: 0)
+                    }.accessibilityElement(children: .combine)
                 }
-            }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .navigationTitle("Далее")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } } }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 16)
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-        .presentationBackground(.ultraThinMaterial)
     }
 }
 
-/// Timeline: the finger owns the thumb while it drags (polls cannot pull it back), the clock runs on
-/// between polls, and the gold band marks where the AutoMix transition into the next track plays.
+private struct NativeSystemVolume: UIViewRepresentable {
+    func makeUIView(context: Context) -> MPVolumeView {
+        let view = MPVolumeView()
+        view.showsRouteButton = false
+        view.tintColor = UIColor.white.withAlphaComponent(0.65)
+        view.accessibilityLabel = "Громкость"
+        return view
+    }
+    func updateUIView(_ view: MPVolumeView, context: Context) {}
+}
+
+
 private struct NativeScrubber: View {
     let state: NativePlayerState
     let receivedAt: Date

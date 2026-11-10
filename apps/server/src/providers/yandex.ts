@@ -307,7 +307,7 @@ export class YandexProvider implements Provider {
   }
 
   /** Prepare only a small playable batch, never the whole recommendation catalog. */
-  private async prepareWave(items: YandexWaveItem[], count = 2): Promise<YandexWaveItem[]> {
+  private async prepareWave(items: YandexWaveItem[], count = 2, tracks: YTrack[] = []): Promise<YandexWaveItem[]> {
     let ready = items.filter((item) => item.trackId).length;
     let attempts = 0, cursor = 0;
     const pending = items.filter((item) => !item.trackId);
@@ -319,7 +319,8 @@ export class YandexProvider implements Provider {
       attempts += size;
       await Promise.all(batch.map(async (item) => {
         try {
-          item.trackId = await this.importTrack({ externalId: item.yandexId, title: item.title, artist: item.artist,
+          const known = this.metadataOnlyImport && tracks.find(track => String(track.id).split(':')[0] === item.yandexId.split(':')[0]);
+          item.trackId = known ? await this.saveTrack(known, item.yandexId.split(':')[1]) : await this.importTrack({ externalId: item.yandexId, title: item.title, artist: item.artist,
             album: '', duration: 0, coverUrl: null, pageUrl: null, license: null, playable: true });
           ready++;
         } catch (e) { item.error = (e as Error).message; }
@@ -341,7 +342,7 @@ export class YandexProvider implements Provider {
         seen.add(id);
         return true;
       });
-      return this.prepareWave(items, count);
+      return this.prepareWave(items, count, sequence.map(s => s.track));
     };
     if (sessionId) {
       const r = await this.call<{ sequence?: { track: YTrack }[]; batchId?: string; unknownSession?: boolean }>('POST', `/rotor/session/${encodeURIComponent(sessionId)}/tracks`, { queue });
@@ -485,7 +486,10 @@ export class YandexProvider implements Provider {
     // Trust server-side metadata, not the title/duration/URLs supplied by a browser.
     const [track] = await this.call<YTrack[]>('POST', '/tracks', { 'track-ids': id }, this.token(), true);
     if (!track) throw new Error('Трек Яндекса не найден');
-    const requestedAlbumId = id.split(':')[1];
+    return this.saveTrack(track, id.split(':')[1]);
+  }
+
+  private async saveTrack(track: YTrack, requestedAlbumId?: string): Promise<string> {
     const album = requestedAlbumId ? track.albums?.find((candidate) => String(candidate.id) === requestedAlbumId) : track.albums?.[0];
     const ext = this.external(track, requestedAlbumId);
     if (!ext.playable || !(ext.duration > 0)) throw new Error('Этот трек недоступен вашему аккаунту');
@@ -493,13 +497,13 @@ export class YandexProvider implements Provider {
     const canonical = this.lib.tracksBySource(this.id, canonicalId).find((t) => t.provider === this.id);
     if (canonical) return canonical.id;
     const media = this.metadataOnlyImport ? null : await this.audio.prepare(canonicalId, ext.duration);
-    const cover = ext.coverUrl ? await this.audio.cover(ext.coverUrl) : null;
+    const cover = !this.metadataOnlyImport && ext.coverUrl ? await this.audio.cover(ext.coverUrl) : null;
     const coverId = cover ? await this.lib.saveCover(cover.data, cover.type) : null;
     return this.lib.addRemote({ provider: this.id, externalId: canonicalId, title: ext.title, artist: ext.artist, album: ext.album,
       duration: media?.probe.duration ?? ext.duration, year: album?.year ?? null, genre: album?.genre ?? '',
       trackNo: album?.trackPosition?.index ?? null, discNo: album?.trackPosition?.volume ?? null,
       coverId,
-      meta: { pageUrl: ext.pageUrl, suffix: 'mp3', ...(media ? { audioHash: media.hash, bitrate: media.bitrate } : {}),
+      meta: { pageUrl: ext.pageUrl, coverUrl: ext.coverUrl, suffix: 'mp3', ...(media ? { audioHash: media.hash, bitrate: media.bitrate } : {}),
         catalogArtists: (track.artists ?? []).filter((artist) => artist.id !== undefined && /^\d+$/.test(String(artist.id))).map((artist) => ({ id: String(artist.id), name: artist.name })),
         catalogAlbumId: album?.id ? String(album.id) : null },
       ...(media ? { content: { hash: media.hash, size: media.size, probe: media.probe } } : {}) }).id;

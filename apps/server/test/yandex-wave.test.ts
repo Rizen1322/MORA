@@ -54,3 +54,17 @@ describe('metadata-only import (iPhone)', () => {
     expect(added.mock.calls[0][0].meta.audioHash).toBeUndefined();
   });
 });
+
+it('uses trusted rotor metadata on iPhone without another metadata or cover request', async () => {
+  const provider = Object.create(YandexProvider.prototype) as YandexProvider;
+  const added = vi.fn((input: { meta: Record<string, unknown> }) => ({ id: 'local', ...input }));
+  const call = vi.fn(), cover = vi.fn(), prepare = vi.fn();
+  Object.assign(provider, { base: "https://api.music.yandex.net", metadataOnlyImport: true, audio: { prepare, cover }, lib: { tracksBySource: () => [], addRemote: added }, checkedId: (id: string) => id });
+  const track = { id: 7, title: 'T', durationMs: 200000, available: true, coverUri: 'avatars.yandex.net/get-music-content/7/%%', artists: [{ id: 1, name: 'A' }], albums: [{ id: 9, title: 'Al' }] };
+  const h = provider as any; h.call = call;
+  const items = [{ yandexId: '7:9', title: 'T', artist: 'A', trackId: null }];
+  await h.prepareWave(items, 2, [track]);
+  expect(items[0].trackId).toBe('local');
+  expect(call).not.toHaveBeenCalled(); expect(cover).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled();
+  expect(added.mock.calls[0][0].meta.coverUrl).toMatch(/^https:/);
+});

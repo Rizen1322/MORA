@@ -71,6 +71,8 @@ final class NativeMixHost {
     private var knownManifest: [String: Any]?
     private var initialConfig: [String: Any] = [:]
     // Main queue only. Do not remove WebKit's or the baseline probe's targets.
+    var onReaction: ((String, Int) -> Int)?
+    var reactionState: ((String) -> Int)?
     private var targets: [(MPRemoteCommand, Any)] = []
     private var refillTask: UIBackgroundTaskIdentifier = .invalid // main queue only
     private var refillWaiting = false // one finite assertion per waiting interval
@@ -368,7 +370,7 @@ final class NativeMixHost {
                     currentEntryId: self.tracks.indices.contains(self.index) ? self.tracks[self.index]["entryId"] as? String : nil)
                 guard id == self.id, let folder = self.folder, !self.tracks.isEmpty, !self.preparing, !self.failed,
                       let requestedFrom = manifest["from"] as? Int, requestedFrom > 0,
-                      let items = manifest["items"] as? [[String: Any]], items.count <= 1000,
+                      let items = manifest["items"] as? [[String: Any]], items.count <= 10000,
                       manifest["previous"] is [String: Any], manifest["settings"] is [String: Any],
                       let scriptURL = Bundle.main.url(forResource: "native-preparation", withExtension: "js", subdirectory: "public") else { throw Failure.invalid }
                 let script = try self.preparationScript ?? String(contentsOf: scriptURL, encoding: .utf8)
@@ -726,6 +728,7 @@ final class NativeMixHost {
             MPNowPlayingInfoPropertyPlaybackQueueIndex: index, MPNowPlayingInfoPropertyPlaybackQueueCount: tracks.count]
         if artworks.indices.contains(index), let artwork = artworks[index] { info[MPMediaItemPropertyArtwork] = artwork }
         let publishedInfo = info
+        let publishedTrackId = tracks.indices.contains(index) ? tracks[index]["trackId"] as? String ?? "" : ""
         let canAdvance = tracks.indices.contains(index + 1) || preparation?.hasRemaining == true || pendingSkips > 0
         let canReverse = canGoBack
         // A tick republishes Now Playing only on a visible change or clock drift (tempo
@@ -742,6 +745,9 @@ final class NativeMixHost {
                 guard let self, self.active, self.snapshot["epoch"] as? Int == generation else { return }
                 self.refillLease(waiting: state["waitingForPreparation"] as? Bool == true)
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = publishedInfo
+                let reaction = self.reactionState?(publishedTrackId) ?? 0
+                MPRemoteCommandCenter.shared().likeCommand.isActive = reaction > 0
+                MPRemoteCommandCenter.shared().dislikeCommand.isActive = reaction < 0
                 MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = canAdvance
                 MPRemoteCommandCenter.shared().previousTrackCommand.isEnabled = canReverse
             }
@@ -834,6 +840,14 @@ final class NativeMixHost {
                 self.updatePosition()
                 if source != "interruption" { self.resumeAfterInterruption = false }
                 switch action {
+                case "like", "dislike":
+                    guard self.tracks.indices.contains(self.index), let trackId = self.tracks[self.index]["trackId"] as? String else { throw Failure.invalid }
+                    DispatchQueue.main.async {
+                        if let value = self.onReaction?(trackId, action == "like" ? 1 : -1) {
+                            MPRemoteCommandCenter.shared().likeCommand.isActive = value > 0
+                            MPRemoteCommandCenter.shared().dislikeCommand.isActive = value < 0
+                        }
+                    }
                 case "pause": self.continueWhenPrepared = false; self.skipTarget = -1; self.wantsPlaying = false; self.player?.pause(); self.engine?.pause()
                 case "play", "toggle":
                     if action == "toggle" && self.wantsPlaying {
@@ -898,10 +912,12 @@ final class NativeMixHost {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.active, self.snapshot["epoch"] as? Int == generation else { return }
             let c = MPRemoteCommandCenter.shared()
+            c.likeCommand.localizedTitle = "Нравится"
+            c.dislikeCommand.localizedTitle = "Не нравится"
             c.skipForwardCommand.isEnabled = false; c.skipBackwardCommand.isEnabled = false
             c.seekForwardCommand.isEnabled = false; c.seekBackwardCommand.isEnabled = false
             let bindings: [(MPRemoteCommand, String)] = [(c.playCommand, "play"), (c.pauseCommand, "pause"), (c.togglePlayPauseCommand, "toggle"),
-                (c.nextTrackCommand, "nexttrack"), (c.previousTrackCommand, "previoustrack"), (c.changePlaybackPositionCommand, "seekto")]
+                (c.nextTrackCommand, "nexttrack"), (c.previousTrackCommand, "previoustrack"), (c.changePlaybackPositionCommand, "seekto"), (c.likeCommand, "like"), (c.dislikeCommand, "dislike")]
             for (command, action) in bindings {
                 if action != "nexttrack" && action != "previoustrack" { command.isEnabled = true }
                 let target = command.addTarget { [weak self] event in

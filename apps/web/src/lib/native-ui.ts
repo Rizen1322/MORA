@@ -106,6 +106,14 @@ export const commands: Record<string, (a: Args) => unknown> = {
     const value = Number(a.value);
     return t && [-1, 0, 1].includes(value) ? react(t, value) : undefined;
   },
+  reactSaved: async (a) => {
+    const id = str(a.id), value = Number(a.value);
+    if (!trackOf(id) || ![-1, 0, 1].includes(value)) throw new Error('Трек или реакция недоступны');
+    const result = await api.react(id, value);
+    useApp.getState().patchTrack(id, { reaction: result.value, reactionSync: result.sync });
+    if (value < 0 && controller.currentEntry?.trackId === id && ['wave', 'yandex-wave', 'online-radio'].includes(controller.state.context?.type ?? '')) void controller.nextTrack('dislike');
+    return { saved: true };
+  },
   wave: (a) => {
     const want = a.source === 'yandex' || a.source === 'online' ? a.source : 'own';
     if (uiState().wave.active === want) return controller.toggle();

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   app: {} as any, listeners: [] as (() => void)[], radio: { active: false, loading: false, error: null as string | null },
   playTracks: vi.fn(), addToQueue: vi.fn(), toggle: vi.fn(), startWave: vi.fn(), startRadio: vi.fn(), toast: vi.fn(),
-  openVersionPanel: vi.fn(),
+  openVersionPanel: vi.fn(), react: vi.fn(), patchTrack: vi.fn(),
 }));
 vi.mock('../src/store/app.ts', () => ({
   phone: true,
@@ -18,7 +18,7 @@ vi.mock('../src/components/VersionPanel.tsx', () => ({
   openVersionPanel: (...a: any[]) => h.openVersionPanel(...a),
   useVersionPanel: { getState: () => ({ target: null }), subscribe: vi.fn() },
 }));
-vi.mock('../src/lib/api.ts', () => ({ api: {} }));
+vi.mock('../src/lib/api.ts', () => ({ api: { react: (...args: any[]) => h.react(...args) } }));
 
 const track = (id: string, status = 'ok') => ({ id, title: id.toUpperCase(), artist: 'X', album: '', duration: 100, reaction: 0, coverUrl: null, status });
 
@@ -26,7 +26,7 @@ beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks(); h.listeners.length = 0;
   h.radio = { active: false, loading: false, error: null };
   const tracks = new Map([['a', track('a')], ['b', track('b', 'missing')]]);
-  h.app = { tracks, order: ['a', 'b'], loaded: true, playlists: [], providers: [], toasts: [], fullPlayer: false, queueOpen: false, panel: null, toast: h.toast,
+  h.app = { patchTrack: h.patchTrack, tracks, order: ['a', 'b'], loaded: true, playlists: [], providers: [], toasts: [], fullPlayer: false, queueOpen: false, panel: null, toast: h.toast,
     player: { status: 'playing', queue: [{ trackId: 'a' }], index: 0, context: { type: 'wave', label: 'Моя волна' }, error: null } };
   vi.stubGlobal('location', { hash: '#/liked?x=1' });
 });
@@ -93,4 +93,15 @@ describe('native shell bridge (page side)', () => {
     expect((push.mock.calls[1] as any)[0].library).toBeUndefined();
     vi.useRealTimers();
   });
+});
+
+it('acknowledges native lock-screen reactions only after persistence succeeds', async () => {
+  const { commands } = await import('../src/lib/native-ui.ts');
+  h.react.mockRejectedValueOnce(new Error('offline'));
+  await expect(commands.reactSaved({ id: 'a', value: 1 })).rejects.toThrow('offline');
+  expect(h.patchTrack).not.toHaveBeenCalled();
+  h.react.mockResolvedValueOnce({ value: 1, sync: { status: 'pending' } });
+  await expect(commands.reactSaved({ id: 'a', value: 1 })).resolves.toEqual({ saved: true });
+  expect(h.patchTrack).toHaveBeenCalledWith('a', { reaction: 1, reactionSync: { status: 'pending' } });
+  await expect(commands.reactSaved({ id: 'a', value: 7 })).rejects.toThrow();
 });

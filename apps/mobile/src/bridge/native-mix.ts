@@ -158,14 +158,23 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
       if (!id) throw Error('Нативная сессия недоступна');
       const entryKey = (entry: NativeQueueEntry) => entry.entryId;
       const unique = [...new Map([...entries, ...loopEntries].map(e => [entryKey(e), e])).values()];
-      const manifest = await sourceManifest(unique, previousId, signal);
-      const items = new Map(manifest.items.map(item => [item.entryId, item]));
+      if (unique.length > 10000) throw Error('В очереди больше 10000 треков');
+      const items = new Map<string, NativePreparationManifest['items'][number]>();
+      let state: NativeMixState | undefined;
+      // Give native the next two songs before resolving/copying the rest of a large likes list.
+      for (let offset = 0; offset < Math.max(1, unique.length);) {
+        const batch = unique.slice(offset, offset + (offset === 0 ? 2 : 32));
+        const manifest = await sourceManifest(batch, previousId, signal);
+        signal?.throwIfAborted();
+        for (const item of manifest.items) items.set(item.entryId, item);
+        state = await port.nativePrepareQueue({ id, manifest: { ...manifest, from, replaceFuture,
+          items: entries.flatMap(e => items.get(entryKey(e)) ?? []), loopItems: loopEntries.flatMap(e => items.get(entryKey(e)) ?? []) } });
+        offset += Math.max(1, batch.length);
+      }
       const dropped = unique.filter(e => !items.has(entryKey(e))).map(entryKey);
-      const state = await port.nativePrepareQueue({ id, manifest: { ...manifest, from, replaceFuture,
-        items: entries.flatMap(e => items.get(entryKey(e)) ?? []), loopItems: loopEntries.flatMap(e => items.get(entryKey(e)) ?? []) } });
-      const kept = new Set(manifest.items.flatMap(item => item.source.kind === 'local' ? [item.source.file] : []));
+      const kept = new Set([...items.values()].flatMap(item => item.source.kind === 'local' ? [item.source.file] : []));
       for (const [trackId, key] of assets) if (!kept.has(key)) assets.delete(trackId);
-      return dropped.length ? { ...state, dropped } : state;
+      return dropped.length ? { ...state!, dropped } : state!;
     }),
     upload: (file, offset, bytes, signal) => serialize(async () => {
       signal?.throwIfAborted();

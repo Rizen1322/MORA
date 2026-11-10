@@ -26,6 +26,13 @@ final class MoraRootViewController: UIViewController {
     /// Built on the page's first snapshot: until then (and if it never comes) the app is the web UI.
     func installShell(host: NativeMixHost, webView: WKWebView?) {
         shell.host = host
+        host.onReaction = { [weak shell] id, desired in
+            guard let shell else { return 0 }
+            let value = shell.reaction(id) == desired ? 0 : desired
+            shell.react(id: id, value: value)
+            return value
+        }
+        host.reactionState = { [weak shell] in shell?.reaction($0) ?? 0 }
         NativeShellStore.shared = shell
         shell.webView = webView
         guard content == nil else { return }
@@ -108,6 +115,8 @@ final class NativeShellStore: ObservableObject {
     private var timer: Timer?
     private var artworkKey = ""
     private var bannerTask: DispatchWorkItem?
+    private var reactions = NativeReactionOutbox()
+    private var sendingReactions = false
     private var sheetOpen = false
     private var pending: (path: String, at: Date)?
 
@@ -118,7 +127,7 @@ final class NativeShellStore: ObservableObject {
     init() {
         let nc = NotificationCenter.default
         nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.stopPolling() }
-        nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in self?.startPolling() }
+        nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in self?.startPolling(); self?.flushReactions() }
     }
 
     /// A snapshot from the page (main thread). Returns whether the shell is on screen.
@@ -134,6 +143,10 @@ final class NativeShellStore: ObservableObject {
             pending = nil
             if path != next.path { path = next.path }
         }
+        for (id, value) in reactions.pending {
+            if let index = library.firstIndex(where: { $0.id == id }) { library[index].reaction = value }
+        }
+        flushReactions()
         revision &+= 1
         startPolling()
         return shown
@@ -198,8 +211,27 @@ final class NativeShellStore: ObservableObject {
     }
     func queue(_ track: NativeTrack, next: Bool) { run("queue", ["ids": [track.id], "next": next]) }
     func react(_ track: NativeTrack, _ value: Int) {
-        if let i = library.firstIndex(where: { $0.id == track.id }) { library[i].reaction = value } // the page confirms it
-        run("react", ["id": track.id, "value": value])
+        react(id: track.id, value: value)
+    }
+    func reaction(_ id: String) -> Int { reactions.pending[id] ?? byId[id]?.reaction ?? 0 }
+    func react(id: String, value: Int) {
+        guard !id.isEmpty, [-1, 0, 1].contains(value) else { return }
+        reactions.set(id, value)
+        if let index = library.firstIndex(where: { $0.id == id }) { library[index].reaction = value }
+        flushReactions()
+    }
+    private func flushReactions() {
+        guard !sendingReactions, UIApplication.shared.applicationState == .active, webView != nil, !reactions.pending.isEmpty else { return }
+        sendingReactions = true
+        Task { @MainActor in
+            defer { sendingReactions = false }
+            for (id, value) in reactions.pending {
+                do {
+                    _ = try await call("reactSaved", ["id": id, "value": value])
+                    reactions.acknowledge(id, value)
+                } catch { show("Реакция сохранена на iPhone. Синхронизация повторится при открытии приложения."); break }
+            }
+        }
     }
 
     func show(_ text: String) {
@@ -357,7 +389,9 @@ struct NativeShellContent: View {
             case .home: NativeHomeView()
             case .more: NativeMoreView()
             case .liked: NativeTrackListView(title: "Любимое", type: "liked", tracks: store.liked)
-            case .library: NativeTrackListView(title: "Медиатека", type: "library", tracks: store.library)
+            case .library:
+                if store.path == "/library" { NativeLibraryView() }
+                else { NativeTrackListView(title: "Песни", type: "library", tracks: store.library) }
             case .search: NativeSearchView()
             case .page: NativePageView()
             case .web: Color.clear
@@ -382,7 +416,6 @@ extension NativeTab {
     var item: (String, String) {
         switch self {
         case .home: return ("Главная", "house")
-        case .liked: return ("Любимое", "heart")
         case .library: return ("Медиатека", "books.vertical")
         case .search: return ("Поиск", "magnifyingglass")
         }
@@ -399,39 +432,7 @@ struct NativeShellBar: View {
     var body: some View {
         VStack(spacing: 8) {
             if let title = store.miniTitle { mini(title) }
-            HStack(spacing: 10) {
-                HStack(spacing: 0) {
-                    ForEach([NativeTab.home, .liked, .library], id: \.self) { tab in
-                        let on = store.tab == tab, label = tab.item.0, symbol = tab.item.1
-                        Button { store.select(tab) } label: {
-                            VStack(spacing: 2) {
-                                Image(systemName: on ? symbol + ".fill" : symbol).font(.system(size: 20, weight: .semibold))
-                                Text(label).font(.caption2.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 52)
-                            .foregroundStyle(on ? Color.moraMint : .white.opacity(0.75))
-                            .background {
-                                if on { Capsule().fill(.white.opacity(0.1)).matchedGeometryEffect(id: "thumb", in: thumb) }
-                            }
-                            .contentShape(Capsule())
-                        }
-                        .accessibilityLabel(label)
-                        .accessibilityAddTraits(on ? .isSelected : [])
-                    }
-                }
-                .padding(4)
-                .moraGlass(Capsule())
-                Button { store.select(.search) } label: {
-                    Image(systemName: "magnifyingglass").font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(store.tab == .search ? Color.moraMint : .white.opacity(0.85))
-                        .frame(width: 60, height: 60)
-                        .contentShape(Circle())
-                }
-                .moraGlass(Circle())
-                .accessibilityLabel("Поиск")
-                .accessibilityAddTraits(store.tab == .search ? .isSelected : [])
-            }
-            .animation(reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.8), value: store.tab)
+            NativeSystemTabs(store: store).frame(height: 64)
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 4)
@@ -470,5 +471,32 @@ struct NativeShellBar: View {
         .frame(minHeight: 56)
         .moraGlass(Capsule())
         .environmentObject(store)
+    }
+}
+
+
+/// The system renders selection, accessibility and Liquid Glass (iOS 26).
+private struct NativeSystemTabs: UIViewRepresentable {
+    @ObservedObject var store: NativeShellStore
+    func makeCoordinator() -> Coordinator { Coordinator(store) }
+    func makeUIView(context: Context) -> UITabBar {
+        let bar = UITabBar()
+        bar.delegate = context.coordinator
+        bar.tintColor = UIColor(Color.moraMint)
+        bar.items = NativeTab.allCases.enumerated().map { index, tab in
+            UITabBarItem(title: tab.item.0, image: UIImage(systemName: tab.item.1), tag: index)
+        }
+        return bar
+    }
+    func updateUIView(_ bar: UITabBar, context: Context) {
+        if let index = NativeTab.allCases.firstIndex(of: store.tab) { bar.selectedItem = bar.items?[index] }
+    }
+    final class Coordinator: NSObject, UITabBarDelegate {
+        let store: NativeShellStore
+        init(_ store: NativeShellStore) { self.store = store }
+        func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
+            guard NativeTab.allCases.indices.contains(item.tag) else { return }
+            store.select(NativeTab.allCases[item.tag])
+        }
     }
 }

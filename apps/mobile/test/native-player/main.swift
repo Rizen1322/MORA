@@ -42,3 +42,7 @@ precondition(mix.mixStart == 180 && mix.mixLength == 20, "window clipped to the 
 precondition(NativePlayerState(["duration": 200.0, "transitionStart": 250.0]).mixStart == nil)
 precondition(NativePlayerState(["duration": 200.0, "transitionStart": 10.0]).mixLength == 0)
 print("Native player: AutoMix window")
+
+precondition(NativePlayerState.mixLabel(["transition": ["method": "echo_out"]]) == "AutoMix · Эхо")
+precondition(NativePlayerState.mixLabel(["plan": ["method": "beatmatch_blend"]]) == "AutoMix · Битматч")
+precondition(NativePlayerState.mixLabel([:]) == "AutoMix · Плавный переход")

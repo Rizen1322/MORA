@@ -501,3 +501,52 @@ struct NativeMoreView: View {
         .listRowBackground(Color.white.opacity(0.06))
     }
 }
+
+
+struct NativeLibraryView: View {
+    @EnvironmentObject private var store: NativeShellStore
+    private var likedArtists: [NativeTrack] {
+        var seen = Set<String>()
+        return store.liked.filter { !$0.artist.isEmpty && seen.insert($0.artist).inserted }
+            .sorted { $0.artist.localizedCaseInsensitiveCompare($1.artist) == .orderedAscending }
+    }
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    destination("Любимое", "heart", "/liked")
+                    destination("Плейлисты", "music.note.list", "/library/playlists")
+                    destination("Артисты", "music.mic", "/library/artists")
+                    destination("Альбомы", "square.stack", "/library/albums")
+                    destination("Песни", "music.note", "/library/tracks")
+                    destination("Загруженные", "arrow.down.circle", "/downloads")
+                }
+                if !store.liked.isEmpty {
+                    Section("Артисты любимых треков") {
+                        ForEach(likedArtists) { track in
+                            Button { store.run("open", ["id": track.id, "to": "artist"]) } label: {
+                                Label(track.artist, systemImage: "music.mic")
+                            }.listRowBackground(Color.clear)
+                        }
+                    }
+                }
+                Section("Недавно добавлено") {
+                    ForEach(Array(store.library.prefix(8).enumerated()), id: \.element.id) { index, track in
+                        NativeTrackRow(track: track) { store.play(store.library, at: index, type: "library", label: "Медиатека") }
+                    }
+                }
+            }
+            .listStyle(.plain).scrollContentBackground(.hidden)
+            .background(Color.moraBackground).navigationTitle("Медиатека")
+        }
+    }
+    private func destination(_ title: String, _ symbol: String, _ path: String) -> some View {
+        Button { store.go(path) } label: {
+            HStack {
+                Label(title, systemImage: symbol).font(.title3).padding(.vertical, 8)
+                Spacer()
+                Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.secondary)
+            }
+        }.listRowBackground(Color.clear)
+    }
+}
