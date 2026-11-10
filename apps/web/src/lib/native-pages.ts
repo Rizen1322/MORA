@@ -62,16 +62,15 @@ const tracks = (list: Track[], play: Section['play'], title?: string): Section =
 const decode = (base64: unknown) => Uint8Array.from(atob(str(base64)), (c) => c.charCodeAt(0));
 const fileText = (a: Record<string, unknown>) => new TextDecoder().decode(decode(a.base64));
 
-/** Play / shuffle / like all for a list of library tracks (CollectionHeader on the web). */
-function header(ids: string[], ctx: { type: string; id?: string; label: string }, sub: string, extra: Row[] = []): Section {
+/** Play / shuffle / like all for a list of library tracks (CollectionHeader on the web); `extra` rows follow in their own group. */
+function header(ids: string[], ctx: { type: string; id?: string; label: string }, sub: string, extra: Row[] = []): Section[] {
   const list = ids.map((id) => trackOf(id)).filter((t): t is Track => !!t);
   const pending = toLike(list, (t) => t.reaction).length;
-  return { footer: sub, rows: [
+  return [{ footer: sub, rows: [
     button('Слушать', 'playAll', { ids, ...ctx }, { symbol: 'play.fill', style: 'primary', disabled: !ids.length }),
     button('Вперемешку', 'playAll', { ids, ...ctx, shuffle: true }, { symbol: 'shuffle', disabled: !ids.length }),
     button(pending ? 'Лайкнуть все' : 'Всё в любимом', 'likeAll', { ids }, { symbol: 'heart', disabled: !pending }),
-    ...extra,
-  ] };
+  ] }, ...(extra.length ? [{ rows: extra }] : [])];
 }
 
 // MARK: Library
@@ -106,7 +105,7 @@ function album(artist: string, name: string): Screen {
   if (!list.length) return { title: name, sections: [{ rows: [text('Альбом не найден.')] }] };
   const ctx = { type: 'album', id: name, label: name }, year = list.find((t) => t.year)?.year;
   return { title: name, sections: [
-    header(list.map((t) => t.id), ctx, `${artist}${year ? ` · ${year}` : ''} · ${tracksWord(list.length)}, ${fmtTotal(list.reduce((a, t) => a + t.duration, 0))}`),
+    ...header(list.map((t) => t.id), ctx, `${artist}${year ? ` · ${year}` : ''} · ${tracksWord(list.length)}, ${fmtTotal(list.reduce((a, t) => a + t.duration, 0))}`),
     tracks(list, ctx),
   ] };
 }
@@ -116,7 +115,7 @@ function artist(name: string): Screen {
   if (!list.length) return { title: name, sections: [{ rows: [text('Исполнитель не найден.')] }] };
   const ctx = { type: 'artist', id: name, label: name };
   return { title: name, sections: [
-    header(list.map((t) => t.id), ctx, tracksWord(list.length), [
+    ...header(list.map((t) => t.id), ctx, tracksWord(list.length), [
       button('Радио по исполнителю', 'artistRadio', { artist: name }, { symbol: 'dot.radiowaves.left.and.right' }),
       { kind: 'link', title: 'Найти в каталоге Яндекса', symbol: 'magnifyingglass', path: go(searchHref(name, 'artist')) },
     ]),
@@ -145,16 +144,16 @@ async function playlist(id: string): Promise<Screen> {
   const ctx = { type: 'playlist', id: pl.id, label: pl.name };
   const list = rows.map((r) => r.t);
   return { title: pl.name, search: list.length ? 'Найти в плейлисте' : undefined, sections: [
-    header(list.map((t) => t.id), ctx, `${tracksWord(list.length)}, ${fmtTotal(list.reduce((a, t) => a + t.duration, 0))}`, [
+    ...header(list.map((t) => t.id), ctx, `${tracksWord(list.length)}, ${fmtTotal(list.reduce((a, t) => a + t.duration, 0))}`, [
       button('Переименовать', 'renamePlaylist', { id }, { symbol: 'pencil', prompt: { title: 'Переименовать плейлист', initial: pl.name, placeholder: 'Название' } }),
       { kind: 'choice', title: 'Порядок', value: sort ?? '', act: { name: 'playlistSort', args: { id } },
         options: [['', 'Как в плейлисте'], ['title', 'По названию'], ['artist', 'По исполнителю'], ['duration', 'По длительности']] },
       button('Скачать на iPhone', 'downloadTracks', { ids: list.map((t) => t.id) }, { symbol: 'arrow.down.circle' }),
       button('Экспорт', 'exportPlaylist', { id }, { symbol: 'square.and.arrow.up' }),
       // The mix builder runs a web worker and its own preview: it stays a web sheet.
-      { kind: 'link', title: 'Собрать микс', symbol: 'wand.and.stars', path: `/playlist/${id}/mix` },
-      button('Удалить', 'deletePlaylist', { id }, { symbol: 'trash', style: 'destructive', confirm: { title: 'Удалить плейлист?', text: `Плейлист «${pl.name}» будет удалён. Треки останутся в медиатеке.`, button: 'Удалить' } }),
+      { kind: 'link', title: 'Собрать микс', detail: 'Плавные переходы между треками', symbol: 'wand.and.stars', path: `/playlist/${id}/mix` },
     ]),
+    { rows: [button('Удалить плейлист', 'deletePlaylist', { id }, { style: 'destructive', confirm: { title: 'Удалить плейлист?', text: `Плейлист «${pl.name}» будет удалён. Треки останутся в медиатеке.`, button: 'Удалить' } })] },
     list.length ? { ...tracks([], ctx), reorder: sort ? undefined : { name: 'reorderPlaylist', args: { id, entries: rows.map((r) => r.e.entryId) } },
       rows: rows.map(({ e, t }) => ({ kind: 'track', id: t.id, remove: { title: 'Убрать из плейлиста', symbol: 'minus.circle', act: { name: 'removeFromPlaylist', args: { id, entry: e.entryId } } } })) }
       : { title: 'У каждой истории есть первый трек', rows: [text('Добавьте музыку через меню трека.'), { kind: 'link', title: 'Выбрать из медиатеки', path: '/library' }] },
@@ -252,7 +251,7 @@ async function wave(): Promise<Screen> {
     { footer: 'Музыка, которая чувствует ваш ритм.', rows: stage },
     { ...tuning, title: 'Настроить звучание' },
     { title: cur ? 'Сейчас в эфире' : 'Ваша частота', rows: now,
-      footer: 'Учитываем лайки, дослушивания и пропуски. «Не нравится» исключает трек из подборки. Ваша коллекция использует рекомендации приложения; источник «Яндекс Музыка» — рекомендации вашего аккаунта.' },
+      footer: 'Волна учитывает лайки, дослушивания и пропуски. «Не нравится» убирает трек из подборки.' },
     { title: 'На подходе', footer: loading ? 'Готовим продолжение…' : left ? tracksWord(left) : 'Запустите волну — здесь появятся следующие треки вашей подборки.', rows: next },
   ] };
 }
@@ -292,7 +291,7 @@ async function downloads(): Promise<Screen> {
     { kind: 'choice', title: 'Предел кэша', value: String(Math.round(usage.limitBytes / MB)), act: { name: 'cacheLimit' }, options: [512, 1024, 2048, 5120, 10240, 20480].map((v) => [String(v), mb(v * MB)]) },
     button('Очистить кэш', 'clearAudioCache'),
   ] });
-  return { title: 'Загрузки', refresh: active.length ? 2 : undefined, sections: [{ footer: 'Скачанные треки играют без интернета. Подготовка к AutoMix идёт отдельно и не мешает слушать.', rows: [] }, ...sections] };
+  return { title: 'Загрузки', refresh: active.length ? 2 : undefined, sections: [{ footer: 'Скачанные треки играют без интернета.', rows: [] }, ...sections] };
 }
 
 // MARK: Import
@@ -303,11 +302,11 @@ let importJob: ImportJob | null = null;
 let importUncertain = false;
 
 async function importPage(): Promise<Screen> {
-  const audio: Section = { title: 'Музыка из Файлов', footer: 'Выберите один или несколько аудиофайлов на iPhone или в iCloud Drive. Копии остаются в приложении и играют без интернета.', rows: [
+  const audio: Section = { title: 'Музыка с iPhone', footer: 'Файлы из «Файлов» и iCloud Drive копируются в приложение и играют без интернета.', rows: [
     { kind: 'file', title: 'Добавить аудиофайлы', symbol: 'music.note', types: AUDIO, multiple: true, act: { name: 'importAudio' } },
-    { kind: 'link', title: 'Свои файлы — в «Загрузках»', symbol: 'arrow.down.circle', path: '/downloads' },
+    { kind: 'link', title: 'Свои файлы', symbol: 'arrow.down.circle', path: '/downloads' },
   ] };
-  const intro: Section = { title: 'Импорт плейлиста', footer: 'Ссылка на плейлист или альбом Spotify, Apple Music, YouTube, SoundCloud — или файл CSV, JSON, M3U. Из сервисов берутся только названия; звук играет из найденной публичной записи.', rows: [
+  const intro: Section = { title: 'Плейлист из сервиса', footer: 'Spotify, Apple Music, YouTube, SoundCloud или файл CSV, JSON, M3U. Берутся только названия; звук ищется в публичных записях.', rows: [
     { kind: 'field', key: 'url', title: 'Ссылка на плейлист', placeholder: 'https://open.spotify.com/playlist/…' },
     button('Прочитать', 'importUrl', {}, { symbol: 'link', style: 'primary' }),
     { kind: 'file', title: 'Файл плейлиста (CSV, M3U, JSON)', symbol: 'doc', types: ['csv', 'json', 'm3u', 'm3u8', 'txt'], act: { name: 'importFile' } },
@@ -316,9 +315,9 @@ async function importPage(): Promise<Screen> {
   const job = importJob;
   if (!job) {
     const { jobs } = await api.imports().catch(() => ({ jobs: [] as ImportJob[] }));
-    return { title: 'Импорт', sections: [audio, intro, { title: jobs.length ? 'Недавние импорты' : undefined, rows: jobs.map((j) => ({
+    return { title: 'Импорт', sections: [audio, intro, { title: jobs.length ? 'Недавние' : undefined, rows: jobs.map((j) => ({
       kind: 'item', title: j.name, cover: j.cover, act: { name: 'openImport', args: { id: j.id } }, actions: [{ title: 'Удалить отчёт', symbol: 'trash', destructive: true, act: { name: 'deleteImport', args: { id: j.id } } }],
-      subtitle: `${IMPORT_SOURCE[j.source] ?? j.source} · ${j.state === 'matching' ? 'сопоставляется' : j.state === 'done' ? 'плейлист создан' : 'ждёт подтверждения'}${j.counts ? ` · найдено ${j.counts.matched}, проверить ${j.counts.uncertain}, нет ${j.counts.missing}` : ''}` })) }] };
+      subtitle: `${IMPORT_SOURCE[j.source] ?? j.source} · ${j.state === 'matching' ? 'сопоставляется' : j.state === 'done' ? 'плейлист создан' : 'ждёт подтверждения'}${j.counts ? ` · ${j.counts.matched} найдено, ${j.counts.uncertain} проверить, ${j.counts.missing} нет` : ''}` })) }] };
   }
   const c = job.rows.reduce((a, r) => ({ ...a, [r.status]: a[r.status] + 1 }), { matched: 0, uncertain: 0, missing: 0, pending: 0 });
   const count = c.matched + (importUncertain ? c.uncertain : 0);
@@ -326,7 +325,7 @@ async function importPage(): Promise<Screen> {
     { kind: 'item', title: job.name, cover: job.cover, subtitle: `${IMPORT_SOURCE[job.source] ?? job.source} · прочитано ${job.rows.length}${job.total !== null ? ` из ${job.total}` : ''}` },
     text(`Найдено ${c.matched} · проверьте ${c.uncertain} · не найдено ${c.missing}${c.pending ? ` · ищем ${c.pending}` : ''}`),
   ];
-  if (!job.complete) head.push(text(`${job.note ?? 'Источник показал не весь список.'} Остальное без входа недоступно — проверьте, прежде чем создавать.`, undefined, undefined, 'warn'));
+  if (!job.complete) head.push(text(`${job.note ?? 'Источник показал не весь список.'} Проверьте список, прежде чем создавать плейлист.`, undefined, undefined, 'warn'));
   if (job.state === 'matching') head.push({ kind: 'progress', title: 'Сопоставление', value: (job.rows.length - c.pending) / Math.max(1, job.rows.length) });
   head.push(button('Закрыть отчёт', 'closeImport', {}, { symbol: 'xmark' }));
   const rows: Row[] = job.rows.map((r) => {
@@ -346,7 +345,7 @@ async function importPage(): Promise<Screen> {
   ];
   if (job.playlistId) footer.push({ kind: 'link', title: 'Открыть плейлист', path: `/playlist/${job.playlistId}` });
   return { title: 'Импорт', refresh: job.state === 'matching' ? 1.2 : undefined, search: 'Найти в отчёте', sections: [audio,
-    { rows: head }, { rows }, { rows: footer, footer: 'Ненайденные позиции остаются в этом отчёте со своим местом в списке: найдите их вручную, и они встанут на своё место в плейлисте. Звук скачивается при первом прослушивании.' },
+    { rows: head }, { rows }, { rows: footer, footer: 'Ненайденные треки можно найти вручную — они встанут на своё место в плейлисте.' },
   ] };
 }
 
@@ -356,47 +355,38 @@ const SOURCE_STATUS: Record<ProviderInfo['status'], [string, 'ok' | 'warn' | und
   connected: ['Подключено', 'ok'], needs_credentials: ['Требуется подключение', undefined], unavailable: ['Недоступно', 'warn'],
   not_supported: ['Не поддерживается', 'warn'], error: ['Ошибка', 'warn'], disabled: ['Выключено', undefined],
 };
-const CAPS: [keyof ProviderInfo['capabilities'], string][] = [['search', 'поиск'], ['library', 'медиатека'], ['recommendations', 'рекомендации'], ['playback', 'воспроизведение'], ['seek', 'перемотка'], ['pcm', 'PCM'], ['analysis', 'анализ'], ['mixing', 'AutoMix']];
 const AUDIO = ['mp3', 'm4a', 'aac', 'wav', 'flac', 'opus', 'ogg', 'aiff', 'aif', 'wv', 'ape', 'alac'];
 /** Provider search results per provider: what «Найти треки» showed last, and what was added since. */
 const browse = new Map<string, { items: ExternalTrack[]; added: Map<string, string> }>();
 
 async function sources(): Promise<Screen> {
   await st().loadProviders();
-  const s = st(), providers = s.providers, connected = providers.filter((p) => p.status === 'connected').length;
-  const likesJob = providers.some((p) => p.id === 'yandex' && p.status === 'connected') && s.settings?.yandex.importLikes !== false
-    ? await api.yandexLikesJob().catch(() => undefined) : undefined;
-  const sections: Section[] = [{ footer: 'Откуда MORA берёт музыку. Треки из подключённых источников заранее готовятся к сведению.', rows: [
-    text(providers.length ? `Подключено ${connected} из ${providers.length}` : 'Проверяем источники…'),
-    button('Проверить подключения', 'checkSources', {}, { symbol: 'arrow.clockwise' }),
-  ] }];
-  for (const p of providers) {
-    const [label, tone] = SOURCE_STATUS[p.status], isConnected = p.status === 'connected';
-    const rows: Row[] = [text(label, p.statusText || undefined, p.account ?? (p.id === 'local' ? 'На этом устройстве' : p.official ? 'Официальный API' : 'Неофициальный API'), tone)];
-    if (p.id === 'local') rows.push({ kind: 'file', title: 'Выбрать файлы', symbol: 'square.and.arrow.down', types: AUDIO, multiple: true, act: { name: 'importAudio' } });
-    else if (p.configFields.length && !isConnected) {
-      for (const f of p.configFields) rows.push({ kind: 'field', key: `${p.id}.${f.key}`, title: f.label, value: f.secret ? '' : p.config[f.key] ?? '', secure: f.secret || f.type === 'password', help: f.help,
-        placeholder: f.placeholder ?? (f.secret && p.hasSecret ? 'сохранён (оставьте пустым)' : '') });
-      rows.push(button('Проверить и сохранить', 'connectSource', { id: p.id }, { style: 'primary' }));
-    } else if (p.id === 'yandex' && isConnected) rows.push({ kind: 'link', title: 'Открыть каталог Яндекса', symbol: 'music.note.list', path: '/yandex' });
-    if (isConnected && p.id === 'yandex' && s.settings) {
-      const y = s.settings.yandex, sync = (title: string, key: keyof typeof y, detail: string): Row => ({ kind: 'toggle', title, detail, on: !!y[key], act: { name: 'set', args: { group: 'yandex', key } } });
-      rows.push(
-        sync('Синхронизация лайков', 'syncLikes', 'Отметка «Нравится» в MORA ставит лайк в Яндекс Музыке, снятие — убирает его.'),
-        sync('Синхронизация дизлайков', 'syncDislikes', 'Отметка «Не нравится» в MORA ставит дизлайк в Яндекс Музыке, снятие — убирает его.'),
-        sync('Импорт лайков в медиатеку', 'importLikes', 'Перенос всей коллекции лайков Яндекса в «Любимое» MORA с подготовкой полных треков.'),
-        sync('Обучение «Моей волны»', 'waveFeedback', 'Рассказывать Яндексу, что прозвучало и что пропущено. Волна работает и без этого.'),
-      );
-      if (likesJob !== undefined) rows.push(...yandexLikes(likesJob));
-    }
-    if (isConnected && p.capabilities.search && p.id !== 'local') rows.push(...providerBrowser(p));
-    rows.push(text('Возможности', [...CAPS.map(([k, l]) => `${p.capabilities[k] ? '✓' : '×'} ${l}`), `кэш: ${p.capabilities.caching === 'persistent' ? 'постоянный' : p.capabilities.caching === 'session' ? 'до перезапуска' : 'нет'}`].join(' · ')));
-    for (const n of p.notes) rows.push(text(n));
-    for (const d of p.docs) rows.push({ kind: 'url', title: new URL(d).host, url: d });
-    if (p.configFields.length && isConnected) rows.push(button('Отключить', 'disconnectSource', { id: p.id }, { style: 'destructive' }));
-    sections.push({ title: p.name, rows });
+  const s = st(), p = s.providers.find((x) => x.id === 'yandex');
+  // Other providers work without an account, so only Yandex Music has a connection to manage here.
+  if (!p) return { title: 'Яндекс Музыка', sections: [{ rows: [text('Проверяем подключение…')] }] };
+  const isConnected = p.status === 'connected', [label, tone] = SOURCE_STATUS[p.status];
+  const likesJob = isConnected && s.settings?.yandex.importLikes !== false ? await api.yandexLikesJob().catch(() => undefined) : undefined;
+  const account: Row[] = [text(label, p.statusText || undefined, p.account ?? undefined, tone)];
+  const sections: Section[] = [{ title: 'Аккаунт', footer: isConnected ? undefined : 'Вход нужен для «Моей волны» Яндекса, лайков и вашей коллекции. Остальная музыка работает без аккаунта.', rows: account }];
+  if (!isConnected && p.configFields.length) {
+    for (const f of p.configFields) account.push({ kind: 'field', key: `${p.id}.${f.key}`, title: f.label, value: f.secret ? '' : p.config[f.key] ?? '', secure: f.secret || f.type === 'password', help: f.help,
+      placeholder: f.placeholder ?? (f.secret && p.hasSecret ? 'сохранён (оставьте пустым)' : '') });
+    account.push(button('Подключить', 'connectSource', { id: p.id }, { style: 'primary' }));
+  } else if (isConnected) account.push({ kind: 'link', title: 'Каталог Яндекса', symbol: 'music.note.list', path: '/yandex' });
+  if (!isConnected) for (const d of p.docs) account.push({ kind: 'url', title: new URL(d).host, url: d });
+  if (isConnected && s.settings) {
+    const y = s.settings.yandex, sync = (title: string, key: keyof typeof y, detail: string): Row => ({ kind: 'toggle', title, detail, on: !!y[key], act: { name: 'set', args: { group: 'yandex', key } } });
+    sections.push({ title: 'Синхронизация', footer: 'Что MORA передаёт Яндекс Музыке и забирает из неё.', rows: [
+      sync('Лайки', 'syncLikes', 'Нравится в MORA ставит лайк в Яндексе'),
+      sync('Дизлайки', 'syncDislikes', 'Не нравится в MORA ставит дизлайк в Яндексе'),
+      sync('Импорт лайков в медиатеку', 'importLikes', 'Коллекция Яндекса попадает в «Любимое»'),
+      sync('Обучение «Моей волны»', 'waveFeedback', 'Яндекс узнаёт, что прозвучало и что пропущено'),
+    ] });
+    if (likesJob !== undefined) sections.push({ title: 'Любимое из Яндекса', rows: yandexLikes(likesJob) });
   }
-  return { title: 'Источники', refresh: likesJob && ['running', 'listing'].includes(likesJob.state) ? 2 : undefined, sections };
+  if (isConnected && p.capabilities.search) sections.push({ title: 'Поиск в Яндексе', rows: providerBrowser(p) });
+  if (isConnected && p.configFields.length) sections.push({ rows: [button('Отключить аккаунт', 'disconnectSource', { id: p.id }, { style: 'destructive' })] });
+  return { title: 'Яндекс Музыка', refresh: likesJob && ['running', 'listing'].includes(likesJob.state) ? 2 : undefined, sections };
 }
 
 function yandexLikes(job: Awaited<ReturnType<typeof api.yandexLikesJob>>): Row[] {
@@ -441,6 +431,8 @@ function providerBrowser(p: ProviderInfo): Row[] {
 
 let backup: { data: unknown; count: number; name: string } | null = null;
 let backupMessage = '';
+/** «Расширенные настройки» on the phone: DJ tricks, limits and service details stay folded until asked for. */
+let showAdvanced = false;
 
 async function settings(): Promise<Screen> {
   const s = st().settings;
@@ -456,51 +448,62 @@ async function settings(): Promise<Screen> {
     button('Сохранить копию', 'exportPlaylists', {}, { symbol: 'square.and.arrow.up' }),
     { kind: 'file', title: 'Восстановить из файла', symbol: 'square.and.arrow.down', types: ['json'], act: { name: 'inspectBackup' } },
   ];
-  if (backup) backupRows.push(text(backup.name, `Плейлистов: ${backup.count}. Будут созданы отдельные копии. Повторное восстановление этого набора обновит его копии.`),
+  if (backup) backupRows.push(text(backup.name, `Плейлистов: ${backup.count}. Будут созданы отдельные копии.`),
     button('Восстановить', 'restoreBackup', {}, { style: 'primary' }), button('Отмена', 'cancelBackup'));
   if (backupMessage) backupRows.push(text(backupMessage));
   const sections: Section[] = [
-    { title: 'Переходы', footer: off ? 'AutoMix выключен: треки играют подряд без наложения.' : 'AutoMix ищет в следующем треке подходящую фразу и сводит песни в темп.', rows: [
-      sw('AutoMix', 'enabled', a.enabled, 'Плавные музыкальные переходы между треками.'),
-      sw('Сводить по кнопке «Следующий»', 'mixOnNext', a.mixOnNext ?? true, 'Первое нажатие — короткий переход, второе переключает сразу.', off),
-      pick('Характер переходов', 'style', a.style, [['auto', 'Авто · рекомендуется'], ['smooth', 'Длинные и плавные'], ['tight', 'Короткие, по фразе']], 'В режиме «Авто» способ и длина зависят от музыки.', 'automix', off),
-      pick('Начало следующего трека', 'entryMode', a.entryMode ?? 'smart', [['smart', 'Умный вход'], ['preserve', 'Сохранять начало']], '«Умный вход» может пропустить часть вступления ради лучшего перехода.', 'automix', off),
+    { title: 'Переходы', footer: off ? 'AutoMix выключен: треки играют подряд без наложения.' : 'AutoMix сводит песни в темп и по фразам.', rows: [
+      sw('AutoMix', 'enabled', a.enabled, 'Плавные переходы между треками'),
+      pick('Характер', 'style', a.style, [['auto', 'Авто · рекомендуется'], ['smooth', 'Длинные и плавные'], ['tight', 'Короткие, по фразе']], 'В режиме «Авто» зависит от музыки', 'automix', off),
+      sw('Сводить по «Следующий»', 'mixOnNext', a.mixOnNext ?? true, 'Первое нажатие — короткий переход, второе — сразу', off),
     ] },
     { title: 'Воспроизведение', rows: [
-      sw('Продолжать радио после конца очереди', 'continueRadio', s.wave.continueRadio !== false, 'Когда альбом или плейлист доиграл, дальше без паузы звучит похожая музыка. Без сети — «Моя волна» из медиатеки. Не включается при повторе.', false, 'wave'),
-      sw('Альбомы без наложения', 'respectAlbums', a.respectAlbums, 'Соседние треки одного альбома играют подряд, как задумал автор.', off),
-      pick('Выравнивание громкости', 'loudnessTarget', a.loudnessTarget === null ? 'off' : String(a.loudnessTarget),
-        [['off', 'Выключено'], ['-14', 'Громче (−14 LUFS)'], ['-16', 'Обычно (−16 LUFS) · рекомендуется'], ['-18', 'Тише, больше запаса (−18 LUFS)']], 'Треки звучат одинаково громко, без перегрузки.', 'automix', false, true),
+      sw('Радио после очереди', 'continueRadio', s.wave.continueRadio !== false, 'Когда альбом или плейлист закончился, играет похожая музыка', false, 'wave'),
+      sw('Альбомы без наложения', 'respectAlbums', a.respectAlbums, 'Треки одного альбома идут подряд, как задумал автор', off),
+      pick('Громкость', 'loudnessTarget', a.loudnessTarget === null ? 'off' : String(a.loudnessTarget),
+        [['off', 'Выключено'], ['-14', 'Громче (−14 LUFS)'], ['-16', 'Обычно (−16 LUFS) · рекомендуется'], ['-18', 'Тише, больше запаса (−18 LUFS)']], 'Выравнивает громкость разных треков', 'automix', false, true),
     ] },
     { title: 'Офлайн', footer: 'Загрузка идёт через любое подключение, в том числе мобильное.', rows: [
-      sw('Скачивать лайкнутые треки', 'autoLiked', !!s.downloads?.autoLiked, 'Треки из YouTube, SoundCloud и Яндекс Музыки с отметкой «Нравится» сохраняются на устройство. Снятие отметки скачанное не удаляет.', false, 'downloads'),
+      sw('Скачивать лайкнутые', 'autoLiked', !!s.downloads?.autoLiked, 'Любимое из YouTube, SoundCloud и Яндекса сохраняется на iPhone', false, 'downloads'),
       { kind: 'link', title: 'Загрузки', symbol: 'arrow.down.circle', path: '/downloads' },
     ] },
-    { title: 'DJ-приёмы', footer: off ? 'Включите AutoMix, чтобы использовать DJ-приёмы.' : undefined, rows: [
-      sw('Обмен басом', 'eqHandoff', a.eqHandoff, 'Бас двух треков не звучит одновременно, середина приглушается при конфликте мелодий.', off),
-      sw('DJ-подводки', 'djPhrasing', a.djPhrasing ?? true, 'Фильтр, передача баса на сильной доле и короткое эхо — только там, где не режут вокальную фразу.', off || !a.eqHandoff || a.stemMixing === false),
-      sw('Стабильный темп вокала', 'masterTempo', a.masterTempo ?? true, 'При небольшой разнице темпа подстраивается следующий трек, а не текущий голос.', off || a.stemMixing === false),
-      sw('Инструментальные петли', 'loopBridges', a.loopBridges ?? true, 'Затухающий финал поддерживается повтором подходящего такта без вокала.', off || !a.eqHandoff || a.stemMixing === false),
+    { title: 'Внешний вид', rows: [
+      pick('Анимации', 'motion', s.ui.motion ?? 'system', [['system', 'Как в системе'], ['full', 'Полные'], ['reduced', 'Минимум движения']], 'Минимум заменяет визуализации статичным видом', 'ui'),
     ] },
-    { title: 'Оформление', rows: [
-      pick('Анимации', 'motion', s.ui.motion ?? 'system', [['system', 'Как в системе'], ['full', 'Полные анимации'], ['reduced', 'Минимум движения']], '«Минимум движения» заменяет визуализации статичным оформлением.', 'ui'),
+    { title: 'Ещё', rows: [
+      { kind: 'link', title: 'Звук', detail: 'Эквалайзер и пресеты', symbol: 'slider.vertical.3', path: '/sound' },
+      { kind: 'link', title: 'Яндекс Музыка', detail: 'Аккаунт и синхронизация', symbol: 'person.crop.circle', path: '/sources' },
+      button('Проверить файлы медиатеки', 'verifyLibrary', {}, { symbol: 'checkmark.circle' }),
     ] },
-    { title: 'Медиатека', rows: [button('Проверить файлы', 'verifyLibrary', {}, { symbol: 'checkmark.circle' })] },
-    { title: 'Ваши плейлисты с собой', footer: 'Сохраните названия, порядок песен и ссылки на записи. Аудиофайлы и подключения аккаунтов в копию не входят.', rows: backupRows },
-    { title: 'Тонкая настройка переходов', footer: 'Это пределы: точные точки и длину AutoMix выбирает по анализу музыки.', rows: [
-      ...((a.entryMode ?? 'smart') === 'smart' ? [slide('Пропуск вступления', 'maxEntrySkipSeconds', a.maxEntrySkipSeconds ?? 45, 0, 75, 1, 'с', 'Насколько глубоко можно войти в следующий трек.')] : []),
-      slide('Изменение темпа', 'maxStretchPercent', a.maxStretchPercent, 0, 16, 0.5, '%', 'Предел для каждого трека, высота тона сохраняется.'),
-      slide('Длина перехода', 'maxBlendSeconds', a.maxBlendSeconds, 8, 48, 1, 'с', 'Сколько максимум звучат два трека вместе.'),
-      slide('Резервный кроссфейд', 'fallbackSeconds', a.fallbackSeconds, 1, 12, 1, 'с', 'Пока анализ трека не готов.'),
+    { title: 'Резервная копия', footer: 'Названия и порядок песен. Аудиофайлы и аккаунты в копию не входят.', rows: backupRows },
+    { footer: 'DJ-приёмы, пределы переходов и служебные сведения.', rows: [
+      { kind: 'toggle', title: 'Расширенные настройки', on: showAdvanced, act: { name: 'settingsAdvanced' } },
     ] },
   ];
-  if (health) sections.push({ title: 'Служебные сведения', rows: [
+  if (showAdvanced) sections.push(
+    { title: 'Переходы подробно', rows: [
+      pick('Начало следующего трека', 'entryMode', a.entryMode ?? 'smart', [['smart', 'Умный вход'], ['preserve', 'Сохранять начало']], 'Умный вход может пропустить часть вступления', 'automix', off),
+    ] },
+    { title: 'DJ-приёмы', footer: off ? 'Включите AutoMix, чтобы использовать DJ-приёмы.' : undefined, rows: [
+      sw('Обмен басом', 'eqHandoff', a.eqHandoff, 'Бас двух треков не звучит одновременно', off),
+      sw('DJ-подводки', 'djPhrasing', a.djPhrasing ?? true, 'Фильтр и короткое эхо, не режущие вокал', off || !a.eqHandoff || a.stemMixing === false),
+      sw('Стабильный темп вокала', 'masterTempo', a.masterTempo ?? true, 'Подстраивается следующий трек, а не текущий голос', off || a.stemMixing === false),
+      sw('Инструментальные петли', 'loopBridges', a.loopBridges ?? true, 'Затухающий финал держится повтором такта', off || !a.eqHandoff || a.stemMixing === false),
+    ] },
+    { title: 'Пределы переходов', footer: 'Точные точки и длину AutoMix выбирает по анализу музыки.', rows: [
+      ...((a.entryMode ?? 'smart') === 'smart' ? [slide('Пропуск вступления', 'maxEntrySkipSeconds', a.maxEntrySkipSeconds ?? 45, 0, 75, 1, 'с', 'Насколько глубоко входить в следующий трек')] : []),
+      slide('Изменение темпа', 'maxStretchPercent', a.maxStretchPercent, 0, 16, 0.5, '%', 'Предел для трека, высота тона сохраняется'),
+      slide('Длина перехода', 'maxBlendSeconds', a.maxBlendSeconds, 8, 48, 1, 'с', 'Сколько максимум звучат два трека вместе'),
+      slide('Резервный кроссфейд', 'fallbackSeconds', a.fallbackSeconds, 1, 12, 1, 'с', 'Пока анализ трека не готов'),
+    ] },
+  );
+  if (health && showAdvanced) sections.push({ title: 'Служебные сведения', rows: [
     text('Декодер', health.ffmpeg ?? 'ffmpeg не найден', health.ffmpeg ? 'Готов' : 'Нет', health.ffmpeg ? 'ok' : 'warn'),
     text('Анализ звука', `Анализатор ${health.analyzer}, планировщик ${health.planner}, потоков ${health.analysis.workers}.`, `в работе ${health.analysis.running} · в очереди ${health.analysis.queued}`),
     text('Кэш звука', `${mbRaw(health.pcmCacheBytes)} из ${mbRaw(health.pcmCacheLimit)}${health.pcmCacheProtectedBytes ? `, сейчас используется ${mbRaw(health.pcmCacheProtectedBytes)}` : ''}. Старое удаляется само; текущий и следующий трек сохраняются.`),
     button('Очистить кэш звука', 'clearCache', {}, { confirm: { title: 'Очистить кэш звука?', text: 'Декодированный звук и сохранённые планы переходов будут удалены и созданы заново при воспроизведении. Медиатека, анализ и история не затрагиваются.', button: 'Очистить' } }),
   ] });
-  sections.push({ rows: [{ kind: 'link', title: 'Посмотреть, как сводятся треки', symbol: 'chart.xyaxis.line', path: '/diagnostics' }] });
+  if (showAdvanced) sections.push({ rows: [{ kind: 'link', title: 'Как сводятся треки', detail: 'Диагностика AutoMix', symbol: 'waveform.path.ecg', path: '/diagnostics' }] });
   return { title: 'Настройки', refresh: 10, sections };
 }
 const mbRaw = (bytes: number) => `${(bytes / MB).toFixed(0)} МБ`;
@@ -782,6 +785,7 @@ export const actions: Record<string, (a: Args) => unknown> = {
     if (job?.failed.length) throw Error(job.failed.map(v => v.name + ': ' + v.error).join('; '));
   },
   checkSources: () => st().loadProviders(true),
+  settingsAdvanced: (a) => { showAdvanced = a.value === true; },
   connectSource: async (a) => {
     const p = st().providers.find((x) => x.id === str(a.id));
     if (!p) return;

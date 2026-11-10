@@ -230,7 +230,7 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
 
   // --------------------------------------------------------------------- wave
 
-  app.post<{ Body: { currentId?: string | null; session?: string[]; mood?: WaveMood; diversity?: WaveDiversity; mode?: 'normal' | 'mix'; count?: number; exclude?: string[] } }>('/api/wave/next', async (req) => {
+  app.post<{ Body: { currentId?: string | null; session?: string[]; mood?: WaveMood; diversity?: WaveDiversity; mode?: 'normal' | 'mix'; count?: number; exclude?: string[]; offline?: boolean } }>('/api/wave/next', async (req) => {
     const st = getSettings(db).wave;
     const b = req.body ?? {};
     const picks = wave.next({
@@ -241,6 +241,7 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
       mix: (b.mode ?? st.mode) === 'mix',
       count: b.count ?? 3,
       exclude: b.exclude,
+      offline: b.offline === true,
     });
     return { picks };
   });

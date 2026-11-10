@@ -197,7 +197,7 @@ struct NativePageView: View {
                     })
                     .listRowBackground(Color.white.opacity(0.06))
             } header: {
-                if let title = section.title { Text(title) }
+                if let title = section.title { Text(title).textCase(nil).font(.footnote.weight(.semibold)) }
             } footer: {
                 if let footer = section.footer { Text(footer) }
             }
@@ -252,33 +252,44 @@ struct NativePageView: View {
                 .disabled(disabled || running)
 
         case .button(let title, let symbol, let act, let style, let disabled, let confirmRow, let promptRow):
-            Button(role: style == "destructive" ? .destructive : nil) {
+            let primary = style == "primary", destructive = style == "destructive"
+            Button(role: destructive ? .destructive : nil) {
                 if let confirmRow { confirm = (confirmRow, act) }
                 else if let promptRow { promptText = promptRow.initial; prompt = (promptRow, act) }
                 else { run(act, ["form": form]) }
             } label: {
-                if style == "primary" {
+                if primary {
                     Group { if let symbol { Label(title, systemImage: symbol) } else { Text(title) } }
-                        .fontWeight(.semibold)
+                        .font(.headline)
                         .foregroundStyle(Color.moraBackground)
-                        .frame(minHeight: 44)
-                        .padding(.horizontal, 22)
+                        .frame(maxWidth: .infinity, minHeight: 50)
                         .background(Color.moraMint.opacity(disabled ? 0.4 : 1), in: Capsule())
-                        .frame(maxWidth: .infinity)
-                } else {
+                } else if destructive {
                     Group { if let symbol { Label(title, systemImage: symbol) } else { Text(title) } }
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        .foregroundStyle(style == "destructive" ? Color.red : Color.moraMint)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .foregroundStyle(Color.red)
+                } else if let symbol {
+                    HStack(spacing: 12) {
+                        NativeIconBadge(symbol: symbol)
+                        Text(title).foregroundStyle(.white)
+                        Spacer(minLength: 0)
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                } else {
+                    Text(title).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).foregroundStyle(Color.moraMint)
+                        .contentShape(Rectangle())
                 }
             }
             .buttonStyle(.plain)
-            .listRowBackground(Color.white.opacity(0.06))
+            .listRowBackground(primary ? Color.clear : Color.white.opacity(0.06))
+            .listRowInsets(primary ? EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0) : EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
             .disabled(disabled || running)
 
         case .link(let title, let detail, let symbol, let path):
             Button { store.go(path) } label: {
                 HStack(spacing: 12) {
-                    if let symbol { Image(systemName: symbol).foregroundStyle(Color.moraMint).frame(width: 24) }
+                    if let symbol { NativeIconBadge(symbol: symbol) }
                     labelled(title, detail)
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.35))
@@ -289,7 +300,15 @@ struct NativePageView: View {
             .buttonStyle(.plain)
 
         case .url(let title, let url):
-            Link(destination: url) { Label(title, systemImage: "arrow.up.right.square").frame(minHeight: 44) }
+            Link(destination: url) {
+                HStack(spacing: 12) {
+                    NativeIconBadge(symbol: "safari")
+                    Text(title).foregroundStyle(.white)
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.up.right").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.35))
+                }
+                .frame(minHeight: 44)
+            }
 
         case .field(let key, let title, let value, let placeholder, let secure, let help):
             VStack(alignment: .leading, spacing: 4) {
@@ -306,8 +325,16 @@ struct NativePageView: View {
 
         case .file(let title, let symbol, let types, let multiple, let act):
             Button { chooseFiles(types: types.compactMap { UTType(filenameExtension: $0) }, multiple: multiple, act: act) } label: {
-                Label(title, systemImage: symbol ?? "doc").frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                HStack(spacing: 12) {
+                    NativeIconBadge(symbol: symbol ?? "doc")
+                    Text(title).foregroundStyle(.white).multilineTextAlignment(.leading)
+                    Spacer(minLength: 0)
+                    Image(systemName: "plus").font(.footnote.weight(.semibold)).foregroundStyle(Color.moraMint)
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             .disabled(running)
 
         case .progress(let title, let value, let detail):

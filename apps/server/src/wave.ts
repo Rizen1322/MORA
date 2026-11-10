@@ -11,7 +11,11 @@ export class WaveService {
     private readonly analysis: AnalysisService,
   ) {}
 
-  private library(): RecTrack[] {
+  /** offline: only songs that play without the network (files, downloads), as the offline wave needs. */
+  private library(offline = false): RecTrack[] {
+    const online = offline
+      ? new Set((q(this.db, "SELECT DISTINCT track_id FROM track_sources WHERE kind = 'remote'").all() as { track_id: string }[]).map((r) => r.track_id))
+      : null;
     const feats = new Map(
       (
         q(this.db, "SELECT content_hash, summary FROM analysis WHERE version = ? AND status = 'done'").all(ANALYZER_VERSION) as {
@@ -35,12 +39,12 @@ export class WaveService {
         camelot: f?.camelot ?? null,
         playCount: t.play_count,
         lastPlayedAt: t.last_played_at,
-        available: t.status === 'ok',
+        available: t.status === 'ok' && (!online || t.pinned === 1 || !online.has(t.id)),
       };
     });
   }
 
-  next(input: { currentId: string | null; session: string[]; mood: WaveMood; diversity: WaveDiversity; mix?: boolean; count: number; exclude?: string[] }): WavePick[] {
+  next(input: { currentId: string | null; session: string[]; mood: WaveMood; diversity: WaveDiversity; mix?: boolean; count: number; exclude?: string[]; offline?: boolean }): WavePick[] {
     const reactions = q(this.db, 'SELECT track_id, value FROM reactions').all() as { track_id: string; value: number }[];
     const likes = new Set(reactions.filter((r) => r.value > 0).map((r) => r.track_id));
     const dislikes = new Set(reactions.filter((r) => r.value < 0).map((r) => r.track_id));
@@ -62,7 +66,7 @@ export class WaveService {
       }),
     );
     const picks = recommendNext(
-      this.library(),
+      this.library(input.offline),
       { likes, dislikes, plays, now: Date.now() },
       { currentId: input.currentId, session: input.session.slice(-200), mood: input.mood, diversity: input.diversity, mix: input.mix, exclude: new Set(input.exclude ?? []) },
       Math.max(1, Math.min(10, input.count)),

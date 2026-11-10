@@ -9,7 +9,7 @@ const h = vi.hoisted(() => ({
 }));
 vi.mock('../src/store/app.ts', () => ({
   phone: true,
-  controller: { resume: () => h.resume(), pause: () => h.pause(), nextTrack: () => h.nextTrack(), prevTrack: () => h.prevTrack(), seek: (time: number) => h.seek(time), toggleShuffle: () => h.toggleShuffle(), cycleRepeat: () => h.cycleRepeat(), playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k), refreshYandexWave: () => h.refreshYandexWave(),
+  controller: { resume: () => h.resume(), pause: () => h.pause(), nextTrack: () => h.nextTrack(), prevTrack: () => h.prevTrack(), seek: (time: number) => h.seek(time), toggleShuffle: () => h.toggleShuffle(), cycleRepeat: () => h.cycleRepeat(), playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k), refreshYandexWave: () => h.refreshYandexWave(), subscribe: vi.fn(), setOfflineOnly: vi.fn(),
     get state() { return h.queueState; }, move: (...a: any[]) => h.move(...a), removeAt: (i: number) => h.removeAt(i), jumpTo: (i: number) => h.jumpTo(i) },
   trackOf: (id: string) => h.app.tracks.get(id),
   useApp: { getState: () => h.app, setState: vi.fn(), subscribe: (fn: () => void) => h.listeners.push(fn) },

@@ -366,13 +366,14 @@ final class NativeShellStore: ObservableObject {
     init() {
         let nc = NotificationCenter.default
         nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.stopPolling() }
-        nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in self?.startPolling(); self?.flushReactions() }
+        nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in self?.startPolling(); self?.flushReactions(); self?.sendNetwork() }
         nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.flushReactions() }
         network.pathUpdateHandler = { [weak self] path in
             DispatchQueue.main.async {
                 guard let self, (path.status != .satisfied) != self.offline else { return }
                 self.offline.toggle()
-                self.show(self.offline ? "Нет подключения к интернету. Скачанная музыка играет как обычно." : "Сеть снова доступна")
+                self.show(self.offline ? "Нет сети — волна продолжится скачанными треками" : "Сеть снова доступна")
+                self.sendNetwork()
             }
         }
         network.start(queue: DispatchQueue(label: "ru.mora.network"))
@@ -386,6 +387,7 @@ final class NativeShellStore: ObservableObject {
         if let rows = value["queue"] as? [[String: Any]] { queue = rows.compactMap(NativeQueuedTrack.init) }
         let next = NativeUiState(value)
         let nowChanged = next.now?.id != ui.now?.id || next.now?.playing != ui.now?.playing
+        if next.loaded && !ui.loaded && offline { sendNetwork() } // a page that (re)loaded without a network
         defer { if value["library"] != nil || nowChanged { publishWidget() } }
         if next.toast != ui.toast, let toast = next.toast, screen != .web { show(toast.text) }
         if next.path != ui.path || next.searchQuery != ui.searchQuery || next.searchSource != ui.searchSource || next.searchScope != ui.searchScope {
@@ -558,6 +560,13 @@ final class NativeShellStore: ObservableObject {
                 self.artwork = (value["artwork"] as? MPMediaItemArtwork)?.image(at: CGSize(width: 120, height: 120))
             }
         }
+    }
+
+    /// The page's offline wave (lib/offline-wave.ts) follows this monitor; sent again on return to the foreground,
+    /// since a suspended page misses the call.
+    private func sendNetwork() {
+        let offline = self.offline
+        Task { @MainActor in _ = try? await call("network", ["offline": offline], timeout: 10) }
     }
 
     /// Home-screen widgets: the playing (or last) track and the newest likes; redrawn only when they change.

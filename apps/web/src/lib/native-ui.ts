@@ -1,6 +1,7 @@
 import { api, type Track } from './api.ts';
 import { nativePlaybackControls } from './playback-trace.ts';
 import { startRadio, useRadio } from './radio.ts';
+import { heldStation, offlineNow, setNetworkOffline, startOffline, watchNetwork } from './offline-wave.ts';
 import { trackAlbumHref, trackArtistHref, trackArtistLinks } from './router.ts';
 import { controller, phone, trackOf, useApp } from '../store/app.ts';
 import { usePublicPlayback, useCatalogPlayback } from '../store/catalog.ts';
@@ -30,7 +31,8 @@ export const uiTrack = (t: Track): NativeUiTrack => ({
 /** Everything but the library and playlists, which are sent only when they change. */
 export function uiState(s = useApp.getState(), radio = useRadio.getState(), preparing = usePublicPlayback.getState()) {
   const catalogPreparation = useCatalogPlayback.getState();
-  const p = s.player, ctx = p.context?.type;
+  // While the offline wave stands in for a station, Home still shows that station as playing.
+  const p = s.player, ctx = (heldStation() ?? p.context)?.type;
   const [path, query] = (location.hash.replace(/^#/, '') || '/').split('?');
   const params = new URLSearchParams(query);
   const current = trackOf(p.queue[p.index]?.trackId);
@@ -155,6 +157,7 @@ export const commands: Record<string, (a: Args) => unknown> = {
   wave: (a) => {
     const want = a.source === 'yandex' || a.source === 'online' ? a.source : 'own';
     if (uiState().wave.active === want) return controller.toggle();
+    if (want !== 'own' && offlineNow()) return startOffline(want);
     return want === 'online' ? startRadio() : controller.startWave(want);
   },
   playbackMode: async (a) => {
@@ -176,6 +179,8 @@ export const commands: Record<string, (a: Args) => unknown> = {
     throw Error('Неизвестная команда плеера');
   },
   toggle: () => controller.toggle(),
+  /** The iPhone's network monitor: without a network the wave goes on with songs on the device. */
+  network: (a) => setNetworkOffline(a.offline === true),
   /** Pushes everything again, e.g. after the shell was switched off or on. */
   resync: () => resend(),
   next: () => controller.nextTrack(),
@@ -208,6 +213,7 @@ export const enableNativeUi = () => resend(true);
 export function startNativeUi(): void {
   const push = nativePlaybackControls()?.uiState;
   if (!phone || !push) return;
+  watchNetwork();
   window.moraNativeUi = async (name, args) => {
     const fn = commands[name];
     if (!fn) throw new Error(`Unknown command ${name}`);

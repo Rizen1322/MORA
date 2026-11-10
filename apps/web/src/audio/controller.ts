@@ -1085,7 +1085,7 @@ export class PlayerController {
       }
       if (kind === 'own') {
         this.yandexSession = null;
-        const r = await api.waveNext({ currentId: null, session: [], count: 3 });
+        const r = await api.waveNext({ currentId: null, session: [], count: 3, offline: this.offlineOnly || undefined });
         if (revision !== this.previewRevision) return;
         entries.push(...r.picks.map((p) => ({ entryId: uid(), trackId: p.id, origin: 'wave' as const, reasons: p.reasons })));
       }
@@ -1481,6 +1481,16 @@ export class PlayerController {
     return null;
   }
 
+  /** No usable network (lib/offline-wave.ts): «Моя волна» picks only songs that play from this device. */
+  offlineOnly = false;
+  setOfflineOnly(on: boolean): void {
+    if (this.offlineOnly === on) return;
+    this.offlineOnly = on;
+    // A refill that failed for lack of network may try again at once with what the device has.
+    this.waveRetryAt = 0; this.waveFailures = 0;
+    if (this.isWave()) void this.topUpWave();
+  }
+
   private isWave(): boolean {
     const t = this.state.context?.type;
     return t === 'wave' || t === 'yandex-wave';
@@ -1601,7 +1611,7 @@ export class PlayerController {
             reasons: ['из «Моей волны» Яндекса'] }] : []);
         } else {
           const r = await api.waveNext({ currentId: this.currentEntry?.trackId ?? null,
-            session: this.state.queue.map((e) => e.trackId), count });
+            session: this.state.queue.map((e) => e.trackId), count, offline: this.offlineOnly || undefined });
           added = r.picks.map((pick) => ({ entryId: uid(), trackId: pick.id, origin: 'wave', reasons: pick.reasons }));
         }
         if (!relevant()) return;

@@ -4,6 +4,22 @@ import UIKit
 /// Native screens of the shell (NativeShell.swift). They link to other sections through the page's router;
 /// the page-described ones (albums, playlists, settings…) are drawn by NativePages.swift, the rest stay web.
 
+/// A white symbol on a tinted rounded square, as in iOS Settings; the tint follows the symbol so rows stay stable.
+struct NativeIconBadge: View {
+    let symbol: String
+    var size: CGFloat = 30
+    private static let palette: [Color] = [Color(red: 0.10, green: 0.52, blue: 0.36), .blue, .indigo, .orange, .pink, .teal, .purple]
+
+    var body: some View {
+        let sum: Int = symbol.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
+        let tint = Self.palette[sum % Self.palette.count]
+        Image(systemName: symbol).font(.system(size: size * 0.5, weight: .semibold)).foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(tint.gradient, in: RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+            .accessibilityHidden(true)
+    }
+}
+
 // MARK: Home
 
 struct NativeHomeView: View {
@@ -12,16 +28,18 @@ struct NativeHomeView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 24) {
                     header
                     NativeWaveHero(wave: store.ui.wave)
                     tiles
                     if store.ui.loaded && store.library.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 10) {
                             Text("Добавьте свою музыку").font(.title3.bold())
                             Text("Импортируйте файлы или плейлист, либо найдите музыку в поиске.").foregroundStyle(.white.opacity(0.65))
-                            Button("Импорт") { store.go("/import") }.buttonStyle(.borderedProminent).frame(minHeight: 44)
+                            Button("Импорт") { store.go("/import") }.buttonStyle(.borderedProminent).tint(.moraMint).frame(minHeight: 44)
                         }
+                        .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     }
                     rail("Недавно добавленные", Array(store.library.prefix(16)), type: "library", all: "/library")
                     rail("Любимое", Array(store.liked.prefix(16)), type: "liked", all: "/liked")
@@ -53,20 +71,32 @@ struct NativeHomeView: View {
     }
 
     private var tiles: some View {
-        let items: [(String, String, String, Bool)] = [("/liked", "Любимое", "heart.fill", false), ("/downloads", "Загрузки", "arrow.down.circle.fill", false),
-                                                      ("/history", "История", "clock.arrow.circlepath", true), ("/import", "Импорт", "square.and.arrow.down.fill", true)]
-        return HStack(alignment: .top, spacing: 8) {
+        let items: [(String, String, String, Bool, String?)] = [
+            ("/liked", "Любимое", "heart.fill", false, store.liked.isEmpty ? nil : NativeText.tracks(store.liked.count)),
+            ("/downloads", "Загрузки", "arrow.down.circle.fill", false, nil),
+            ("/history", "История", "clock.arrow.circlepath", true, nil),
+            ("/import", "Импорт", "square.and.arrow.down.fill", true, nil)]
+        return LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
             ForEach(items, id: \.0) { item in
+                let tint = item.3 ? Color.moraGold : Color.moraMint
                 Button { store.go(item.0) } label: {
-                    VStack(spacing: 6) {
-                        Image(systemName: item.2).font(.title3)
-                            .foregroundStyle(item.3 ? Color.moraGold : Color.moraMint)
-                            .frame(width: 56, height: 56)
-                            .background((item.3 ? Color.moraGold : Color.moraMint).opacity(0.14), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        Text(item.1).font(.caption.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
+                    HStack(spacing: 12) {
+                        Image(systemName: item.2).font(.body.weight(.semibold))
+                            .foregroundStyle(tint)
+                            .frame(width: 38, height: 38)
+                            .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.1).font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.8)
+                            if let detail = item.4 { Text(detail).font(.caption).foregroundStyle(.white.opacity(0.55)).lineLimit(1) }
+                        }
+                        Spacer(minLength: 0)
                     }
-                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
+                    .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .accessibilityElement(children: .combine)
             }
         }
@@ -78,7 +108,11 @@ struct NativeHomeView: View {
                 HStack {
                     Text(title).font(.title3.bold()).accessibilityAddTraits(.isHeader)
                     Spacer()
-                    Button("Показать все") { store.go(all) }.font(.subheadline.weight(.medium)).frame(minHeight: 44)
+                    Button { store.go(all) } label: {
+                        HStack(spacing: 4) { Text("Все"); Image(systemName: "chevron.forward").font(.caption.weight(.bold)) }
+                            .font(.subheadline.weight(.medium)).foregroundStyle(Color.moraMint).frame(minHeight: 44)
+                    }
+                    .accessibilityLabel("Показать все: " + title)
                 }
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(alignment: .top, spacing: 12) {
@@ -135,9 +169,13 @@ struct NativeWaveHero: View {
     var body: some View {
         let selected = store.waveSource.flatMap { wave.sources.contains($0) ? $0 : nil } ?? wave.preferred
         let button = wave.button(selected)
-        VStack(alignment: .leading, spacing: 14) {
-            (Text("Моя волна") + Text(".").foregroundColor(.moraMint)).font(.title.bold()).accessibilityAddTraits(.isHeader)
-            Text("Знакомое, любимое и то, что ещё предстоит открыть.").foregroundStyle(.white.opacity(0.7))
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(wave.active != nil ? "Сейчас в эфире" : "Для вас", systemImage: "waveform")
+                    .font(.caption.weight(.bold)).foregroundStyle(Color.moraMint)
+                (Text("Моя волна") + Text(".").foregroundColor(.moraMint)).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
+                Text("Знакомое, любимое и то, что ещё предстоит открыть.").font(.subheadline).foregroundStyle(.white.opacity(0.7))
+            }
             Picker("Источник волны", selection: Binding(get: { selected }, set: { store.waveSource = $0 })) {
                 ForEach(wave.sources, id: \.self) { s in
                     Text(s == .own ? "Коллекция" : s == .online ? "Радио" : "Яндекс").tag(s)
@@ -147,13 +185,13 @@ struct NativeWaveHero: View {
             HStack(spacing: 10) {
                 Button { store.run("wave", ["source": selected.rawValue]) } label: {
                     Label(button.title, systemImage: button.symbol).font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .frame(maxWidth: .infinity, minHeight: 54)
                         .foregroundStyle(Color.moraBackground)
                         .background(Color.moraMint.opacity(button.enabled ? 1 : 0.4), in: Capsule())
                 }
                 .disabled(!button.enabled)
                 Button { store.waveSource = selected; store.go("/wave") } label: {
-                    Image(systemName: "slider.horizontal.3").font(.headline).frame(width: 50, height: 50)
+                    Image(systemName: "slider.horizontal.3").font(.headline).frame(width: 54, height: 54)
                         .background(.white.opacity(0.1), in: Circle())
                 }
                 .accessibilityLabel("Настроить волну").accessibilityIdentifier("wave.settings")
@@ -164,10 +202,15 @@ struct NativeWaveHero: View {
         }
         .padding(20)
         .background {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(LinearGradient(colors: [Color(red: 0.10, green: 0.30, blue: 0.21), Color(red: 0.04, green: 0.11, blue: 0.08)],
-                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-                .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.moraMint.opacity(0.18)))
+            let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+            ZStack(alignment: .topTrailing) {
+                shape.fill(LinearGradient(colors: [Color(red: 0.10, green: 0.30, blue: 0.21), Color(red: 0.04, green: 0.11, blue: 0.08)],
+                                          startPoint: .topLeading, endPoint: .bottomTrailing))
+                Image(systemName: "waveform").font(.system(size: 130, weight: .ultraLight))
+                    .foregroundStyle(Color.moraMint.opacity(0.10)).offset(x: 28, y: -6).accessibilityHidden(true)
+            }
+            .clipShape(shape)
+            .overlay(shape.stroke(Color.moraMint.opacity(0.18)))
         }
         .onChange(of: wave.active) { _, active in if active != nil { store.waveSource = nil } } // follow what plays now
     }
@@ -198,6 +241,13 @@ struct NativeTrackListView: View {
                     ContentUnavailableView(title, systemImage: liked ? "heart" : "music.note.list", description: Text(hint))
                         .listRowBackground(Color.clear)
                 } else {
+                    if query.isEmpty && selection == nil {
+                        HStack(spacing: 10) {
+                            playButton("Слушать", "play.fill", prominent: true) { store.play(shown, at: 0, type: type, label: title) }
+                            playButton("Вперемешку", "shuffle", prominent: false) { store.play(shown.shuffled(), at: 0, type: type, label: title) }
+                        }
+                        .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                    }
                     Section {
                         ForEach(Array(shown.enumerated()), id: \.element.id) { i, t in
                             if let selection {
@@ -258,6 +308,16 @@ struct NativeTrackListView: View {
                 }
             }
         }
+    }
+
+    private func playButton(_ title: String, _ symbol: String, prominent: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol).font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .foregroundStyle(prominent ? Color.moraBackground : Color.moraMint)
+                .background(prominent ? Color.moraMint : Color.moraMint.opacity(0.15), in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private func bulkBar(_ chosen: [NativeTrack]) -> some View {
@@ -708,7 +768,7 @@ struct NativeMoreView: View {
                     }
                 }
                 Section("Приложение") {
-                    link("/sources", "Источники музыки", "Файлы, серверы и Яндекс Музыка", "powerplug")
+                    link("/sources", "Яндекс Музыка", "Аккаунт и синхронизация лайков", "person.crop.circle")
                     link("/settings", "Настройки", "Переходы, громкость и офлайн", "gearshape")
                     link("/sound", "Звук", "Эквалайзер и пресеты", "slider.vertical.3")
                     link("/diagnostics", "Диагностика AutoMix", "Всё ли в порядке со звуком и переходами", "waveform.path.ecg")
@@ -737,7 +797,7 @@ struct NativeMoreView: View {
     private func link(_ path: String, _ title: String, _ hint: String, _ symbol: String) -> some View {
         Button { store.go(path) } label: {
             HStack(spacing: 14) {
-                Image(systemName: symbol).font(.body.weight(.semibold)).foregroundStyle(Color.moraMint).frame(width: 28)
+                NativeIconBadge(symbol: symbol)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).foregroundStyle(.white)
                     Text(hint).font(.footnote).foregroundStyle(.white.opacity(0.55))
@@ -796,11 +856,14 @@ struct NativeLibraryView: View {
     }
     private func destination(_ title: String, _ symbol: String, _ path: String) -> some View {
         Button { store.go(path) } label: {
-            HStack {
-                Label(title, systemImage: symbol).font(.title3).padding(.vertical, 8)
+            HStack(spacing: 14) {
+                NativeIconBadge(symbol: symbol, size: 34)
+                Text(title).font(.title3).foregroundStyle(.white)
                 Spacer()
-                Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.secondary)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.35))
             }
-        }.listRowBackground(Color.clear)
+            .frame(minHeight: 48)
+            .contentShape(Rectangle())
+        }.buttonStyle(.plain).listRowBackground(Color.clear)
     }
 }
