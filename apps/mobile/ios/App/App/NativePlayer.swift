@@ -25,12 +25,15 @@ enum NativePlayerSheet {
 final class NativePlayerModel: ObservableObject {
     @Published var state = NativePlayerState()
     @Published private(set) var artwork: UIImage?
+    @Published private(set) var artists: [NativeCatalogLink] = []
+    @Published private(set) var albumPath: String?
+    private var navigationTrack = ""
     /// The seek target from the moment the finger lifts until the host reports it.
     @Published var scrub: Double?
     @Published private(set) var reaction = 0
     @Published private(set) var modes = NativePlaybackModes()
     @Published private(set) var changingMode = false
-    @Published var modeError: String?
+    @Published var actionError: String?
     @Published private(set) var banner: String?
     /// When `state.position` was read: the scrubber runs the clock on from there between polls.
     private(set) var receivedAt = Date()
@@ -54,6 +57,8 @@ final class NativePlayerModel: ObservableObject {
             "entryId": "visual-a", "currentTrack": ["title": "MORA · Native Player", "artist": "Проверка интерфейса", "trackId": "visual-a"],
             "blend": ["index": 1, "progress": 0.4], "upcoming": [["entryId": "visual-b", "title": "Следующий трек", "artist": "Очередь AutoMix", "transition": ["method": "beatmatch_blend"]]]])
         modes = NativeShellStore.shared?.ui.playback ?? NativePlaybackModes()
+        artists = [NativeCatalogLink(["id": "77", "title": "Native Artist", "path": "/catalog/artist/77"])!]
+        albumPath = "/catalog/album/88"
         artwork = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 600)).image { ctx in
             UIColor(Color.moraMint).setFill(); ctx.fill(CGRect(x: 0, y: 0, width: 600, height: 600))
             UIImage(systemName: "waveform", withConfiguration: UIImage.SymbolConfiguration(pointSize: 250))?.withTintColor(.black).draw(in: CGRect(x: 100, y: 170, width: 400, height: 260))
@@ -94,6 +99,7 @@ final class NativePlayerModel: ObservableObject {
             if next.entryId != self.state.entryId { self.scrub = nil }
             self.receivedAt = Date()
             if next != self.state { self.state = next }
+            if next.trackId != self.navigationTrack { self.loadNavigation(next.trackId) }
             let key = "\(next.entryId)|\(next.artworkReady)"
             if key != self.artworkKey {
                 self.artworkKey = key
@@ -129,13 +135,41 @@ final class NativePlayerModel: ObservableObject {
         Task { @MainActor in
             defer { changingMode = false }
             do { modes = NativePlaybackModes(try await store.call("playbackMode", ["mode": mode]) as? [String: Any] ?? [:]) }
-            catch { modeError = error.localizedDescription }
+            catch { actionError = error.localizedDescription }
         }
     }
 
+    private func loadNavigation(_ id: String) {
+        guard !id.isEmpty, let store = NativeShellStore.shared else { return }
+        navigationTrack = id; artists = []; albumPath = nil
+        Task { @MainActor in
+            do {
+                let value = try await store.call("trackLinks", ["id": id]) as? [String: Any]
+                guard state.trackId == id else { return }
+                artists = (value?["artists"] as? [[String: Any]] ?? []).compactMap(NativeCatalogLink.init)
+                albumPath = value?["album"] as? String
+            } catch { if navigationTrack == id { navigationTrack = "" } }
+        }
+    }
+
+    func navigate(_ path: String) {
+        controller?.presentingViewController?.dismiss(animated: true) { NativeShellStore.shared?.go(path) }
+    }
+
     func open(_ destination: String) {
+        if destination == "album", let albumPath { navigate(albumPath); return }
+        if destination == "artist", let artist = artists.first { navigate(artist.path); return }
         let id = state.trackId
-        controller?.presentingViewController?.dismiss(animated: true) { NativeShellStore.shared?.run("open", ["id": id, "to": destination]) }
+        guard let store = NativeShellStore.shared else { return }
+        Task { @MainActor in
+            do {
+                let value = try await store.call("trackLinks", ["id": id]) as? [String: Any]
+                guard state.trackId == id else { return }
+                let links = (value?["artists"] as? [[String: Any]] ?? []).compactMap(NativeCatalogLink.init)
+                guard let path = destination == "album" ? value?["album"] as? String : links.first?.path else { throw NativeShellError.page }
+                navigate(path)
+            } catch { actionError = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription }
+        }
     }
 
     func versions() {
@@ -211,7 +245,7 @@ struct NativePlayerView: View {
                 Menu {
                     Button("Другая версия", systemImage: "arrow.triangle.swap") { model.versions() }
                     Button("Перейти к исполнителю", systemImage: "music.mic") { model.open("artist") }
-                    Button("Перейти к альбому", systemImage: "square.stack") { model.open("album") }
+                    Button("Перейти к альбому", systemImage: "square.stack") { model.open("album") }.disabled(model.albumPath == nil)
                 } label: {
                     Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
                 }.accessibilityLabel("Действия с треком")
@@ -265,7 +299,7 @@ struct NativePlayerView: View {
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.48, dampingFraction: 0.86), value: queueOpen)
         .animation(.easeInOut(duration: 0.3), value: s.entryId)
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
-        .alert("Не удалось изменить режим", isPresented: Binding(get: { model.modeError != nil }, set: { if !$0 { model.modeError = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(model.modeError ?? "") }
+        .alert("Не удалось выполнить действие", isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(model.actionError ?? "") }
         .onAppear {
             model.start()
             #if DEBUG
@@ -281,8 +315,11 @@ struct NativePlayerView: View {
     private var metadata: some View {
         HStack(spacing: 4) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(model.state.title.isEmpty ? "MORA" : model.state.title).contentTransition(.opacity).font(.title2.bold()).lineLimit(1)
-                Text(model.state.artist).contentTransition(.opacity).font(.title3).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
+                Button { model.open("album") } label: {
+                    Text(model.state.title.isEmpty ? "MORA" : model.state.title).contentTransition(.opacity).font(.title2.bold()).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                }.buttonStyle(.plain).disabled(model.albumPath == nil)
+                    .accessibilityHint("Открыть альбом").accessibilityIdentifier("player.album")
+                artistLine
             }.frame(maxWidth: .infinity, alignment: .leading)
             IconButton(symbol: model.reaction > 0 ? "heart.fill" : "heart", label: model.reaction > 0 ? "Убрать лайк" : "Нравится") { model.react(1) }
                 .foregroundStyle(model.reaction > 0 ? Color.moraMint : .white)
@@ -290,6 +327,32 @@ struct NativePlayerView: View {
             IconButton(symbol: model.reaction < 0 ? "hand.thumbsdown.fill" : "hand.thumbsdown", label: "Не нравится") { model.react(-1) }
                 .foregroundStyle(model.reaction < 0 ? Color.moraGold : .white.opacity(0.7))
                 .accessibilityValue(model.reaction < 0 ? "Включено" : "Выключено")
+        }
+    }
+
+    private var artistText: AttributedString {
+        var value = AttributedString()
+        for (index, artist) in model.artists.enumerated() {
+            if index > 0 { value.append(AttributedString(", ")) }
+            var part = AttributedString(artist.title)
+            part.link = URL(string: "mora-native:" + artist.path)
+            part.foregroundColor = Color.white.opacity(0.65)
+            value.append(part)
+        }
+        return value
+    }
+    @ViewBuilder private var artistLine: some View {
+        if model.artists.isEmpty {
+            Button { model.open("artist") } label: { Text(model.state.artist).font(.title3).foregroundStyle(.white.opacity(0.65)).lineLimit(1) }.buttonStyle(.plain)
+        } else {
+            Text(artistText).font(.title3).lineLimit(1).contentTransition(.opacity)
+                .environment(\.openURL, OpenURLAction { url in
+                    guard url.scheme == "mora-native" else { return .discarded }
+                    model.navigate(String(url.absoluteString.dropFirst("mora-native:".count)))
+                    return .handled
+                })
+                .contextMenu { ForEach(model.artists) { artist in Button(artist.title) { model.navigate(artist.path) } } }
+                .accessibilityIdentifier("player.artists")
         }
     }
 

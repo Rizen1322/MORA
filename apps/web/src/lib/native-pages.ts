@@ -287,16 +287,17 @@ let importJob: ImportJob | null = null;
 let importUncertain = false;
 
 async function importPage(): Promise<Screen> {
-  const intro: Section = { footer: 'Ссылка на плейлист или альбом Spotify, Apple Music, YouTube, SoundCloud — или файл CSV, JSON, M3U. Из сервисов берутся только названия; звук играет из найденной публичной записи.', rows: [
+  const audio: Section = { title: 'Музыка из Файлов', footer: 'Выберите один или несколько аудиофайлов на iPhone или в iCloud Drive.', rows: [{ kind: 'file', title: 'Добавить аудиофайлы', symbol: 'music.note', types: AUDIO, multiple: true, act: { name: 'importAudio' } }] };
+  const intro: Section = { title: 'Импорт плейлиста', footer: 'Ссылка на плейлист или альбом Spotify, Apple Music, YouTube, SoundCloud — или файл CSV, JSON, M3U. Из сервисов берутся только названия; звук играет из найденной публичной записи.', rows: [
     { kind: 'field', key: 'url', title: 'Ссылка на плейлист', placeholder: 'https://open.spotify.com/playlist/…' },
     button('Прочитать', 'importUrl', {}, { symbol: 'link', style: 'primary' }),
-    { kind: 'file', title: 'Выбрать файл', symbol: 'doc', types: ['csv', 'json', 'm3u', 'm3u8', 'txt'], act: { name: 'importFile' } },
+    { kind: 'file', title: 'Файл плейлиста (CSV, M3U, JSON)', symbol: 'doc', types: ['csv', 'json', 'm3u', 'm3u8', 'txt'], act: { name: 'importFile' } },
   ] };
   if (importJob) importJob = await api.importJob(importJob.id).catch(() => importJob);
   const job = importJob;
   if (!job) {
     const { jobs } = await api.imports().catch(() => ({ jobs: [] as ImportJob[] }));
-    return { title: 'Импорт', sections: [intro, { title: jobs.length ? 'Недавние импорты' : undefined, rows: jobs.map((j) => ({
+    return { title: 'Импорт', sections: [audio, intro, { title: jobs.length ? 'Недавние импорты' : undefined, rows: jobs.map((j) => ({
       kind: 'item', title: j.name, cover: j.cover, act: { name: 'openImport', args: { id: j.id } }, actions: [{ title: 'Удалить отчёт', symbol: 'trash', destructive: true, act: { name: 'deleteImport', args: { id: j.id } } }],
       subtitle: `${IMPORT_SOURCE[j.source] ?? j.source} · ${j.state === 'matching' ? 'сопоставляется' : j.state === 'done' ? 'плейлист создан' : 'ждёт подтверждения'}${j.counts ? ` · найдено ${j.counts.matched}, проверить ${j.counts.uncertain}, нет ${j.counts.missing}` : ''}` })) }] };
   }
@@ -325,7 +326,7 @@ async function importPage(): Promise<Screen> {
     button(job.playlistId ? 'Обновить плейлист' : `Создать плейлист · ${count}`, 'importPlaylist', {}, { style: 'primary', disabled: job.state === 'matching' || !count }),
   ];
   if (job.playlistId) footer.push({ kind: 'link', title: 'Открыть плейлист', path: `/playlist/${job.playlistId}` });
-  return { title: 'Импорт', refresh: job.state === 'matching' ? 1.2 : undefined, search: 'Найти в отчёте', sections: [
+  return { title: 'Импорт', refresh: job.state === 'matching' ? 1.2 : undefined, search: 'Найти в отчёте', sections: [audio,
     { rows: head }, { rows }, { rows: footer, footer: 'Ненайденные позиции остаются в этом отчёте со своим местом в списке: найдите их вручную, и они встанут на своё место в плейлисте. Звук скачивается при первом прослушивании.' },
   ] };
 }
@@ -707,7 +708,13 @@ export const actions: Record<string, (a: Args) => unknown> = {
     await Promise.all([st().loadPlaylists(), st().loadLibrary()]);
     st().toast('Плейлист готов', 'success');
   },
-  importAudio: (a) => importFiles([new File([decode(a.base64)], str(a.name))]),
+  importAudio: async (a) => {
+    const bytes = decode(a.base64);
+    if (!bytes.length) throw Error('Выбран пустой аудиофайл');
+    await importFiles([new File([bytes], str(a.name))]);
+    const job = st().upload;
+    if (job?.failed.length) throw Error(job.failed.map(v => v.name + ': ' + v.error).join('; '));
+  },
   checkSources: () => st().loadProviders(true),
   connectSource: async (a) => {
     const p = st().providers.find((x) => x.id === str(a.id));

@@ -116,7 +116,7 @@ struct NativeUiState: Equatable {
     var now: NativeNow?
     var toast: NativeToast?
     var preparing: String?
-    var searchQuery: String?, searchSource: String?
+    var searchQuery: String?, searchSource: String?, searchScope: String?
 
     init() {}
     init(_ value: [String: Any]) {
@@ -135,6 +135,7 @@ struct NativeUiState: Equatable {
         preparing = value["preparing"] as? String
         let search = value["search"] as? [String: Any] ?? [:]
         if let query = search["q"] as? String { searchQuery = String(query.prefix(200)) }
+        if let scope = search["type"] as? String, ["all", "track", "artist", "album"].contains(scope) { searchScope = scope }
         if let source = search["source"] as? String, ["all", "local", "ytmusic", "youtube", "soundcloud", "yandex"].contains(source) { searchSource = source }
     }
 }
@@ -355,7 +356,7 @@ enum NativePreviewResume {
             && current["epoch"] as? Int == paused["epoch"] as? Int
     }
 }
-struct NativeSearchLink: Identifiable {
+struct NativeCatalogLink: Identifiable {
     let id: String, title: String, detail: String, path: String
     let cover: String?
     init?(_ value: [String: Any]) {
@@ -374,13 +375,13 @@ struct NativeSearchHit: Identifiable {
     }
 }
 struct NativeSearchResults {
-    let session: String, tracks: [NativeSearchHit], artists: [NativeSearchLink], albums: [NativeSearchLink], more: Bool
+    let session: String, tracks: [NativeSearchHit], artists: [NativeCatalogLink], albums: [NativeCatalogLink], more: Bool
     init?(_ value: Any?) {
         guard let value = value as? [String: Any], let session = value["session"] as? String, !session.isEmpty else { return nil }
         self.session = session
         tracks = (value["tracks"] as? [[String: Any]] ?? []).compactMap(NativeSearchHit.init)
-        artists = (value["artists"] as? [[String: Any]] ?? []).compactMap(NativeSearchLink.init)
-        albums = (value["albums"] as? [[String: Any]] ?? []).compactMap(NativeSearchLink.init)
+        artists = (value["artists"] as? [[String: Any]] ?? []).compactMap(NativeCatalogLink.init)
+        albums = (value["albums"] as? [[String: Any]] ?? []).compactMap(NativeCatalogLink.init)
         more = value["more"] as? Bool == true
     }
     var isEmpty: Bool { tracks.isEmpty && artists.isEmpty && albums.isEmpty }

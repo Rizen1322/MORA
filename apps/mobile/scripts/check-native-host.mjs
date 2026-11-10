@@ -10,7 +10,7 @@ const dir = await mkdtemp(join(tmpdir(), 'mora-native-host-'));
 const run = (command, args, timeout = 180000) => {
   console.log('[native-host]', command, args.slice(0, 4).join(' '));
   const result = spawnSync(command, args, { encoding: 'utf8', timeout, killSignal: 'SIGKILL' });
-  assert.equal(result.status, 0, `${command}: ${result.stderr || result.stdout}`); return result.stdout.trim();
+  assert.equal(result.status, 0, `${command}: ${result.error?.message || result.stderr || result.stdout}`); return result.stdout.trim();
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let device;
@@ -50,7 +50,7 @@ try {
     .map(name => resolve(root, `apps/mobile/ios/App/App/${name}.swift`));
   run('xcrun', ['swiftc', '-sdk', run('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-path']),
     '-target', `${process.arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-ios17.4-simulator`,
-    ...files, resolve(root, 'apps/mobile/test/native-host/main.swift'), '-o', join(app, 'HostCheck')]);
+    ...files, resolve(root, 'apps/mobile/test/native-host/main.swift'), '-o', join(app, 'HostCheck')], 600000);
   run('codesign', ['--force', '--sign', '-', app]);
   run('xcrun', ['simctl', 'install', device.udid, app]);
   const container = run('xcrun', ['simctl', 'get_app_container', device.udid, bundle, 'data']);

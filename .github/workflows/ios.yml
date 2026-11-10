@@ -24,7 +24,7 @@ jobs:
   build:
     if: inputs.ui_only != true
     runs-on: macos-15-intel
-    timeout-minutes: 60
+    timeout-minutes: 75
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
@@ -103,7 +103,7 @@ jobs:
   ui:
     if: inputs.ui_only == true
     runs-on: macos-15-intel
-    timeout-minutes: 35
+    timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
@@ -139,7 +139,7 @@ jobs:
           # Wait for simctl to confirm the actual app launch; cold iOS 26 registration can exceed 30 seconds.
           xcrun simctl launch --terminate-running-process "$DEVICE" ru.mora.player --native-ui-check > "$RUNNER_TEMP/mora-ui-console.log" 2>&1
           CONTAINER=$(xcrun simctl get_app_container "$DEVICE" ru.mora.player data)
-          for i in $(seq 1 90); do
+          for i in $(seq 1 180); do
             [ -f "$CONTAINER/Documents/native-ui-check.json" ] && break
             sleep 1
           done

@@ -1,7 +1,7 @@
 import { api, type Track } from './api.ts';
 import { nativePlaybackControls } from './playback-trace.ts';
 import { startRadio, useRadio } from './radio.ts';
-import { trackAlbumHref, trackArtistHref } from './router.ts';
+import { trackAlbumHref, trackArtistHref, trackArtistLinks } from './router.ts';
 import { controller, phone, trackOf, useApp } from '../store/app.ts';
 import { usePublicPlayback, useCatalogPlayback } from '../store/catalog.ts';
 import { react } from '../components/TrackList.tsx';
@@ -36,7 +36,7 @@ export function uiState(s = useApp.getState(), radio = useRadio.getState(), prep
   const toast = s.toasts.at(-1);
   return {
     path,
-    search: { q: params.get('q'), source: path === '/yandex' ? 'yandex' : params.get('src') },
+    search: { q: params.get('q'), source: path === '/yandex' ? 'yandex' : params.get('src'), type: params.get('type') },
     loaded: s.loaded,
     // The web full player, side panels and the version picker cover everything: native steps aside while they are open.
     overlay: s.fullPlayer || s.queueOpen || s.panel !== null || useVersionPanel.getState().target !== null,
@@ -73,6 +73,12 @@ export const commands: Record<string, (a: Args) => unknown> = {
   ...nativeCatalogCommands,
   go: (a) => { location.hash = str(a.path) || '/'; },
   back: () => history.back(),
+  trackLinks: (a) => {
+    const track = trackOf(str(a.id));
+    if (!track) throw Error('Трек не найден');
+    return { album: track.album ? trackAlbumHref(track).replace(/^#/, '') : null,
+      artists: trackArtistLinks(track).map(link => ({ id: link.href, title: link.name, path: link.href.replace(/^#/, '') })) };
+  },
   open: (a) => {
     const t = trackOf(str(a.id));
     if (t) location.hash = (a.to === 'artist' ? trackArtistHref(t) : trackAlbumHref(t)).replace(/^#/, '');

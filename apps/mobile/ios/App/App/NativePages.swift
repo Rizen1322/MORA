@@ -2,6 +2,46 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+/// A private copy is available before the delegate fires, including files supplied by iCloud.
+@MainActor struct NativeDocumentPicker: UIViewControllerRepresentable {
+    let types: [UTType], multiple: Bool
+    let complete: (Result<[URL], Error>) -> Void
+    static func controller(types: [UTType], multiple: Bool) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types.isEmpty ? [.data] : types, asCopy: true)
+        picker.allowsMultipleSelection = multiple
+        return picker
+    }
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = Self.controller(types: types, multiple: multiple); picker.delegate = context.coordinator; return picker
+    }
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+    func makeCoordinator() -> Coordinator { Coordinator(complete: complete) }
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let complete: (Result<[URL], Error>) -> Void
+        init(complete: @escaping (Result<[URL], Error>) -> Void) { self.complete = complete }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { complete(.success(urls)) }
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { complete(.failure(CocoaError(.userCancelled))) }
+    }
+}
+enum NativePickedFile {
+    static func discardTemporaryCopy(_ url: URL) {
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path
+        // Only app-owned temporary copies may be removed; provider originals stay untouched.
+        guard url.isFileURL, url.resolvingSymlinksInPath().path.hasPrefix(root.hasSuffix("/") ? root : root + "/") else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+    static func base64(_ url: URL) async throws -> String {
+        guard url.isFileURL else { throw CocoaError(.fileReadUnsupportedScheme) }
+        return try await Task.detached(priority: .userInitiated) {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            guard !data.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
+            return data.base64EncodedString()
+        }.value
+    }
+}
+
 /// Native pages described by the page (apps/web/src/lib/native-pages.ts): albums, artists, playlists,
 /// history, wave, downloads, import, sources, settings and diagnostics. The page owns the data and the
 /// actions; this view draws the rows (NativeShellState.swift, `NativePage`) and sends the actions back.
@@ -19,6 +59,7 @@ struct NativePageView: View {
     @State private var prompt: (row: NativePageRow.Prompt, act: NativePageAct)?
     @State private var promptText = ""
     @State private var picker = false
+    @State private var importingFile: String?
     /// Kept after the picker closes: its completion can arrive after `picker` is reset.
     @State private var pick: (types: [UTType], multiple: Bool, act: NativePageAct)?
 
@@ -29,6 +70,7 @@ struct NativePageView: View {
     // Split out of body: as one expression it exceeds the Swift type checker's time limit.
     private var pageList: some View {
         withSearch(List {
+            if let name = importingFile { ProgressView("Добавляем «" + name + "»…").frame(maxWidth: .infinity).listRowBackground(Color.clear) }
             if let waveSource { waveHeader(waveSource) }
             if let page {
                 ForEach(Array(page.sections.enumerated()), id: \.offset) { _, section in sectionView(section) }
@@ -113,9 +155,18 @@ struct NativePageView: View {
                 Button("Готово") { run(p.act, ["value": promptText]) }
                 Button("Отмена", role: .cancel) {}
             }
-            .fileImporter(isPresented: $picker, allowedContentTypes: pick?.types ?? [.data], allowsMultipleSelection: pick?.multiple ?? false) { result in
-                guard let act = pick?.act, case .success(let urls) = result else { return }
-                send(urls, act)
+            .sheet(isPresented: $picker) {
+                if let pick {
+                    NativeDocumentPicker(types: pick.types, multiple: pick.multiple) { result in
+                        picker = false
+                        switch result {
+                        case .success(let urls):
+                            if urls.isEmpty { store.show("Файлы не выбраны") } else { send(urls, pick.act) }
+                        case .failure(let error):
+                            if (error as NSError).code != CocoaError.Code.userCancelled.rawValue { store.show(Self.message(error)) }
+                        }
+                    }.ignoresSafeArea()
+                }
             }
             .onChange(of: store.path) { page = nil; failure = nil; form = [:]; query = "" }
             .onChange(of: waveSource?.wrappedValue) { page = nil; failure = nil }
@@ -380,13 +431,13 @@ struct NativePageView: View {
     private func send(_ urls: [URL], _ act: NativePageAct) {
         running = true
         Task { @MainActor in
-            defer { running = false; reload &+= 1 }
+            defer { running = false; importingFile = nil; reload &+= 1 }
             for url in urls {
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                defer { NativePickedFile.discardTemporaryCopy(url) }
+                importingFile = url.lastPathComponent
                 do {
-                    let data = try Data(contentsOf: url)
-                    let args = act.args.merging(["name": url.lastPathComponent, "base64": data.base64EncodedString()]) { _, new in new }
+                    let base64 = try await NativePickedFile.base64(url)
+                    let args = act.args.merging(["name": url.lastPathComponent, "base64": base64]) { _, new in new }
                     _ = try await store.call("act", ["name": act.name, "args": args], timeout: 300)
                 } catch {
                     store.show("\(url.lastPathComponent): \(Self.message(error))")

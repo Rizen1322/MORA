@@ -2,6 +2,7 @@ import Combine
 import MediaPlayer
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 import WebKit
 
 /// iPhone app root: the Capacitor web view with the native SwiftUI shell over it.
@@ -231,18 +232,63 @@ extension MoraRootViewController {
             try capture("native-player-queue")
             player.playbackMode("repeat")
             try await wait { !player.changingMode }
-            try require(player.modeError == nil && player.modes.repeatMode == "all", "Repeat queue did not reach controller")
+            try require(player.actionError == nil && player.modes.repeatMode == "all", "Repeat queue did not reach controller")
             player.playbackMode("repeat")
             try await wait { !player.changingMode }
-            try require(player.modeError == nil && player.modes.repeatMode == "one", "Repeat one did not reach controller")
+            try require(player.actionError == nil && player.modes.repeatMode == "one", "Repeat one did not reach controller")
             player.playbackMode("shuffle")
             try await wait { !player.changingMode }
-            try require(player.modeError == nil && player.modes.shuffle, "Shuffle did not reach controller")
+            try require(player.actionError == nil && player.modes.shuffle, "Shuffle did not reach controller")
             player.playbackMode("automix")
             try await wait { !player.changingMode }
-            try require(player.modeError == nil && !player.modes.automix, "AutoMix did not save settings")
+            try require(player.actionError == nil && !player.modes.automix, "AutoMix did not save settings")
             try capture("native-player-modes")
             report["player"] = "visual mixing fixture and animated queue; real shuffle, repeat all/one and AutoMix bridge commands passed"
+            player.open("artist")
+            try await wait { self.shell.ui.path == "/catalog/artist/77" && self.presentedViewController == nil }
+            try await Task.sleep(for: .seconds(1))
+            try capture("native-player-artist-link")
+            shell.go("/import")
+            try await wait { self.shell.ui.path == "/import" }
+            let file = folder.appendingPathComponent("MORA Native Import.wav")
+            try NativeProbeWave.make(track: 0, seconds: 1).write(to: file)
+            let before = Set(shell.library.map(\.id))
+            var selected: [URL] = [], cancelled = false
+            let pickerView = NativeDocumentPicker(types: [.audio], multiple: true) { result in
+                switch result {
+                case .success(let urls): selected = urls
+                case .failure(let error): cancelled = (error as NSError).code == CocoaError.Code.userCancelled.rawValue
+                }
+            }
+            let coordinator = pickerView.makeCoordinator()
+            let picker = NativeDocumentPicker.controller(types: [.audio], multiple: true)
+            picker.delegate = coordinator
+            coordinator.documentPickerWasCancelled(picker)
+            try require(cancelled, "File picker did not report cancellation")
+            try require(picker.allowsMultipleSelection, "File picker lost multiple selection")
+            present(picker, animated: true)
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-file-picker")
+            coordinator.documentPicker(picker, didPickDocumentsAt: [file])
+            try require(selected == [file], "File picker did not forward its selection")
+            picker.dismiss(animated: false)
+            try await wait { self.presentedViewController == nil }
+            NativePickedFile.discardTemporaryCopy(file)
+            try require(FileManager.default.fileExists(atPath: file.path), "Import removed the original document")
+            let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+            try NativeProbeWave.make(track: 0, seconds: 1).write(to: temporary)
+            NativePickedFile.discardTemporaryCopy(temporary)
+            try require(!FileManager.default.fileExists(atPath: temporary.path), "Temporary document copy was not removed")
+            let encoded = try await NativePickedFile.base64(selected[0])
+            _ = try await shell.call("act", ["name": "importAudio", "args": ["name": file.lastPathComponent, "base64": encoded]], timeout: 45)
+            try await Task.sleep(for: .seconds(1))
+            report["importMessage"] = shell.banner
+            try await wait { self.shell.library.contains { !before.contains($0.id) && $0.duration > 0 } }
+            shell.go("/library/tracks")
+            try await wait { self.shell.ui.path == "/library/tracks" }
+            try await Task.sleep(for: .seconds(1))
+            try capture("native-import-library")
+            report["import"] = "UIKit picker delegate, copied file read, real WAV upload and visible library row passed"
             report["status"] = "passed"
         } catch { report["status"] = "failed"; report["error"] = error.localizedDescription }
         try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: folder.appendingPathComponent("native-ui-check.json"))
@@ -284,6 +330,7 @@ final class NativeShellStore: ObservableObject {
 
     @Published var searchQuery = ""
     @Published var searchSource = "all"
+    @Published var searchScope = "all"
     @Published var waveSource: NativeWaveSource?
     @Published var waveSettingsOpen = false
     var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web }
@@ -306,9 +353,10 @@ final class NativeShellStore: ObservableObject {
         if let rows = value["queue"] as? [[String: Any]] { queue = rows.compactMap(NativeQueuedTrack.init) }
         let next = NativeUiState(value)
         if next.toast != ui.toast, let toast = next.toast, screen != .web { show(toast.text) }
-        if next.path != ui.path || next.searchQuery != ui.searchQuery || next.searchSource != ui.searchSource {
+        if next.path != ui.path || next.searchQuery != ui.searchQuery || next.searchSource != ui.searchSource || next.searchScope != ui.searchScope {
             if let query = next.searchQuery { searchQuery = query }
             if let source = next.searchSource { searchSource = source }
+            if let scope = next.searchScope { searchScope = scope }
         }
         if next != ui { ui = next }
         // A push sent before the page saw native's own navigation must not jump back.
@@ -389,6 +437,7 @@ final class NativeShellStore: ObservableObject {
         if let query = url?.queryItems?.first(where: { $0.name == "q" })?.value { searchQuery = String(query.prefix(200)) }
         if path.hasPrefix("/yandex") { searchSource = "yandex" }
         else if let source = url?.queryItems?.first(where: { $0.name == "src" })?.value, ["all", "local", "ytmusic", "youtube", "soundcloud", "yandex"].contains(source) { searchSource = source }
+        if let scope = url?.queryItems?.first(where: { $0.name == "type" })?.value, ["all", "track", "artist", "album"].contains(scope) { searchScope = scope }
         self.path = path.components(separatedBy: "?")[0]
         pending = (self.path, Date())
         run("go", ["path": path])

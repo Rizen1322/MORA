@@ -122,5 +122,10 @@ precondition(searchState.searchQuery?.count == 200 && searchState.searchSource =
 precondition(NativeUiState(["search": ["source": "wrong"]]).searchSource == nil)
 let searchRows = NativeSearchResults(["session": "one", "more": true, "tracks": [["id": "one", "title": "Song", "explicit": true, "saved": true]], "artists": [["id": "artist", "title": "Artist", "path": "/catalog/artist/1"]]])!
 precondition(searchRows.more && searchRows.tracks[0].explicit && searchRows.tracks[0].saved && searchRows.artists[0].path == "/catalog/artist/1")
-precondition(NativeSearchResults(["session": ""]) == nil && NativeSearchLink(["id": "x", "path": "https://bad"]) == nil)
+precondition(NativeSearchResults(["session": ""]) == nil && NativeCatalogLink(["id": "x", "path": "https://bad"]) == nil)
 print("Native search: routes, query validation and catalog rows")
+precondition(NativeUiState(["search": ["type": "artist"]]).searchScope == "artist")
+precondition(NativeUiState(["search": ["type": "wrong"]]).searchScope == nil)
+let artistPath = "/artist/Artist%20One"
+let internalArtistURL = URL(string: "mora-native:" + artistPath)!
+precondition(internalArtistURL.scheme == "mora-native" && String(internalArtistURL.absoluteString.dropFirst("mora-native:".count)) == artistPath)

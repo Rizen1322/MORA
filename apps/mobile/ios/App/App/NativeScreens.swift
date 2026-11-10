@@ -315,7 +315,6 @@ struct NativeSearchView: View {
     private static let publicSources = ["ytmusic", "youtube", "soundcloud"]
     @EnvironmentObject private var store: NativeShellStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var scope = "all"
     @State private var results: [String: NativeSearchResults] = [:]
     @State private var errors: [String: String] = [:]
     @State private var searching: Set<String> = []
@@ -324,6 +323,7 @@ struct NativeSearchView: View {
     @State private var failure: String?
     private var query: String { store.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var source: String { store.searchSource }
+    private var scope: String { store.searchScope }
     private var key: String { query + "|" + source + "|" + scope }
     private var sources: [String] { source == "all" ? Self.publicSources + (store.ui.wave.yandex ? ["yandex"] : []) : source == "local" ? [] : [source] }
     private var local: [NativeTrack] { query.isEmpty ? [] : NativeSearchText.filter(store.library, query) }
@@ -360,6 +360,7 @@ struct NativeSearchView: View {
             .task(id: key) { await search() }
             .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: source)
             .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: scope)
+            .onChange(of: store.searchSource) { _, value in if value != "yandex" { store.searchScope = "all" } }
             .onChange(of: store.searchQuery) { _, value in if value.count > 200 { store.searchQuery = String(value.prefix(200)) } }
             .alert("Не удалось выполнить", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(failure ?? "") }
         }
@@ -380,7 +381,7 @@ struct NativeSearchView: View {
                 ForEach(["all", "local"] + Self.publicSources + ["yandex"], id: \.self) { value in Text(Self.title(value)).tag(value) }
             }.accessibilityIdentifier("search.source")
             if source == "yandex" {
-                Picker("Что искать", selection: $scope) {
+                Picker("Что искать", selection: $store.searchScope) {
                     Text("Всё").tag("all"); Text("Треки").tag("track"); Text("Артисты").tag("artist"); Text("Альбомы").tag("album")
                 }.pickerStyle(.segmented).accessibilityIdentifier("search.scope")
             }
@@ -431,7 +432,7 @@ struct NativeSearchView: View {
             }
         }
     }
-    private func linkRow(_ item: NativeSearchLink, symbol: String) -> some View {
+    private func linkRow(_ item: NativeCatalogLink, symbol: String) -> some View {
         Button { remember(); store.go(item.path) } label: {
             HStack(spacing: 12) {
                 NativeCover(url: item.cover, size: 48, radius: symbol == "music.mic" ? 24 : 8)
