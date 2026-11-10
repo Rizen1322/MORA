@@ -258,6 +258,8 @@ async function downloads(): Promise<Screen> {
   const usage = await api.downloads().then((r) => r.usage, () => null);
   const active = [...useDownloads.getState().jobs.values()].filter((j) => j.state !== 'done' && j.state !== 'cancelled');
   const pinned = library().filter((t) => t.pinned).sort((a, b) => a.title.localeCompare(b.title, 'ru'));
+  // Files picked from «Файлы» are copied into the app, so they play without the internet just like downloads.
+  const own = library().filter((t) => t.provider === 'local' && !t.pinned).sort((a, b) => a.title.localeCompare(b.title, 'ru'));
   const jobAct = (id: string, action: string, title: string, symbol: string): ItemAction => ({ title, symbol, act: { name: 'downloadAction', args: { id, action } } });
   const sections: Section[] = [];
   if (active.length) sections.push({ title: 'Скачивается', rows: active.map((j) => ({
@@ -268,8 +270,12 @@ async function downloads(): Promise<Screen> {
       ...(['paused', 'failed'].includes(j.state) ? [jobAct(j.id, 'retry', 'Повторить', 'arrow.clockwise')] : []),
       { ...jobAct(j.id, 'cancel', 'Отменить', 'xmark'), destructive: true },
     ] })) });
-  sections.push({ title: `Скачано · ${pinned.length}`, footer: pinned.length ? undefined : 'Пока ничего. В меню трека или результата поиска выберите «Скачать».',
+  sections.push({ title: `Скачано · ${pinned.length}`,
+    footer: pinned.length ? undefined : own.length ? 'Скачанных из сети пока нет — свои файлы ниже.' : 'Пока пусто. В меню трека или результата поиска выберите «Скачать».',
     play: { type: 'library', label: 'Загрузки' }, rows: pinned.map((t) => ({ kind: 'track', id: t.id, remove: { title: 'Удалить загрузку', symbol: 'trash', act: { name: 'removeDownload', args: { id: t.id } } } })) });
+  if (own.length) sections.push({ title: `Свои файлы · ${own.length}`,
+    footer: 'Файлы из «Файлов» и импорта сохранены внутри приложения и играют без интернета. Убрать трек из медиатеки можно в его меню.',
+    play: { type: 'library', label: 'Свои файлы' }, rows: own.map((t) => ({ kind: 'track', id: t.id })) });
   if (usage) sections.push({ title: 'Место на диске', footer: usage.freeBytes !== null ? `Свободно на диске: ${mb(usage.freeBytes)}` : undefined, rows: [
     text('Скачанное', 'Не удаляется автоматически', mb(usage.pinnedBytes)),
     text('Кэш прослушанного', 'Старое удаляется само, когда превышен предел. Текущий и следующий трек защищены.', mb(usage.cacheBytes)),
@@ -287,7 +293,10 @@ let importJob: ImportJob | null = null;
 let importUncertain = false;
 
 async function importPage(): Promise<Screen> {
-  const audio: Section = { title: 'Музыка из Файлов', footer: 'Выберите один или несколько аудиофайлов на iPhone или в iCloud Drive.', rows: [{ kind: 'file', title: 'Добавить аудиофайлы', symbol: 'music.note', types: AUDIO, multiple: true, act: { name: 'importAudio' } }] };
+  const audio: Section = { title: 'Музыка из Файлов', footer: 'Выберите один или несколько аудиофайлов на iPhone или в iCloud Drive. Копии остаются в приложении и играют без интернета.', rows: [
+    { kind: 'file', title: 'Добавить аудиофайлы', symbol: 'music.note', types: AUDIO, multiple: true, act: { name: 'importAudio' } },
+    { kind: 'link', title: 'Свои файлы — в «Загрузках»', symbol: 'arrow.down.circle', path: '/downloads' },
+  ] };
   const intro: Section = { title: 'Импорт плейлиста', footer: 'Ссылка на плейлист или альбом Spotify, Apple Music, YouTube, SoundCloud — или файл CSV, JSON, M3U. Из сервисов берутся только названия; звук играет из найденной публичной записи.', rows: [
     { kind: 'field', key: 'url', title: 'Ссылка на плейлист', placeholder: 'https://open.spotify.com/playlist/…' },
     button('Прочитать', 'importUrl', {}, { symbol: 'link', style: 'primary' }),

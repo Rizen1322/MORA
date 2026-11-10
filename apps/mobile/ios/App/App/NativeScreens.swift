@@ -291,6 +291,7 @@ struct NativeTrackActions: View {
         Button(action: play) { Label("Играть", systemImage: "play") }.disabled(!track.ok)
         Button { store.queue(track, next: true) } label: { Label("Играть следующим", systemImage: "text.line.first.and.arrowtriangle.forward") }.disabled(!track.ok)
         Button { store.queue(track, next: false) } label: { Label("Добавить в очередь", systemImage: "text.append") }.disabled(!track.ok)
+        Button { store.playlistTarget = track } label: { Label("Добавить в плейлист", systemImage: "text.badge.plus") }
         Divider()
         Button { store.react(track, track.liked ? 0 : 1) } label: {
             Label(track.liked ? "Убрать из любимого" : "Нравится", systemImage: track.liked ? "heart.slash" : "heart")
@@ -305,6 +306,77 @@ struct NativeTrackActions: View {
             Button { store.run("open", ["id": track.id, "to": "album"]) } label: { Label("Перейти к альбому", systemImage: "square.stack") }
         }
         Button { store.run("open", ["id": track.id, "to": "artist"]) } label: { Label("Перейти к исполнителю", systemImage: "music.mic") }
+    }
+}
+
+/// «Добавить в плейлист» from the track menu: an existing playlist or a new one, without leaving the screen.
+struct NativePlaylistPicker: View {
+    let track: NativeTrack
+    @EnvironmentObject private var store: NativeShellStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var creating = false
+    @State private var name = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Button { name = ""; creating = true } label: { Label("Новый плейлист", systemImage: "plus") }
+                        .accessibilityIdentifier("playlist.new")
+                } footer: {
+                    Text("«\(track.title)» — \(track.artist)")
+                }
+                Section("Мои плейлисты") {
+                    if store.playlists.isEmpty {
+                        Text("Плейлистов пока нет — создайте первый.").foregroundStyle(.white.opacity(0.6))
+                    }
+                    ForEach(store.playlists) { playlist in
+                        Button { add(to: playlist.id) } label: {
+                            HStack(spacing: 12) {
+                                NativeCover(url: playlist.cover, size: 36, radius: 6)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(playlist.name).lineLimit(1)
+                                    Text(NativeText.tracks(playlist.count)).font(.caption).foregroundStyle(.white.opacity(0.55))
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "plus.circle.fill").foregroundStyle(Color.moraMint)
+                            }
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Добавить в «\(playlist.name)»")
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(Color.moraBackground)
+            .navigationTitle("В плейлист")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } } }
+            .alert("Новый плейлист", isPresented: $creating) {
+                TextField("Название", text: $name)
+                Button("Создать") { create() }
+                Button("Отмена", role: .cancel) { name = "" }
+            } message: { Text("«\(track.title)» попадёт в новый плейлист.") }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .tint(.moraMint)
+        .preferredColorScheme(.dark)
+    }
+
+    private func add(to playlistId: String) {
+        store.run("addToPlaylist", ["ids": [track.id], "playlistId": playlistId])
+        dismiss()
+    }
+
+    private func create() {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        store.run("addToPlaylist", ["ids": [track.id], "name": value])
+        dismiss()
     }
 }
 

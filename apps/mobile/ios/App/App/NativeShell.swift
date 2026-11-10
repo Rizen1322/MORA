@@ -347,6 +347,8 @@ final class NativeShellStore: ObservableObject {
     @Published var searchScope = "all"
     @Published var waveSource: NativeWaveSource?
     @Published var waveSettingsOpen = false
+    /// «Добавить в плейлист» from the track menu: the sheet picks a playlist for this track.
+    @Published var playlistTarget: NativeTrack?
     var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web }
     var screen: NativeScreen { NativeRoute.screen(path) }
     var tab: NativeTab { NativeRoute.tab(path) }
@@ -649,6 +651,9 @@ struct NativeShellContent: View {
     var body: some View {
         ZStack(alignment: .top) {
             Color.moraBackground.ignoresSafeArea()
+                .sheet(item: $store.playlistTarget) { track in
+                    NativePlaylistPicker(track: track).environmentObject(store)
+                }
             screen.id(store.path)
                 .transition(.opacity.combined(with: .offset(x: reduceMotion ? 0 : 18)))
             if let text = store.banner {

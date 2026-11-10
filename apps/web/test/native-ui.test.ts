@@ -4,6 +4,7 @@ const h = vi.hoisted(() => ({
   resume: vi.fn(), pause: vi.fn(), nextTrack: vi.fn(), prevTrack: vi.fn(), seek: vi.fn(),
   toggleShuffle: vi.fn(), cycleRepeat: vi.fn(), playTracks: vi.fn(), addToQueue: vi.fn(), toggle: vi.fn(), startWave: vi.fn(), startRadio: vi.fn(), toast: vi.fn(),
   importFiles: vi.fn(), imports: vi.fn(), openVersionPanel: vi.fn(), yandexWaveSettings: vi.fn(), refreshYandexWave: vi.fn(), react: vi.fn(), patchTrack: vi.fn(),
+  addToPlaylist: vi.fn(), createPlaylist: vi.fn(), loadPlaylists: vi.fn(), downloads: vi.fn(),
 }));
 vi.mock('../src/store/app.ts', () => ({
   phone: true,
@@ -20,7 +21,9 @@ vi.mock('../src/components/VersionPanel.tsx', () => ({
   openVersionPanel: (...a: any[]) => h.openVersionPanel(...a),
   useVersionPanel: { getState: () => ({ target: null }), subscribe: vi.fn() },
 }));
-vi.mock('../src/lib/api.ts', () => ({ api: { imports: () => h.imports(), react: (...args: any[]) => h.react(...args), yandexWaveSettings: () => h.yandexWaveSettings() } }));
+vi.mock('../src/lib/api.ts', () => ({ api: { imports: () => h.imports(), react: (...args: any[]) => h.react(...args), yandexWaveSettings: () => h.yandexWaveSettings(),
+  addToPlaylist: (...a: any[]) => h.addToPlaylist(...a), createPlaylist: (...a: any[]) => h.createPlaylist(...a), downloads: () => h.downloads() } }));
+vi.mock('../src/store/downloads.ts', () => ({ useDownloads: { getState: () => ({ jobs: new Map(), load: async () => {} }) } }));
 
 const track = (id: string, status = 'ok') => ({ id, title: id.toUpperCase(), artist: 'X', album: '', duration: 100, reaction: 0, coverUrl: null, status });
 
@@ -28,7 +31,7 @@ beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks(); h.importFiles.mockReset(); h.imports.mockResolvedValue({ jobs: [] }); h.listeners.length = 0;
   h.radio = { active: false, loading: false, error: null };
   const tracks = new Map([['a', track('a')], ['b', track('b', 'missing')]]);
-  h.app = { patchTrack: h.patchTrack, tracks, order: ['a', 'b'], loaded: true, playlists: [], providers: [], toasts: [], fullPlayer: false, queueOpen: false, panel: null, toast: h.toast,
+  h.app = { patchTrack: h.patchTrack, tracks, order: ['a', 'b'], loaded: true, playlists: [], loadPlaylists: () => h.loadPlaylists(), providers: [], toasts: [], fullPlayer: false, queueOpen: false, panel: null, toast: h.toast,
     player: { status: 'playing', queue: [{ trackId: 'a' }], index: 0, context: { type: 'wave', label: 'Моя волна' }, error: null } };
   vi.stubGlobal('location', { hash: '#/liked?x=1' });
 });
@@ -229,6 +232,35 @@ it('passes native file bytes and the original name to the importer and surfaces 
   await expect(actions.importAudio({ name: 'broken.mp3', base64: 'AQID' })).rejects.toThrow('broken.mp3: Не удалось прочитать');
 });
 
+
+it('adds a track to a playlist from the native menu, or creates one with it', async () => {
+  const { commands } = await import('../src/lib/native-ui.ts');
+  h.app.playlists = [{ id: 'p1', name: 'Дорога', count: 3 }];
+  h.addToPlaylist.mockResolvedValue({ added: 1 });
+  await expect(commands.addToPlaylist({ ids: ['a', 'zzz'], playlistId: 'p1' })).resolves.toEqual({ added: 1 });
+  expect(h.addToPlaylist).toHaveBeenCalledWith('p1', ['a']);
+  expect(h.loadPlaylists).toHaveBeenCalledTimes(1);
+  expect(h.toast).toHaveBeenCalledWith('Добавлено в «Дорога»: 1', 'success');
+  h.createPlaylist.mockResolvedValue({ id: 'p2' });
+  await expect(commands.addToPlaylist({ ids: ['a'], name: '  Новое  ' })).resolves.toEqual({ id: 'p2' });
+  expect(h.createPlaylist).toHaveBeenCalledWith('Новое', ['a']);
+  await expect(commands.addToPlaylist({ ids: ['zzz'], playlistId: 'p1' })).rejects.toThrow('Трек не найден');
+  await expect(commands.addToPlaylist({ ids: ['a'], name: '   ' })).rejects.toThrow('название');
+});
+
+it('keeps own phone files in Downloads next to downloaded tracks', async () => {
+  const { describe } = await import('../src/lib/native-pages.ts');
+  h.app.tracks.set('own', { ...track('own'), title: 'Своя запись', provider: 'local', pinned: false });
+  h.app.tracks.set('net', { ...track('net'), title: 'Из сети', provider: 'youtube', pinned: true });
+  h.app.order = ['a', 'b', 'own', 'net'];
+  h.downloads.mockResolvedValue({ usage: null });
+  (location as any).hash = '#/downloads';
+  const page = await describe() as any;
+  const own = page.sections.find((s: any) => s.title?.startsWith('Свои файлы'));
+  expect(own.rows).toEqual([{ kind: 'track', id: 'own' }]);
+  const downloaded = page.sections.find((s: any) => s.title?.startsWith('Скачано'));
+  expect(downloaded.rows[0]).toMatchObject({ id: 'net', remove: { title: 'Удалить загрузку' } });
+});
 
 it('presents restored metadata and dispatches transport without opening the web player', async () => {
   const { uiState, commands } = await import('../src/lib/native-ui.ts');

@@ -108,6 +108,26 @@ export const commands: Record<string, (a: Args) => unknown> = {
     const value = Number(a.value);
     return t && [-1, 0, 1].includes(value) ? react(t, value) : undefined;
   },
+  /** «Добавить в плейлист» from the native track menu: an existing playlist or a new one with this track. */
+  addToPlaylist: async (a) => {
+    const ids = Array.isArray(a.ids) ? a.ids.filter((x): x is string => typeof x === 'string' && !!trackOf(x)) : [];
+    if (!ids.length) throw new Error('Трек не найден');
+    const st = useApp.getState();
+    const playlistId = str(a.playlistId);
+    if (playlistId) {
+      const name = st.playlists.find((p) => p.id === playlistId)?.name ?? '';
+      const result = await api.addToPlaylist(playlistId, ids);
+      await st.loadPlaylists();
+      st.toast(`Добавлено в «${name}»: ${result.added}`, 'success');
+      return { added: result.added };
+    }
+    const name = str(a.name).trim().slice(0, 120);
+    if (!name) throw new Error('Введите название плейлиста');
+    const created = await api.createPlaylist(name, ids);
+    await st.loadPlaylists();
+    st.toast(`Создан плейлист «${name}»`, 'success');
+    return { id: created.id };
+  },
   reactSaved: async (a) => {
     const id = str(a.id), value = Number(a.value);
     if (!trackOf(id) || ![-1, 0, 1].includes(value)) throw new Error('Трек или реакция недоступны');
