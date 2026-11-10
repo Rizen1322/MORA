@@ -333,5 +333,6 @@ enum NativePreviewResume {
               let revision = paused["controlRevision"] as? Int else { return false }
         return current["active"] as? Bool == true && current["playing"] as? Bool != true
             && current["entryId"] as? String == entry && current["controlRevision"] as? Int == revision
+            && current["epoch"] as? Int == paused["epoch"] as? Int
     }
 }

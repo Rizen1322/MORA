@@ -25,6 +25,7 @@ private struct NativeVersionChoice: Identifiable {
     @Published var previewDuration = 0.0
     private var clock: Timer?
     private var webPaused: [String: Any]?
+    private var ownsPreviewSession = false
     private var session = ""
     private var player: AVAudioPlayer?
     private var previewTask: Task<Void, Never>?
@@ -99,11 +100,16 @@ private struct NativeVersionChoice: Identifiable {
                 audio.prepareToPlay()
                 if store.host?.active == true {
                     let current = try await hostState()
-                    if current["playing"] as? Bool == true { paused = try await hostState(command: "pause") }
+                    if current["playing"] as? Bool == true {
+                        let snapshot = try await hostState(command: "pause")
+                        guard generation == intent, !Task.isCancelled else { restoreMain(snapshot); return }
+                        paused = snapshot
+                    }
                 } else {
                     if webPaused == nil { webPaused = try await store.call("versionPause") as? [String: Any] }
                     try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
                     try AVAudioSession.sharedInstance().setActive(true)
+                    ownsPreviewSession = true
                 }
                 guard generation == intent, !Task.isCancelled else { return }
                 audio.delegate = self; player = audio
@@ -131,12 +137,18 @@ private struct NativeVersionChoice: Identifiable {
         }
         if resume, let previous = paused {
             paused = nil
-            Task {
-                guard let current = try? await hostState(), NativePreviewResume.allowed(current, after: previous) else { return }
-                _ = try? await hostState(command: "play")
-            }
-        } else if resume, store.host?.active != true {
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            restoreMain(previous)
+        }
+        if resume, ownsPreviewSession {
+            ownsPreviewSession = false
+            if store.host?.active != true { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
+        }
+    }
+
+    private func restoreMain(_ snapshot: [String: Any]) {
+        Task {
+            guard let current = try? await hostState(), NativePreviewResume.allowed(current, after: snapshot) else { return }
+            _ = try? await hostState(command: "play")
         }
     }
 

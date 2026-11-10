@@ -95,9 +95,11 @@ outbox.set("", 1); outbox.set("bad", 7)
 precondition(outbox.pending.isEmpty)
 reactionDefaults.removePersistentDomain(forName: reactionSuite)
 
-let previewPaused: [String: Any] = ["active": true, "playing": false, "entryId": "same", "controlRevision": 4]
+let previewPaused: [String: Any] = ["active": true, "playing": false, "entryId": "same", "controlRevision": 4, "epoch": 7]
 precondition(NativePreviewResume.allowed(previewPaused, after: previewPaused))
 precondition(!NativePreviewResume.allowed(previewPaused.merging(["controlRevision": 5]) { _, new in new }, after: previewPaused))
 precondition(!NativePreviewResume.allowed(previewPaused.merging(["entryId": "next"]) { _, new in new }, after: previewPaused))
 precondition(!NativePreviewResume.allowed(previewPaused.merging(["playing": true]) { _, new in new }, after: previewPaused))
 precondition(!NativePreviewResume.allowed(previewPaused, after: [:]))
+
+precondition(!NativePreviewResume.allowed(previewPaused.merging(["epoch": 8]) { _, new in new }, after: previewPaused))
