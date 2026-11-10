@@ -90,6 +90,9 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
         shell.presenter = self
         observer = shell.objectWillChange.sink { [weak self] in DispatchQueue.main.async { self?.layoutShell() } }
         layoutShell()
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--native-ui-check") { Task { await checkNativeUI() } }
+        #endif
     }
 
     private func embed(_ child: UIViewController, into container: UIView? = nil) {
@@ -100,7 +103,7 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
     private func layoutShell() {
         guard let content, let bar else { return }
         let visible = shell.shown && !shell.ui.overlay
-        content.view.isHidden = !visible || shell.screen == .web
+        content.view.isHidden = !shell.nativeContentVisible
         tabsOverlay.isHidden = !visible
         bar.view.isHidden = !visible || shell.miniTitle == nil
         if let index = NativeTab.allCases.firstIndex(of: shell.tab), tabs.selectedIndex != index { tabs.selectedIndex = index }
@@ -124,6 +127,65 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
     override var childForStatusBarHidden: UIViewController? { bridge }
     override var childForHomeIndicatorAutoHidden: UIViewController? { bridge }
 }
+
+
+#if DEBUG
+// Exercises the real SwiftUI/UIKit field and bridge in the simulator, without external catalog calls.
+extension MoraRootViewController {
+    @MainActor private func checkNativeUI() async {
+        let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        func require(_ condition: Bool, _ message: String) throws {
+            if !condition { throw NSError(domain: "NativeUI", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
+        }
+        func wait(_ condition: () -> Bool) async throws {
+            for _ in 0..<240 {
+                if condition() { return }
+                try await Task.sleep(for: .milliseconds(250))
+            }
+            try require(false, "Timed out waiting for native UI")
+        }
+        func descendants(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(descendants) }
+        func capture(_ name: String) throws {
+            let image = UIGraphicsImageRenderer(bounds: view.bounds).image { _ in view.drawHierarchy(in: view.bounds, afterScreenUpdates: true) }
+            try image.pngData()!.write(to: folder.appendingPathComponent(name + ".png"))
+        }
+        var report: [String: Any] = [:]
+        do {
+            try await wait { self.shell.ui.loaded && self.shell.webView != nil }
+            let web = shell.webView!
+            _ = try await web.evaluateJavaScript("window.__uiQueries=[]; window.__uiOriginal=window.moraNativeUi; window.moraNativeUi=async (n,a)=>{if(n==='search'){window.__uiQueries.push(a.q);return [];}return window.__uiOriginal(n,a);}")
+            shell.go("/search")
+            try await wait { self.shell.ui.path == "/search" && descendants(self.content!.view).contains { $0 is UISearchTextField } }
+            try await Task.sleep(for: .seconds(2))
+            let field = descendants(content!.view).compactMap { $0 as? UISearchTextField }.first!
+            let inert = try await web.evaluateJavaScript("document.getElementById('root').inert && !document.activeElement.matches('input,textarea')") as? Bool == true
+            try require(inert, "Hidden web search stole focus")
+            try require(!field.isFirstResponder, "Search opened keyboard automatically")
+            try require(field.becomeFirstResponder(), "Native search cannot receive focus")
+            field.insertText("MORA")
+            try await Task.sleep(for: .seconds(2))
+            try require(field.text == "MORA", "Typed text is missing from native search")
+            let query = try await web.evaluateJavaScript("window.__uiQueries.includes('MORA')") as? Bool == true
+            try require(query, "UIKit input did not reach SwiftUI and the search bridge")
+            report["search"] = "typed MORA through UIKit into SwiftUI and bridge; no automatic focus"
+            try capture("native-search")
+            shell.go("/")
+            try await wait { self.shell.ui.path == "/" }
+            shell.waveSource = .own
+            shell.go("/wave")
+            try await wait { self.content?.presentedViewController != nil }
+            try await Task.sleep(for: .seconds(2))
+            try require(shell.path == "/" && shell.ui.path == "/", "Wave settings navigated away from Home")
+            let page = try await shell.call("waveSettings", ["source": "own"]) as? [String: Any]
+            try require(page?["title"] as? String == "Настроить волну", "Wave settings failed to load")
+            report["wave"] = "native sheet presented; Home route preserved; settings loaded"
+            // simctl captures the presented sheet, including its system material and drag indicator.
+            report["status"] = "passed"
+        } catch { report["status"] = "failed"; report["error"] = error.localizedDescription }
+        try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: folder.appendingPathComponent("native-ui-check.json"))
+    }
+}
+#endif
 
 enum NativeShellError: LocalizedError {
     case page, timeout
@@ -157,6 +219,9 @@ final class NativeShellStore: ObservableObject {
     private var sheetOpen = false
     private var pending: (path: String, at: Date)?
 
+    @Published var waveSource: NativeWaveSource?
+    @Published var waveSettingsOpen = false
+    var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web }
     var screen: NativeScreen { NativeRoute.screen(path) }
     var tab: NativeTab { NativeRoute.tab(path) }
     var liked: [NativeTrack] { NativeTrack.favorites(library) }
@@ -249,6 +314,8 @@ final class NativeShellStore: ObservableObject {
     }
 
     func go(_ path: String) {
+        presenter?.view.endEditing(true)
+        if path == "/wave" { waveSettingsOpen = true; return }
         self.path = path.components(separatedBy: "?")[0]
         pending = (self.path, Date())
         run("go", ["path": path])
@@ -469,6 +536,14 @@ struct NativeShellContent: View {
         .foregroundStyle(.white)
         .tint(.moraMint)
         .environmentObject(store)
+        .sheet(isPresented: $store.waveSettingsOpen) {
+            NativePageView(waveSource: Binding(get: { store.waveSource ?? store.ui.wave.preferred }, set: { store.waveSource = $0 }))
+                .environmentObject(store)
+                .tint(.moraMint)
+                .presentationDetents([.fraction(0.72), .large])
+                .presentationDragIndicator(.visible)
+                .preferredColorScheme(.dark)
+        }
     }
 }
 

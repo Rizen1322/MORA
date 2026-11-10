@@ -128,14 +128,22 @@ jobs:
           xcodebuild -project apps/mobile/ios/App/App.xcodeproj -scheme App -configuration Debug \
             -destination "id=$DEVICE" -derivedDataPath "$RUNNER_TEMP/mora-ui" \
             CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=YES IPHONEOS_DEPLOYMENT_TARGET=18.4 build > "$RUNNER_TEMP/mora-ui-build.log" 2>&1 || { tail -100 "$RUNNER_TEMP/mora-ui-build.log"; exit 1; }
-      - name: Launch app and verify it stays alive
+      - name: Check real native search input and wave sheet
         run: |
           APP="$RUNNER_TEMP/mora-ui/Build/Products/Debug-iphonesimulator/App.app"
           codesign --force --deep --sign - "$APP"
           xcrun simctl install "$DEVICE" "$APP"
           # Wait for simctl to confirm the actual app launch; cold iOS 26 registration can exceed 30 seconds.
-          xcrun simctl launch --terminate-running-process "$DEVICE" ru.mora.player > "$RUNNER_TEMP/mora-ui-console.log" 2>&1
-          sleep 30
+          xcrun simctl launch --terminate-running-process "$DEVICE" ru.mora.player --native-ui-check > "$RUNNER_TEMP/mora-ui-console.log" 2>&1
+          CONTAINER=$(xcrun simctl get_app_container "$DEVICE" ru.mora.player data)
+          for i in $(seq 1 90); do
+            [ -f "$CONTAINER/Documents/native-ui-check.json" ] && break
+            sleep 1
+          done
+          cp "$CONTAINER/Documents/native-ui-check.json" "$RUNNER_TEMP/mora-ui-check.json"
+          cp "$CONTAINER/Documents/native-search.png" "$RUNNER_TEMP/mora-ui-search.png"
+          xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mora-ui-wave.png"
+          python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r); assert r["status"]=="passed", r' "$RUNNER_TEMP/mora-ui-check.json"
           xcrun simctl spawn "$DEVICE" launchctl list | grep ru.mora.player > "$RUNNER_TEMP/mora-ui-process.txt"
           xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mora-native-home.png"
           cat "$RUNNER_TEMP/mora-ui-console.log"
@@ -143,6 +151,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/mora-ui-diagnostics"
+          cp "$RUNNER_TEMP"/mora-ui-*.json "$RUNNER_TEMP"/mora-ui-*.png "$RUNNER_TEMP/mora-ui-diagnostics/" 2>/dev/null || true
           cp "$RUNNER_TEMP"/mora-ui-*.log "$RUNNER_TEMP/mora-ui-diagnostics/" 2>/dev/null || true
           cp "$RUNNER_TEMP"/mora-ui-devices.json "$RUNNER_TEMP/mora-ui-diagnostics/" 2>/dev/null || true
           cp "$RUNNER_TEMP"/mora-ui-process.txt "$RUNNER_TEMP"/mora-native-home.png "$RUNNER_TEMP/mora-ui-diagnostics/" 2>/dev/null || true

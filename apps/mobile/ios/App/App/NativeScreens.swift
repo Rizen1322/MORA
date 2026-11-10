@@ -131,15 +131,14 @@ struct NativeHomeView: View {
 struct NativeWaveHero: View {
     let wave: NativeWave
     @EnvironmentObject private var store: NativeShellStore
-    @State private var source: NativeWaveSource?
 
     var body: some View {
-        let selected = source.flatMap { wave.sources.contains($0) ? $0 : nil } ?? wave.preferred
+        let selected = store.waveSource.flatMap { wave.sources.contains($0) ? $0 : nil } ?? wave.preferred
         let button = wave.button(selected)
         VStack(alignment: .leading, spacing: 14) {
             (Text("Моя волна") + Text(".").foregroundColor(.moraMint)).font(.title.bold()).accessibilityAddTraits(.isHeader)
             Text("Знакомое, любимое и то, что ещё предстоит открыть.").foregroundStyle(.white.opacity(0.7))
-            Picker("Источник волны", selection: Binding(get: { selected }, set: { source = $0 })) {
+            Picker("Источник волны", selection: Binding(get: { selected }, set: { store.waveSource = $0 })) {
                 ForEach(wave.sources, id: \.self) { s in
                     Text(s == .own ? "Коллекция" : s == .online ? "Радио" : "Яндекс").tag(s)
                 }
@@ -153,11 +152,11 @@ struct NativeWaveHero: View {
                         .background(Color.moraMint.opacity(button.enabled ? 1 : 0.4), in: Capsule())
                 }
                 .disabled(!button.enabled)
-                Button { store.go("/wave") } label: {
+                Button { store.waveSource = selected; store.go("/wave") } label: {
                     Image(systemName: "slider.horizontal.3").font(.headline).frame(width: 50, height: 50)
                         .background(.white.opacity(0.1), in: Circle())
                 }
-                .accessibilityLabel("Настроить волну")
+                .accessibilityLabel("Настроить волну").accessibilityIdentifier("wave.settings")
             }
             if let error = wave.error, !error.isEmpty {
                 Text(error).font(.footnote).foregroundStyle(Color(red: 1, green: 0.55, blue: 0.5))
@@ -170,7 +169,7 @@ struct NativeWaveHero: View {
                                      startPoint: .topLeading, endPoint: .bottomTrailing))
                 .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.moraMint.opacity(0.18)))
         }
-        .onChange(of: wave.active) { _, active in if active != nil { source = nil } } // follow what plays now
+        .onChange(of: wave.active) { _, active in if active != nil { store.waveSource = nil } } // follow what plays now
     }
 }
 

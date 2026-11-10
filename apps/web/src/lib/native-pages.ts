@@ -169,26 +169,10 @@ async function history(): Promise<Screen> {
 
 let waveSource: 'own' | 'online' | 'yandex' | null = null;
 
-async function wave(): Promise<Screen> {
-  const s = st(), p = s.player, radio = useRadio.getState();
-  const yandex = s.providers.some((x) => x.id === 'yandex' && x.status === 'connected');
-  const waveOn = radio.active || p.context?.type === 'wave' || p.context?.type === 'yandex-wave';
-  const active = radio.active ? 'online' : p.context?.type === 'yandex-wave' ? 'yandex' : 'own';
-  const source = waveSource ?? (radio.active || p.context?.type === 'online-radio' ? 'online' : p.context?.type === 'yandex-wave' ? 'yandex' : 'own');
-  const selected = waveOn && active === source;
-  const playing = selected && (p.status === 'playing' || p.status === 'buffering');
-  const unavailable = source === 'own' ? !s.order.length : source === 'yandex' ? !yandex : false;
-  const loading = !!p.waveLoading || radio.loading;
-  const w = s.settings?.wave;
-  const stage: Row[] = [
-    { kind: 'choice', title: 'Источник', value: source, act: { name: 'waveSource' }, options: [['own', 'Моя коллекция'], ['online', 'Онлайн-радио'], ...(yandex ? [['yandex', 'Яндекс Музыка'] as [string, string]] : [])] },
-    button(selected ? playing ? 'Пауза' : 'Продолжить' : loading ? 'Подбираю музыку…' : source === 'online' ? 'Включить радио' : 'Поймать волну', 'waveLaunch', { source },
-      { symbol: playing ? 'pause.fill' : 'play.fill', style: 'primary', disabled: !selected && (loading || unavailable) }),
-  ];
-  if (selected) stage.push(button('Другой трек', 'next', {}, { symbol: 'forward.fill' }));
-  if (unavailable && !selected) stage.push(source === 'own' ? { kind: 'link', title: 'Добавьте музыку в медиатеку, чтобы начать', path: '/library' } : { kind: 'link', title: 'Подключите Яндекс Музыку', path: '/sources' });
-  if (p.error) stage.push(text(p.error, undefined, undefined, 'error'));
-
+/** Settings for a native sheet; describing them never changes the page route or playback. */
+export async function describeWaveSettings(source: unknown): Promise<Screen> {
+  if (source !== 'own' && source !== 'online' && source !== 'yandex') throw Error('Неизвестный источник волны');
+  const w = st().settings?.wave;
   const seg = (title: string, key: string, value: string, options: [string, string][], detail?: string): Row => ({ kind: 'choice', title, detail, value, options, act: { name: 'set', args: { group: 'wave', key } }, disabled: !w });
   let tuning: Row[];
   if (source === 'yandex') {
@@ -209,6 +193,34 @@ async function wave(): Promise<Screen> {
     ];
   }
 
+  return { title: 'Настроить волну', sections: [{
+    title: source === 'yandex' ? 'Подбор Яндекса' : source === 'online' ? 'Радио по вашему вкусу' : 'Характер подборки',
+    footer: source === 'yandex' ? 'Настройки вашего аккаунта Яндекса применятся к продолжению волны.' : 'Новые настройки применятся к следующим трекам.',
+    rows: tuning,
+  }] };
+}
+
+async function wave(): Promise<Screen> {
+  const s = st(), p = s.player, radio = useRadio.getState();
+  const yandex = s.providers.some((x) => x.id === 'yandex' && x.status === 'connected');
+  const waveOn = radio.active || p.context?.type === 'wave' || p.context?.type === 'yandex-wave';
+  const active = radio.active ? 'online' : p.context?.type === 'yandex-wave' ? 'yandex' : 'own';
+  const source = waveSource ?? (radio.active || p.context?.type === 'online-radio' ? 'online' : p.context?.type === 'yandex-wave' ? 'yandex' : 'own');
+  const selected = waveOn && active === source;
+  const playing = selected && (p.status === 'playing' || p.status === 'buffering');
+  const unavailable = source === 'own' ? !s.order.length : source === 'yandex' ? !yandex : false;
+  const loading = !!p.waveLoading || radio.loading;
+  const stage: Row[] = [
+    { kind: 'choice', title: 'Источник', value: source, act: { name: 'waveSource' }, options: [['own', 'Моя коллекция'], ['online', 'Онлайн-радио'], ...(yandex ? [['yandex', 'Яндекс Музыка'] as [string, string]] : [])] },
+    button(selected ? playing ? 'Пауза' : 'Продолжить' : loading ? 'Подбираю музыку…' : source === 'online' ? 'Включить радио' : 'Поймать волну', 'waveLaunch', { source },
+      { symbol: playing ? 'pause.fill' : 'play.fill', style: 'primary', disabled: !selected && (loading || unavailable) }),
+  ];
+  if (selected) stage.push(button('Другой трек', 'next', {}, { symbol: 'forward.fill' }));
+  if (unavailable && !selected) stage.push(source === 'own' ? { kind: 'link', title: 'Добавьте музыку в медиатеку, чтобы начать', path: '/library' } : { kind: 'link', title: 'Подключите Яндекс Музыку', path: '/sources' });
+  if (p.error) stage.push(text(p.error, undefined, undefined, 'error'));
+
+  const tuning = (await describeWaveSettings(source)).sections[0];
+
   const cur = waveOn ? trackOf(p.queue[p.index]?.trackId) : undefined;
   const now: Row[] = cur ? [
     { kind: 'item', title: cur.title, subtitle: `${cur.artist} · ${active === 'online' ? 'Онлайн-радио' : active === 'yandex' ? 'Яндекс Музыка' : 'Моя коллекция'}`, cover: cur.coverUrl, actions: [
@@ -227,7 +239,7 @@ async function wave(): Promise<Screen> {
   if (left > upcoming.length) next.push(button('Вся очередь', 'queue', {}, { symbol: 'list.bullet' }));
   return { title: 'Моя волна', refresh: loading ? 2 : undefined, sections: [
     { footer: 'Музыка, которая чувствует ваш ритм.', rows: stage },
-    { title: 'Настроить звучание', footer: source === 'yandex' ? 'Подбор Яндекса из вашего аккаунта. Новые настройки применятся к продолжению волны.' : 'Для следующих треков', rows: tuning },
+    { ...tuning, title: 'Настроить звучание' },
     { title: cur ? 'Сейчас в эфире' : 'Ваша частота', rows: now,
       footer: 'Учитываем лайки, дослушивания и пропуски. «Не нравится» исключает трек из подборки. Ваша коллекция использует рекомендации приложения; источник «Яндекс Музыка» — рекомендации вашего аккаунта.' },
     { title: 'На подходе', footer: loading ? 'Готовим продолжение…' : left ? tracksWord(left) : 'Запустите волну — здесь появятся следующие треки вашей подборки.', rows: next },

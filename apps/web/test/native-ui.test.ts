@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   app: {} as any, listeners: [] as (() => void)[], radio: { active: false, loading: false, error: null as string | null },
   playTracks: vi.fn(), addToQueue: vi.fn(), toggle: vi.fn(), startWave: vi.fn(), startRadio: vi.fn(), toast: vi.fn(),
-  openVersionPanel: vi.fn(), react: vi.fn(), patchTrack: vi.fn(),
+  openVersionPanel: vi.fn(), yandexWaveSettings: vi.fn(), refreshYandexWave: vi.fn(), react: vi.fn(), patchTrack: vi.fn(),
 }));
 vi.mock('../src/store/app.ts', () => ({
   phone: true,
-  controller: { playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k) },
+  controller: { playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k), refreshYandexWave: () => h.refreshYandexWave() },
   trackOf: (id: string) => h.app.tracks.get(id),
   useApp: { getState: () => h.app, setState: vi.fn(), subscribe: (fn: () => void) => h.listeners.push(fn) },
 }));
@@ -18,7 +18,7 @@ vi.mock('../src/components/VersionPanel.tsx', () => ({
   openVersionPanel: (...a: any[]) => h.openVersionPanel(...a),
   useVersionPanel: { getState: () => ({ target: null }), subscribe: vi.fn() },
 }));
-vi.mock('../src/lib/api.ts', () => ({ api: { react: (...args: any[]) => h.react(...args) } }));
+vi.mock('../src/lib/api.ts', () => ({ api: { react: (...args: any[]) => h.react(...args), yandexWaveSettings: () => h.yandexWaveSettings() } }));
 
 const track = (id: string, status = 'ok') => ({ id, title: id.toUpperCase(), artist: 'X', album: '', duration: 100, reaction: 0, coverUrl: null, status });
 
@@ -119,4 +119,58 @@ it('publishes queue entries separately when only the continuation changed', asyn
   expect((push.mock.calls[1] as any)[0].queue).toEqual(h.app.player.queue);
   expect((push.mock.calls[1] as any)[0].library).toBeUndefined();
   vi.useRealTimers();
+});
+
+it('gives focus exclusively to native content and restores web inputs for web screens and overlays', async () => {
+  vi.useFakeTimers();
+  let shown = true;
+  const root = { inert: false }, blur = vi.fn();
+  const push = vi.fn(async (state: any) => ({ shown, nativeContent: shown && !state.overlay && state.path !== '/yandex' }));
+  vi.stubGlobal('window', { moraNativePlayback: { uiState: push }, addEventListener: vi.fn() });
+  vi.stubGlobal('document', { getElementById: () => root, activeElement: { blur }, documentElement: { classList: { toggle: vi.fn() } } });
+  const { startNativeUi } = await import('../src/lib/native-ui.ts');
+  startNativeUi(); await vi.advanceTimersByTimeAsync(200);
+  expect(root.inert).toBe(true); expect(blur).toHaveBeenCalledTimes(1);
+  h.app = { ...h.app, toasts: [{ id: 1, text: 'test' }] }; h.listeners.forEach(fn => fn()); await vi.advanceTimersByTimeAsync(200);
+  expect(blur).toHaveBeenCalledTimes(1); // State refreshes must not dismiss the native keyboard.
+  h.app = { ...h.app, fullPlayer: true }; h.listeners.forEach(fn => fn()); await vi.advanceTimersByTimeAsync(200);
+  expect(root.inert).toBe(false);
+  h.app = { ...h.app, fullPlayer: false }; (location as any).hash = '#/yandex';
+  h.listeners.forEach(fn => fn()); await vi.advanceTimersByTimeAsync(200); expect(root.inert).toBe(false);
+  (location as any).hash = '#/search'; h.listeners.forEach(fn => fn()); await vi.advanceTimersByTimeAsync(200);
+  expect(root.inert).toBe(true); expect(blur).toHaveBeenCalledTimes(2);
+  shown = false; h.app = { ...h.app, toasts: [] }; h.listeners.forEach(fn => fn()); await vi.advanceTimersByTimeAsync(200);
+  expect(root.inert).toBe(false);
+  vi.useRealTimers();
+});
+
+it('describes wave tuning over the current screen without navigating or starting playback', async () => {
+  const { commands } = await import('../src/lib/native-ui.ts');
+  h.app.settings = { wave: { mood: 'normal', diversity: 'balanced', mode: 'normal', yandexSeeds: [] } };
+  h.app.saveSettings = vi.fn(async (patch: any) => { h.app.settings = { ...h.app.settings, ...patch }; });
+  const before = location.hash;
+  const page = await commands.waveSettings({ source: 'own' }) as any;
+  expect(page.title).toBe('Настроить волну');
+  expect(page.sections).toHaveLength(1);
+  expect(page.sections[0].rows.map((row: any) => row.title)).toEqual(['Энергия', 'Характер', 'Для микса']);
+  await commands.act({ name: 'set', args: { group: 'wave', key: 'mood', value: 'energetic' } });
+  expect(h.app.saveSettings).toHaveBeenCalledWith({ wave: expect.objectContaining({ mood: 'energetic', diversity: 'balanced' }) });
+  expect(location.hash).toBe(before); expect(h.startWave).not.toHaveBeenCalled();
+  await expect(commands.waveSettings({ source: 'invalid' })).rejects.toThrow('Неизвестный источник');
+});
+
+it('keeps Yandex tuning groups independent and shows an error when its settings cannot load', async () => {
+  const { commands } = await import('../src/lib/native-ui.ts');
+  h.app.settings = { wave: { yandexSeeds: ['mood:calm', 'diversity:discover'] } };
+  h.app.saveSettings = vi.fn(async (patch: any) => { h.app.settings = { ...h.app.settings, ...patch }; });
+  h.yandexWaveSettings.mockResolvedValue({ groups: [{ name: 'Настроение', values: [{ seed: 'mood:calm', name: 'Спокойно' }, { seed: 'mood:fun', name: 'Весело' }] }] });
+  const page = await commands.waveSettings({ source: 'yandex' }) as any;
+  const row = page.sections[0].rows[0];
+  expect(row.value).toBe('mood:calm');
+  await commands.act({ name: row.act.name, args: { ...row.act.args, value: 'mood:fun' } });
+  expect(h.app.settings.wave.yandexSeeds).toEqual(['diversity:discover', 'mood:fun']);
+  expect(h.refreshYandexWave).toHaveBeenCalledOnce();
+  h.yandexWaveSettings.mockRejectedValueOnce(new Error('offline'));
+  const failed = await commands.waveSettings({ source: 'yandex' }) as any;
+  expect(failed.sections[0].rows[0]).toMatchObject({ kind: 'text', tone: 'warn' });
 });

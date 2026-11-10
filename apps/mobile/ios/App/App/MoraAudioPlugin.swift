@@ -432,7 +432,8 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async {
             guard let root = self.bridge?.viewController?.parent as? MoraRootViewController else { call.resolve(["shown": false]); return }
             root.installShell(host: self.nativeMix, webView: self.bridge?.webView)
-            call.resolve(["shown": root.shell.receive(state)])
+            let shown = root.shell.receive(state)
+            call.resolve(["shown": shown, "nativeContent": root.shell.nativeContentVisible])
         }
     }
 }

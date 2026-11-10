@@ -6,7 +6,9 @@ import UniformTypeIdentifiers
 /// history, wave, downloads, import, sources, settings and diagnostics. The page owns the data and the
 /// actions; this view draws the rows (NativeShellState.swift, `NativePage`) and sends the actions back.
 struct NativePageView: View {
+    var waveSource: Binding<NativeWaveSource>? = nil
     @EnvironmentObject private var store: NativeShellStore
+    @Environment(\.dismiss) private var dismiss
     @State private var page: NativePage?
     @State private var failure: String?
     @State private var form: [String: String] = [:]
@@ -27,27 +29,49 @@ struct NativePageView: View {
     // Split out of body: as one expression it exceeds the Swift type checker's time limit.
     private var pageList: some View {
         withSearch(List {
+            if let waveSource { waveHeader(waveSource) }
             if let page {
                 ForEach(Array(page.sections.enumerated()), id: \.offset) { _, section in sectionView(section) }
             } else if let failure {
                 ContentUnavailableView("Не удалось открыть", systemImage: "exclamationmark.triangle", description: Text(failure))
                     .listRowBackground(Color.clear)
+                Button("Повторить") { reload &+= 1 }
             } else {
-                ProgressView().frame(maxWidth: .infinity).listRowBackground(Color.clear)
+                ProgressView(waveSource == nil ? "Загрузка…" : "Загружаем настройки…").frame(maxWidth: .infinity).listRowBackground(Color.clear)
             }
         })
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Color.moraBackground)
         .navigationTitle(page?.title ?? "")
+        .navigationBarTitleDisplayMode(waveSource == nil ? .automatic : .inline)
         .toolbar { toolbar }
+    }
+
+    private func waveHeader(_ source: Binding<NativeWaveSource>) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Ваш ритм", systemImage: "waveform").font(.title2.bold()).foregroundStyle(Color.moraMint)
+                Text("Выберите настроение и характер музыки.").font(.subheadline).foregroundStyle(.secondary)
+                Picker("Источник волны", selection: source) {
+                    ForEach(store.ui.wave.sources, id: \.self) { value in
+                        Text(value == .own ? "Коллекция" : value == .online ? "Радио" : "Яндекс").tag(value)
+                    }
+                }.pickerStyle(.segmented).disabled(running)
+            }.padding(.vertical, 6)
+        } footer: { Text("Изменения сохраняются автоматически.") }
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
-            Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") }
+            if waveSource == nil {
+                Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") }
+            } else {
+                Button { reload &+= 1 } label: { Label("Обновить", systemImage: "arrow.clockwise") }.disabled(running)
+            }
         }
         if running { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
+        if waveSource != nil { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } } }
         if page?.sections.contains(where: { $0.reorder != nil }) == true && query.isEmpty {
             ToolbarItem(placement: .topBarTrailing) { EditButton() }
         }
@@ -56,7 +80,7 @@ struct NativePageView: View {
     private func dialogs(_ list: some View) -> some View {
         list
             .refreshable { await load() }
-            .task(id: "\(store.path)|\(store.revision)|\(reload)") { await load() }
+            .task(id: "\(store.path)|\(store.revision)|\(reload)|\(waveSource?.wrappedValue.rawValue ?? "")") { await load() }
             .task(id: page?.refresh) {
                 guard let seconds = page?.refresh else { return }
                 while !Task.isCancelled {
@@ -78,6 +102,13 @@ struct NativePageView: View {
                 send(urls, act)
             }
             .onChange(of: store.path) { page = nil; failure = nil; form = [:]; query = "" }
+            .onChange(of: waveSource?.wrappedValue) { page = nil; failure = nil }
+            .safeAreaInset(edge: .bottom) {
+                if waveSource != nil, let text = store.banner {
+                    Text(text).font(.footnote).padding().frame(maxWidth: .infinity)
+                        .background(.ultraThinMaterial).accessibilityIdentifier("wave.message")
+                }
+            }
     }
 
     @ViewBuilder private func withSearch(_ list: some View) -> some View {
@@ -135,11 +166,29 @@ struct NativePageView: View {
                 .disabled(disabled || running)
 
         case .choice(let title, let detail, let value, let options, let act, let disabled):
-            Picker(selection: Binding(get: { value }, set: { run(act, ["value": $0]) })) {
-                ForEach(options.indices, id: \.self) { i in Text(options[i].label).tag(options[i].value) }
-            } label: { labelled(title, detail) }
-                .pickerStyle(.menu)
-                .disabled(disabled || running)
+            if waveSource != nil {
+                VStack(alignment: .leading, spacing: 12) {
+                    labelled(title, detail)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], spacing: 8) {
+                        ForEach(options.indices, id: \.self) { index in
+                            let selected = options[index].value == value
+                            Button { run(act, ["value": options[index].value]) } label: {
+                                Text(options[index].label).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
+                                    .frame(maxWidth: .infinity, minHeight: 44).padding(.horizontal, 6).padding(.vertical, 4)
+                                    .foregroundStyle(selected ? Color.moraMint : Color.white.opacity(0.8))
+                                    .background(selected ? Color.moraMint.opacity(0.15) : Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
+                                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? Color.moraMint.opacity(0.5) : Color.white.opacity(0.08)))
+                            }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
+                        }
+                    }.disabled(disabled || running)
+                }.padding(.vertical, 6)
+            } else {
+                Picker(selection: Binding(get: { value }, set: { run(act, ["value": $0]) })) {
+                    ForEach(options.indices, id: \.self) { i in Text(options[i].label).tag(options[i].value) }
+                } label: { labelled(title, detail) }
+                    .pickerStyle(.menu)
+                    .disabled(disabled || running)
+            }
 
         case .slider(let title, let detail, let value, let range, let step, let unit, let act, let disabled):
             NativePageSlider(title: title, detail: detail, value: value, range: range, step: step, unit: unit) { run(act, ["value": $0]) }
@@ -280,7 +329,7 @@ struct NativePageView: View {
 
     @MainActor private func load() async {
         do {
-            let value = try await store.call("page")
+            let value = try await store.call(waveSource == nil ? "page" : "waveSettings", waveSource.map { ["source": $0.wrappedValue.rawValue] } ?? [:])
             guard !Task.isCancelled else { return }
             page = NativePage(value)
             failure = nil

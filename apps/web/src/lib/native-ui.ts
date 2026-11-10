@@ -7,7 +7,7 @@ import { publicPlayer, usePublicPlayback } from '../store/catalog.ts';
 import { react } from '../components/TrackList.tsx';
 import { asCatalog, SOURCE_LABEL } from '../pages/Search.tsx';
 import { useVersionPanel, openVersionPanel } from '../components/VersionPanel.tsx';
-import { actions, describe, type ActResult } from './native-pages.ts';
+import { actions, describe, describeWaveSettings, type ActResult } from './native-pages.ts';
 import { nativeVersionCommands } from './native-versions.ts';
 
 /**
@@ -91,6 +91,7 @@ export const commands: Record<string, (a: Args) => unknown> = {
   },
   /** The native page for the current route (native-pages.ts); null when it stays web. */
   page: () => describe(),
+  waveSettings: (a) => describeWaveSettings(a.source),
   /** A row action of a native page. Its errors become toasts, as on the web page. */
   act: async (a): Promise<ActResult | null> => {
     const fn = actions[str(a.name)];
@@ -186,9 +187,15 @@ export function startNativeUi(): void {
     if (enable) state.enable = true;
     if (s.player.queue !== queue) state.queue = s.player.queue.map(({ entryId, trackId }) => ({ entryId, trackId }));
     tracks = s.tracks; order = s.order; playlists = s.playlists; queue = s.player.queue; last = key;
-    push(state).then(({ shown }) => {
+    push(state).then(({ shown, nativeContent }) => {
       disabled = !shown;
       document.documentElement.classList.toggle('mora-native-shell', shown);
+      const root = document.getElementById?.('root');
+      if (root) {
+        const owned = shown && nativeContent === true;
+        if (owned && !root.inert) (document.activeElement as HTMLElement | null)?.blur();
+        root.inert = owned; // Hidden web controls must not steal focus from native fields.
+      }
     }, () => { tracks = order = playlists = queue = undefined; last = ''; }); // resent whole on the next change
   };
   const schedule = () => { timer ??= setTimeout(send, 120); };
