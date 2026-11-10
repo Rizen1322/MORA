@@ -17,6 +17,7 @@ final class MoraRootViewController: UITabBarController, UITabBarControllerDelega
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        overrideUserInterfaceStyle = .dark
         view.backgroundColor = UIColor(Color.moraBackground)
         delegate = self
         tabBar.tintColor = UIColor(Color.moraMint)
@@ -99,7 +100,6 @@ final class MoraRootViewController: UITabBarController, UITabBarControllerDelega
                 child.view.frame = surface.bounds
             }
         }
-        view.bringSubviewToFront(tabBar)
         guard let content, let bar else { return }
         view.bringSubviewToFront(bar.view)
         let inset = bar.view.isHidden ? 0 : bar.view.frame.height + 8
