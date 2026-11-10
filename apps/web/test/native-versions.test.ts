@@ -66,3 +66,10 @@ it('keeps successful search providers when one is unavailable', async () => {
   expect(result.rows).toHaveLength(3);
   expect(result.errors).toEqual(['YouTube Music: offline']);
 });
+
+it('opens the current wave recording even when it is not saved in the library tab', async () => {
+  const { nativeVersionCommands: c } = await import('../src/lib/native-versions.ts');
+  h.tracks.set('wave', { id: 'wave', title: 'Wave title', artist: 'Artist', coverUrl: 'wave-cover', status: 'ok', saved: false, binding: { assetId: 'other' } });
+  expect(c.versionTarget({ target: 'wave' })).toMatchObject({ id: 'wave', title: 'Wave title', cover: 'wave-cover', binding: 'other' });
+  expect(() => c.versionTarget({ target: 'missing' })).toThrow('Трек не найден');
+});

@@ -16,6 +16,12 @@ const resolve = async (args: Args) => {
 };
 
 export const nativeVersionCommands = {
+  versionTarget: (args: Args) => {
+    const track = useApp.getState().tracks.get(text(args.target));
+    if (!track) throw Error('Трек не найден');
+    return { id: track.id, title: track.title, artist: track.artist, album: track.album, duration: track.duration,
+      cover: track.coverUrl, reaction: track.reaction, ok: track.status === 'ok', binding: track.binding?.assetId };
+  },
   versionSearch: async (args: Args) => {
     const target = useApp.getState().tracks.get(text(args.target));
     if (!target) throw Error('Трек не найден');

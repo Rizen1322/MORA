@@ -97,8 +97,7 @@ final class NativePlayerModel: ObservableObject {
     }
 
     func versions() {
-        guard let store = NativeShellStore.shared, let track = store.byId[state.trackId] else { return }
-        store.presentVersions(track, from: controller)
+        NativeShellStore.shared?.presentVersions(id: state.trackId, from: controller)
     }
 
     func react(_ value: Int) {
