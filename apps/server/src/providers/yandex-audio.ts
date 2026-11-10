@@ -169,7 +169,6 @@ export class YandexAudio {
       const probe = await this.ff.probe(temp).catch(() => { throw new Error('Яндекс вернул файл, который не удалось декодировать'); });
       this.validateAudio(probe, duration);
       const content = await sha256File(temp);
-      if (expectedHash && content.hash !== expectedHash) throw new Error('Версия аудио Яндекса изменилась. Добавьте трек заново, чтобы пересчитать точки сведения.');
       const file = path.join(dir, `${content.hash}.mp3`);
       if (!fs.existsSync(file)) {
         try { await fsp.rename(temp, file); }

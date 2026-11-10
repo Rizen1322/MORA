@@ -18,6 +18,7 @@ describe('Yandex catalog metadata through a local authenticated API fixture', ()
   const seen: SeenRequest[] = [];
   let fixture: Server, base: string, a: App;
   let libraryTrackId: string;
+  let likedTracks: { id: string; albumId?: string; timestamp?: string }[] | undefined;
   const artist = (id = 7) => ({
     id, name: id === 7 ? 'Fixture Artist' : 'Similar Artist', genres: ['electronic'],
     cover: { uri: id === 7 ? `${base}/images/artist/%%` : 'https://untrusted.example/artist.jpg' },
@@ -58,7 +59,7 @@ describe('Yandex catalog metadata through a local authenticated API fixture', ()
         return json(res, null, 401);
       }
       if (url.pathname === '/account/status') return json(res, { account: { uid: 42, displayName: 'Catalog Fixture' } });
-      if (url.pathname === '/users/42/likes/tracks') return json(res, { library: { tracks: Array.from({ length: 25 }, (_, index) => ({ id: String(100 + index), albumId: '10' })) } });
+      if (url.pathname === '/users/42/likes/tracks') return json(res, { library: { tracks: likedTracks ?? Array.from({ length: 25 }, (_, index) => ({ id: String(100 + index), albumId: '10' })) } });
       if (url.pathname === '/users/42/dislikes/tracks') return json(res, { library: { tracks: [{ id: '200', albumId: '10' }] } });
       if (url.pathname === '/tracks' && req.method === 'POST') {
         let body = '';
@@ -289,6 +290,21 @@ describe('Yandex catalog metadata through a local authenticated API fixture', ()
     expect(Object.keys(response.json())).toEqual(['error']);
     expect(response.json().error).toEqual(expect.any(String));
     for (const secret of [TOKEN, SECOND_TOKEN, base, 'access_token', 'FixtureFailure', 'stack']) expect(response.body).not.toContain(secret);
+  });
+
+  it('orders imported likes by their source dates even when the API lists oldest first', async () => {
+    likedTracks = [
+      { id: '100', albumId: '10', timestamp: '2024-01-01T00:00:00Z' },
+      { id: '101', albumId: '10', timestamp: '2026-11-07T10:00:00+03:00' },
+      { id: '102', albumId: '10', timestamp: '2025-06-01T00:00:00Z' },
+      { id: '101', albumId: '10', timestamp: '2026-11-07T10:00:00+03:00' },
+      { id: '103' }, { id: '104', timestamp: 'invalid' },
+    ];
+    try {
+      expect((await a.services.providers.yandex.likeIds()).ids).toEqual(['101:10', '102:10', '100:10', '103', '104']);
+      likedTracks = [{ id: '104' }, { id: '100', timestamp: 'invalid' }, { id: '103' }];
+      expect((await a.services.providers.yandex.likeIds()).ids).toEqual(['104', '100', '103']);
+    } finally { likedTracks = undefined; }
   });
 
   it('clears cached metadata after account changes and checks credentials even for cached pages', async () => {

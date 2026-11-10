@@ -476,8 +476,10 @@ describe('Yandex full MP3 import through local API/download fixtures', () => {
     expect(fs.existsSync(cache) ? fs.readdirSync(cache).filter((file) => file.startsWith('incoming-')) : []).toEqual([]);
   });
 
-  it('revalidates a damaged cache before serving playback and rejects changed remote content', async () => {
-    const src = a.services.lib.sources(importedId)[0];
+  it('repairs damaged audio and refreshes changed audio before choosing the playback cache key', async () => {
+    const id = (await importViaApi(external('104'))).json().trackId as string;
+    const src = a.services.lib.sources(id)[0];
+    const original = a.services.lib.get(id)!;
     const provider: Provider = a.services.providers.yandex;
     const file = await provider.fetchAudio!(src);
     expect(path.resolve(file).startsWith(path.resolve(dataDir) + path.sep)).toBe(true);
@@ -487,21 +489,33 @@ describe('Yandex full MP3 import through local API/download fixtures', () => {
     expect(digest(fs.readFileSync(repaired))).toBe(digest(mp3));
     expect(audioRequests().length).toBe(downloads + 1);
     fs.unlinkSync(repaired); changedDownload = true;
-    try { await expect(provider.fetchAudio!(src)).rejects.toThrow(/измен|хеш|hash|содержим/i); }
-    finally { changedDownload = false; }
-    expect(a.services.lib.get(importedId)!.content_hash).toBe(digest(mp3));
+    const ensure = vi.spyOn(a.services.analysis, 'ensure');
+    try {
+      const response = await a.app.inject(`/api/tracks/${id}/pcm?sr=88200&start=0&frames=1024`);
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.rawPayload.length).toBe(4096);
+      const updated = a.services.lib.get(id)!;
+      expect(updated).toMatchObject({ id, title: original.title, saved: original.saved, pinned: original.pinned, content_hash: digest(replacementMp3) });
+      expect(ensure).toHaveBeenCalledWith(expect.objectContaining({ id, content_hash: digest(replacementMp3) }), 5);
+      expect(JSON.parse(a.services.lib.sources(id)[0].meta)).toMatchObject({ ...JSON.parse(src.meta), audioHash: digest(replacementMp3) });
+      expect(a.services.pcm.status(digest(mp3), 88200)).toBeNull();
+      expect(a.services.pcm.status(digest(replacementMp3), 88200)).toBeTruthy();
+      expect(digest(fs.readFileSync(await provider.fetchAudio!(a.services.lib.sources(id)[0])))).toBe(digest(replacementMp3));
+    } finally { changedDownload = false; ensure.mockRestore(); }
   });
 
-  it('keeps playback pinned to the library hash when optional source metadata is missing', async () => {
-    const src = a.services.lib.sources(importedId)[0];
-    const originalHash = a.services.lib.get(importedId)!.content_hash;
+  it('refreshes the library hash even when optional source metadata is missing', async () => {
+    const id = (await importViaApi(external('105'))).json().trackId as string;
+    const src = a.services.lib.sources(id)[0];
+    const originalHash = a.services.lib.get(id)!.content_hash;
     const cached = path.join(dataDir, 'remote', 'yandex', `${originalHash}.mp3`);
     fs.rmSync(cached, { force: true });
     changedDownload = true;
     try {
-      await expect(a.services.providers.yandex.fetchAudio({ ...src, meta: '{}' })).rejects.toThrow(/измен|хеш|hash|содержим/i);
+      const file = await a.services.providers.yandex.fetchAudio({ ...src, meta: '{}' });
+      expect(digest(fs.readFileSync(file))).toBe(digest(replacementMp3));
     } finally { changedDownload = false; }
-    expect(a.services.lib.get(importedId)!.content_hash).toBe(originalHash);
+    expect(a.services.lib.get(id)!.content_hash).toBe(digest(replacementMp3));
   });
 
   it('rejects conflicting source and library hashes before any download request', async () => {

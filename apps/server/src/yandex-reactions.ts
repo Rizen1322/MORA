@@ -114,7 +114,7 @@ export class YandexReactionSync {
 
   private writeLocal(trackId: string, value: ReactionValue): void {
     if (value === 0) q(this.db, 'DELETE FROM reactions WHERE track_id=?').run(trackId);
-    else q(this.db, `INSERT INTO reactions(track_id,value,updated_at) VALUES (?,?,?) ON CONFLICT(track_id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`).run(trackId, value, Date.now());
+    else q(this.db, `INSERT INTO reactions(track_id,value,updated_at) VALUES (?,?,?) ON CONFLICT(track_id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at WHERE reactions.value!=excluded.value`).run(trackId, value, Date.now());
   }
 
   attachTrack(trackId: string): void {
