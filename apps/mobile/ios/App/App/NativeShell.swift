@@ -8,7 +8,7 @@ import WebKit
 /// Three layers: the WKWebView (always in the window, so the page keeps running), the native screens
 /// (hidden on routes that stay web) and the floating tab bar with the mini player.
 /// Hidden layers take no touches, so there is no pass-through hit testing.
-final class MoraRootViewController: UIViewController {
+final class MoraRootViewController: UITabBarController, UITabBarControllerDelegate {
     let bridge = MoraBridgeViewController()
     let shell = NativeShellStore()
     private var content: UIViewController?
@@ -18,8 +18,18 @@ final class MoraRootViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor(Color.moraBackground)
-        embed(bridge)
-        bridge.view.frame = view.bounds
+        delegate = self
+        tabBar.tintColor = UIColor(Color.moraMint)
+        viewControllers = NativeTab.allCases.enumerated().map { index, tab in
+            let page = UIViewController()
+            page.view.backgroundColor = .clear
+            page.tabBarItem = UITabBarItem(title: tab.item.0, image: UIImage(systemName: tab.item.1), tag: index)
+            return page
+        }
+        if #available(iOS 26.0, *) { setTabBarHidden(true, animated: false) }
+        else { tabBar.isHidden = true }
+        embed(bridge, into: selectedViewController?.view)
+        bridge.view.frame = selectedViewController?.view.bounds ?? view.bounds
         bridge.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
     }
 
@@ -39,8 +49,8 @@ final class MoraRootViewController: UIViewController {
         let content = UIHostingController(rootView: NativeShellContent(store: shell))
         content.view.backgroundColor = UIColor(Color.moraBackground)
         content.overrideUserInterfaceStyle = .dark
-        embed(content)
-        content.view.frame = view.bounds
+        embed(content, into: selectedViewController?.view)
+        content.view.frame = selectedViewController?.view.bounds ?? view.bounds
         content.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
 
         let bar = UIHostingController(rootView: NativeShellBar(store: shell))
@@ -53,7 +63,7 @@ final class MoraRootViewController: UIViewController {
         NSLayoutConstraint.activate([
             bar.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bar.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bar.view.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            bar.view.bottomAnchor.constraint(equalTo: tabBar.topAnchor, constant: -8),
         ])
         self.content = content
         self.bar = bar
@@ -62,9 +72,9 @@ final class MoraRootViewController: UIViewController {
         layoutShell()
     }
 
-    private func embed(_ child: UIViewController) {
+    private func embed(_ child: UIViewController, into container: UIView? = nil) {
         addChild(child)
-        view.addSubview(child.view)
+        (container ?? view).addSubview(child.view)
         child.didMove(toParent: self)
     }
 
@@ -72,16 +82,34 @@ final class MoraRootViewController: UIViewController {
         guard let content, let bar else { return }
         let visible = shell.shown && !shell.ui.overlay
         content.view.isHidden = !visible || shell.screen == .web
-        bar.view.isHidden = !visible
+        bar.view.isHidden = !visible || shell.miniTitle == nil
+        if #available(iOS 26.0, *) { setTabBarHidden(!visible, animated: false) }
+        else { tabBar.isHidden = !visible }
+        if let index = NativeTab.allCases.firstIndex(of: shell.tab), selectedIndex != index { selectedIndex = index }
         view.setNeedsLayout()
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // Native lists scroll under the floating bar and stop above it.
+        // One live WebView and native screen move together under the selected system tab.
+        if let surface = selectedViewController?.view {
+            let layers: [UIViewController?] = [bridge, content]
+            for child in layers.compactMap({ $0 }) {
+                if child.view.superview !== surface { surface.addSubview(child.view) }
+                child.view.frame = surface.bounds
+            }
+        }
+        view.bringSubviewToFront(tabBar)
         guard let content, let bar else { return }
-        let inset = bar.view.isHidden ? 0 : bar.view.frame.height
+        view.bringSubviewToFront(bar.view)
+        let inset = bar.view.isHidden ? 0 : bar.view.frame.height + 8
         if content.additionalSafeAreaInsets.bottom != inset { content.additionalSafeAreaInsets.bottom = inset }
+    }
+
+    func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
+        guard NativeTab.allCases.indices.contains(selectedIndex) else { return }
+        shell.select(NativeTab.allCases[selectedIndex])
+        view.setNeedsLayout()
     }
 
     override var childForStatusBarStyle: UIViewController? { bridge }
@@ -443,7 +471,6 @@ struct NativeShellBar: View {
     var body: some View {
         VStack(spacing: 8) {
             if let title = store.miniTitle { mini(title) }
-            NativeSystemTabs(store: store).frame(height: 64)
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 4)
@@ -482,32 +509,5 @@ struct NativeShellBar: View {
         .frame(minHeight: 56)
         .moraGlass(Capsule())
         .environmentObject(store)
-    }
-}
-
-
-/// The system renders selection, accessibility and Liquid Glass (iOS 26).
-private struct NativeSystemTabs: UIViewRepresentable {
-    @ObservedObject var store: NativeShellStore
-    func makeCoordinator() -> Coordinator { Coordinator(store) }
-    func makeUIView(context: Context) -> UITabBar {
-        let bar = UITabBar()
-        bar.delegate = context.coordinator
-        bar.tintColor = UIColor(Color.moraMint)
-        bar.items = NativeTab.allCases.enumerated().map { index, tab in
-            UITabBarItem(title: tab.item.0, image: UIImage(systemName: tab.item.1), tag: index)
-        }
-        return bar
-    }
-    func updateUIView(_ bar: UITabBar, context: Context) {
-        if let index = NativeTab.allCases.firstIndex(of: store.tab) { bar.selectedItem = bar.items?[index] }
-    }
-    final class Coordinator: NSObject, UITabBarDelegate {
-        let store: NativeShellStore
-        init(_ store: NativeShellStore) { self.store = store }
-        func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
-            guard NativeTab.allCases.indices.contains(item.tag) else { return }
-            store.select(NativeTab.allCases[item.tag])
-        }
     }
 }
