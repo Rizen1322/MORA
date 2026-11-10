@@ -73,6 +73,7 @@ final class NativeMixHost {
     // Main queue only. Do not remove WebKit's or the baseline probe's targets.
     var onReaction: ((String, Int) -> Int)?
     var reactionState: ((String) -> Int)?
+    private var controlRevision = 0
     private var targets: [(MPRemoteCommand, Any)] = []
     private var refillTask: UIBackgroundTaskIdentifier = .invalid // main queue only
     private var refillWaiting = false // one finite assertion per waiting interval
@@ -126,7 +127,7 @@ final class NativeMixHost {
     private func save() {
         let duration = tracks.indices.contains(index) ? NativeMixTimeline.duration(tracks[index], sampleRate: sr) : 0
         let state: [String: Any] = ["active": folder != nil, "playing": wantsPlaying && !failed,
-            "preparing": preparing, "index": index, "position": position, "duration": duration,
+            "preparing": preparing, "controlRevision": controlRevision, "index": index, "position": position, "duration": duration,
             "renderedFrames": rendered, "queuedFrames": queued, "presentedFrames": presented,
             "epoch": epoch, "ownership": ownershipRevision, "underruns": underruns, "maxRenderMs": maxRenderMs, "failed": failed,
             "outputBufferCount": outputBufferCount, "outputLatency": outputLatency,
@@ -837,6 +838,7 @@ final class NativeMixHost {
                 }
                 guard !self.preparing else { throw Failure.invalid }
                 if source == "interruption" && self.mediaResetPending { throw Failure.invalid }
+                if action != "like" && action != "dislike" { self.controlRevision += 1 }
                 self.updatePosition()
                 if source != "interruption" { self.resumeAfterInterruption = false }
                 switch action {

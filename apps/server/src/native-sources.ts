@@ -38,6 +38,7 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
     while (next < entries.length) {
       const index = next++, entry = entries[index], track = s.lib.media(entry.trackId);
       if (!track || !(track.duration > 0)) throw Error('Неподдерживаемый трек в очереди');
+      const identity = s.lib.get(entry.trackId) ?? track;
       const sources = s.lib.sources(track.id), remote = sources.find(source => source.kind === 'remote');
       const resolving = (async (): Promise<NativeMediaSource> => {
         const local = localFile(s, track.id);
@@ -72,9 +73,10 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
       const size = analysis ? JSON.stringify(analysis).length : 0;
       const includeAnalysis = analysisBytes + size <= 2 * 1024 * 1024;
       if (includeAnalysis) analysisBytes += size;
-      const meta = remote ? JSON.parse(remote.meta || '{}') as { coverUrl?: string } : {};
+      const identitySource = identity.id === track.id ? remote : s.lib.sources(identity.id).find(source => source.kind === 'remote');
+      const meta = identitySource ? JSON.parse(identitySource.meta || '{}') as { coverUrl?: string } : {};
       let artwork: NativePreparationItem['artwork'];
-      const coverPath = track.cover_id && s.lib.coverPath(track.cover_id);
+      const coverPath = identity.cover_id && s.lib.coverPath(identity.cover_id);
       if (coverPath) {
         const data = await fs.readFile(coverPath);
         if (data.length <= 256 * 1024 && analysisBytes + data.length * 1.4 < 4 * 1024 * 1024) {
@@ -82,7 +84,7 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
           artwork = { base64: data.toString('base64'), mime: coverPath.endsWith('.png') ? 'image/png' : coverPath.endsWith('.webp') ? 'image/webp' : 'image/jpeg' };
         }
       }
-      items[index] = { ...entry, title: track.title, artist: track.artist, duration: track.duration,
+      items[index] = { ...entry, title: identity.title, artist: identity.artist, duration: track.duration,
         mixingAllowed: s.lib.mixingPolicy.get(track.provider) === true, source,
         analysis: includeAnalysis ? analysis : null, ...(artwork ? { artwork } : {}),
         ...(meta.coverUrl?.startsWith('https:') ? { coverUrl: meta.coverUrl } : {}) };

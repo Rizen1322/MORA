@@ -9,6 +9,7 @@ import { nativeSources } from '../src/native-sources.ts';
 it('hands off the whole known queue rather than just the next two songs, preserving order', async () => {
   const resolve = vi.fn(async (source: { external_id: string }) => ({ kind: 'direct', url: `https://audio.test/${source.external_id}.mp3` }));
   const services = { db: {}, lib: {
+    get: () => null,
     media: (id: string) => ({ id, duration: 180, content_hash: id, provider: 'test', title: id, artist: 'artist', cover_id: null }),
     sources: (id: string) => [{ provider: 'test', kind: 'remote', external_id: id, meta: '{}' }],
     mixingPolicy: new Map([['test', true]]),
@@ -25,6 +26,7 @@ it('rejects malformed queue file keys before querying any provider', async () =>
 
 afterEach(() => { vi.useRealTimers(); });
 const svc = (resolve: (source: { external_id: string }) => Promise<unknown>) => ({ db: {}, lib: {
+  get: () => null,
   media: (id: string) => ({ id, duration: 180, content_hash: id, provider: 'test', title: id, artist: 'artist', cover_id: null }),
   sources: (id: string) => [{ provider: 'test', kind: 'remote', external_id: id, meta: '{}' }],
   mixingPolicy: new Map([['test', true]]),
@@ -70,6 +72,7 @@ it('plays a downloaded Yandex track from disk instead of streaming it again', as
   fs.writeFileSync(path.join(dataDir, 'remote', 'yandex', `${hash}.mp3`), Buffer.alloc(16));
   const resolve = vi.fn(async () => ({ kind: 'direct', url: 'https://audio.test/stream.mp3' }));
   const services = { cfg: { dataDir }, db: {}, lib: {
+    get: () => null,
     media: (id: string) => ({ id, duration: 180, content_hash: hash, provider: 'yandex', title: id, artist: 'artist', cover_id: null }),
     sources: (id: string) => [{ provider: 'yandex', kind: 'remote', external_id: id, meta: '{}' }],
     mixingPolicy: new Map([['yandex', true]]),
@@ -79,4 +82,14 @@ it('plays a downloaded Yandex track from disk instead of streaming it again', as
     expect(manifest.items[0].source).toEqual({ kind: 'upload', trackId: 'track1' });
     expect(resolve).not.toHaveBeenCalled();
   } finally { fs.rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+it('replaces audio while keeping the original title, artist and artwork', async () => {
+  const services = svc(async () => ({ kind: 'direct', url: 'https://audio.test/new.mp3' }));
+  services.lib.get = vi.fn(() => ({ id: 'original', title: 'Original title', artist: 'Original artist', cover_id: null })) as any;
+  services.lib.media = vi.fn(() => ({ id: 'replacement', title: 'Remix title', artist: 'Remixer', provider: 'test', duration: 240, content_hash: 'replacement', cover_id: null })) as any;
+  services.lib.sources = vi.fn((id: string) => [{ kind: 'remote', provider: 'test', external_id: id,
+    meta: JSON.stringify({ coverUrl: id === 'original' ? 'https://covers.test/original.jpg' : 'https://covers.test/remix.jpg' }) }]) as any;
+  const manifest = await nativeSources(services, [{ trackId: 'original', entryId: 'entry', file: 1 }], 'original');
+  expect(manifest.items[0]).toMatchObject({ trackId: 'original', title: 'Original title', artist: 'Original artist', duration: 240, coverUrl: 'https://covers.test/original.jpg', source: { url: 'https://audio.test/new.mp3' } });
 });

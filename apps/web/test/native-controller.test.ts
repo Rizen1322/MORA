@@ -278,3 +278,16 @@ it('adopts native progress beyond a restored partial queue before refreshing its
   }
   expect(prepareQueue).toHaveBeenCalledTimes(2);
 });
+
+it('invalidates changed future recordings without losing the liked queue or its current entry', async () => {
+  const tracks = new Map(['a', 'b'].map(id => [id, { id, title: id, duration: 120, status: 'ok' } as Track]));
+  vi.stubGlobal('window', { moraNativePlayback: { route: 'native', mix: { prepareQueue: vi.fn() } } });
+  const controller = new PlayerController(id => tracks.get(id), vi.fn());
+  controller.state = { ...controller.state, context: { type: 'liked', label: 'Любимое' }, index: 0,
+    queue: [{ entryId: 'current', trackId: 'a', origin: 'context' }, { entryId: 'old-b', trackId: 'b', origin: 'context' }] };
+  controller.onRecordingChanged('b');
+  expect(controller.state.queue[0].entryId).toBe('current');
+  expect(controller.state.queue[1].entryId).not.toBe('old-b');
+  expect(controller.state.queue.map(entry => entry.trackId)).toEqual(['a', 'b']);
+  expect(controller.state.context?.type).toBe('liked');
+});

@@ -184,9 +184,21 @@ final class NativeShellStore: ObservableObject {
 
     /// A command: its own errors reach the listener as the page's toasts.
     func run(_ name: String, _ args: [String: Any] = [:]) {
+        if name == "versions", let id = args["id"] as? String, let track = byId[id] { presentVersions(track); return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         Task { @MainActor in
             do { _ = try await call(name, args, timeout: 60) } catch let error as NativeShellError { show(error.localizedDescription) } catch {}
+        }
+    }
+
+    func presentVersions(_ track: NativeTrack, from parent: UIViewController? = nil) {
+        Task { @MainActor in
+            guard let parent = parent ?? presenter?.presentedViewController ?? presenter, parent.presentedViewController == nil else { return }
+            let controller = UIHostingController(rootView: NativeVersionView(track: track, store: self))
+            controller.modalPresentationStyle = .pageSheet
+            controller.sheetPresentationController?.prefersGrabberVisible = true
+            controller.overrideUserInterfaceStyle = .dark
+            parent.present(controller, animated: true)
         }
     }
 

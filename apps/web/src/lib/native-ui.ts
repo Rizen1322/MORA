@@ -8,6 +8,7 @@ import { react } from '../components/TrackList.tsx';
 import { asCatalog, SOURCE_LABEL } from '../pages/Search.tsx';
 import { useVersionPanel, openVersionPanel } from '../components/VersionPanel.tsx';
 import { actions, describe, type ActResult } from './native-pages.ts';
+import { nativeVersionCommands } from './native-versions.ts';
 
 /**
  * iPhone native shell (ios/App/App/NativeShell.swift). Data path: this page stays the only owner of
@@ -17,11 +18,11 @@ import { actions, describe, type ActResult } from './native-pages.ts';
  * which is the only time native screens can be touched; native keeps the last snapshot meanwhile.
  */
 
-export interface NativeUiTrack { id: string; title: string; artist: string; album: string; duration: number; reaction: number; likedAt?: number; addedAt?: number; cover: string | null; ok: boolean }
+export interface NativeUiTrack { id: string; title: string; artist: string; album: string; duration: number; reaction: number; likedAt?: number; addedAt?: number; cover: string | null; ok: boolean; binding?: string }
 type Wave = 'own' | 'yandex' | 'online';
 
 export const uiTrack = (t: Track): NativeUiTrack => ({
-  id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration, reaction: t.reaction, likedAt: t.likedAt, addedAt: t.addedAt, cover: t.coverUrl, ok: t.status === 'ok',
+  id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration, reaction: t.reaction, likedAt: t.likedAt, addedAt: t.addedAt, cover: t.coverUrl, ok: t.status === 'ok', binding: t.binding?.assetId,
 });
 
 /** Everything but the library and playlists, which are sent only when they change. */
@@ -76,6 +77,7 @@ const source = (v: unknown): PublicSource => {
 
 /** Native → page. Arguments come from our own Swift code, but are still checked: a wrong call must fail, not misplay. */
 export const commands: Record<string, (a: Args) => unknown> = {
+  ...nativeVersionCommands,
   go: (a) => { location.hash = str(a.path) || '/'; },
   back: () => history.back(),
   open: (a) => {

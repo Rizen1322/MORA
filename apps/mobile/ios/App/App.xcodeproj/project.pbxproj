@@ -36,6 +36,7 @@
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
+		F6F0C0DE2FF0000100000001 /* NativeVersions.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6F0C0DE2FF0000100000002 /* NativeVersions.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -70,6 +71,7 @@
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		F6F0C0DE2FF0000100000002 /* NativeVersions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeVersions.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -117,6 +119,7 @@
 				E5F0C0DE2FF0000100000002 /* NativeShellState.swift */,
 				E5F0C0DE2FF0000100000004 /* NativeShell.swift */,
 				E5F0C0DE2FF0000100000006 /* NativeScreens.swift */,
+				F6F0C0DE2FF0000100000002 /* NativeVersions.swift */,
 				E5F0C0DE2FF0000100000008 /* NativePages.swift */,
 				B2F0C0DE2FF0000100000002 /* NativeDSPRenderer.swift */,
 				B2F0C0DE2FF0000100000004 /* NativeMixHost.swift */,
@@ -229,6 +232,7 @@
 				E5F0C0DE2FF0000100000001 /* NativeShellState.swift in Sources */,
 				E5F0C0DE2FF0000100000003 /* NativeShell.swift in Sources */,
 				E5F0C0DE2FF0000100000005 /* NativeScreens.swift in Sources */,
+				F6F0C0DE2FF0000100000001 /* NativeVersions.swift in Sources */,
 				E5F0C0DE2FF0000100000007 /* NativePages.swift in Sources */,
 				B2F0C0DE2FF0000100000001 /* NativeDSPRenderer.swift in Sources */,
 				B2F0C0DE2FF0000100000003 /* NativeMixHost.swift in Sources */,

@@ -96,6 +96,11 @@ final class NativePlayerModel: ObservableObject {
         }
     }
 
+    func versions() {
+        guard let store = NativeShellStore.shared, let track = store.byId[state.trackId] else { return }
+        store.presentVersions(track, from: controller)
+    }
+
     func react(_ value: Int) {
         guard let store = NativeShellStore.shared else { return }
         reaction = reaction == value ? 0 : value
@@ -161,7 +166,12 @@ struct NativePlayerView: View {
                 Text("Сейчас играет").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
                     .accessibilityHidden(true)
                 Spacer()
-                IconButton(symbol: "ellipsis", label: "Ещё") { model.close("more") }
+                Menu {
+                    Button("Другая версия", systemImage: "arrow.triangle.swap") { model.versions() }
+                    Button("Ещё", systemImage: "ellipsis") { model.close("more") }
+                } label: {
+                    Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
+                }.accessibilityLabel("Действия с треком")
             }
             .padding(.horizontal, -10)
             Spacer(minLength: 12)

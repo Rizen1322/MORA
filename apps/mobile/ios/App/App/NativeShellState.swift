@@ -10,6 +10,7 @@ struct NativeTrack: Equatable, Identifiable {
     let likedAt: Double
     let cover: String?
     let ok: Bool
+    let binding: String?
     /// Lowercased, ё → е: what search-as-you-type matches against.
     let key: String
 
@@ -24,6 +25,7 @@ struct NativeTrack: Equatable, Identifiable {
         likedAt = (value["likedAt"] as? NSNumber)?.doubleValue ?? (value["addedAt"] as? NSNumber)?.doubleValue ?? 0
         cover = value["cover"] as? String
         ok = value["ok"] as? Bool ?? true
+        binding = value["binding"] as? String
         key = NativeSearchText.normalize("\(title) \(artist) \(album)")
     }
     var liked: Bool { reaction > 0 }
@@ -321,5 +323,15 @@ struct NativeReactionOutbox {
         guard pending[id] == value else { return }
         pending.removeValue(forKey: id)
         defaults.set(pending, forKey: "mora.pendingReactions")
+    }
+}
+
+
+enum NativePreviewResume {
+    static func allowed(_ current: [String: Any], after paused: [String: Any]) -> Bool {
+        guard let entry = paused["entryId"] as? String, !entry.isEmpty,
+              let revision = paused["controlRevision"] as? Int else { return false }
+        return current["active"] as? Bool == true && current["playing"] as? Bool != true
+            && current["entryId"] as? String == entry && current["controlRevision"] as? Int == revision
     }
 }

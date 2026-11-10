@@ -1971,6 +1971,16 @@ export class PlayerController {
     if (affectsPair) void this.prepareNext();
   }
 
+  onRecordingChanged(trackId: string): void {
+    this.queueRevision++;
+    this.nativeQueueEditRevision++;
+    this.nativeFiles.delete(trackId);
+    this.nativeManifestKey = '';
+    this.set({ queue: this.state.queue.map((entry, index) => index > this.state.index && entry.trackId === trackId ? { ...entry, entryId: uid() } : entry) });
+    if (this.native) void this.nativeSync();
+    else { this.invalidateNext(); void this.prepareNext(); }
+  }
+
   onAnalysisDone(trackId: string): void {
     if (this.native) {
       if (this.nativeTracks.slice(Math.max(0, this.nativeAt)).some(t => t.trackId === trackId)) { this.nativeStale.add(trackId); void this.nativeSync(); }
