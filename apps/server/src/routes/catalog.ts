@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { CatalogSearchType, ReactionValue } from '@automix/core';
+import crypto from 'node:crypto';
 import { isYandexTrackId } from '../providers/yandex-audio.ts';
-import { tx } from '../db.ts';
+import { q, tx } from '../db.ts';
 import type { Services } from '../app.ts';
 import { CatalogError } from '../providers/yandex-catalog.ts';
 
@@ -27,6 +28,18 @@ async function respond(reply: FastifyReply, work: () => Promise<unknown>): Promi
 
 export function registerCatalogRoutes(app: FastifyInstance, services: Services): void {
   const catalog = services.providers.yandex.catalog;
+  app.get('/api/providers/yandex/playlists', async (_req, reply) => respond(reply, async () => ({ playlists: await services.providers.yandex.playlists() })));
+  app.post<{ Params: { kind: string } }>('/api/providers/yandex/playlists/:kind/import', async (req, reply) => respond(reply, async () => {
+    const playlist = await services.providers.yandex.importPlaylist(idOf(req.params.kind));
+    if (!playlist.current()) throw new CatalogError(409, 'Подключение Яндекса изменилось');
+    const id = crypto.randomUUID(), now = Date.now();
+    tx(services.db, () => {
+      q(services.db, 'INSERT INTO playlists(id,name,created_at,updated_at) VALUES(?,?,?,?)').run(id, playlist.name, now, now);
+      playlist.ids.forEach((track, at) => q(services.db, 'INSERT INTO playlist_tracks(playlist_id,track_id,position,added_at) VALUES(?,?,?,?)').run(id, track, at, now));
+    });
+    services.events.emit({ type: 'playlists' }); services.events.emit({ type: 'library', reason: 'yandex-playlist' });
+    return { id, count: playlist.ids.length, unavailable: playlist.unavailable };
+  }));
   app.get('/api/catalog/yandex/home', async (_req, reply) => respond(reply, () => catalog.home()));
   app.get('/api/providers/yandex/reactions/sync', async (_req, reply) => { reply.header('Cache-Control', 'private, no-store'); return services.yandexReactions.stats(); });
   app.post<{ Params: { id: string }; Body: { value?: unknown } }>('/api/catalog/yandex/tracks/:id/reaction', async (req, reply) => respond(reply, async () => {

@@ -317,16 +317,19 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func diagnosticsShare(_ call: CAPPluginCall) {
         guard MoraPlaybackJournal.enabled else { call.reject("Diagnostics disabled"); return }
         diagnosticReport { report in
-            do {
-                let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
-                let url = FileManager.default.temporaryDirectory.appendingPathComponent("MORA-playback-diagnostics.json")
-                try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-                guard let vc = self.bridge?.viewController, vc.presentedViewController == nil else { call.reject("Share unavailable"); return }
-                let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-                sheet.popoverPresentationController?.sourceView = vc.view
-                sheet.popoverPresentationController?.sourceRect = CGRect(x: vc.view.bounds.midX, y: vc.view.bounds.midY, width: 1, height: 1)
-                vc.present(sheet, animated: true) { call.resolve() }
-            } catch { call.reject("Report export failed") }
+            DispatchQueue.global(qos: .utility).async {
+                do {
+                    let url = try NativeDiagnosticArchive.make(report: report, metrics: NativeMetrics.folder)
+                    DispatchQueue.main.async {
+                        guard let vc = self.bridge?.viewController, vc.presentedViewController == nil else { try? FileManager.default.removeItem(at: url); call.reject("Не удалось открыть экспорт"); return }
+                        let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                        sheet.completionWithItemsHandler = { _, _, _, _ in try? FileManager.default.removeItem(at: url) }
+                        sheet.popoverPresentationController?.sourceView = vc.view
+                        sheet.popoverPresentationController?.sourceRect = CGRect(x: vc.view.bounds.midX, y: vc.view.bounds.midY, width: 1, height: 1)
+                        vc.present(sheet, animated: true) { call.resolve() }
+                    }
+                } catch { call.reject("Не удалось создать архив диагностики: \(error.localizedDescription)") }
+            }
         }
     }
     @objc func diagnosticsTest(_ call: CAPPluginCall) {

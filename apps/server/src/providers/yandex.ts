@@ -18,7 +18,7 @@ export interface YandexWaveSetting {
 const CAPS: Capabilities = {
   search: true,
   library: true,
-  playlists: false,
+  playlists: true,
   recommendations: true,
   playback: true,
   seek: true,
@@ -237,7 +237,7 @@ export class YandexProvider implements Provider {
       },
       body: body ? (form ? new URLSearchParams(body as Record<string, string>).toString() : JSON.stringify(body)) : undefined,
     });
-    if (r.status === 401 || r.status === 403) throw new Error('токен не принят');
+    if (r.status === 401 || r.status === 403) throw new Error('Токен не принят. Подключите Яндекс Музыку заново');
     if (!r.body || r.body.error || r.status >= 400) throw new Error(`Яндекс Музыка не выполнила запрос (HTTP ${r.status})`);
     return r.body.result;
   }
@@ -392,6 +392,50 @@ export class YandexProvider implements Provider {
     return ids.flatMap((id) => { const t = byId.get(id.split(':')[0]); return t ? [this.item(t, m)] : []; });
   }
 
+  async playlists(): Promise<{ kind: string; name: string; count: number }[]> {
+    const session = this.reactionSession();
+    if (!session) throw Error('Подключите Яндекс Музыку');
+    const uid = await session.account();
+    const rows = await this.call<{ kind: string | number; title: string; trackCount: number }[]>('GET', `/users/${uid}/playlists/list`);
+    if (!session.current()) throw Error('Подключение Яндекса изменилось');
+    if (!Array.isArray(rows) || rows.length > 1000) throw Error('Яндекс не вернул список плейлистов');
+    return rows.filter(row => /^\d{1,24}$/.test(String(row.kind)) && typeof row.title === 'string')
+      .map(row => ({ kind: String(row.kind), name: row.title.slice(0, 120), count: Math.max(0, Number(row.trackCount) || 0) }));
+  }
+  async importPlaylist(kind: string): Promise<{ name: string; ids: string[]; unavailable: number; current: () => boolean }> {
+    if (!/^\d{1,24}$/.test(kind)) throw Error('Некорректный ID плейлиста');
+    const session = this.reactionSession();
+    if (!session) throw Error('Подключите Яндекс Музыку');
+    const token = this.token()!, uid = await session.account();
+    const playlist = await this.call<{ title?: string; trackCount?: number; tracks?: { id: string | number; albumId?: string | number }[] }>('GET', `/users/${uid}/playlists/${kind}`, undefined, token);
+    if (!session.current()) throw Error('Подключение Яндекса изменилось');
+    if (!Array.isArray(playlist.tracks) || playlist.tracks.length > 10000 || (playlist.trackCount !== undefined && playlist.trackCount !== playlist.tracks.length)) throw Error('Состав плейлиста не получен целиком. Импорт не начат');
+    const externalIds = playlist.tracks.map(row => this.checkedId(row.albumId ? `${row.id}:${row.albumId}` : String(row.id)));
+    const details = new Map<string, YTrack>();
+    const unique = [...new Set(externalIds)];
+    for (let at = 0; at < unique.length; at += 100) {
+      const batch = await this.call<YTrack[]>('POST', '/tracks', { 'track-ids': unique.slice(at, at + 100).join(',') }, token, true);
+      if (!session.current()) throw Error('Подключение Яндекса изменилось');
+      if (!Array.isArray(batch)) throw Error('Яндекс не вернул сведения о треках');
+      for (const track of batch) details.set(String(track.id).split(':')[0], track);
+    }
+    const imported = new Map<string, string>(); let unavailable = 0;
+    for (const id of unique) {
+      if (!session.current()) throw Error('Подключение Яндекса изменилось');
+      const track = details.get(id.split(':')[0]);
+      if (track && (track.available !== false || track.availableForPremiumUsers === true) && (track.durationMs ?? 0) > 0) {
+        imported.set(id, await this.saveTrack(track, id.split(':')[1], true));
+      } else {
+        const existing = this.lib.tracksBySource(this.id, id)[0];
+        const row = existing ?? this.lib.addRemote({ provider: this.id, externalId: id, title: track?.title ?? 'Недоступный трек', artist: track?.artists?.map(a => a.name).join(', ') ?? '', duration: Math.max(0, (track?.durationMs ?? 0) / 1000), meta: {} });
+        if (!existing) this.lib.setStatus(row.id, 'missing', 'Трек недоступен в этом аккаунте Яндекса');
+        imported.set(id, row.id); unavailable++;
+      }
+      this.lib.setSaved(imported.get(id)!, true);
+    }
+    return { name: playlist.title?.trim().slice(0, 120) || 'Плейлист Яндекса', ids: externalIds.map(id => imported.get(id)!), unavailable, current: session.current };
+  }
+
   /** The likes endpoint returns the library snapshot, not a 60-track recommendation page. */
   async likeIds(): Promise<{ key: string; ids: string[] }> {
     const session = this.reactionSession();
@@ -489,15 +533,15 @@ export class YandexProvider implements Provider {
     return this.saveTrack(track, id.split(':')[1]);
   }
 
-  private async saveTrack(track: YTrack, requestedAlbumId?: string): Promise<string> {
+  private async saveTrack(track: YTrack, requestedAlbumId?: string, metadataOnly = this.metadataOnlyImport): Promise<string> {
     const album = requestedAlbumId ? track.albums?.find((candidate) => String(candidate.id) === requestedAlbumId) : track.albums?.[0];
     const ext = this.external(track, requestedAlbumId);
     if (!ext.playable || !(ext.duration > 0)) throw new Error('Этот трек недоступен вашему аккаунту');
     const canonicalId = this.checkedId(ext.externalId);
     const canonical = this.lib.tracksBySource(this.id, canonicalId).find((t) => t.provider === this.id);
     if (canonical) return canonical.id;
-    const media = this.metadataOnlyImport ? null : await this.audio.prepare(canonicalId, ext.duration);
-    const cover = !this.metadataOnlyImport && ext.coverUrl ? await this.audio.cover(ext.coverUrl) : null;
+    const media = metadataOnly ? null : await this.audio.prepare(canonicalId, ext.duration);
+    const cover = !metadataOnly && ext.coverUrl ? await this.audio.cover(ext.coverUrl) : null;
     const coverId = cover ? await this.lib.saveCover(cover.data, cover.type) : null;
     return this.lib.addRemote({ provider: this.id, externalId: canonicalId, title: ext.title, artist: ext.artist, album: ext.album,
       duration: media?.probe.duration ?? ext.duration, year: album?.year ?? null, genre: album?.genre ?? '',

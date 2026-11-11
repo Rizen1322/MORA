@@ -95,6 +95,8 @@ jobs:
           "$RUNNER_TEMP/mora-download-queue-check"
           swiftc apps/mobile/ios/App/App/NativeBackupStore.swift apps/mobile/test/native-backup/main.swift -o "$RUNNER_TEMP/mora-backup-check"
           "$RUNNER_TEMP/mora-backup-check"
+          swiftc apps/mobile/ios/App/App/NativeDiagnosticArchive.swift apps/mobile/test/native-diagnostic-archive/main.swift -o "$RUNNER_TEMP/mora-diagnostics-check"
+          "$RUNNER_TEMP/mora-diagnostics-check"
       - name: Build unsigned device IPA
         env:
           MORA_CARPLAY: ${{ inputs.carplay && '1' || '0' }}

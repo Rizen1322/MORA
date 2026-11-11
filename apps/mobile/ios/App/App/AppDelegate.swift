@@ -12,6 +12,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // activating it here silenced other apps' music at launch.
         NativeMixAnalysis.compiled = (NativeRustAnalysis.version, NativeRustAnalysis.analyze)
         _ = NativeDownloadManager.shared
+        _ = NativeMetrics.shared
         application.shortcutItems = [
             UIApplicationShortcutItem(type: "mora.wave", localizedTitle: "Волна", localizedSubtitle: nil, icon: UIApplicationShortcutIcon(systemImageName: "waveform")),
             UIApplicationShortcutItem(type: "mora.search", localizedTitle: "Поиск", localizedSubtitle: nil, icon: UIApplicationShortcutIcon(systemImageName: "magnifyingglass")),

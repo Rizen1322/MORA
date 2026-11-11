@@ -14,7 +14,7 @@ import { likeLibraryTrack } from '../components/LikeAll.tsx';
 import { react as reactTrack } from '../components/TrackList.tsx';
 import { openVersionPanel } from '../components/VersionPanel.tsx';
 import { sortTracks } from '../pages/Library.tsx';
-import { nativePlaybackControls } from './playback-trace.ts';
+import { nativePlaybackControls, playbackDiagnostics } from './playback-trace.ts';
 
 /**
  * Native pages of the iPhone shell (NativePages.swift): the page describes a screen as sections of
@@ -430,6 +430,7 @@ async function sources(): Promise<Screen> {
     if (likesJob !== undefined) sections.push({ title: 'Любимое из Яндекса', rows: yandexLikes(likesJob) });
   }
   if (isConnected && p.capabilities.search) sections.push({ title: 'Поиск в Яндексе', rows: providerBrowser(p) });
+  if (isConnected) sections.push({ rows: [{ kind: 'link', title: 'Мои плейлисты Яндекса', symbol: 'music.note.list', path: '/yandex-playlists' }] });
   if (isConnected && p.configFields.length) sections.push({ rows: [button('Отключить аккаунт', 'disconnectSource', { id: p.id }, { style: 'destructive' })] });
   return { title: 'Яндекс Музыка', refresh: likesJob && ['running', 'listing'].includes(likesJob.state) ? 2 : undefined, sections };
 }
@@ -548,6 +549,7 @@ async function settings(): Promise<Screen> {
   );
   if (health && showAdvanced) sections.push({ title: 'Служебные сведения', rows: [
     text('Декодер', health.ffmpeg ?? 'ffmpeg не найден', health.ffmpeg ? 'Готов' : 'Нет', health.ffmpeg ? 'ok' : 'warn'),
+    button('Экспорт диагностики (ZIP)', 'exportDiagnostics', {}, { symbol: 'square.and.arrow.up', disabled: !playbackDiagnostics() }),
     text('Анализ звука', `Анализатор ${health.analyzer}, планировщик ${health.planner}, потоков ${health.analysis.workers}.`, `в работе ${health.analysis.running} · в очереди ${health.analysis.queued}`),
     text('Кэш звука', `${mbRaw(health.pcmCacheBytes)} из ${mbRaw(health.pcmCacheLimit)}${health.pcmCacheProtectedBytes ? `, сейчас используется ${mbRaw(health.pcmCacheProtectedBytes)}` : ''}. Старое удаляется само; текущий и следующий трек сохраняются.`),
     button('Очистить кэш звука', 'clearCache', {}, { confirm: { title: 'Очистить кэш звука?', text: 'Декодированный звук и сохранённые планы переходов будут удалены и созданы заново при воспроизведении. Медиатека, анализ и история не затрагиваются.', button: 'Очистить' } }),
@@ -670,6 +672,12 @@ async function backups(): Promise<Screen> {
     ...(backup ? [{ rows: [text(backup.name, 'Настройки, плейлисты, лайки и история будут восстановлены.'), button('Восстановить', 'restoreBackup', {}, { style: 'primary' }), button('Отмена', 'cancelBackup')] }] : [])] };
 }
 
+async function yandexPlaylists(): Promise<Screen> {
+  const { playlists } = await api.yandexPlaylists();
+  return { title: 'Плейлисты Яндекса', sections: [{ footer: 'Импортируется состав плейлиста. Звук скачивается отдельно. Места недоступных треков сохраняются.', rows: playlists.length ? playlists.map(playlist =>
+    button(`${playlist.name} · ${tracksWord(playlist.count)}`, 'importYandexPlaylist', { kind: playlist.kind }, { symbol: 'square.and.arrow.down' })) : [text('Плейлистов пока нет')] }] };
+}
+
 /** The native page for a hash route, or null when it stays web (NativeRoute in NativeShellState.swift lists the same routes). */
 export function describe(): Promise<Screen> | Screen | null {
   const { parts } = route();
@@ -693,6 +701,7 @@ export function describe(): Promise<Screen> | Screen | null {
       case 'smart-playlists': return smartPlaylists();
       case 'duplicates': return duplicates();
       case 'statistics': return statistics();
+      case 'yandex-playlists': return yandexPlaylists();
       case 'diagnostics': return diagnostics();
       case 'sound': return sound();
     }
@@ -710,6 +719,17 @@ const SETTING_GROUPS = ['automix', 'wave', 'ui', 'downloads', 'yandex'] as const
 async function importBody(body: Parameters<typeof api.startImport>[0]) { importJob = await api.startImport(body); }
 
 export const actions: Record<string, (a: Args) => unknown> = {
+  importYandexPlaylist: async (a): Promise<ActResult> => {
+    const result = await api.importYandexPlaylist(str(a.kind));
+    await st().loadLibrary(); await st().loadPlaylists();
+    st().toast(`Импортировано: ${result.count}${result.unavailable ? `. Недоступно: ${result.unavailable}; места сохранены` : ''}`);
+    return { go: `/playlist/${result.id}` };
+  },
+  exportDiagnostics: async () => {
+    const diagnostics = playbackDiagnostics();
+    if (!diagnostics) throw Error('Диагностика в этой сборке недоступна');
+    await diagnostics.share();
+  },
   saveSmartPlaylist: async (a): Promise<ActResult> => {
     const values = { ...(a.defaults as Record<string, string> ?? {}), ...form(a) };
     const rules: Record<string, unknown> = {};
