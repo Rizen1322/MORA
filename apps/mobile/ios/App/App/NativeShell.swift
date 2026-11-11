@@ -171,7 +171,7 @@ extension MoraRootViewController {
             _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__waveOriginal;0")
             report["waveLink"] = "mora://wave?source=yandex reached the wave command"
             try await wait { self.shell.sharedLibrary }
-            _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='page'&&/^#\\/(settings|downloads)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(location.hash);throw Error('Native screen requested a page description');}return window.__nativePagesOriginal(n,a);};0")
+            _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='backup'||n==='page'&&/^#\\/(settings|downloads|sound|backups)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(n+':'+location.hash);throw Error('Native screen requested the page');}return window.__nativePagesOriginal(n,a);};0")
             let originalSettings = try await NativeServerApp.request("GET", "/api/settings")
             let originalAutomix = (originalSettings["automix"] as? [String: Any])?["enabled"] as? Bool ?? true
             do {
@@ -194,8 +194,20 @@ extension MoraRootViewController {
             try await wait { self.shell.ui.path == "/downloads" }
             try await Task.sleep(for: .seconds(2))
             try capture("native-downloads")
+            shell.go("/sound")
+            try await wait { self.shell.ui.path == "/sound" && self.shell.nativeContentVisible }
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-sound")
+            report["sound"] = "SwiftUI EQ and preset controls rendered without a page description"
+            shell.captureBackup()
+            try await wait { (try? NativeBackupStore.files().isEmpty) == false }
+            shell.go("/backups")
+            try await wait { self.shell.ui.path == "/backups" && self.shell.nativeContentVisible }
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-backups")
+            report["backups"] = "Automatic backup captured through the native server; SwiftUI backups rendered without page calls"
             let pageCalls = try await web.evaluateJavaScript("window.__nativePageCalls.length") as? Int ?? -1
-            try require(pageCalls == 0, "Settings/downloads depended on a page description")
+            try require(pageCalls == 0, "Native screens/backups depended on the page")
             NativeDownloadManager.shared.removeVisualFixture(downloadFixture)
             _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__nativePagesOriginal;0")
             report["downloads"] = "SwiftUI downloads rendered with an in-memory native progress fixture, without a page description"
@@ -409,14 +421,21 @@ final class NativeShellStore: ObservableObject {
     func remapReactions(_ mapping: [String: String]) { reactions.remap(mapping); flushReactions() }
 
     func captureBackup() {
-        guard ui.loaded, !backingUp, revision != backupRevision else { return }
+        guard (sharedLibrary || ui.loaded), !backingUp, sharedLibrary || revision != backupRevision else { return }
         backingUp = true
         let revision = self.revision
         Task { @MainActor in
             let lease = UIApplication.shared.beginBackgroundTask(withName: "MORA backup", expirationHandler: nil)
             defer { self.backingUp = false; if lease != .invalid { UIApplication.shared.endBackgroundTask(lease) } }
             do {
-                guard let text = try await self.call("backup", timeout: 15) as? String else { throw CocoaError(.fileReadCorruptFile) }
+                let text: String
+                if self.sharedLibrary {
+                    let backup = try await NativeServerApp.request("GET", "/api/backup/playlists?library=1")
+                    text = String(decoding: try JSONSerialization.data(withJSONObject: backup), as: UTF8.self)
+                } else {
+                    guard let snapshot = try await self.call("backup", timeout: 15) as? String else { throw CocoaError(.fileReadCorruptFile) }
+                    text = snapshot
+                }
                 try await Task.detached(priority: .utility) {
                     _ = try NativeBackupStore.save(text)
                     #if MORA_ICLOUD
@@ -954,6 +973,8 @@ struct NativeShellContent: View {
             case .page:
                 if store.sharedLibrary && store.path == "/settings" { NativeSettingsView() }
                 else if store.sharedLibrary && store.path == "/downloads" { NavigationStack { NativeDownloadsView() } }
+                else if store.sharedLibrary && store.path == "/sound" { NativeSoundView() }
+                else if store.sharedLibrary && store.path == "/backups" { NativeBackupsView() }
                 else { NativePageView() }
             case .web: Color.clear
             }

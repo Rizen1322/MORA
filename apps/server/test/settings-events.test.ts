@@ -21,3 +21,23 @@ it('notifies other clients only after settings are accepted and saved', async ()
     expect(saved).toEqual([false]);
   } finally { off(); await app.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+it('merges partial native EQ edits without resetting other tone or playback settings', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mora-native-eq-'));
+  const app = await createApp({ dataDir: dir, port: 0, stemsPython: null, accessToken: null }, { startWorkers: false });
+  const put = (payload: Record<string, unknown>) => app.app.inject({ method: 'PUT', url: '/api/settings', payload });
+  try {
+    const initial = (await app.app.inject('/api/settings')).json();
+    const sound = { ...initial.sound, tone: { ...initial.sound.tone, enabled: true, balance: .25, mono: true, reverbMix: .2 },
+      playback: { speed: .9, semitones: 2 }, presets: [{ name: 'Saved', gains: Array(10).fill(1) }] };
+    expect((await put({ sound })).statusCode).toBe(200);
+    const off = await put({ sound: { tone: { enabled: false } } });
+    expect(off.statusCode).toBe(200);
+    expect(off.json().sound).toMatchObject({ ...sound, tone: { ...sound.tone, enabled: false } });
+    const gains = Array(10).fill(0); gains[2] = 3.5;
+    const eq = await put({ sound: { tone: { gains } } });
+    expect(eq.statusCode).toBe(200);
+    expect(eq.json().sound).toMatchObject({ ...sound, tone: { ...sound.tone, enabled: false, gains } });
+    expect((await app.app.inject('/api/settings')).json().sound.tone.gains).toEqual(gains);
+  } finally { await app.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});

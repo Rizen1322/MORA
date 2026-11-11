@@ -89,6 +89,12 @@ jobs:
           "$RUNNER_TEMP/mora-settings-check"
           swiftc apps/mobile/ios/App/App/NativeShellState.swift apps/mobile/ios/App/App/NativeDownloadsState.swift apps/mobile/test/native-downloads/main.swift -o "$RUNNER_TEMP/mora-downloads-check"
           "$RUNNER_TEMP/mora-downloads-check"
+      - name: Test native sound and backup files
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeSoundState.swift apps/mobile/test/native-sound/main.swift -o "$RUNNER_TEMP/mora-sound-check"
+          "$RUNNER_TEMP/mora-sound-check"
+          swiftc apps/mobile/ios/App/App/NativeBackupStore.swift apps/mobile/ios/App/App/NativeSettingsState.swift apps/mobile/ios/App/App/NativeBackupFiles.swift apps/mobile/test/native-backups/main.swift -o "$RUNNER_TEMP/mora-backups-check"
+          "$RUNNER_TEMP/mora-backups-check"
       - name: Test native wave links and widget compatibility
         run: |
           swiftc apps/mobile/ios/App/App/NativeWaveLink.swift apps/mobile/test/native-wave-link/main.swift -o "$RUNNER_TEMP/mora-wave-link-check"

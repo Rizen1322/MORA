@@ -2,6 +2,7 @@ import Foundation
 import CryptoKit
 
 enum NativeBackupStore {
+    static let maximumBytes = 16 * 1024 * 1024
     private static let lock = NSLock()
     static var folder: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("backup", isDirectory: true) }
 
@@ -12,7 +13,7 @@ enum NativeBackupStore {
     }
     private static func validated(_ text: String) throws -> (Data, Data) {
         let data = Data(text.utf8)
-        guard data.count <= 16 * 1024 * 1024,
+        guard data.count <= maximumBytes,
               var object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               object["format"] as? String == "mora-playlists", object["version"] as? Int == 1,
               object["tracks"] is [Any], object["playlists"] is [Any] else { throw CocoaError(.fileReadCorruptFile) }
@@ -48,9 +49,21 @@ enum NativeBackupStore {
               !name.contains("/"), !name.contains("\\") else { throw CocoaError(.fileReadInvalidFileName) }
         let file = root.appendingPathComponent(name).resolvingSymlinksInPath()
         guard file.deletingLastPathComponent() == root.resolvingSymlinksInPath() else { throw CocoaError(.fileReadInvalidFileName) }
-        let text = try String(contentsOf: file, encoding: .utf8)
+        let data = try readData(file)
+        guard let text = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadCorruptFile) }
         _ = try validated(text)
         return text
+    }
+    static func readData(_ file: URL) throws -> Data {
+        let values = try file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true, let size = values.fileSize else { throw CocoaError(.fileReadCorruptFile) }
+        let oversized = NSError(domain: "MORABackup", code: 2, userInfo: [NSLocalizedDescriptionKey: "Файл больше 16 МБ"])
+        guard size <= maximumBytes else { throw oversized }
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: maximumBytes + 1) ?? Data()
+        guard data.count <= maximumBytes else { throw oversized }
+        return data
     }
     #if MORA_ICLOUD
     static func cloudFolder() throws -> URL {

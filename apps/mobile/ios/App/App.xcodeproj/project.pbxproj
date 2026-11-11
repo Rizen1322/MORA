@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		FBF0C0DE2FF0000100000046 /* NativeBackupsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000047 /* NativeBackupsView.swift */; };
+		FBF0C0DE2FF0000100000044 /* NativeBackupFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000045 /* NativeBackupFiles.swift */; };
+		FBF0C0DE2FF0000100000042 /* NativeSoundView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000043 /* NativeSoundView.swift */; };
+		FBF0C0DE2FF0000100000040 /* NativeSoundState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000041 /* NativeSoundState.swift */; };
 		FBF0C0DE2FF0000100000036 /* NativeDownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000037 /* NativeDownloadsView.swift */; };
 		FBF0C0DE2FF0000100000034 /* NativeDownloadsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000035 /* NativeDownloadsState.swift */; };
 		FBF0C0DE2FF0000100000032 /* NativeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000033 /* NativeSettingsView.swift */; };
@@ -65,6 +69,10 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		FBF0C0DE2FF0000100000047 /* NativeBackupsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBackupsView.swift; sourceTree = "<group>"; };
+		FBF0C0DE2FF0000100000045 /* NativeBackupFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBackupFiles.swift; sourceTree = "<group>"; };
+		FBF0C0DE2FF0000100000043 /* NativeSoundView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSoundView.swift; sourceTree = "<group>"; };
+		FBF0C0DE2FF0000100000041 /* NativeSoundState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSoundState.swift; sourceTree = "<group>"; };
 		FBF0C0DE2FF0000100000037 /* NativeDownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDownloadsView.swift; sourceTree = "<group>"; };
 		FBF0C0DE2FF0000100000035 /* NativeDownloadsState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDownloadsState.swift; sourceTree = "<group>"; };
 		FBF0C0DE2FF0000100000033 /* NativeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSettingsView.swift; sourceTree = "<group>"; };
@@ -324,6 +332,10 @@
 				FBF0C0DE2FF0000100000005 /* NativePlaybackHooks.swift */,
 				FBF0C0DE2FF0000100000021 /* NativeServer.swift */,
 				FBF0C0DE2FF0000100000025 /* NativeLibraryStore.swift */,
+				FBF0C0DE2FF0000100000047 /* NativeBackupsView.swift */,
+				FBF0C0DE2FF0000100000045 /* NativeBackupFiles.swift */,
+				FBF0C0DE2FF0000100000043 /* NativeSoundView.swift */,
+				FBF0C0DE2FF0000100000041 /* NativeSoundState.swift */,
 				FBF0C0DE2FF0000100000037 /* NativeDownloadsView.swift */,
 				FBF0C0DE2FF0000100000035 /* NativeDownloadsState.swift */,
 				FBF0C0DE2FF0000100000033 /* NativeSettingsView.swift */,
@@ -468,6 +480,10 @@
 				FBF0C0DE2FF0000100000004 /* NativePlaybackHooks.swift in Sources */,
 				FBF0C0DE2FF0000100000020 /* NativeServer.swift in Sources */,
 				FBF0C0DE2FF0000100000024 /* NativeLibraryStore.swift in Sources */,
+				FBF0C0DE2FF0000100000046 /* NativeBackupsView.swift in Sources */,
+				FBF0C0DE2FF0000100000044 /* NativeBackupFiles.swift in Sources */,
+				FBF0C0DE2FF0000100000042 /* NativeSoundView.swift in Sources */,
+				FBF0C0DE2FF0000100000040 /* NativeSoundState.swift in Sources */,
 				FBF0C0DE2FF0000100000036 /* NativeDownloadsView.swift in Sources */,
 				FBF0C0DE2FF0000100000034 /* NativeDownloadsState.swift in Sources */,
 				FBF0C0DE2FF0000100000032 /* NativeSettingsView.swift in Sources */,

@@ -108,7 +108,8 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
       ui: { showDiagnostics: b.ui?.showDiagnostics ?? cur.ui.showDiagnostics,
         motion: b.ui?.motion === 'full' || b.ui?.motion === 'reduced' || b.ui?.motion === 'system' ? b.ui.motion : cur.ui.motion ?? 'system',
         graphics: b.ui?.graphics === 'canvas' || b.ui?.graphics === 'auto' ? b.ui.graphics : cur.ui.graphics ?? 'auto' },
-      sound: b.sound ? sanitizeSound({ ...cur.sound, ...b.sound }) : cur.sound,
+      sound: b.sound ? sanitizeSound({ ...cur.sound, ...b.sound,
+        tone: b.sound.tone ? { ...cur.sound.tone, ...b.sound.tone } : cur.sound.tone }) : cur.sound,
       yandex: {
         syncLikes: !!y.syncLikes,
         syncDislikes: !!y.syncDislikes,

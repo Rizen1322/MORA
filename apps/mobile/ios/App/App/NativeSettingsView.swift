@@ -250,15 +250,8 @@ struct NativeSettingsView: View {
     private func exportBackup(library: Bool) {
         perform {
             let raw = try await NativeServerApp.request("GET", "/api/backup/playlists" + (library ? "?library=1" : ""))
-            let data = try JSONSerialization.data(withJSONObject: raw, options: [.prettyPrinted, .sortedKeys])
-            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("MORA-backup-\(UUID().uuidString)", isDirectory: true)
-            let url = folder.appendingPathComponent(library ? "MORA-library.json" : "MORA-playlists.json")
-            try await Task.detached(priority: .utility) {
-                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                do { try data.write(to: url, options: .atomic) }
-                catch { try? FileManager.default.removeItem(at: folder); throw error }
-            }.value
-            shareCleanup = folder; share = NativeSettingsShareItem(url: url)
+            let file = try await Task.detached(priority: .utility) { try NativeBackupFiles.prepareShare(raw, library: library) }.value
+            shareCleanup = file.folder; share = NativeSettingsShareItem(url: file.url)
         }
     }
     private func inspectBackup(_ result: Result<[URL], Error>) {
@@ -267,14 +260,9 @@ struct NativeSettingsView: View {
             if (error as NSError).code != NSUserCancelledError { failure = error.localizedDescription }
         case .success(let urls):
             guard let url = urls.first else { return }
+            backup = nil
             perform {
-                let data = try await Task.detached(priority: .userInitiated) {
-                    let scoped = url.startAccessingSecurityScopedResource()
-                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                    let file = try FileHandle(forReadingFrom: url)
-                    defer { try? file.close() }
-                    return try file.read(upToCount: 16 * 1024 * 1024 + 1) ?? Data()
-                }.value
+                let data = try await Task.detached(priority: .userInitiated) { try NativeBackupFiles.read(url) }.value
                 backup = try NativeSettingsBackup(data: data, name: url.lastPathComponent)
             }
         }
@@ -284,13 +272,14 @@ struct NativeSettingsView: View {
         perform {
             let result = try await NativeServerApp.request("POST", "/api/backup/playlists/restore", body: backup.raw)
             self.backup = nil
-            let missing = integer(result["missingFiles"])
-            message = "Восстановлено плейлистов: \(integer(result["playlists"]))." + (missing > 0 ? " Не найдено локальных файлов: \(missing). Их места в плейлистах сохранены." : "")
-            let raw = try await NativeServerApp.request("GET", "/api/settings")
-            let saved = try NativeSettingsState(raw)
-            settings = saved; confirmed = saved
-            NativeDownloadManager.shared.setWiFiOnly(saved.bool("downloads", "wifiOnly", fallback: false))
+            message = NativeBackupFiles.restoreMessage(result)
             store.refreshLibrary()
+            do {
+                let raw = try await NativeServerApp.request("GET", "/api/settings")
+                let saved = try NativeSettingsState(raw)
+                settings = saved; confirmed = saved
+                NativeDownloadManager.shared.setWiFiOnly(saved.bool("downloads", "wifiOnly", fallback: false))
+            } catch { failure = "Копия восстановлена, но настройки не удалось обновить: \(error.localizedDescription)" }
         }
     }
     private func exportDiagnostics() {
