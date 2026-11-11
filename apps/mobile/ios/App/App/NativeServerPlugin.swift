@@ -17,6 +17,11 @@ enum NativeServerApp {
     static var booted: Bool { FileManager.default.fileExists(atPath: bootedMarker.path) }
     private(set) static var shared: NativeServer?
 
+    static func request(_ method: String, _ path: String, body: [String: Any]? = nil) async throws -> [String: Any] {
+        guard let shared else { throw NativeServer.RequestFailure(message: "Медиатека ещё загружается") }
+        return try await shared.request(method, path, body: body)
+    }
+
     static func start(onMessage: @escaping ([String: Any]) -> Void) throws {
         let handler: ([String: Any]) -> Void = { message in
             if message["t"] as? String == "ready", !booted { FileManager.default.createFile(atPath: bootedMarker.path, contents: nil) }

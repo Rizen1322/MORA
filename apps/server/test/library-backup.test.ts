@@ -24,8 +24,12 @@ it('round trips settings, reactions and history without credentials, and restore
   expect(backup.json().tracks).toHaveLength(1);
   q(db, 'DELETE FROM reactions').run(); q(db, 'DELETE FROM plays').run();
   const restore = () => app.app.inject({ method: 'POST', url: '/api/backup/playlists/restore', payload: backup.json() });
+  const settingsChanged: string[] = [];
+  const off = app.services.events.on(event => { if (event.type === 'settings') settingsChanged.push(event.type); });
   expect((await restore()).statusCode).toBe(200);
   expect((await restore()).statusCode).toBe(200);
+  off();
+  expect(settingsChanged).toHaveLength(2);
   expect(q(db, 'SELECT value FROM reactions WHERE track_id=?').get(t.id)).toMatchObject({ value: 1 });
   expect(q(db, 'SELECT COUNT(*) AS n FROM plays').get()).toMatchObject({ n: 1 });
   expect(q(db, 'SELECT COUNT(*) AS n FROM smart_playlists').get()).toMatchObject({ n: 2 });

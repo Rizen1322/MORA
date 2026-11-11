@@ -6,6 +6,7 @@ export type ServerEvent =
   | { type: 'analysis'; trackId: string | null; hash: string; status: string; progress?: number; error?: string;asset?:'vocals';revision?:string }
   | { type: 'import'; jobId: string; done: number; total: number; current?: string; errors: number; finished?: boolean }
   | { type: 'providers' }
+  | { type: 'settings' }
   | { type: 'playlists' }
   | { type: 'transition-recipe'; playlistId: string }
   | { type: 'download'; job: { id: string; key: string; title: string; state: string; progress: number; error: string | null; trackId: string | null } };

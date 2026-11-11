@@ -62,6 +62,7 @@ let toastId = 0;
 let toneTimer: ReturnType<typeof setTimeout> | null = null;
 let playbackTimer: ReturnType<typeof setTimeout> | null = null;
 let settingsRevision = 0;
+let settingsLoadRevision = 0;
 let settingsSaves: Promise<unknown> = Promise.resolve();
 
 export const useApp = create<AppState>((set, get) => ({
@@ -106,14 +107,20 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
   loadSettings: async () => {
+    const request = ++settingsLoadRevision;
     try {
+      await settingsSaves.catch(() => {});
+      const revision = settingsRevision;
       const s = await api.settings();
       const audio = (await desktop?.getSettings().catch(() => null))?.audio;
       if (audio?.tone) s.sound.tone = audio.tone;
       if (audio?.playback) s.sound.playback = audio.playback;
       if (audio) controller.outputDevice = audio.outputDevice;
+      if (revision !== settingsRevision || request !== settingsLoadRevision) return;
+      const changed = get().settings !== null && JSON.stringify(get().settings?.automix) !== JSON.stringify(s.automix);
       set({ settings: s });
-      controller.setLoudnessTarget(s.automix.loudnessTarget);
+      if (changed) controller.onSettingsChanged(s.automix.loudnessTarget);
+      else controller.setLoudnessTarget(s.automix.loudnessTarget);
       controller.instantNext = s.automix.mixOnNext === false;
       controller.setTone(s.sound.tone);
       controller.setPlayback(s.sound.playback);
@@ -221,6 +228,7 @@ export function connectEvents(): () => void {
   const open = () => {
     es = new EventSource('/api/events');
     es.onopen = () => {
+      void useApp.getState().loadSettings(); // Native screens may have saved while WebContent was suspended.
       const reconnect=!useApp.getState().serverOnline;
       useApp.setState({serverOnline:true});
       if(reconnect)void useApp.getState().loadLibrary().then(()=>{
@@ -233,6 +241,7 @@ export function connectEvents(): () => void {
       const e = JSON.parse(m.data);
       const st = useApp.getState();
       if (e.type === 'library') reloadLib();
+      else if (e.type === 'settings') void st.loadSettings();
       else if(e.type==='lyrics'&&typeof e.trackId==='string'&&typeof e.hash==='string')useApp.setState({lyricsReady:{trackId:e.trackId,hash:e.hash}});
       else if (e.type === 'download') {
         useDownloads.getState().upsert(e.job);

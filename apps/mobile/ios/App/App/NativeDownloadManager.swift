@@ -14,6 +14,9 @@ import Network
     private var lastSave = Date.distantPast
     private var limitBytes: Int64 = 512 * 1024 * 1024
     private var completion: (() -> Void)?
+    #if DEBUG
+    private var visualFixtureId: String?
+    #endif
     private let network = NWPathMonitor()
     private var wifi = false
     private var wifiOnly: Bool { UserDefaults.standard.bool(forKey: "mora.downloads.wifiOnly") }
@@ -67,6 +70,22 @@ import Network
     }
 
     func handleEvents(_ handler: @escaping () -> Void) { completion = handler; _ = session }
+    func hasTask(_ id: String) -> Bool { tasks[id] != nil }
+    #if DEBUG
+    func installVisualFixture() -> String {
+        if let id = visualFixtureId { removeVisualFixture(id) }
+        var job = NativeDownloadJob(trackId: "native-download-fixture", title: "Проверка загрузки", artist: "", album: "", duration: 180, expectedBytes: 10 * 1024 * 1024)
+        job.state = .downloading; job.receivedBytes = 4 * 1024 * 1024
+        visualFixtureId = job.id; jobs.append(job)
+        NotificationCenter.default.post(name: Self.changed, object: nil)
+        return job.id
+    }
+    func removeVisualFixture(_ id: String) {
+        guard id == visualFixtureId else { return }
+        jobs.removeAll { $0.id == id }; visualFixtureId = nil
+        NotificationCenter.default.post(name: Self.changed, object: nil)
+    }
+    #endif
     func localFile(_ trackId: String) -> URL? {
         guard let root = Self.root, let job = jobs.first(where: { $0.trackId == trackId && $0.state == .done }) else { return nil }
         let url = root.appendingPathComponent(job.id + ".media")
@@ -148,7 +167,12 @@ import Network
     private func save() throws {
         guard let root = Self.root else { throw failure("Общая папка MORA недоступна") }
         let file = root.appendingPathComponent("queue.json")
-        try JSONEncoder().encode(jobs).write(to: file, options: .atomic)
+        var savedJobs = jobs
+        #if DEBUG
+        // A diagnostic row must not survive a real background callback saving the queue.
+        if let id = visualFixtureId { savedJobs.removeAll { $0.id == id } }
+        #endif
+        try JSONEncoder().encode(savedJobs).write(to: file, options: .atomic)
         try FileManager.default.setAttributes(NativePreparationFiles.attributes, ofItemAtPath: file.path)
     }
     private func publish(force: Bool = false) {

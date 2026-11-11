@@ -323,22 +323,26 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func diagnosticsReport(_ call: CAPPluginCall) {
         diagnosticReport { call.resolve($0) }
     }
+    @MainActor private func exportDiagnosticArchive() async throws -> URL {
+        guard MoraPlaybackJournal.enabled else { throw NativeServer.RequestFailure(message: "Диагностика выключена") }
+        let report: [String: Any] = await withCheckedContinuation { continuation in
+            diagnosticReport { continuation.resume(returning: $0) }
+        }
+        return try await Task.detached(priority: .utility) {
+            try NativeDiagnosticArchive.make(report: report, metrics: NativeMetrics.folder)
+        }.value
+    }
     @objc func diagnosticsShare(_ call: CAPPluginCall) {
-        guard MoraPlaybackJournal.enabled else { call.reject("Diagnostics disabled"); return }
-        diagnosticReport { report in
-            DispatchQueue.global(qos: .utility).async {
-                do {
-                    let url = try NativeDiagnosticArchive.make(report: report, metrics: NativeMetrics.folder)
-                    DispatchQueue.main.async {
-                        guard let vc = self.bridge?.viewController, vc.presentedViewController == nil else { try? FileManager.default.removeItem(at: url); call.reject("Не удалось открыть экспорт"); return }
-                        let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-                        sheet.completionWithItemsHandler = { _, _, _, _ in try? FileManager.default.removeItem(at: url) }
-                        sheet.popoverPresentationController?.sourceView = vc.view
-                        sheet.popoverPresentationController?.sourceRect = CGRect(x: vc.view.bounds.midX, y: vc.view.bounds.midY, width: 1, height: 1)
-                        vc.present(sheet, animated: true) { call.resolve() }
-                    }
-                } catch { call.reject("Не удалось создать архив диагностики: \(error.localizedDescription)") }
-            }
+        Task { @MainActor in
+            do {
+                let url = try await exportDiagnosticArchive()
+                guard let vc = self.bridge?.viewController, vc.presentedViewController == nil else { try? FileManager.default.removeItem(at: url); call.reject("Не удалось открыть экспорт"); return }
+                let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                sheet.completionWithItemsHandler = { _, _, _, _ in try? FileManager.default.removeItem(at: url) }
+                sheet.popoverPresentationController?.sourceView = vc.view
+                sheet.popoverPresentationController?.sourceRect = CGRect(x: vc.view.bounds.midX, y: vc.view.bounds.midY, width: 1, height: 1)
+                vc.present(sheet, animated: true) { call.resolve() }
+            } catch { call.reject("Не удалось создать архив диагностики: \(error.localizedDescription)") }
         }
     }
     @objc func diagnosticsTest(_ call: CAPPluginCall) {
@@ -546,7 +550,10 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async {
             guard let root = self.bridge?.viewController?.parent as? MoraRootViewController else { call.resolve(["shown": false]); return }
             // The launch splash is native (NativeSplash.swift); no `launchSplash` reply keeps the page's intro off.
-            root.installShell(host: self.nativeMix, webView: self.bridge?.webView)
+            root.installShell(host: self.nativeMix, webView: self.bridge?.webView, diagnosticExport: { [weak self] in
+                guard let self else { throw NativeShellError.page }
+                return try await self.exportDiagnosticArchive()
+            })
             let shown = root.shell.receive(state)
             call.resolve(["shown": shown, "nativeContent": root.shell.nativeContentVisible, "libraryInSwift": root.shell.sharedLibrary])
         }

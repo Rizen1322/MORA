@@ -13,6 +13,8 @@ struct NativeTrack: Equatable, Identifiable {
     let binding: String?
     /// Plays without the internet (downloaded, or a file of the library).
     let offline: Bool
+    let provider: String, sourceKind: String
+    let pinned: Bool
     /// Lowercased, ё → е: what search-as-you-type matches against.
     let key: String
 
@@ -29,6 +31,9 @@ struct NativeTrack: Equatable, Identifiable {
         ok = value["ok"] as? Bool ?? true
         binding = value["binding"] as? String
         offline = value["offline"] as? Bool == true
+        provider = value["provider"] as? String ?? "local"
+        sourceKind = value["sourceKind"] as? String ?? value["source_kind"] as? String ?? ""
+        pinned = (value["pinned"] as? NSNumber)?.boolValue == true
         key = NativeSearchText.normalize("\(title) \(artist) \(album)")
     }
     var liked: Bool { reaction > 0 }

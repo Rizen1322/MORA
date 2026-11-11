@@ -65,6 +65,39 @@ let settings = String(cString: sqlite3_column_text(stmt, 0))
 assert(settings.contains(#""motion":"full""#), settings)
 sqlite3_finalize(stmt); sqlite3_close(db)
 
+func nativeRequest(_ path: String, method: String = "GET", body: [String: Any]? = nil, timeout: Double = 2,
+                   cancel: Bool = false, reattach: Bool = false) -> Result<[String: Any], Error> {
+    let done = DispatchSemaphore(value: 0)
+    var result: Result<[String: Any], Error>!
+    let task = Task.detached {
+        do { result = .success(try await server.request(method, path, body: body, timeout: timeout)) }
+        catch { result = .failure(error) }
+        done.signal()
+    }
+    if cancel { DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) { task.cancel() } }
+    if reattach {
+        var pending = false
+        for _ in 0..<100 {
+            pending = evaluate("typeof globalThis.__releaseNativeDelayed === 'function'") as? Bool == true
+            if pending { break }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        assert(pending, "native request was not dispatched before reattach")
+        server.attach { message in lock.lock(); messages.append(message); lock.broadcast(); lock.unlock() }
+        _ = evaluate("globalThis.__releaseNativeDelayed(); delete globalThis.__releaseNativeDelayed; 0")
+    }
+    assert(done.wait(timeout: .now() + 10) == .success, "native request never completed")
+    return result
+}
+let nativeSettings = try nativeRequest("/api/settings").get()
+assert((nativeSettings["ui"] as? [String: Any])?["motion"] as? String == "full")
+let nativePut = try nativeRequest("/api/settings", method: "PUT", body: ["automix": ["enabled": false]]).get()
+assert((nativePut["automix"] as? [String: Any])?["enabled"] as? Bool == false)
+if case .success = nativeRequest("/api/not-found") { fatalError("native accepted HTTP 404") }
+lock.lock()
+assert(!messages.contains { (($0["id"] as? NSNumber)?.intValue ?? 0) < 0 }, "native response leaked to the page")
+lock.unlock()
+
 // Decoded planes reach the server as ArrayBuffers, as postMessage handed them to the worker (rpc.ts: new Float32Array(plane)).
 func evaluate(_ script: String) -> Any {
     let done = DispatchSemaphore(value: 0)
@@ -73,6 +106,32 @@ func evaluate(_ script: String) -> Any {
     done.wait()
     return out
 }
+_ = evaluate("""
+globalThis.__originalReceive = globalThis.__moraReceive;
+globalThis.__nativeAborted = [];
+globalThis.__moraReceive = m => {
+  if (m.t === 'abort' && m.id < 0) globalThis.__nativeAborted.push(m.id);
+  if (m.url === '/api/native-hang') return;
+  if (m.url === '/api/native-invalid' || m.url === '/api/native-delayed') {
+    const reply = () => { postMessage({t:'head',id:m.id,status:200,headers:{}});
+      postMessage({t:'chunk',id:m.id,data:m.url.endsWith('invalid')?'broken':'{"ok":true}'});
+      postMessage({t:'end',id:m.id}); };
+    if (m.url.endsWith('delayed')) globalThis.__releaseNativeDelayed = reply; else reply();
+    return;
+  }
+  return globalThis.__originalReceive(m);
+}; 0
+""")
+let delayed = try nativeRequest("/api/native-delayed", reattach: true).get()
+assert(delayed["ok"] as? Bool == true, "reattach aborted native request")
+if case .success = nativeRequest("/api/native-invalid") { fatalError("native accepted invalid JSON") }
+if case .success = nativeRequest("/api/native-hang", timeout: 0.05) { fatalError("native request did not time out") }
+switch nativeRequest("/api/native-hang", cancel: true) {
+case .failure(is CancellationError): break
+default: fatalError("native cancellation was not preserved")
+}
+assert((evaluate("globalThis.__nativeAborted.length") as? Double ?? 0) >= 2, "native timeouts/cancellation did not abort server work")
+_ = evaluate("globalThis.__moraReceive = globalThis.__originalReceive; 0")
 _ = evaluate("""
 (() => { const prev = self.onmessage; globalThis.__decoded = null;
   self.onmessage = (e) => { const m = e.data;

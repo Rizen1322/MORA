@@ -29,6 +29,18 @@ final class NativeServer {
     private var loading = false
     /// Requests of the attached page still owed a reply; replies to anything else are dropped.
     private var open = Set<Int>()
+    private struct NativeReply {
+        let cancelled: CancelFlag
+        let finish: (Result<[String: Any], Error>) -> Void
+        var status = 0
+        var data = Data()
+    }
+    private var nativeReplies: [Int: NativeReply] = [:]
+    private var nextNativeId = -1 // page requests use non-negative IDs
+    struct RequestFailure: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
     /// Diagnostics (MoraAudioPlugin.diagnosticReport): what each request, download and long JS call cost.
     /// Paths only, never query strings or bodies. Guarded by its own lock so a busy `queue` never blocks a report.
     private let traceLock = NSLock()
@@ -80,12 +92,81 @@ final class NativeServer {
     /// Page → server: the same messages the page posted to the worker.
     func send(_ message: [String: Any]) {
         queue.async {
+            if ["req", "abort"].contains(message["t"] as? String ?? ""),
+               let id = (message["id"] as? NSNumber)?.intValue, id < 0 { return }
             if message["t"] as? String == "req", let id = (message["id"] as? NSNumber)?.intValue {
                 self.open.insert(id)
                 self.requestStart[id] = ("\(message["method"] ?? "") \((message["url"] as? String ?? "").split(separator: "?").first ?? "")", ProcessInfo.processInfo.systemUptime, 0)
             }
             self.timed("message \(message["t"] ?? "")") { self.receive(message) }
         }
+    }
+
+    /// Swift screens use the existing API directly; page reloads cannot abort these requests.
+    func request(_ method: String, _ path: String, body: [String: Any]? = nil, timeout: Double = 30) async throws -> [String: Any] {
+        guard ["GET", "POST", "PUT", "DELETE"].contains(method), path.hasPrefix("/api/"), !path.contains("\n") else { throw URLError(.badURL) }
+        let text = try body.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }
+        let cancelled = CancelFlag()
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                queue.async {
+                    guard !cancelled.isSet else { continuation.resume(throwing: CancellationError()); return }
+                    guard self.booted else { continuation.resume(throwing: RequestFailure(message: self.bootError ?? "Медиатека ещё загружается")); return }
+                    let id = self.nextNativeId; self.nextNativeId -= 1
+                    self.nativeReplies[id] = NativeReply(cancelled: cancelled, finish: { continuation.resume(with: $0) })
+                    self.requestStart[id] = ("\(method) \(path.split(separator: "?").first ?? "")", ProcessInfo.processInfo.systemUptime, 0)
+                    self.timerQueue.asyncAfter(deadline: .now() + timeout) { [weak self] in
+                        self?.queue.async {
+                            guard let self, self.nativeReplies[id] != nil else { return }
+                            self.finishNative(id, .failure(URLError(.timedOut)), abort: true)
+                        }
+                    }
+                    self.receive(["t": "req", "id": id, "method": method, "url": path,
+                                  "headers": text == nil ? [:] : ["content-type": "application/json"], "body": text as Any? ?? NSNull()])
+                }
+            }
+        }, onCancel: {
+            cancelled.set()
+            self.queue.async {
+                if let id = self.nativeReplies.first(where: { $0.value.cancelled === cancelled })?.key {
+                    self.finishNative(id, .failure(CancellationError()), abort: true)
+                }
+            }
+        })
+    }
+
+    private func finishNative(_ id: Int, _ result: Result<[String: Any], Error>, abort: Bool = false) {
+        guard let reply = nativeReplies.removeValue(forKey: id) else { return }
+        if let r = requestStart.removeValue(forKey: id) {
+            note(String(format: "native %@ %.0f ms %d KB", r.path, (ProcessInfo.processInfo.systemUptime - r.at) * 1000, reply.data.count / 1024))
+        }
+        if abort { receive(["t": "abort", "id": id]) }
+        reply.finish(result)
+    }
+
+    private func nativeMessage(_ message: [String: Any], id: Int) {
+        guard var reply = nativeReplies[id] else { return }
+        switch message["t"] as? String {
+        case "head": reply.status = (message["status"] as? NSNumber)?.intValue ?? 0
+        case "chunk":
+            let bytes = message["data"] as? Data ?? Data((message["data"] as? String ?? "").utf8)
+            guard reply.data.count + bytes.count <= 16 * 1024 * 1024 else {
+                finishNative(id, .failure(RequestFailure(message: "Ответ медиатеки слишком большой")), abort: true); return
+            }
+            reply.data.append(bytes)
+        case "fail":
+            finishNative(id, .failure(RequestFailure(message: message["error"] as? String ?? "Медиатека не ответила"))); return
+        case "end":
+            do {
+                let value = try JSONSerialization.jsonObject(with: reply.data) as? [String: Any]
+                guard (200..<300).contains(reply.status) else { throw RequestFailure(message: value?["error"] as? String ?? "Ошибка медиатеки (\(reply.status))") }
+                guard let value else { throw RequestFailure(message: "Неверный ответ медиатеки") }
+                finishNative(id, .success(value))
+            } catch { finishNative(id, .failure(error)) }
+            return
+        default: return
+        }
+        nativeReplies[id] = reply
     }
 
     /// Runs `script` in the server's context and hands back its plain value (tests).
@@ -559,6 +640,7 @@ final class NativeServer {
         case "rpc-abort":
             if let id = message["id"] as? Double { requests.removeValue(forKey: Int(id))?.cancel() }
         case "head", "chunk", "end", "fail":
+            if let id = (message["id"] as? NSNumber)?.intValue, id < 0 { nativeMessage(message, id: id); return }
             guard let id = (message["id"] as? NSNumber)?.intValue, open.contains(id) else { return } // owed to a page that is gone
             if let data = message["data"] as? Data { requestStart[id]?.bytes += data.count } else if let text = message["data"] as? String { requestStart[id]?.bytes += text.utf8.count }
             if message["t"] as? String == "end" || message["t"] as? String == "fail", let r = requestStart.removeValue(forKey: id) {

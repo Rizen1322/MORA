@@ -136,6 +136,7 @@ export function registerBackupRoutes(app: FastifyInstance, { db, lib, events }: 
       return { playlists: b.playlists.length, tracks: b.tracks.length, missingFiles };
     });
     events.emit({ type: 'library', reason: 'backup' }); events.emit({ type: 'playlists' });
+    if (b.library) events.emit({ type: 'settings' });
     return result;
   });
 }

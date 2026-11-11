@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		FBF0C0DE2FF0000100000036 /* NativeDownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000037 /* NativeDownloadsView.swift */; };
+		FBF0C0DE2FF0000100000034 /* NativeDownloadsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000035 /* NativeDownloadsState.swift */; };
+		FBF0C0DE2FF0000100000032 /* NativeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000033 /* NativeSettingsView.swift */; };
+		FBF0C0DE2FF0000100000030 /* NativeSettingsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000031 /* NativeSettingsState.swift */; };
 		FBF0C0DE2FF0000100000024 /* NativeLibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000025 /* NativeLibraryStore.swift */; };
 		FFF0C0DE2FF0000100000001 /* NativeDiagnosticArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF0C0DE2FF0000100000002 /* NativeDiagnosticArchive.swift */; };
 		FFF0C0DE2FF0000100000003 /* NativeMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF0C0DE2FF0000100000004 /* NativeMetrics.swift */; };
@@ -61,6 +65,10 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		FBF0C0DE2FF0000100000037 /* NativeDownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDownloadsView.swift; sourceTree = "<group>"; };
+		FBF0C0DE2FF0000100000035 /* NativeDownloadsState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDownloadsState.swift; sourceTree = "<group>"; };
+		FBF0C0DE2FF0000100000033 /* NativeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSettingsView.swift; sourceTree = "<group>"; };
+		FBF0C0DE2FF0000100000031 /* NativeSettingsState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSettingsState.swift; sourceTree = "<group>"; };
 		FBF0C0DE2FF0000100000025 /* NativeLibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLibraryStore.swift; sourceTree = "<group>"; };
 		FFF0C0DE2FF0000100000002 /* NativeDiagnosticArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDiagnosticArchive.swift; sourceTree = "<group>"; };
 		FFF0C0DE2FF0000100000004 /* NativeMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMetrics.swift; sourceTree = "<group>"; };
@@ -316,6 +324,10 @@
 				FBF0C0DE2FF0000100000005 /* NativePlaybackHooks.swift */,
 				FBF0C0DE2FF0000100000021 /* NativeServer.swift */,
 				FBF0C0DE2FF0000100000025 /* NativeLibraryStore.swift */,
+				FBF0C0DE2FF0000100000037 /* NativeDownloadsView.swift */,
+				FBF0C0DE2FF0000100000035 /* NativeDownloadsState.swift */,
+				FBF0C0DE2FF0000100000033 /* NativeSettingsView.swift */,
+				FBF0C0DE2FF0000100000031 /* NativeSettingsState.swift */,
 				FBF0C0DE2FF0000100000023 /* NativeServerPlugin.swift */,
 				FCF0C0DE2FF0000100000002 /* NativeDownloadQueue.swift */,
 				FCF0C0DE2FF0000100000004 /* NativeDownloadManager.swift */,
@@ -456,6 +468,10 @@
 				FBF0C0DE2FF0000100000004 /* NativePlaybackHooks.swift in Sources */,
 				FBF0C0DE2FF0000100000020 /* NativeServer.swift in Sources */,
 				FBF0C0DE2FF0000100000024 /* NativeLibraryStore.swift in Sources */,
+				FBF0C0DE2FF0000100000036 /* NativeDownloadsView.swift in Sources */,
+				FBF0C0DE2FF0000100000034 /* NativeDownloadsState.swift in Sources */,
+				FBF0C0DE2FF0000100000032 /* NativeSettingsView.swift in Sources */,
+				FBF0C0DE2FF0000100000030 /* NativeSettingsState.swift in Sources */,
 				FBF0C0DE2FF0000100000022 /* NativeServerPlugin.swift in Sources */,
 				FCF0C0DE2FF0000100000001 /* NativeDownloadQueue.swift in Sources */,
 				FCF0C0DE2FF0000100000003 /* NativeDownloadManager.swift in Sources */,

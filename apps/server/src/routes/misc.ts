@@ -122,6 +122,7 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
     };
     kvSet(db, 'settings', { ...next, version: 2 });
     analysis.setPower({ onlyWhenIdle: next.analysis.onlyWhenIdle });
+    events.emit({ type: 'settings' });
     return next;
   });
 

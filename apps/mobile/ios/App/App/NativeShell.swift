@@ -59,8 +59,9 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
         tabsOverlay.isHidden = true
     }
 
-    func installShell(host: NativeMixHost, webView: WKWebView?) {
+    func installShell(host: NativeMixHost, webView: WKWebView?, diagnosticExport: @escaping @MainActor () async throws -> URL) {
         shell.host = host
+        shell.diagnosticExport = diagnosticExport
         host.onReaction = { [weak shell] id, desired in
             guard let shell else { return 0 }
             let value = shell.reaction(id) == desired ? 0 : desired
@@ -169,13 +170,35 @@ extension MoraRootViewController {
             try require(waveLinkPassed, "Wave deep link lost selected source")
             _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__waveOriginal;0")
             report["waveLink"] = "mora://wave?source=yandex reached the wave command"
-            _ = try await web.evaluateJavaScript("window.__downloadOriginal=window.moraNativeUi;window.moraNativeUi=async(n,a)=>{if(n==='page'&&location.hash.includes('/downloads'))return{title:'Загрузки',sections:[{title:'Скачивается',rows:[{kind:'progress',title:'Проверка загрузки',value:0.4,detail:'4 МБ / 10 МБ · осталось 30 с'}]}]};return window.__downloadOriginal(n,a);};0")
+            try await wait { self.shell.sharedLibrary }
+            _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='page'&&/^#\\/(settings|downloads)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(location.hash);throw Error('Native screen requested a page description');}return window.__nativePagesOriginal(n,a);};0")
+            let originalSettings = try await NativeServerApp.request("GET", "/api/settings")
+            let originalAutomix = (originalSettings["automix"] as? [String: Any])?["enabled"] as? Bool ?? true
+            do {
+                _ = try await NativeServerApp.request("PUT", "/api/settings", body: ["automix": ["enabled": !originalAutomix]])
+                try await wait { self.shell.ui.playback.automix == !originalAutomix }
+                shell.go("/settings")
+                try await wait { self.shell.ui.path == "/settings" && self.shell.nativeContentVisible }
+                try await Task.sleep(for: .seconds(2))
+                try capture("native-settings")
+            } catch {
+                _ = try? await NativeServerApp.request("PUT", "/api/settings", body: ["automix": ["enabled": originalAutomix]])
+                throw error
+            }
+            _ = try await NativeServerApp.request("PUT", "/api/settings", body: ["automix": ["enabled": originalAutomix]])
+            try await wait { self.shell.ui.playback.automix == originalAutomix }
+            report["settings"] = "SwiftUI settings rendered without a page description; native PUT synchronized playback over server events"
+            let downloadFixture = NativeDownloadManager.shared.installVisualFixture()
+            defer { NativeDownloadManager.shared.removeVisualFixture(downloadFixture) }
             shell.go("/downloads")
             try await wait { self.shell.ui.path == "/downloads" }
             try await Task.sleep(for: .seconds(2))
             try capture("native-downloads")
-            _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__downloadOriginal;0")
-            report["downloads"] = "Native progress row rendered with an explicit diagnostic fixture"
+            let pageCalls = try await web.evaluateJavaScript("window.__nativePageCalls.length") as? Int ?? -1
+            try require(pageCalls == 0, "Settings/downloads depended on a page description")
+            NativeDownloadManager.shared.removeVisualFixture(downloadFixture)
+            _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__nativePagesOriginal;0")
+            report["downloads"] = "SwiftUI downloads rendered with an in-memory native progress fixture, without a page description"
             func waitForQuery(_ query: String) async throws {
                 let encoded = String(data: try JSONSerialization.data(withJSONObject: query, options: .fragmentsAllowed), encoding: .utf8)!
                 for _ in 0..<40 {
@@ -378,6 +401,11 @@ final class NativeShellStore: ObservableObject {
     private var librarySnapshot: NativeLibraryStore.Snapshot?
     private var libraryFailure: String?
     var playlistSort: [String: String] = [:]
+    var diagnosticExport: (@MainActor () async throws -> URL)?
+    @MainActor func exportDiagnostics() async throws -> URL {
+        guard let diagnosticExport else { throw NativeShellError.page }
+        return try await diagnosticExport()
+    }
     func remapReactions(_ mapping: [String: String]) { reactions.remap(mapping); flushReactions() }
 
     func captureBackup() {
@@ -923,7 +951,10 @@ struct NativeShellContent: View {
                 if store.path == "/library" { NativeLibraryView() }
                 else { NativeTrackListView(title: "Песни", type: "library", tracks: store.library) }
             case .search: NativeSearchView()
-            case .page: NativePageView()
+            case .page:
+                if store.sharedLibrary && store.path == "/settings" { NativeSettingsView() }
+                else if store.sharedLibrary && store.path == "/downloads" { NavigationStack { NativeDownloadsView() } }
+                else { NativePageView() }
             case .web: Color.clear
             }
     }

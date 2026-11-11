@@ -83,6 +83,12 @@ jobs:
         run: |
           swiftc apps/mobile/ios/App/App/NativeShellState.swift apps/mobile/ios/App/App/NativeLibraryStore.swift apps/mobile/test/native-library/main.swift -lsqlite3 -o "$RUNNER_TEMP/mora-library-check"
           "$RUNNER_TEMP/mora-library-check"
+      - name: Test native settings and downloads state
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeSettingsState.swift apps/mobile/test/native-settings/main.swift -o "$RUNNER_TEMP/mora-settings-check"
+          "$RUNNER_TEMP/mora-settings-check"
+          swiftc apps/mobile/ios/App/App/NativeShellState.swift apps/mobile/ios/App/App/NativeDownloadsState.swift apps/mobile/test/native-downloads/main.swift -o "$RUNNER_TEMP/mora-downloads-check"
+          "$RUNNER_TEMP/mora-downloads-check"
       - name: Test native wave links and widget compatibility
         run: |
           swiftc apps/mobile/ios/App/App/NativeWaveLink.swift apps/mobile/test/native-wave-link/main.swift -o "$RUNNER_TEMP/mora-wave-link-check"
