@@ -53,6 +53,8 @@ let library = request("GET", "/api/library")
 assert(library.status == 200 && library.text == #"{"tracks":[]}"#, "library \(library)")
 let put = request("PUT", "/api/settings", #"{"ui":{"motion":"full"}}"#)
 assert(put.status < 300, "settings \(put)")
+// diagnostics: each request with its path (never the query) and duration
+assert(server.trace.contains { $0.contains("api GET /api/health ") } && server.trace.contains { $0.contains("ready after") }, "trace \(server.trace)")
 
 var db: OpaquePointer?
 assert(sqlite3_open_v2(root.appendingPathComponent("data/automix.sqlite").path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK)

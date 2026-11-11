@@ -807,6 +807,15 @@ struct NativeShellContent: View {
                 }
             screen.id(store.path)
                 .transition(.opacity.combined(with: .offset(x: reduceMotion ? 0 : 18)))
+            if store.path != NativeRoute.root(store.tab) {
+                // Pages are route switches, not NavigationStack pushes, so iOS gives them no back swipe: this edge does.
+                Color.clear.frame(width: 18).frame(maxHeight: .infinity).contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 12).onEnded { g in
+                        if g.translation.width > 70 && abs(g.translation.height) < g.translation.width { store.back() }
+                    })
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityHidden(true)
+            }
             if let text = store.banner {
                 Text(text).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
                     .padding(.horizontal, 16).padding(.vertical, 10)

@@ -370,14 +370,31 @@ struct NativePageView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(path == nil && act == nil)
-                ForEach(Array(actions.enumerated()), id: \.offset) { _, a in
-                    Button(role: a.destructive ? .destructive : nil) { run(a.act) } label: {
-                        Image(systemName: a.symbol).frame(width: 36, height: 44)
-                    }
-                    .buttonStyle(.borderless)
-                    .tint(a.destructive ? Color.red : Color.moraMint)
-                    .accessibilityLabel(a.title)
+                // A catalog track has eight actions: inline they squeeze the title out of the row, so past two they go in a menu.
+                if actions.count > 2 {
+                    Menu {
+                        ForEach(Array(actions.enumerated()), id: \.offset) { _, a in
+                            Button(role: a.destructive ? .destructive : nil) { run(a.act) } label: { Label(a.title, systemImage: a.symbol) }
+                        }
+                    } label: { Image(systemName: "ellipsis").frame(width: 36, height: 44) }
+                    .tint(Color.moraMint)
+                    .accessibilityLabel("Действия")
                     .disabled(running)
+                } else {
+                    ForEach(Array(actions.enumerated()), id: \.offset) { _, a in
+                        Button(role: a.destructive ? .destructive : nil) { run(a.act) } label: {
+                            Image(systemName: a.symbol).frame(width: 36, height: 44)
+                        }
+                        .buttonStyle(.borderless)
+                        .tint(a.destructive ? Color.red : Color.moraMint)
+                        .accessibilityLabel(a.title)
+                        .disabled(running)
+                    }
+                }
+            }
+            .contextMenu {
+                ForEach(Array(actions.enumerated()), id: \.offset) { _, a in
+                    Button(role: a.destructive ? .destructive : nil) { run(a.act) } label: { Label(a.title, systemImage: a.symbol) }
                 }
             }
             .accessibilityElement(children: .contain)

@@ -26,6 +26,13 @@ final class NativeServer {
     private var loading = false
     /// Requests of the attached page still owed a reply; replies to anything else are dropped.
     private var open = Set<Int>()
+    /// Diagnostics (MoraAudioPlugin.diagnosticReport): what each request, download and long JS call cost.
+    /// Paths only, never query strings or bodies. Guarded by its own lock so a busy `queue` never blocks a report.
+    private let traceLock = NSLock()
+    private var traceLines: [String] = []
+    private var requestStart: [Int: (path: String, at: Double, bytes: Int)] = [:]
+    private let bootAt = ProcessInfo.processInfo.systemUptime
+    var trace: [String] { traceLock.lock(); defer { traceLock.unlock() }; return traceLines }
     private let services: Services
     private let script: String
     private var context: JSContext!
@@ -70,14 +77,30 @@ final class NativeServer {
     /// Page → server: the same messages the page posted to the worker.
     func send(_ message: [String: Any]) {
         queue.async {
-            if message["t"] as? String == "req", let id = (message["id"] as? NSNumber)?.intValue { self.open.insert(id) }
-            self.receive(message)
+            if message["t"] as? String == "req", let id = (message["id"] as? NSNumber)?.intValue {
+                self.open.insert(id)
+                self.requestStart[id] = ("\(message["method"] ?? "") \((message["url"] as? String ?? "").split(separator: "?").first ?? "")", ProcessInfo.processInfo.systemUptime, 0)
+            }
+            self.timed("message \(message["t"] ?? "")") { self.receive(message) }
         }
     }
 
     /// Runs `script` in the server's context and hands back its plain value (tests).
     func evaluate(_ script: String, _ done: @escaping (Any) -> Void) {
         queue.async { done(self.swift(self.context?.evaluateScript(script))) }
+    }
+
+    private func note(_ line: String) {
+        traceLock.lock(); defer { traceLock.unlock() }
+        traceLines.append(String(format: "%8.2f ", ProcessInfo.processInfo.systemUptime - bootAt) + line)
+        if traceLines.count > 400 { traceLines.removeFirst(traceLines.count - 400) }
+    }
+    /// A JS entry that holds `queue` this long delays every other request: worth seeing in diagnostics.
+    private func timed(_ what: String, _ body: () -> Void) {
+        let start = ProcessInfo.processInfo.systemUptime
+        body()
+        let ms = (ProcessInfo.processInfo.systemUptime - start) * 1000
+        if ms >= 100 { note(String(format: "js %@ %.0f ms", what, ms)) }
     }
 
     private func receive(_ message: [String: Any]) {
@@ -505,7 +528,7 @@ final class NativeServer {
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             if !repeating { self.timers.removeValue(forKey: id)?.cancel() }
-            self.context.objectForKeyedSubscript("__moraTimer")?.call(withArguments: [id])
+            self.timed("timer") { _ = self.context.objectForKeyedSubscript("__moraTimer")?.call(withArguments: [id]) }
         }
         timers[id] = timer
         timer.resume()
@@ -531,9 +554,15 @@ final class NativeServer {
             if let id = message["id"] as? Double { requests.removeValue(forKey: Int(id))?.cancel() }
         case "head", "chunk", "end", "fail":
             guard let id = (message["id"] as? NSNumber)?.intValue, open.contains(id) else { return } // owed to a page that is gone
+            if let data = message["data"] as? Data { requestStart[id]?.bytes += data.count } else if let text = message["data"] as? String { requestStart[id]?.bytes += text.utf8.count }
+            if message["t"] as? String == "end" || message["t"] as? String == "fail", let r = requestStart.removeValue(forKey: id) {
+                let ms = (ProcessInfo.processInfo.systemUptime - r.at) * 1000
+                note(String(format: "%@ %@ %.0f ms %d KB", message["t"] as? String == "fail" ? "FAIL" : "api", r.path, ms, r.bytes / 1024))
+            }
             if message["t"] as? String != "head" && message["t"] as? String != "chunk" { open.remove(id) }
             onMessage?(message)
         case "ready":
+            note(String(format: "ready after %.0f ms", (ProcessInfo.processInfo.systemUptime - bootAt) * 1000))
             booted = true
             onMessage?(message)
         case "boot-error":
@@ -553,9 +582,12 @@ final class NativeServer {
         if let body = args["body"] as? String { request.httpBody = Data(body.utf8) }
         else if let body = args["body"] as? Data { request.httpBody = body }
         let key = Int(id as? Double ?? 0)
+        let fetchStart = ProcessInfo.processInfo.systemUptime, label = "\(url.host ?? "") \(url.path.prefix(60))"
         let task = session.dataTask(with: request) { [weak self] data, response, error in
             guard let self else { return }
             self.queue.async { self.requests.removeValue(forKey: key) }
+            let ms = (ProcessInfo.processInfo.systemUptime - fetchStart) * 1000
+            self.note(String(format: "net %@ %@ %.0f ms %d KB", (response as? HTTPURLResponse).map { String($0.statusCode) } ?? "ERR", label, ms, (data?.count ?? 0) / 1024))
             if let error { self.reply(id, .failure(error)); return }
             guard let http = response as? HTTPURLResponse else { self.reply(id, .failure(URLError(.badServerResponse))); return }
             var headers: [String: Any] = [:]
@@ -584,7 +616,8 @@ final class NativeServer {
         let finish = { (error: String?, result: Any?) in
             self.queue.async {
                 guard self.analyses.removeValue(forKey: job) == false else { return } // cancelled
-                done.call(withArguments: [error.map { $0 as Any } ?? NSNull(), self.js(result)])
+                self.note("analysis \(error ?? "done")")
+                self.timed("analysis result") { _ = done.call(withArguments: [error.map { $0 as Any } ?? NSNull(), self.js(result)]) }
             }
         }
         guard let path = real(file) else { finish("недопустимый путь", nil); return job }

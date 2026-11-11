@@ -304,6 +304,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             report["isSnapshotStale"] = stale
             report["nativeProbe"] = self.nativeProbe.snapshot
             report["nativeMix"] = state
+            report["nativeServer"] = NativeServerApp.shared.map { ["booted": $0.booted, "trace": $0.trace] as [String: Any] } ?? ["running": false]
             completion(report)
         }
         nativeMix.diagnosticState { result in
