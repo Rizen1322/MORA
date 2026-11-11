@@ -256,7 +256,7 @@ export function startNativeUi(): void {
           playSplash({ ready: () => useApp.getState().loaded || !useApp.getState().serverOnline,
             target: () => document.querySelector('.wave-hero-title span') });
         }
-        if (launchSplash !== undefined) schedule();
+        if (launchSplash !== undefined) { last = ''; schedule(); }
       }
       disabled = !shown;
       document.documentElement.classList.toggle('mora-native-shell', shown);

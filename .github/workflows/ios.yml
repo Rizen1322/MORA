@@ -85,6 +85,8 @@ jobs:
         run: |
           swiftc apps/mobile/ios/App/App/NativeStationSnapshot.swift apps/mobile/test/native-station/main.swift -o "$RUNNER_TEMP/mora-station-check"
           "$RUNNER_TEMP/mora-station-check"
+          swiftc apps/mobile/ios/App/App/NativeActivityShared.swift apps/mobile/test/native-activity/main.swift -o "$RUNNER_TEMP/mora-activity-check"
+          "$RUNNER_TEMP/mora-activity-check"
       - name: Build unsigned device IPA
         env:
           MORA_CARPLAY: ${{ inputs.carplay && '1' || '0' }}

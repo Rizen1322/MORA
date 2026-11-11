@@ -80,6 +80,7 @@ final class NativeMixHost {
     private var refillWaiting = false // one finite assertion per waiting interval
     // Levels for the page visualizer: computed only while the page listens, in the foreground and while playing.
     var onLevels: ((Double, [Double]) -> Void)? // called on work; the plugin hops to main
+    var onNowPlaying: (@MainActor ([String: Any], Bool) -> Void)?
     private var levelsOn = false, foreground = true
     private var levelBlocks: [(start: Int64, left: Data, right: Data)] = [] // rendered blocks still near the audible frame
     private var levelTimer: DispatchSourceTimer?
@@ -739,6 +740,11 @@ final class NativeMixHost {
         NativeStationFiles.updatePosition(trackId: publishedTrackId, position: position)
         let canAdvance = tracks.indices.contains(index + 1) || preparation?.hasRemaining == true || pendingSkips > 0
         let canReverse = canGoBack
+        var event = state
+        event["title"] = title; event["artist"] = artist; event["trackId"] = publishedTrackId
+        event["artwork"] = publishedInfo[MPMediaItemPropertyArtwork]
+        let finished = ended && !canAdvance && !continueWhenPrepared
+        DispatchQueue.main.async { [weak self] in self?.onNowPlaying?(event, finished) }
         // A tick republishes Now Playing only on a visible change or clock drift (tempo
         // stretch, stall); its journal row is kept every 5 s otherwise.
         let key = "\(generation)|\(index)|\(title)|\(artist)|\(state["duration"] ?? 0)|\(playbackRate)|\(info[MPMediaItemPropertyArtwork] != nil)|\(tracks.count)|\(canAdvance)|\(canReverse)|\(state["waitingForPreparation"] ?? false)"
@@ -947,7 +953,7 @@ final class NativeMixHost {
             self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false; self.skipTarget = -1
             self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis()
             self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
-            DispatchQueue.main.async { [weak self] in self?.refillLease(waiting: false) }
+            DispatchQueue.main.async { [weak self] in self?.refillLease(waiting: false); self?.onNowPlaying?([:], true) }
             guard self.folder != nil || self.ownsSession else { self.reply(completion, .success(self.snapshot)); return }
             self.epoch += 1; self.wantsPlaying = false; self.resumeAfterInterruption = false
             self.discardGraph(); self.interrupted = false; self.mediaResetPending = false

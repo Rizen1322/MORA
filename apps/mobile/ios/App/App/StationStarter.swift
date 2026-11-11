@@ -11,6 +11,7 @@ import Foundation
         guard source == nil || source == snapshot.source, let root = NativeStationFiles.root else { throw NativeStationSnapshot.Failure.noLocalFiles }
         let tracks = try snapshot.localTracks(in: root)
         let host = NativeMixHost.shared
+        NativeLiveActivity.install(host)
         if host.active {
             let state = host.snapshot
             if state["playing"] as? Bool != true {

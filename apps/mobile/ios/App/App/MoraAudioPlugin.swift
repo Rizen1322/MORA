@@ -79,6 +79,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private let nativeMix = NativeMixHost.shared
 
     override public func load() {
+        Task { @MainActor in NativeLiveActivity.install(self.nativeMix) }
         nativeMix.onLevels = { [weak self] rms, bands in
             DispatchQueue.main.async { self?.notifyListeners("levels", data: ["rms": rms, "bands": bands]) }
         }
