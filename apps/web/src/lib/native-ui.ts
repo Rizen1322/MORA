@@ -9,6 +9,7 @@ import { useVersionPanel, openVersionPanel } from '../components/VersionPanel.ts
 import { actions, describe, describeWaveSettings, type ActResult } from './native-pages.ts';
 import { nativeVersionCommands } from './native-versions.ts';
 import { nativeCatalogCommands } from './native-catalog.ts';
+import { splashing } from './splash.ts';
 
 /**
  * iPhone native shell (ios/App/App/NativeShell.swift). Data path: this page stays the only owner of
@@ -39,7 +40,7 @@ export function uiState(s = useApp.getState(), radio = useRadio.getState(), prep
     search: { q: params.get('q'), source: path === '/yandex' ? 'yandex' : params.get('src') },
     loaded: s.loaded,
     // The web full player, side panels and the version picker cover everything: native steps aside while they are open.
-    overlay: s.fullPlayer || s.queueOpen || s.panel !== null || useVersionPanel.getState().target !== null,
+    overlay: splashing || s.fullPlayer ||s.queueOpen || s.panel !== null || useVersionPanel.getState().target !== null,
     wave: {
       own: s.order.length > 0,
       yandex: s.providers.some((v) => v.id === 'yandex' && v.status === 'connected'),
@@ -195,5 +196,6 @@ export function startNativeUi(): void {
   useCatalogPlayback.subscribe(schedule);
   useVersionPanel.subscribe(schedule);
   window.addEventListener('hashchange', schedule);
+  window.addEventListener('mora-splash', schedule);
   schedule();
 }

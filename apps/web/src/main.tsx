@@ -9,7 +9,7 @@ import './styles/desktop.css';
 import './styles/search.css';
 import './styles/listening.css';
 import { App } from './App.tsx';
-import { controller, trackOf, useApp } from './store/app.ts';
+import { controller, phone, trackOf, useApp } from './store/app.ts';
 import { desktop } from './lib/desktop.ts';
 import { playSplash, splashEnabled } from './lib/splash.ts';
 
@@ -47,8 +47,8 @@ if (desktop) {
   });
 }
 
-// Launch intro on the desktop app; `?splash` shows it in a browser too.
-if ((desktop && splashEnabled()) || new URLSearchParams(location.search).has('splash')) {
+// Launch intro in the desktop and iPhone apps; `?splash` shows it in a browser too.
+if (((desktop || phone) && splashEnabled()) ||new URLSearchParams(location.search).has('splash')) {
   let fonts = false;
   void document.fonts.ready.then(() => { fonts = true; });
   playSplash({

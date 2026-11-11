@@ -1,27 +1,30 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BEAT, setSplashEnabled, skyAt, splashEnabled, T } from '../src/lib/splash.ts';
+import { BEAT, markPath, setSplashEnabled, splashEnabled, T } from '../src/lib/splash.ts';
 
 describe('launch splash timeline', () => {
-  it('fits the 5–7 s brief, beats in order', () => {
-    expect(T.end).toBeGreaterThanOrEqual(5);
-    expect(T.end).toBeLessThanOrEqual(7);
-    expect(T.bloom < T.hold && T.hold < T.flash && T.flash < T.fade && T.fade < T.end).toBe(true);
+  it('fits the 3–5 s brief, beats in order', () => {
+    expect(T.end).toBeGreaterThanOrEqual(3);
+    expect(T.end).toBeLessThanOrEqual(5);
+    expect(T.bloom < T.grid && T.grid < T.word && T.word < T.dot && T.dot < T.hold && T.hold < T.fade && T.fade < T.end).toBe(true);
   });
 
-  it('keeps a musical tempo with the green flash on a downbeat', () => {
-    const bpm = 60 / BEAT;
-    expect(bpm).toBeGreaterThan(90);
-    expect(bpm).toBeLessThan(120);
-    expect((T.flash / BEAT) % 4).toBeCloseTo(0);
+  it('cuts on a musical grid with the word on a downbeat', () => {
+    for (const t of [T.bloom, T.grid, T.word, T.dot, T.hold]) expect((t / BEAT) % 1).toBeCloseTo(0);
+    expect((T.word / BEAT) % 4).toBeCloseTo(0);
   });
+});
 
-  it('starts golden and ends on the app background, so the handoff has no colour jump', () => {
-    const [top, mid] = skyAt(0);
-    expect(mid[0]).toBeGreaterThan(200);
-    expect(top.map(Math.round)).not.toEqual([5, 13, 10]);
-    const [endTop, endMid] = skyAt(T.end);
-    expect(endTop.map(Math.round)).toEqual([5, 13, 10]); // --bg #050d0a
-    expect(endMid.map(Math.round)).toEqual([5, 13, 10]);
+describe('the mark as one stroke', () => {
+  const p = markPath();
+  it('is continuous and evenly paced, so the brush never jumps', () => {
+    const steps = p.slice(1).map(([x, y], i) => Math.hypot(x - p[i][0], y - p[i][1]));
+    expect(Math.max(...steps)).toBeLessThan(4.01 / 951);
+    expect(Math.min(...steps.slice(0, -1))).toBeGreaterThan(3 / 951);
+  });
+  it('runs left to right inside the logo frame', () => {
+    expect(p[0][0]).toBeLessThan(-0.4);
+    expect(p.at(-1)![0]).toBeGreaterThan(0.4);
+    for (const [x, y] of p) { expect(Math.abs(x)).toBeLessThan(0.5); expect(Math.abs(y)).toBeLessThan(0.36); }
   });
 });
 
