@@ -39,6 +39,10 @@ let handle = try FileHandle(forWritingTo: oversized)
 try handle.truncate(atOffset: UInt64(NativeBackupFiles.maximumBytes + 1)); try handle.close()
 requireFailure { _ = try NativeBackupStore.read(oversized.lastPathComponent, in: local) }
 requireFailure { _ = try NativeBackupFiles.read(oversized) }
+let newestOversized = local.appendingPathComponent("auto-zzzz-large.json")
+try FileManager.default.moveItem(at: oversized, to: newestOversized)
+let saved = try NativeBackupStore.save(String(decoding: data, as: UTF8.self), folder: local)
+precondition(saved != nil, "A corrupt oversized predecessor must not prevent a valid automatic backup")
 let unavailable = NativeBackupFiles.listing(local: cloud, cloud: .failure(CocoaError(.fileReadNoPermission)))
 precondition(unavailable.entries.count == 1 && unavailable.warnings.count == 1)
 let invalidRoot = NativeBackupFiles.listing(local: outside, cloud: .success(cloud))

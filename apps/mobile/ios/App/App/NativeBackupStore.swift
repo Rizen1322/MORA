@@ -33,7 +33,7 @@ enum NativeBackupStore {
         lock.lock(); defer { lock.unlock() }
         let (data, digest) = try validated(text)
         if let last = try files(in: root).first,
-           let text = try? String(contentsOf: last, encoding: .utf8), let previous = try? validated(text), previous.1 == digest { return nil }
+           let text = try? read(last.lastPathComponent, in: root), let previous = try? validated(text), previous.1 == digest { return nil }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let stamp = String(format: "%016lld", Int64(Date().timeIntervalSince1970 * 1000))
         let file = root.appendingPathComponent("auto-\(stamp)-\(UUID().uuidString).json")

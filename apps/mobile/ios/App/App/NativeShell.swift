@@ -199,8 +199,13 @@ extension MoraRootViewController {
             try await Task.sleep(for: .seconds(2))
             try capture("native-sound")
             report["sound"] = "SwiftUI EQ and preset controls rendered without a page description"
-            shell.captureBackup()
-            try await wait { (try? NativeBackupStore.files().isEmpty) == false }
+            var backupTask: Task<Bool, Never>?
+            try await wait {
+                if backupTask == nil { backupTask = self.shell.captureBackup() }
+                return backupTask != nil
+            }
+            let backupSaved = await backupTask!.value
+            try require(backupSaved, "The native automatic backup did not finish successfully")
             shell.go("/backups")
             try await wait { self.shell.ui.path == "/backups" && self.shell.nativeContentVisible }
             try await Task.sleep(for: .seconds(2))
@@ -420,11 +425,11 @@ final class NativeShellStore: ObservableObject {
     }
     func remapReactions(_ mapping: [String: String]) { reactions.remap(mapping); flushReactions() }
 
-    func captureBackup() {
-        guard (sharedLibrary || ui.loaded), !backingUp, sharedLibrary || revision != backupRevision else { return }
+    @discardableResult func captureBackup() -> Task<Bool, Never>? {
+        guard (sharedLibrary || ui.loaded), !backingUp, sharedLibrary || revision != backupRevision else { return nil }
         backingUp = true
         let revision = self.revision
-        Task { @MainActor in
+        return Task { @MainActor in
             let lease = UIApplication.shared.beginBackgroundTask(withName: "MORA backup", expirationHandler: nil)
             defer { self.backingUp = false; if lease != .invalid { UIApplication.shared.endBackgroundTask(lease) } }
             do {
@@ -443,7 +448,8 @@ final class NativeShellStore: ObservableObject {
                     #endif
                 }.value
                 self.backupRevision = revision
-            } catch { self.show("Бэкап: \(error.localizedDescription)") }
+                return true
+            } catch { self.show("Бэкап: \(error.localizedDescription)"); return false }
         }
     }
 

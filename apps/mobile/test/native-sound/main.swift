@@ -23,7 +23,7 @@ require(NativeSoundState.bandLabel(31) == "31 Гц" && NativeSoundState.bandLabe
 require(state.presets.map(\.name) == ["Ровно", "Больше баса", "Вокал", "Тихое прослушивание", "Электроника"], "Built-in preset order")
 require(state.presets.map(\.gains) == [
     flat, [4, 3.5, 2.5, 1, 0, 0, 0, 0, 0, 0], [-1.5, -1, 0, 0.5, 1.5, 2.5, 2.5, 1.5, 0, -0.5],
-    [3, 2.5, 1.5, 0, 0, 0, 0, 0, 0.5, 1.5, 2], [3.5, 3, 1, 0, -1, -0.5, 0.5, 1.5, 2.5, 2],
+    [3, 2.5, 1.5, 0, 0, 0, 0, 0.5, 1.5, 2], [3.5, 3, 1, 0, -1, -0.5, 0.5, 1.5, 2.5, 2],
 ], "Core built-in gains")
 require(state.selectedPreset == 0, "Disabled EQ still identifies its saved preset")
 
