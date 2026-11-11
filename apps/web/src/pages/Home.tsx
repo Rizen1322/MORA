@@ -58,7 +58,7 @@ export function WaveHero() {
   const tracks = useApp((s) => s.order.length);
   const providers = useApp((s) => s.providers);
   const connected = providers.some((v) => v.id === 'yandex' && v.status === 'connected');
-  const [source, setSource] = useState<'own' | 'yandex' | 'online'>(p.context?.type === 'yandex-wave' ? 'yandex' : tracks ? 'own' : 'online');
+  const [source, setSource] = useState<'own' | 'yandex' | 'online'>(radio.active || p.context?.type === 'online-radio' ? 'online' : p.context?.type === 'yandex-wave' ? 'yandex' : tracks ? 'own' : 'online');
   const [tuning, setTuning] = useState(false);
   useEffect(() => {
     if (radio.active || p.context?.type === 'online-radio') setSource('online');
@@ -72,7 +72,7 @@ export function WaveHero() {
     void startRadio();
   };
   const waveOn = p.context?.type === 'wave' || p.context?.type === 'yandex-wave';
-  const selectedActive = source === 'online' ? radio.active : waveOn && (p.context?.type === 'yandex-wave' ? 'yandex' : 'own') === source;
+  const selectedActive = source === 'online' ? radio.active || p.context?.type === 'online-radio' : waveOn && (p.context?.type === 'yandex-wave' ? 'yandex' : 'own') === source;
   const playing = selectedActive && (p.status === 'playing' || p.status === 'buffering');
   return (
     <section className="wave-hero" aria-label="Моя волна">
