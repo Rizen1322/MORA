@@ -433,6 +433,34 @@ final class NativeShellStore: ObservableObject {
     private var sendingReactions = false
     private var sheetOpen = false
     private var pending: (path: String, at: Date)?
+    private var stationWrite: DispatchWorkItem?
+    private let stationIO = DispatchQueue(label: "ru.mora.station")
+    private var station: NativeStationSnapshot?
+
+    private func scheduleStation(_ value: [String: Any]) {
+        guard let raw = value["station"] as? [String: Any], let data = try? JSONSerialization.data(withJSONObject: raw),
+              let incoming = try? JSONDecoder().decode(NativeStationPayload.self, from: data) else { return }
+        let tracks = incoming.tracks.map { row -> NativeStationSnapshot.Track in
+            var track = row
+            track.localFile = NativeStationFiles.name(track.trackId)
+            return track
+        }
+        let next = NativeStationSnapshot(context: incoming.context, source: incoming.source, index: incoming.index,
+            position: incoming.position, settings: incoming.settings, tracks: tracks)
+        guard (try? next.validate()) != nil else { return }
+        station = next
+        guard stationWrite == nil else { return } // Throttle continuous position ticks rather than postponing forever.
+        let task = DispatchWorkItem { [weak self] in
+            guard let self, let snapshot = self.station else { return }
+            self.stationWrite = nil
+            self.stationIO.async {
+                do { try NativeStationFiles.save(snapshot) }
+                catch { DispatchQueue.main.async { self.show("Не удалось сохранить станцию: \(error.localizedDescription)") } }
+            }
+        }
+        stationWrite = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: task)
+    }
 
     @Published var searchQuery = ""
     @Published var searchSource = "all"
@@ -472,6 +500,7 @@ final class NativeShellStore: ObservableObject {
     }
 
     func receive(_ value: [String: Any]) -> Bool {
+        scheduleStation(value)
         if value["enable"] as? Bool == true { setShown(true, resync: false) }
         if let rows = value["library"] as? [[String: Any]] { library = rows.compactMap(NativeTrack.init) }
         if let rows = value["playlists"] as? [[String: Any]] { playlists = rows.compactMap(NativePlaylist.init) }

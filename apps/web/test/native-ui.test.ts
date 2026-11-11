@@ -40,6 +40,17 @@ beforeEach(() => {
 });
 
 describe('native shell bridge (page side)', () => {
+  it('shares at most fifty station entries without provider credentials or audio URLs', async () => {
+    const { uiState } = await import('../src/lib/native-ui.ts');
+    h.app.settings = { wave: { mood: 'calm', diversity: 'discover', mode: 'mix' }, automix: { enabled: true }, token: 'secret' };
+    h.app.player.queue = Array.from({ length: 70 }, (_, i) => ({ trackId: 'a', entryId: String(i) }));
+    h.app.player.position = 17;
+    const station = uiState().station;
+    expect(station.tracks).toHaveLength(50);
+    expect(station).toMatchObject({ context: 'wave', source: 'own', index: 0, position: 17, settings: { mood: 'calm', diversity: 'discover', mode: 'mix' } });
+    expect(JSON.stringify(station)).not.toContain('secret');
+    expect(station.tracks[0]).not.toHaveProperty('url');
+  });
   it('passes like and addition dates to the native favorites list', async () => {
     const { uiTrack } = await import('../src/lib/native-ui.ts');
     expect(uiTrack({ ...track('a'), reaction: 1, likedAt: 123, addedAt: 456 } as any)).toMatchObject({ likedAt: 123, addedAt: 456 });

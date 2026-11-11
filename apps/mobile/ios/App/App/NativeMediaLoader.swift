@@ -10,6 +10,10 @@ final class NativeMediaLoader {
     func load(_ source: [String: Any], to destination: URL, folder: URL, ticket: NativePreparationTicket) async throws -> URL {
         if ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
         let kind = source["kind"] as? String ?? ""
+        if kind == "station" {
+            guard let name = source["file"] as? String else { throw Failure.source }
+            return try NativeStationFiles.localURL(name)
+        }
         if kind == "local" {
             guard let key = source["file"] as? Int, (0..<1_000_000).contains(key) else { throw Failure.source }
             let file = folder.appendingPathComponent("source-\(key).media")

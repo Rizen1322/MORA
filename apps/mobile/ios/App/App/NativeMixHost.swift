@@ -7,6 +7,7 @@ import UIKit
 /// Native playback plus a cancellable preparation producer, independent of page timers.
 /// Engine/file ownership is confined to work; analysis and downloads run off that queue.
 final class NativeMixHost {
+    static let shared = NativeMixHost()
     private let work = DispatchQueue(label: "ru.mora.native-mix", qos: .userInitiated)
     private let lock = NSLock()
     private var cached: [String: Any] = ["active": false, "playing": false, "index": 0, "position": 0.0, "duration": 0.0]
@@ -284,6 +285,7 @@ final class NativeMixHost {
                   config["gainDb"] == nil || config["gainDb"] is Double, self.preparedFileKey < 999999 else {
                 self.reply(completion, .failure(Failure.invalid)); return
             }
+            NativeStationFiles.retainLocal(item, folder: folder)
             self.initialTicket?.cancel()
             let ticket = NativePreparationTicket(); self.initialTicket = ticket; self.initialConfig = config
             self.preparedFileKey += 1; let key = self.preparedFileKey
@@ -378,6 +380,7 @@ final class NativeMixHost {
                 for item in items {
                     guard let key = item["file"] as? Int, (0..<1_000_000).contains(key), item["source"] is [String: Any] else { throw Failure.invalid }
                 }
+                for item in items.prefix(50) { NativeStationFiles.retainLocal(item, folder: folder) }
                 var configuration = manifest, future = items
                 var previous = manifest["previous"] as! [String: Any]
                 // A suspended page can send stale entries with a fresh native index.
@@ -733,6 +736,7 @@ final class NativeMixHost {
         if artworks.indices.contains(index), let artwork = artworks[index] { info[MPMediaItemPropertyArtwork] = artwork }
         let publishedInfo = info
         let publishedTrackId = tracks.indices.contains(index) ? tracks[index]["trackId"] as? String ?? "" : ""
+        NativeStationFiles.updatePosition(trackId: publishedTrackId, position: position)
         let canAdvance = tracks.indices.contains(index + 1) || preparation?.hasRemaining == true || pendingSkips > 0
         let canReverse = canGoBack
         // A tick republishes Now Playing only on a visible change or clock drift (tempo

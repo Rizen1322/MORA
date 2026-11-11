@@ -61,6 +61,10 @@ enum NativeDeepLink {
         guard url.scheme?.lowercased() == scheme else { return }
         Task { @MainActor in
             if splashVisible { pending.append(url); return }
+            if let link = NativeWaveLink(url), URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains(where: { $0.name == "autoplay" && $0.value == "1" }) == true {
+                do { try await StationStarter.start(source: link.source); return }
+                catch { NativeShellStore.shared?.show(error.localizedDescription) }
+            }
             guard let store = await NativeIntentShell.ready() else { return }
             switch url.host?.lowercased() {
             case "wave":
@@ -79,11 +83,15 @@ enum NativeDeepLink {
 struct StartWaveIntent: AppIntent {
     static let title: LocalizedStringResource = "Включить волну"
     static let description = IntentDescription("Запускает «Мою волну» в MORA с источником, выбранным на главной.")
-    static let openAppWhenRun = true
+    static let openAppWhenRun = false
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
-        guard let store = await NativeIntentShell.ready() else { throw NativeIntentError.notReady }
-        return NativeIntentShell.startWave(store) ? .result(dialog: "Включаю волну") : .result(dialog: "Волна уже играет")
+        do {
+            try await StationStarter.start()
+            return .result(dialog: "Включаю сохранённую волну")
+        } catch {
+            return .result(dialog: "Откройте MORA, чтобы начать")
+        }
     }
 }
 

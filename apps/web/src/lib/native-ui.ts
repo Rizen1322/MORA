@@ -42,6 +42,15 @@ export function uiState(s = useApp.getState(), radio = useRadio.getState(), prep
     path,
     search: { q: params.get('q'), source: path === '/yandex' ? 'yandex' : params.get('src'), type: params.get('type') },
     loaded: s.loaded,
+    station: {
+      context: p.context?.type ?? 'library', source: ctx === 'yandex-wave' ? 'yandex' : ctx === 'online-radio' ? 'online' : ctx === 'wave' ? 'own' : null,
+      index: 0, position: p.position,
+      settings: { mood: s.settings?.wave?.mood ?? 'normal', diversity: s.settings?.wave?.diversity ?? 'balanced', mode: s.settings?.wave?.mode ?? 'normal' },
+      tracks: p.queue.slice(p.index, p.index + 50).flatMap(entry => {
+        const t = trackOf(entry.trackId);
+        return t ? [{ trackId: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration }] : [];
+      }),
+    },
     // The web full player, side panels and the version picker cover everything: native steps aside while they are open.
     overlay: s.fullPlayer || s.queueOpen || s.panel !== null || useVersionPanel.getState().target !== null,
     wave: {

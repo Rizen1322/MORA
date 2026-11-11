@@ -67,6 +67,8 @@ try {
   console.log(`Node MIR reference: ${seconds}s audio, ${Math.round(performance.now() - referenceStart)}ms wall time`);
   const build = spawnSync('swiftc', [...(seconds > 4 ? ['-O'] : []), resolve(root, 'apps/mobile/ios/App/App/NativeMediaHTTP.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativeMediaLoader.swift'),
+    resolve(root, 'apps/mobile/ios/App/App/NativeStationFiles.swift'),
+    resolve(root, 'apps/mobile/ios/App/App/NativeStationSnapshot.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativePCMDecoder.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativePreparationCore.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativeQueuePreparation.swift'),

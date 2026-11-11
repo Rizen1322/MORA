@@ -76,7 +76,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private var navigationRoute = "webkit"
     private var navigationEpoch = 0
     private let nativeProbe = NativePlaybackProbe()
-    private let nativeMix = NativeMixHost()
+    private let nativeMix = NativeMixHost.shared
 
     override public func load() {
         nativeMix.onLevels = { [weak self] rms, bands in

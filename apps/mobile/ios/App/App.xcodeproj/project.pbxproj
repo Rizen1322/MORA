@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		FAF0C0DE2FF0000100000001 /* NativeStationSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAF0C0DE2FF0000100000002 /* NativeStationSnapshot.swift */; };
+		FAF0C0DE2FF0000100000003 /* NativeStationFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAF0C0DE2FF0000100000004 /* NativeStationFiles.swift */; };
+		FAF0C0DE2FF0000100000005 /* StationStarter.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAF0C0DE2FF0000100000006 /* StationStarter.swift */; };
 		F9F0C0DE2FF0000100000001 /* NativeWaveLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9F0C0DE2FF0000100000002 /* NativeWaveLink.swift */; };
 		B2F0C0DE2FF0000100000011 /* NativeMixTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF0000100000012 /* NativeMixTimeline.swift */; };
 		B2F0C0DE2FF000010000000B /* NativeMediaLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF000010000000C /* NativeMediaLoader.swift */; };
@@ -47,6 +50,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		FAF0C0DE2FF0000100000002 /* NativeStationSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeStationSnapshot.swift; sourceTree = "<group>"; };
+		FAF0C0DE2FF0000100000004 /* NativeStationFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeStationFiles.swift; sourceTree = "<group>"; };
+		FAF0C0DE2FF0000100000006 /* StationStarter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationStarter.swift; sourceTree = "<group>"; };
 		F9F0C0DE2FF0000100000002 /* NativeWaveLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWaveLink.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF0000100000012 /* NativeMixTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMixTimeline.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF000010000000C /* NativeMediaLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMediaLoader.swift; sourceTree = "<group>"; };
@@ -281,6 +287,9 @@
 				F6F0C0DE2FF0000100000002 /* NativeVersions.swift */,
 				F7F0C0DE2FF0000100000002 /* NativeIntents.swift */,
 				F9F0C0DE2FF0000100000002 /* NativeWaveLink.swift */,
+				FAF0C0DE2FF0000100000002 /* NativeStationSnapshot.swift */,
+				FAF0C0DE2FF0000100000004 /* NativeStationFiles.swift */,
+				FAF0C0DE2FF0000100000006 /* StationStarter.swift */,
 				F8F0C0DE2FF0000100000002 /* NativeCarPlay.swift */,
 				F8F0C0DE2FF0000100000004 /* NativeWidgetShared.swift */,
 				F8F0C0DE2FF000010000000A /* App.entitlements */,
@@ -407,6 +416,9 @@
 				F6F0C0DE2FF0000100000001 /* NativeVersions.swift in Sources */,
 				F7F0C0DE2FF0000100000001 /* NativeIntents.swift in Sources */,
 				F9F0C0DE2FF0000100000001 /* NativeWaveLink.swift in Sources */,
+				FAF0C0DE2FF0000100000001 /* NativeStationSnapshot.swift in Sources */,
+				FAF0C0DE2FF0000100000003 /* NativeStationFiles.swift in Sources */,
+				FAF0C0DE2FF0000100000005 /* StationStarter.swift in Sources */,
 				F8F0C0DE2FF0000100000001 /* NativeCarPlay.swift in Sources */,
 				F8F0C0DE2FF0000100000003 /* NativeWidgetShared.swift in Sources */,
 				E5F0C0DE2FF0000100000007 /* NativePages.swift in Sources */,
