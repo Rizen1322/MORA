@@ -9,7 +9,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
-        let showSplash = !Self.coldLaunchClaimed && UIApplication.shared.applicationState != .background
+        // During foreground scene connection UIApplication can still report .background.
+        let showSplash = !Self.coldLaunchClaimed && !AppDelegate.backgroundLaunch
             && connectionOptions.urlContexts.isEmpty && connectionOptions.userActivities.isEmpty
             && connectionOptions.shortcutItem == nil
         Self.coldLaunchClaimed = true

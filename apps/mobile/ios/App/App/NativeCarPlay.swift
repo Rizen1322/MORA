@@ -22,6 +22,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private static let thumbnails: NSCache<NSString, UIImage> = { let cache = NSCache<NSString, UIImage>(); cache.countLimit = 100; return cache }()
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene, didConnect interfaceController: CPInterfaceController) {
+        AppDelegate.backgroundLaunch = true
         interface = interfaceController
         wave.tabImage = UIImage(systemName: "waveform")
         liked.tabImage = UIImage(systemName: "heart.fill")

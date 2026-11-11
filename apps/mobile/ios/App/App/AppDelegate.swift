@@ -3,6 +3,7 @@ import Capacitor
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
+    static var backgroundLaunch = false
 
     var window: UIWindow?
 
@@ -20,6 +21,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+        Self.backgroundLaunch = true
         guard identifier == NativeDownloadManager.identifier else { completionHandler(); return }
         NativeDownloadManager.shared.handleEvents(completionHandler)
     }
