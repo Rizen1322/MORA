@@ -684,6 +684,14 @@ final class NativeShellStore: ObservableObject {
         Task { @MainActor in _ = try? await call("network", ["offline": offline], timeout: 10) }
     }
 
+    @MainActor func nativePlaybackChanged(_ state: [String: Any], ended: Bool) {
+        guard UIApplication.shared.applicationState != .active else { return }
+        var next = NativePlayerState(state)
+        if ended { next.playing = false }
+        guard next.trackId != player.trackId || next.playing != player.playing else { return }
+        player = next; publishWidget()
+    }
+
     /// Home-screen widgets: the playing (or last) track and the newest likes; redrawn only when they change.
     private var widget: NativeWidgetData?
     private func publishWidget() {

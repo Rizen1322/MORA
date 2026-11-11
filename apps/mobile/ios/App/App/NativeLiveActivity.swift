@@ -20,6 +20,7 @@ import MediaPlayer
         }
         host.onNowPlaying = { state, ended in
             let store = NativeShellStore.shared
+            store?.nativePlaybackChanged(state, ended: ended)
             var content: NativeActivityState?
             if !ended {
                 let key = "\(state["trackId"] ?? "")|\(state["artworkReady"] ?? false)"

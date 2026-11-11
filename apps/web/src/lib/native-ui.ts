@@ -46,7 +46,7 @@ export function uiState(s = useApp.getState(), radio = useRadio.getState(), prep
     search: { q: params.get('q'), source: path === '/yandex' ? 'yandex' : params.get('src'), type: params.get('type') },
     loaded: s.loaded,
     station: {
-      context: p.context?.type ?? 'library', source: ctx === 'yandex-wave' ? 'yandex' : ctx === 'online-radio' ? 'online' : ctx === 'wave' ? 'own' : null,
+      context: ctx ?? 'library', source: ctx === 'yandex-wave' ? 'yandex' : ctx === 'online-radio' ? 'online' : ctx === 'wave' ? 'own' : null,
       index: 0, position: p.position, contextId: p.context?.id ?? null,
       settings: { mood: s.settings?.wave?.mood ?? 'normal', diversity: s.settings?.wave?.diversity ?? 'balanced', mode: s.settings?.wave?.mode ?? 'normal' },
       tracks: p.queue.slice(p.index, p.index + 50).flatMap(entry => {
@@ -255,7 +255,7 @@ export function startNativeUi(): void {
     return (await fn(args ?? {})) ?? null;
   };
   let tracks: unknown, order: unknown, playlists: unknown, queue: unknown, last = '', timer: ReturnType<typeof setTimeout> | null = null;
-  let launchRequested = false;
+  let launchRequested = false, pendingIntro = false;
   let syncedWiFi: boolean | undefined;
   let keepingWave = false, keptWave = '';
   const keepWave = async () => {
@@ -286,6 +286,7 @@ export function startNativeUi(): void {
     const key = JSON.stringify(state);
     state.launchIntro = !launchRequested;
     state.launchHidden = document.hidden;
+    if (pendingIntro) { state.splash = true; state.overlay = true; }
     const libraryChanged = s.tracks !== tracks || s.order !== order;
     if (!enable && !libraryChanged && s.playlists === playlists && s.player.queue === queue && key === last) return;
     if (libraryChanged) state.library = s.order.map((id) => s.tracks.get(id)).filter((t): t is Track => !!t).map(uiTrack);
@@ -297,10 +298,11 @@ export function startNativeUi(): void {
       if (!launchRequested) {
         launchRequested = true;
         if (launchSplash && splashEnabled()) {
-          const start = () => playSplash({ ready: () => useApp.getState().loaded || !useApp.getState().serverOnline,
-            target: () => document.querySelector('.wave-hero-title span') });
+          const start = () => { pendingIntro = false; playSplash({ ready: () => useApp.getState().loaded || !useApp.getState().serverOnline,
+            target: () => document.querySelector('.wave-hero-title span') }); };
           if (!document.hidden) start();
           else {
+            pendingIntro = true;
             const visible = () => { if (!document.hidden) { document.removeEventListener('visibilitychange', visible); start(); last = ''; schedule(); } };
             document.addEventListener('visibilitychange', visible);
           }
