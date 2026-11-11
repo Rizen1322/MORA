@@ -464,7 +464,8 @@ final class NativeServer {
                 } else {
                     // by byte count: a NUL inside the string must not cut it short
                     let text = Array((value.toString() ?? "").utf8)
-                    rc = text.withUnsafeBytes { sqlite3_bind_text(stmt, i, $0.baseAddress?.assumingMemoryBound(to: CChar.self) ?? "", Int32($0.count), SQLiteConnection.transient) }
+                    rc = text.isEmpty ? sqlite3_bind_text(stmt, i, "", 0, SQLiteConnection.transient)
+                        : text.withUnsafeBytes { sqlite3_bind_text(stmt, i, $0.baseAddress!.assumingMemoryBound(to: CChar.self), Int32($0.count), SQLiteConnection.transient) }
                 }
             } else { rc = sqlite3_bind_null(stmt, i) }
             guard rc == SQLITE_OK else { throw SQLiteConnection.Failure(code: rc, message: "bind \(i): \(rc)") }
