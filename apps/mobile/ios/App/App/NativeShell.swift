@@ -380,13 +380,18 @@ final class NativeShellStore: ObservableObject {
     }
 
     /// A snapshot from the page (main thread). Returns whether the shell is on screen.
+    // Kept out of line: inlined into receive(), Swift 6.2's CopyPropagation pass crashes on these optional chains (Release).
+    @inline(never) private static func trackChanged(_ old: NativeNow?, _ new: NativeNow?) -> Bool {
+        old?.id != new?.id || old?.playing != new?.playing
+    }
+
     func receive(_ value: [String: Any]) -> Bool {
         if value["enable"] as? Bool == true { setShown(true, resync: false) }
         if let rows = value["library"] as? [[String: Any]] { library = rows.compactMap(NativeTrack.init) }
         if let rows = value["playlists"] as? [[String: Any]] { playlists = rows.compactMap(NativePlaylist.init) }
         if let rows = value["queue"] as? [[String: Any]] { queue = rows.compactMap(NativeQueuedTrack.init) }
         let next = NativeUiState(value)
-        let widgetChanged = value["library"] != nil || next.now?.id != ui.now?.id || next.now?.playing != ui.now?.playing
+        let widgetChanged = value["library"] != nil || Self.trackChanged(ui.now, next.now)
         if next.loaded && !ui.loaded && offline { sendNetwork() } // a page that (re)loaded without a network
         if next.toast != ui.toast, let toast = next.toast, screen != .web { show(toast.text) }
         if next.path != ui.path || next.searchQuery != ui.searchQuery || next.searchSource != ui.searchSource || next.searchScope != ui.searchScope {
