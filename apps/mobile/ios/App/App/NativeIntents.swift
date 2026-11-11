@@ -147,7 +147,8 @@ struct MoraShortcuts: AppShortcutsProvider {
 struct MoraPlaylistEntity: AppEntity {
     static var typeDisplayRepresentation: TypeDisplayRepresentation = "Плейлист"
     static var defaultQuery = MoraPlaylistQuery()
-    var id: String, name: String
+    var id: String
+    var name: String
     var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(name)") }
 }
 struct MoraPlaylistQuery: EntityStringQuery {
