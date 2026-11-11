@@ -1,5 +1,6 @@
 import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import type { FromWorker, ToWorker } from '../shared/protocol.ts';
+import { secretKey } from './native.ts';
 
 /**
  * Where the page's /api requests go: the server worker in this WebView, or apps/server in the
@@ -20,7 +21,8 @@ export function workerPort(): ServerPort {
 }
 
 interface NativeServer {
-  serverStatus(): Promise<{ ready: boolean }>;
+  serverStatus(): Promise<{ ready: boolean; booted: boolean }>;
+  serverAbandon(): Promise<void>;
   serverImportReset(): Promise<void>;
   serverImport(o: { path: string; offset: number; data: string }): Promise<void>;
   serverImportDone(): Promise<void>;
@@ -60,29 +62,53 @@ function decode(v: unknown): unknown {
 }
 
 /**
- * The app-process server, after moving the library out of OPFS on first use. null when that move
- * failed: OPFS is untouched, so the worker can go on with it. Once moved, there is no way back to the
- * worker (its copy would be stale): a failing start is an error.
+ * The app-process server, after moving the library out of OPFS on first use. null sends the page back to
+ * the worker, which is safe only while OPFS is still the current library: when the move failed, or when
+ * the moved copy's server has never reached `ready` (so it has served nothing). After a first `ready`
+ * OPFS is stale and a failing server is shown as an error instead.
  */
 export async function nativePort(progress: (text: string | null) => void): Promise<ServerPort | null> {
-  if (!(await Native.serverStatus()).ready) {
-    try { await importFromOpfs(progress); } catch (e) { console.warn('[server] перенос медиатеки не удался, остаётся WebView', e); return null; }
+  const status = await Native.serverStatus();
+  if (!status.ready) {
+    try { await importFromOpfs(progress); }
+    catch (e) {
+      console.warn('[server] перенос медиатеки не удался, остаётся WebView', e);
+      await Native.serverImportReset().catch(() => {}); // give the partial copy's space back
+      return null;
+    }
   }
   const early: FromWorker[] = [];
   // until the page listens, messages wait (the server may answer before listen() is called)
   let onMessage: (m: FromWorker) => void = (m) => early.push(m);
-  let onError: (text: string) => void = (text) => console.error('[server]', text);
-  await Native.addListener('server', (m) => {
+  let failure: string | null = null;
+  let onError: (text: string) => void = (text) => { failure = text; };
+  let settle!: (outcome: string) => void;
+  const first = new Promise<string>((r) => (settle = r));
+  const listener = await Native.addListener('server', (m) => {
     const msg = decode(m) as FromWorker;
-    if (msg.t === 'boot-error') onError(msg.error);
-    else onMessage(msg);
+    if (msg.t === 'boot-error') { settle(msg.error); onError(msg.error); return; }
+    if (msg.t === 'ready') settle('ready');
+    onMessage(msg);
   });
   await Native.serverStart();
+  // The server opens the library only after this key; the page's own copy waits in its queue until a port is chosen.
+  await Native.serverSend({ message: { t: 'secret-key', key: await secretKey() } });
+  const outcome = await Promise.race([first, new Promise<string>((r) => setTimeout(() => r('нет ответа за 60 с'), 60_000))]);
+  if (outcome !== 'ready' && !status.booted) {
+    console.warn('[server] сервер приложения не запустился, остаётся WebView:', outcome);
+    await listener.remove();
+    await Native.serverAbandon().catch((e) => console.warn('[server]', e));
+    return null;
+  }
   // Bodies may need an async read (Blob); a chain keeps messages in the order they were posted.
   let chain = Promise.resolve();
   return {
     post: (m) => { chain = chain.then(async () => Native.serverSend({ message: await encode(m) })).catch((e) => console.warn('[server]', e)); },
-    listen: (m, e) => { onMessage = m; onError = e; for (const x of early.splice(0)) m(x); },
+    listen: (m, e) => {
+      onMessage = m; onError = e;
+      for (const x of early.splice(0)) m(x);
+      if (failure) e(failure);
+    },
   };
 }
 

@@ -177,7 +177,20 @@ function writeFileSync(p0: string | URL, data: string | Uint8Array | ArrayBuffer
   } finally { fsh.close(fd); }
 }
 
-const rmImpl = (p0: string | URL, o?: { recursive?: boolean; force?: boolean }) => fsh.rm(norm(p0), !!o?.recursive, !!o?.force);
+const rmImpl = (p0: string | URL, o?: { recursive?: boolean; force?: boolean }) => {
+  const p = norm(p0);
+  // Node: rm/unlink refuse a directory unless recursive (rmdir is the call for an empty one)
+  if (!o?.recursive && fsh.stat(p)?.dir) throw err('EISDIR', 'rm', p);
+  fsh.rm(p, !!o?.recursive, !!o?.force);
+};
+const rmdirImpl = (p0: string | URL, o?: { recursive?: boolean }) => {
+  const p = norm(p0);
+  const n = fsh.stat(p);
+  if (!n) throw err('ENOENT', 'rmdir', p);
+  if (!n.dir) throw err('ENOTDIR', 'rmdir', p);
+  if (!o?.recursive && fsh.readdir(p).length) throw err('ENOTEMPTY', 'rmdir', p);
+  fsh.rm(p, true, false);
+};
 const mkdirImpl = (p: string | URL, o?: { recursive?: boolean } | number) => fsh.mkdir(norm(p), typeof o === 'object' && !!o?.recursive);
 const utimesImpl = (p: string | URL, _a: unknown, m: number | Date) => fsh.utimes(norm(p), typeof m === 'number' ? m * 1000 : m.getTime());
 
@@ -192,7 +205,7 @@ export const promises = {
   async access(p: string | URL) { statImpl(p); },
   async rm(p: string | URL, o?: { recursive?: boolean; force?: boolean }) { rmImpl(p, o); },
   async unlink(p: string | URL) { rmImpl(p); },
-  async rmdir(p: string | URL, o?: { recursive?: boolean }) { rmImpl(p, o); },
+  async rmdir(p: string | URL, o?: { recursive?: boolean }) { rmdirImpl(p, o); },
   async rename(a: string | URL, b: string | URL) { fsh.rename(norm(a), norm(b)); },
   async copyFile(a: string | URL, b: string | URL) { fsh.copy(norm(a), norm(b)); },
   async statfs(): Promise<never> { throw err('ENOSYS', 'statfs', '/'); },

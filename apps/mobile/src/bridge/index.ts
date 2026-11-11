@@ -64,7 +64,7 @@ function showProgress(text: string | null): void {
     el.className = 'mora-boot-progress';
     el.setAttribute('role', 'status');
     el.style.cssText = 'position:fixed;inset:auto 16px calc(env(safe-area-inset-bottom) + 96px);z-index:3000;padding:12px 16px;border-radius:14px;background:#0d1f17;color:#e8f5ee;font:15px/1.35 system-ui;text-align:center';
-    document.body.append(el);
+    (document.body ?? document.documentElement).append(el); // the bridge runs in <head>
   }
   el.textContent = text;
 }

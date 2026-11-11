@@ -8,14 +8,14 @@ let root = FileManager.default.temporaryDirectory.appendingPathComponent("mora-s
 defer { try? FileManager.default.removeItem(at: root) }
 
 let server = NativeServer(root: root, script: try String(contentsOf: bundle, encoding: .utf8), services: .init(
-    decode: { _, _, _ in throw CocoaError(.featureUnsupported) },
+    // two frames, both channels: 0.5, 0.25
+    decode: { _, _, _ in let plane = [Float(0.5), 0.25].withUnsafeBufferPointer { Data(buffer: $0) }; return ([plane, plane], 48000, 1) },
     analyzerVersion: { "test" },
     analyze: { _, _ in nil }))
 let lock = NSCondition()
 var messages: [[String: Any]] = []
-server.onMessage = { message in
+server.attach { message in
     lock.lock(); messages.append(message); lock.broadcast(); lock.unlock()
-    // outbound HTTP is not part of this check: the server must cope with being offline
 }
 func wait(_ what: String, _ match: @escaping ([String: Any]) -> Bool) -> [String: Any] {
     lock.lock(); defer { lock.unlock() }
@@ -62,4 +62,38 @@ assert(sqlite3_step(stmt) == SQLITE_ROW)
 let settings = String(cString: sqlite3_column_text(stmt, 0))
 assert(settings.contains(#""motion":"full""#), settings)
 sqlite3_finalize(stmt); sqlite3_close(db)
+
+// Decoded planes reach the server as ArrayBuffers, as postMessage handed them to the worker (rpc.ts: new Float32Array(plane)).
+func evaluate(_ script: String) -> Any {
+    let done = DispatchSemaphore(value: 0)
+    var out: Any = NSNull()
+    server.evaluate(script) { out = $0; done.signal() }
+    done.wait()
+    return out
+}
+_ = evaluate("""
+(() => { const prev = self.onmessage; globalThis.__decoded = null;
+  self.onmessage = (e) => { const m = e.data;
+    if (m.t === 'rpc-res' && m.id === 900001) { const p = m.value.planes[0]; globalThis.__decoded = [p instanceof ArrayBuffer, new Float32Array(p).length, new Float32Array(p)[1]]; self.onmessage = prev; }
+    else prev(e); };
+  postMessage({ t: 'rpc', id: 900001, op: 'decode', args: { bytes: new Uint8Array([1, 2, 3]).buffer, sampleRate: 44100, channels: 2, format: 'f32le' } });
+  return 0; })()
+""")
+var decoded: [Any] = []
+for _ in 0..<100 where decoded.isEmpty { decoded = evaluate("globalThis.__decoded") as? [Any] ?? []; if decoded.isEmpty { Thread.sleep(forTimeInterval: 0.05) } }
+assert(decoded.count == 3 && decoded[0] as? Bool == true && decoded[1] as? Double == 2 && decoded[2] as? Double == 0.25, "decoded \(decoded)")
+
+// A reloaded WebView attaches again and must get ready again (the server outlives the page).
+lock.lock(); messages.removeAll(); lock.unlock()
+server.attach { message in lock.lock(); messages.append(message); lock.broadcast(); lock.unlock() }
+_ = wait("ready again") { $0["t"] as? String == "ready" }
+
+// A script that throws while loading is a boot error, not a silent hang.
+let broken = NativeServer(root: root.appendingPathComponent("broken"), script: "throw new Error('полифил не найден')", services: .init(
+    decode: { _, _, _ in throw CocoaError(.featureUnsupported) }, analyzerVersion: { "test" }, analyze: { _, _ in nil }))
+let failed = DispatchSemaphore(value: 0)
+var bootError = ""
+broken.attach { if $0["t"] as? String == "boot-error" { bootError = $0["error"] as? String ?? ""; failed.signal() } }
+broken.start()
+assert(failed.wait(timeout: .now() + 10) == .success && bootError.contains("полифил не найден"), "boot error \(bootError)")
 print("Native server passed")

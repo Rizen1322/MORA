@@ -10,18 +10,32 @@ enum NativeServerApp {
     private static let staging = support.appendingPathComponent("server-import", isDirectory: true)
     /// Written last when an import completed; until then the library is still the WebView worker's.
     private static var marker: URL { root.appendingPathComponent(".imported") }
+    /// Written at the server's first `ready`. Before it, the imported copy has served nothing, so a server
+    /// that cannot start may be abandoned and the worker go on with OPFS; after it, OPFS is stale.
+    private static var bootedMarker: URL { root.appendingPathComponent(".booted") }
     static var ready: Bool { FileManager.default.fileExists(atPath: marker.path) }
+    static var booted: Bool { FileManager.default.fileExists(atPath: bootedMarker.path) }
     private(set) static var shared: NativeServer?
 
-    static func start(onMessage: @escaping ([String: Any]) -> Void) throws -> NativeServer {
-        if let shared { shared.onMessage = onMessage; return shared }
+    static func start(onMessage: @escaping ([String: Any]) -> Void) throws {
+        let handler: ([String: Any]) -> Void = { message in
+            if message["t"] as? String == "ready", !booted { FileManager.default.createFile(atPath: bootedMarker.path, contents: nil) }
+            onMessage(message)
+        }
+        if let shared { shared.attach(handler); return }
         guard ready else { throw CocoaError(.fileNoSuchFile) }
         guard let url = Bundle.main.url(forResource: "server-jsc", withExtension: "js", subdirectory: "public") else { throw CocoaError(.fileReadNoSuchFile) }
         let server = NativeServer(root: root, script: try String(contentsOf: url, encoding: .utf8), services: services)
-        server.onMessage = onMessage
+        server.attach(handler)
         shared = server
         server.start()
-        return server
+    }
+
+    /// A server that never reached `ready`: drop its copy so the worker keeps the (still current) OPFS library.
+    static func abandon() throws {
+        guard !booted else { throw CocoaError(.fileWriteNoPermission) }
+        shared = nil // its JSContext stays idle in memory until the app restarts
+        if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) }
     }
 
     static func importReset() throws {
@@ -112,7 +126,12 @@ extension MoraAudioPlugin {
         }
     }
 
-    @objc func serverStatus(_ call: CAPPluginCall) { call.resolve(["ready": NativeServerApp.ready]) }
+    @objc func serverStatus(_ call: CAPPluginCall) { call.resolve(["ready": NativeServerApp.ready, "booted": NativeServerApp.booted]) }
+    @objc func serverAbandon(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            do { try NativeServerApp.abandon(); call.resolve() } catch { call.reject(error.localizedDescription) }
+        }
+    }
     @objc func serverImportReset(_ call: CAPPluginCall) {
         DispatchQueue.global(qos: .userInitiated).async {
             do { try NativeServerApp.importReset(); call.resolve() } catch { call.reject(error.localizedDescription) }
@@ -132,7 +151,7 @@ extension MoraAudioPlugin {
     }
     @objc func serverStart(_ call: CAPPluginCall) {
         do {
-            _ = try NativeServerApp.start { [weak self] message in
+            try NativeServerApp.start { [weak self] message in
                 let data = Self.encode(message) as? [String: Any] ?? [:]
                 DispatchQueue.main.async { self?.notifyListeners("server", data: data) }
             }

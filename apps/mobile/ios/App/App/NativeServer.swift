@@ -19,7 +19,13 @@ final class NativeServer {
     let root: URL
     let queue = DispatchQueue(label: "ru.mora.server", qos: .userInitiated)
     /// Server → page messages (head/chunk/end/fail/ready/boot-error), called on `queue`. Binary parts are Data.
-    var onMessage: (([String: Any]) -> Void)?
+    /// Set through `attach`, which may be called again when the WebView reloads.
+    private var onMessage: (([String: Any]) -> Void)?
+    private(set) var booted = false
+    private var bootError: String?
+    private var loading = false
+    /// Requests of the attached page still owed a reply; replies to anything else are dropped.
+    private var open = Set<Int>()
     private let services: Services
     private let script: String
     private var context: JSContext!
@@ -48,12 +54,41 @@ final class NativeServer {
         queue.async { self.boot() }
     }
 
+    /// (Re)connects a page. The server outlives the WebView (iOS reloads it under memory pressure): a new
+    /// page gets `ready` (or the boot error) again, and requests of the previous one are aborted, so their
+    /// replies never land on the new page's requests with the same ids.
+    func attach(_ handler: @escaping ([String: Any]) -> Void) {
+        queue.async {
+            for id in self.open { self.receive(["t": "abort", "id": Double(id)]) }
+            self.open.removeAll()
+            self.onMessage = handler
+            if let error = self.bootError { handler(["t": "boot-error", "error": error]) }
+            else if self.booted { handler(["t": "ready"]) }
+        }
+    }
+
     /// Page → server: the same messages the page posted to the worker.
     func send(_ message: [String: Any]) {
         queue.async {
-            guard let context = self.context, let receive = context.objectForKeyedSubscript("__moraReceive") else { return }
-            receive.call(withArguments: [self.js(message)])
+            if message["t"] as? String == "req", let id = (message["id"] as? NSNumber)?.intValue { self.open.insert(id) }
+            self.receive(message)
         }
+    }
+
+    /// Runs `script` in the server's context and hands back its plain value (tests).
+    func evaluate(_ script: String, _ done: @escaping (Any) -> Void) {
+        queue.async { done(self.swift(self.context?.evaluateScript(script))) }
+    }
+
+    private func receive(_ message: [String: Any]) {
+        guard let context, let receive = context.objectForKeyedSubscript("__moraReceive") else { return }
+        receive.call(withArguments: [js(message)])
+    }
+
+    private func failBoot(_ text: String) {
+        guard bootError == nil, !booted else { return }
+        bootError = text
+        onMessage?(["t": "boot-error", "error": text])
     }
 
     private func boot() {
@@ -62,17 +97,20 @@ final class NativeServer {
         // Playback continues after the screen locks: the library must stay readable then.
         try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: root.path)
         #endif
-        guard let vm = JSVirtualMachine(), let context = JSContext(virtualMachine: vm) else {
-            onMessage?(["t": "boot-error", "error": "JavaScriptCore недоступен"]); return
-        }
+        guard let vm = JSVirtualMachine(), let context = JSContext(virtualMachine: vm) else { failBoot("JavaScriptCore недоступен"); return }
         self.context = context
         context.name = "MORA server"
         context.exceptionHandler = { [weak self] _, value in
-            let stack = value?.forProperty("stack")?.toString() ?? ""
-            self?.log("error", "uncaught: \(value?.toString() ?? "?")\n\(stack)")
+            guard let self else { return }
+            let text = "\(value?.toString() ?? "?")\n\(value?.forProperty("stack")?.toString() ?? "")"
+            self.log("error", "uncaught: \(text)")
+            // a throw while the script loads is a failed boot; the worker's boot().catch covers the async part
+            if self.loading { self.failBoot(text) }
         }
         context.setObject(makeHost(), forKeyedSubscript: "moraHost" as NSString)
+        loading = true
         context.evaluateScript(script, withSourceURL: URL(string: "capacitor://localhost/server-jsc.js"))
+        loading = false
     }
 
     // MARK: - JS ⇄ Swift values
@@ -129,7 +167,8 @@ final class NativeServer {
     private func js(_ value: Any?) -> JSValue {
         switch value {
         case nil, is NSNull: return JSValue(nullIn: context)
-        case let data as Data: return uint8Array(data)
+        // messages carry ArrayBuffers, as postMessage gave the worker (rpc.ts reads `new Float32Array(plane)`)
+        case let data as Data: return uint8Array(data).forProperty("buffer")
         case let string as String: return JSValue(object: string, in: context)
         case let number as NSNumber:
             return CFGetTypeID(number) == CFBooleanGetTypeID() ? JSValue(bool: number.boolValue, in: context) : JSValue(double: number.doubleValue, in: context)
@@ -418,11 +457,14 @@ final class NativeServer {
                 if value.isBoolean { rc = sqlite3_bind_int64(stmt, i, value.toBool() ? 1 : 0) }
                 else if value.isNumber {
                     let d = value.toDouble()
-                    rc = d.rounded() == d && abs(d) < 9_007_199_254_740_992 ? sqlite3_bind_int64(stmt, i, Int64(d)) : sqlite3_bind_double(stmt, i, d)
+                    // sql.js's rule, under which the iPhone library was written: 32-bit integers as INTEGER, the rest as REAL
+                    rc = Int32(exactly: d) != nil ? sqlite3_bind_int64(stmt, i, Int64(d)) : sqlite3_bind_double(stmt, i, d)
                 } else if let data = bytes(value) {
                     rc = data.withUnsafeBytes { sqlite3_bind_blob(stmt, i, $0.baseAddress, Int32($0.count), SQLiteConnection.transient) }
                 } else {
-                    rc = sqlite3_bind_text(stmt, i, value.toString() ?? "", -1, SQLiteConnection.transient)
+                    // by byte count: a NUL inside the string must not cut it short
+                    let text = Array((value.toString() ?? "").utf8)
+                    rc = text.withUnsafeBytes { sqlite3_bind_text(stmt, i, $0.baseAddress?.assumingMemoryBound(to: CChar.self) ?? "", Int32($0.count), SQLiteConnection.transient) }
                 }
             } else { rc = sqlite3_bind_null(stmt, i) }
             guard rc == SQLITE_OK else { throw SQLiteConnection.Failure(code: rc, message: "bind \(i): \(rc)") }
@@ -456,7 +498,8 @@ final class NativeServer {
     private func arm(_ id: Int, _ ms: Double, _ repeating: Bool) {
         timers.removeValue(forKey: id)?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        let interval = DispatchTimeInterval.microseconds(Int(max(0, ms) * 1000))
+        // Node's limit; Int(.infinity) would trap (prelude.ts clamps too)
+        let interval = DispatchTimeInterval.microseconds(Int((ms.isFinite ? min(max(0, ms), 2_147_483_647) : 0) * 1000))
         timer.schedule(deadline: .now() + interval, repeating: repeating ? (ms > 0 ? interval : .milliseconds(1)) : .never, leeway: .milliseconds(1))
         timer.setEventHandler { [weak self] in
             guard let self else { return }
@@ -485,6 +528,15 @@ final class NativeServer {
             if message["op"] as? String == "fetch" { fetch(id, args) } else { decode(id, args) }
         case "rpc-abort":
             if let id = message["id"] as? Double { requests.removeValue(forKey: Int(id))?.cancel() }
+        case "head", "chunk", "end", "fail":
+            guard let id = (message["id"] as? NSNumber)?.intValue, open.contains(id) else { return } // owed to a page that is gone
+            if message["t"] as? String != "head" && message["t"] as? String != "chunk" { open.remove(id) }
+            onMessage?(message)
+        case "ready":
+            booted = true
+            onMessage?(message)
+        case "boot-error":
+            failBoot(message["error"] as? String ?? "?")
         default:
             onMessage?(message)
         }

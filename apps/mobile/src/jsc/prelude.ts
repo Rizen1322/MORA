@@ -47,7 +47,9 @@ g.__moraTimer = (id: number) => {
 const arm = (repeat: boolean) => (fn: unknown, ms?: number, ...args: unknown[]) => {
   const id = nextTimer++;
   timers.set(id, { fn: typeof fn === 'function' ? fn as (...a: unknown[]) => void : new Function(String(fn)) as () => void, args, repeat });
-  host.timer(id, Math.max(0, Number(ms) || 0), repeat);
+  // Node's rule: past 2^31-1 ms (Infinity too) a timer fires after 1 ms; NaN and negatives mean 0
+  const d = Number(ms);
+  host.timer(id, d > 2147483647 ? 1 : d > 0 ? d : 0, repeat);
   return id;
 };
 const disarm = (id: unknown) => { if (timers.delete(Number(id))) host.clearTimer(Number(id)); };

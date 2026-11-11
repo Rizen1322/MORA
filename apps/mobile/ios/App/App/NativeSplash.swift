@@ -14,7 +14,10 @@ import UIKit
     private static let erode: [(CGFloat, CGFloat, Double)] = [(0, 0, 0), (0.16, 0.2, 0.1), (0.84, 0.76, 0.16), (0.24, 0.84, 0.24), (0.8, 0.14, 0.3), (0.5, 0.5, 0.36), (0.08, 0.52, 0.42)]
 
     private let ready: @MainActor () -> Bool
-    private let started = CACurrentMediaTime()
+    private var started = CACurrentMediaTime()
+    private let scale: CGFloat
+    private var link: CADisplayLink?
+    private var built = false
     private var period = CGPoint.zero
     private var ending = false
 
@@ -34,13 +37,23 @@ import UIKit
 
     private init(frame: CGRect, scale: CGFloat, ready: @escaping @MainActor () -> Bool) {
         self.ready = ready
+        self.scale = scale
         super.init(frame: frame)
         backgroundColor = Self.night
         accessibilityViewIsModal = true
         isAccessibilityElement = true
         accessibilityLabel = "MORA"
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(skip)))
+        // The scene starts on the first frame actually shown: until then the main thread may still be setting
+        // up the WebView, and absolute begin times would skip the bloom. Meanwhile the view is LaunchScreen's night.
+        link = CADisplayLink(target: self, selector: #selector(firstFrame))
+        link?.add(to: .main, forMode: .common)
+    }
+    @objc private func firstFrame() {
+        link?.invalidate(); link = nil
+        started = CACurrentMediaTime()
         build(still: UIAccessibility.isReduceMotionEnabled, scale: scale)
+        built = true
         wait()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -145,7 +158,7 @@ import UIKit
         if elapsed >= T.maxWait || ((still || elapsed >= T.hold) && ready()) { finish(); return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.wait() }
     }
-    @objc private func skip() { finish() }
+    @objc private func skip() { if built { finish() } }
 
     /// Ink breaks through from the period and a few spots at once, takes the sheet, then the app shows through.
     private func finish() {

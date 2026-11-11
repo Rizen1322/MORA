@@ -8,7 +8,8 @@ const entry = fileURLToPath(new URL('../src/jsc/prelude.ts', import.meta.url));
 const code = (await build({ entryPoints: [entry], bundle: true, write: false, format: 'iife', platform: 'browser', target: 'safari16.4' })).outputFiles[0].text;
 const ctx = vm.createContext({});
 const realm = vm.runInContext('globalThis', ctx);
-realm.moraHost = { log() {}, post() {}, timer() {}, clearTimer() {}, now: () => 0, random: (n: number) => new realm.Uint8Array(n).fill(7) };
+const armed: number[] = [];
+realm.moraHost = { log() {}, post() {}, timer(_id: number, ms: number) { armed.push(ms); }, clearTimer() {}, now: () => 0, random: (n: number) => new realm.Uint8Array(n).fill(7) };
 vm.runInContext(code, ctx);
 const run = <T>(src: string): T => vm.runInContext(src, ctx) as T;
 
@@ -79,5 +80,13 @@ describe('fetch classes in JavaScriptCore', () => {
       return [text, seen, c.signal.aborted, atob(btoa('ab\\u00ff')) === 'ab\\u00ff', crypto.randomUUID().length];
     })()`);
     expect(got).toEqual(['жар', 'AbortError', true, true, 36]);
+  });
+});
+
+describe('timers in JavaScriptCore', () => {
+  it('clamps delays like Node, so the host never gets Infinity or NaN', () => {
+    armed.length = 0;
+    run('setTimeout(() => {}, Infinity); setTimeout(() => {}, 2 ** 40); setTimeout(() => {}, NaN); setTimeout(() => {}, -5); setTimeout(() => {}, 250)');
+    expect(armed).toEqual([1, 1, 0, 0, 250]);
   });
 });

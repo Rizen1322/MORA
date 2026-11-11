@@ -81,6 +81,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "serverImport", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "serverImportDone", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "serverStart", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "serverAbandon", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "serverSend", returnType: CAPPluginReturnPromise),
     ]
 
