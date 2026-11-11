@@ -39,7 +39,7 @@ import Network
                     guard data.count <= 4 * 1024 * 1024 else { throw CocoaError(.fileReadCorruptFile) }
                     let loaded = try JSONDecoder().decode([NativeDownloadJob].self, from: data)
                     guard loaded.count <= 10000, Set(loaded.map(\.id)).count == loaded.count,
-                          loaded.allSatisfy({ UUID(uuidString: $0.id) != nil && !$0.trackId.isEmpty && $0.expectedBytes >= 0 && $0.receivedBytes >= 0 && $0.duration.isFinite && $0.duration > 0 && $0.duration <= 86400 }) else { throw CocoaError(.fileReadCorruptFile) }
+                          loaded.allSatisfy({ UUID(uuidString: $0.id) != nil && !$0.trackId.isEmpty && $0.expectedBytes >= 0 && $0.expectedBytes <= 1_099_511_627_776 && $0.receivedBytes >= 0 && $0.receivedBytes <= 1_099_511_627_776 && $0.duration.isFinite && $0.duration > 0 && $0.duration <= 86400 }) else { throw CocoaError(.fileReadCorruptFile) }
                     jobs = loaded
                 }
             } catch {
@@ -73,14 +73,14 @@ import Network
         return FileManager.default.isReadableFile(atPath: url.path) ? url : nil
     }
     func add(trackId: String, title: String, artist: String, album: String, duration: Double, request: URLRequest, limit: Int64) throws -> NativeDownloadJob {
-        guard let root = Self.root, !trackId.isEmpty, trackId.utf8.count <= 512, duration.isFinite, duration > 0,
+        guard let root = Self.root, !trackId.isEmpty, trackId.utf8.count <= 512, duration.isFinite, duration > 0, duration <= 86400,
               request.url?.scheme == "https", request.url?.user == nil, request.url?.password == nil else { throw failure("Источник фоновой загрузки недоступен") }
         if let i = jobs.firstIndex(where: { $0.trackId == trackId && $0.state == .paused && tasks[$0.id] == nil }) { jobs[i].state = .failed }
         if let existing = jobs.first(where: { $0.trackId == trackId && ![.cancelled, .failed].contains($0.state) }) { return existing }
         limitBytes = max(0, limit)
         UserDefaults.standard.set(limitBytes, forKey: "mora.downloads.limitBytes")
         let estimate = Int64(min(duration, 86400) * 40000)
-        let occupied = jobs.filter { $0.state != .cancelled && $0.state != .failed }.reduce(Int64(0)) { $0 + max($1.receivedBytes, $1.expectedBytes) }
+        let occupied = jobs.filter { $0.state != .cancelled && $0.state != .failed }.reduce(Int64(0)) { $0 + $1.reservedBytes }
         let free = try root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage ?? 0
         guard occupied + estimate <= limitBytes, estimate + 64 * 1024 * 1024 < free else { throw failure("Недостаточно места или превышен лимит кэша") }
         var job = NativeDownloadJob(trackId: trackId, title: title, artist: artist, album: album, duration: duration, expectedBytes: estimate)
@@ -162,7 +162,7 @@ import Network
             self.jobs[i].receivedBytes = totalBytesWritten
             if totalBytesExpectedToWrite > 0 { self.jobs[i].expectedBytes = totalBytesExpectedToWrite }
             self.jobs[i].state = .downloading
-            if self.jobs.filter({ $0.state != .cancelled && $0.state != .failed }).reduce(Int64(0), { $0 + $1.expectedBytes }) > self.limitBytes {
+            if self.jobs.filter({ $0.state != .cancelled && $0.state != .failed }).reduce(Int64(0), { $0 + $1.reservedBytes }) > self.limitBytes {
                 self.jobs[i].state = .failed; self.jobs[i].error = "Превышен лимит кэша"; self.tasks.removeValue(forKey: id)?.cancel()
             }
             self.publish()
@@ -181,7 +181,8 @@ import Network
             }
             do {
                 let bytes = try staged.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-                guard bytes > 0, Int64(bytes) <= self.limitBytes else { throw self.failure("Пустой файл или превышен лимит кэша") }
+                let other = self.jobs.filter { $0.id != id && ![.cancelled, .failed].contains($0.state) }.reduce(Int64(0)) { $0 + $1.reservedBytes }
+                guard bytes > 0, Int64(bytes) + other <= self.limitBytes else { throw self.failure("Пустой файл или превышен лимит кэша") }
                 let destination = root.appendingPathComponent(id + ".media")
                 try FileManager.default.moveItem(at: staged, to: destination)
                 try FileManager.default.setAttributes(NativePreparationFiles.attributes, ofItemAtPath: destination.path)

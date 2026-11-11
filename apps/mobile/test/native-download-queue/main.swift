@@ -19,3 +19,8 @@ assert(restored == [job])
 assert(NativeDownloadJob.retryDelay(attempt: 1) == 10)
 assert(NativeDownloadJob.retryDelay(attempt: 99) == 300)
 print("Native download queue passed")
+
+job.receivedBytes = 1400
+assert(job.reservedBytes == 1400, "Unknown content length must reserve received bytes")
+job.receivedBytes = 400
+assert(job.reservedBytes == 1000, "Queued transfers keep their estimate reserved")

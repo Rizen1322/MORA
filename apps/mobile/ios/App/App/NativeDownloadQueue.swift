@@ -12,6 +12,7 @@ struct NativeDownloadJob: Codable, Equatable, Identifiable {
     var error: String?
     var attempts = 0
     var createdAt = Date()
+    var reservedBytes: Int64 { max(receivedBytes, expectedBytes) }
     var progress: Double { expectedBytes > 0 ? min(1, max(0, Double(receivedBytes) / Double(expectedBytes))) : 0 }
     func eta(elapsed: Double) -> Double? {
         guard receivedBytes > 0, expectedBytes >= receivedBytes, elapsed > 0 else { return nil }
