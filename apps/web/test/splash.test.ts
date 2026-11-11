@@ -68,3 +68,28 @@ it('remembers when the intro is turned off in Settings', () => {
   setSplashEnabled(true);
   expect(splashEnabled()).toBe(true);
 });
+
+it('keeps Reduce Motion static until the app behind it is ready', async () => {
+  vi.useFakeTimers(); vi.resetModules();
+  const frames: FrameRequestCallback[] = [];
+  const metrics = { width: 20, fontBoundingBoxAscent: 20, fontBoundingBoxDescent: 4, actualBoundingBoxRight: 20, actualBoundingBoxLeft: 0, actualBoundingBoxAscent: 20, actualBoundingBoxDescent: 4, addColorStop: vi.fn() };
+  const draw = new Proxy({}, { get: (_target, key) => key === 'measureText' ? () => metrics : vi.fn(() => metrics) });
+  const root = { style: {}, setAttribute: vi.fn(), append: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), remove: vi.fn() };
+  const doc = { hidden: false, createElement: (tag: string) => tag === 'canvas' ? { getContext: () => draw } : root,
+    body: { append: vi.fn() }, documentElement: { dataset: { motion: 'reduced' }, classList: { contains: () => true } },
+    fonts: { load: async () => {}, check: () => true }, addEventListener: vi.fn(), removeEventListener: vi.fn() };
+  vi.stubGlobal('document', doc); vi.stubGlobal('location', { search: '' });
+  vi.stubGlobal('innerWidth', 390); vi.stubGlobal('innerHeight', 844); vi.stubGlobal('devicePixelRatio', 3);
+  vi.stubGlobal('requestAnimationFrame', (fn: FrameRequestCallback) => frames.push(fn));
+  vi.stubGlobal('addEventListener', vi.fn()); vi.stubGlobal('removeEventListener', vi.fn()); vi.stubGlobal('dispatchEvent', vi.fn());
+  const splash = await import('../src/lib/splash.ts');
+  let ready = false, time = 100;
+  splash.playSplash({ ready: () => ready, target: () => null });
+  for (let i = 0; i < 60; i++) { time += 16; frames.shift()?.(time); }
+  expect(splash.splashing).toBe(true);
+  expect(root.remove).not.toHaveBeenCalled();
+  ready = true;
+  for (let i = 0; i < 60 && frames.length; i++) { time += 16; frames.shift()?.(time); }
+  expect(splash.splashing).toBe(false);
+  await vi.runAllTimersAsync(); vi.useRealTimers();
+});

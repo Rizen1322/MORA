@@ -196,7 +196,11 @@ export function playSplash({ ready, target }: SplashOptions) {
     last = now;
     wall += dt;
     if (document.hidden && fade < 0) skip();
-    if (reduced() && fade < 0) { fade = st; fadeLen = 0.25; }
+    const minimal = reduced();
+    if (minimal) {
+      st = Math.max(st, T.hold);
+      if (fade < 0 && (ready() || wall >= MAX_WAIT)) { fade = st; fadeLen = 0.25; }
+    }
     if (W !== innerWidth || H !== innerHeight) {
       W = innerWidth; H = innerHeight;
       // weak GPUs and 4K screens: cap the backing store at ~3.6 MP
@@ -218,7 +222,7 @@ export function playSplash({ ready, target }: SplashOptions) {
     else if (!waiting) st += advance;
 
     // a slow push-in keeps the still frames alive
-    const zoom = 1 + 0.025 * smooth(st / T.hold);
+    const zoom = minimal ? 1 : 1 + 0.025 * smooth(st / T.hold);
     const flood = clamp((st - T.hold) / FLOOD);
     const graph = st >= T.grid && st < T.word;
     const paper = graph ? GRAPH : PAPER;
