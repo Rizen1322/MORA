@@ -47,13 +47,25 @@ enum NativeIntentError: Error, CustomLocalizedStringResourceConvertible {
 /// `mora://wave|player|liked|search` from the widgets (MORAWidgets): the same actions as the app's own buttons.
 enum NativeDeepLink {
     static let scheme = "mora"
+    @MainActor static var splashVisible = false
+    @MainActor private static var pending: [URL] = []
+
+    @MainActor static func finishSplash() {
+        splashVisible = false
+        let links = pending
+        pending.removeAll()
+        links.forEach { open($0) }
+    }
 
     static func open(_ url: URL) {
-        guard url.scheme == scheme else { return }
+        guard url.scheme?.lowercased() == scheme else { return }
         Task { @MainActor in
+            if splashVisible { pending.append(url); return }
             guard let store = await NativeIntentShell.ready() else { return }
-            switch url.host {
-            case "wave": NativeIntentShell.startWave(store)
+            switch url.host?.lowercased() {
+            case "wave":
+                guard let link = NativeWaveLink(url) else { return }
+                NativeIntentShell.startWave(store, source: link.source.flatMap(NativeWaveSource.init(rawValue:)))
             // «Продолжить»: resume what was paused, or show what already plays.
             case "player": if store.miniPlaying { store.openPlayer() } else if store.miniTitle != nil { store.togglePlayback() }
             case "liked": store.go("/liked")

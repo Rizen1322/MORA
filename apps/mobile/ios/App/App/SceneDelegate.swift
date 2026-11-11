@@ -3,12 +3,20 @@ import Capacitor
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
+    private static var coldLaunchClaimed = false
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
-        window?.rootViewController = MoraRootViewController()
+        let showSplash = !Self.coldLaunchClaimed && UIApplication.shared.applicationState != .background
+            && connectionOptions.urlContexts.isEmpty && connectionOptions.userActivities.isEmpty
+            && connectionOptions.shortcutItem == nil
+        Self.coldLaunchClaimed = true
+        let root = MoraRootViewController()
+        root.showLaunchSplash = showSplash
+        NativeDeepLink.splashVisible = showSplash
+        window?.rootViewController = root
         window?.makeKeyAndVisible()
 
         SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)

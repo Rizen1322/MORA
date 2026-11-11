@@ -71,6 +71,12 @@ jobs:
         run: |
           swiftc apps/mobile/ios/App/App/NativeShellState.swift apps/mobile/test/native-shell/main.swift -o "$RUNNER_TEMP/mora-shell-check"
           "$RUNNER_TEMP/mora-shell-check"
+      - name: Test native wave links and widget compatibility
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeWaveLink.swift apps/mobile/test/native-wave-link/main.swift -o "$RUNNER_TEMP/mora-wave-link-check"
+          "$RUNNER_TEMP/mora-wave-link-check"
+          swiftc apps/mobile/ios/App/App/NativeWidgetShared.swift apps/mobile/test/native-widget/main.swift -o "$RUNNER_TEMP/mora-widget-check"
+          "$RUNNER_TEMP/mora-widget-check"
       - name: Build unsigned device IPA
         run: sh apps/mobile/scripts/ios-mac.sh --ipa
       - name: Release notes from commits

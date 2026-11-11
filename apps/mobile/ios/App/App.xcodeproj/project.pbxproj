@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F9F0C0DE2FF0000100000001 /* NativeWaveLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9F0C0DE2FF0000100000002 /* NativeWaveLink.swift */; };
 		B2F0C0DE2FF0000100000011 /* NativeMixTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF0000100000012 /* NativeMixTimeline.swift */; };
 		B2F0C0DE2FF000010000000B /* NativeMediaLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF000010000000C /* NativeMediaLoader.swift */; };
 		B2F0C0DE2FF000010000000D /* NativePreparationCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F0C0DE2FF000010000000E /* NativePreparationCore.swift */; };
@@ -46,6 +47,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		F9F0C0DE2FF0000100000002 /* NativeWaveLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWaveLink.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF0000100000012 /* NativeMixTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMixTimeline.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF000010000000C /* NativeMediaLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMediaLoader.swift; sourceTree = "<group>"; };
 		B2F0C0DE2FF000010000000E /* NativePreparationCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePreparationCore.swift; sourceTree = "<group>"; };
@@ -278,6 +280,7 @@
 				E5F0C0DE2FF0000100000006 /* NativeScreens.swift */,
 				F6F0C0DE2FF0000100000002 /* NativeVersions.swift */,
 				F7F0C0DE2FF0000100000002 /* NativeIntents.swift */,
+				F9F0C0DE2FF0000100000002 /* NativeWaveLink.swift */,
 				F8F0C0DE2FF0000100000002 /* NativeCarPlay.swift */,
 				F8F0C0DE2FF0000100000004 /* NativeWidgetShared.swift */,
 				F8F0C0DE2FF000010000000A /* App.entitlements */,
@@ -403,6 +406,7 @@
 				E5F0C0DE2FF0000100000005 /* NativeScreens.swift in Sources */,
 				F6F0C0DE2FF0000100000001 /* NativeVersions.swift in Sources */,
 				F7F0C0DE2FF0000100000001 /* NativeIntents.swift in Sources */,
+				F9F0C0DE2FF0000100000001 /* NativeWaveLink.swift in Sources */,
 				F8F0C0DE2FF0000100000001 /* NativeCarPlay.swift in Sources */,
 				F8F0C0DE2FF0000100000003 /* NativeWidgetShared.swift in Sources */,
 				E5F0C0DE2FF0000100000007 /* NativePages.swift in Sources */,

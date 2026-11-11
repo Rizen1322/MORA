@@ -9,6 +9,7 @@ struct NativeWidgetData: Codable, Equatable {
     var playing = false
     var liked: [Song] = []
     var likedCount = 0
+    var updatedAt: Date?
 
     static let group = "group.ru.mora.player"
     private static let key = "mora.widget"
