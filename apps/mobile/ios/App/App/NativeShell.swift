@@ -22,6 +22,9 @@ private final class NativeTabsOverlay: UIView {
 
 final class MoraRootViewController: UIViewController, UITabBarControllerDelegate {
     var showLaunchSplash = false
+    #if DEBUG
+    var launchTrace: [[String: Any]] = []
+    #endif
     let bridge = MoraBridgeViewController()
     let shell = NativeShellStore()
     private let tabs = UITabBarController()
@@ -141,7 +144,7 @@ extension MoraRootViewController {
         let file = folder.appendingPathComponent("native-splash.png")
         guard !FileManager.default.fileExists(atPath: file.path) else { return }
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(800))
+            try? await Task.sleep(for: .milliseconds(100))
             guard NativeDeepLink.splashVisible, let window = self.view.window else { return }
             let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
             try? image.pngData()?.write(to: file)
@@ -169,7 +172,7 @@ extension MoraRootViewController {
         do {
             try await wait { self.shell.ui.loaded && self.shell.webView != nil }
             try await wait { !NativeDeepLink.splashVisible }
-            try require(FileManager.default.fileExists(atPath: folder.appendingPathComponent("native-splash.png").path), "Cold-launch splash screenshot missing")
+            try require(FileManager.default.fileExists(atPath: folder.appendingPathComponent("native-splash.png").path), "Cold-launch splash screenshot missing: \(launchTrace)")
             report["splash"] = "Existing splash.ts captured while the interface loaded underneath"
             let web = shell.webView!
             _ = try await web.evaluateJavaScript("window.__waveOriginal=window.moraNativeUi;window.__waveSource=null;window.moraNativeUi=async(n,a)=>{if(n==='wave'){window.__waveSource=a.source;return;}return window.__waveOriginal(n,a);};0")

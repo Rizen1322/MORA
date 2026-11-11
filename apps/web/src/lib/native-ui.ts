@@ -285,6 +285,7 @@ export function startNativeUi(): void {
     const state: Record<string, unknown> = uiState(s);
     const key = JSON.stringify(state);
     state.launchIntro = !launchRequested;
+    state.launchHidden = document.hidden;
     const libraryChanged = s.tracks !== tracks || s.order !== order;
     if (!enable && !libraryChanged && s.playlists === playlists && s.player.queue === queue && key === last) return;
     if (libraryChanged) state.library = s.order.map((id) => s.tracks.get(id)).filter((t): t is Track => !!t).map(uiTrack);
@@ -295,9 +296,14 @@ export function startNativeUi(): void {
     push(state).then(({ shown, nativeContent, launchSplash }) => {
       if (!launchRequested) {
         launchRequested = true;
-        if (launchSplash && splashEnabled() && !document.hidden) {
-          playSplash({ ready: () => useApp.getState().loaded || !useApp.getState().serverOnline,
+        if (launchSplash && splashEnabled()) {
+          const start = () => playSplash({ ready: () => useApp.getState().loaded || !useApp.getState().serverOnline,
             target: () => document.querySelector('.wave-hero-title span') });
+          if (!document.hidden) start();
+          else {
+            const visible = () => { if (!document.hidden) { document.removeEventListener('visibilitychange', visible); start(); last = ''; schedule(); } };
+            document.addEventListener('visibilitychange', visible);
+          }
         }
         if (launchSplash !== undefined) { last = ''; schedule(); }
       }

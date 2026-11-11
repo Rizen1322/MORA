@@ -541,6 +541,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             root.installShell(host: self.nativeMix, webView: self.bridge?.webView)
             let shown = root.shell.receive(state)
             #if DEBUG
+            if root.launchTrace.count < 10 { root.launchTrace.append(["eligible": root.showLaunchSplash, "reply": launchSplash, "intro": state["launchIntro"] ?? "missing", "splash": state["splash"] ?? "missing", "hidden": state["launchHidden"] ?? "missing", "active": UIApplication.shared.applicationState.rawValue]) }
             if state["splash"] as? Bool == true { root.captureLaunchSplash() }
             #endif
             call.resolve(["shown": shown, "nativeContent": root.shell.nativeContentVisible, "launchSplash": launchSplash])
