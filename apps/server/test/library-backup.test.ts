@@ -1,0 +1,32 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterAll, expect, it } from 'vitest';
+import { createApp } from '../src/app.ts';
+import { kvSet, q } from '../src/db.ts';
+
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mora-library-backup-'));
+let app: Awaited<ReturnType<typeof createApp>>;
+afterAll(async () => { await app?.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+it('round trips settings, reactions and history without credentials, and restores idempotently', async () => {
+  app = await createApp({ dataDir: dir, port: 0, stemsPython: null, accessToken: null }, { startWorkers: false });
+  const { db, lib } = app.services;
+  const t = lib.addRemote({ provider: 'youtube', externalId: 'BackupFull1', title: 'Трек', artist: 'Артист', duration: 180, meta: { token: 'SECRET' } });
+  kvSet(db, 'secret.fixture', 'SECRET');
+  kvSet(db, 'settings', { version: 2, automix: { enabled: false, token: 'SECRET' }, wave: { mood: 'calm' } });
+  q(db, 'INSERT INTO reactions(track_id,value,updated_at) VALUES(?,1,100)').run(t.id);
+  q(db, 'INSERT INTO plays(track_id,started_at,ended_at,played_ms,duration_ms,end_reason) VALUES(?,1,100,99000,180000,?)').run(t.id, 'stop');
+  const backup = await app.app.inject('/api/backup/playlists?library=1');
+  expect(backup.statusCode, backup.body).toBe(200);
+  expect(backup.body).not.toContain('SECRET');
+  expect(backup.json().library.history).toHaveLength(1);
+  expect(backup.json().tracks).toHaveLength(1);
+  q(db, 'DELETE FROM reactions').run(); q(db, 'DELETE FROM plays').run();
+  const restore = () => app.app.inject({ method: 'POST', url: '/api/backup/playlists/restore', payload: backup.json() });
+  expect((await restore()).statusCode).toBe(200);
+  expect((await restore()).statusCode).toBe(200);
+  expect(q(db, 'SELECT value FROM reactions WHERE track_id=?').get(t.id)).toMatchObject({ value: 1 });
+  expect(q(db, 'SELECT COUNT(*) AS n FROM plays').get()).toMatchObject({ n: 1 });
+  const invalid = backup.json(); invalid.library.history[0].trackId = 'absent';
+  expect((await app.app.inject({ method: 'POST', url: '/api/backup/playlists/restore', payload: invalid })).statusCode).toBe(400);
+});

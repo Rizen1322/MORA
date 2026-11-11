@@ -448,6 +448,8 @@ async function settings(): Promise<Screen> {
   const slide = (title: string, key: string, value: number, min: number, max: number, step: number, unit: string, detail: string): Row =>
     ({ kind: 'slider', title, detail, value, min, max, step, unit, disabled: off, act: { name: 'set', args: { group: 'automix', key } } });
   const backupRows: Row[] = [
+    button('Экспорт медиатеки', 'exportLibraryBackup', {}, { symbol: 'square.and.arrow.up' }),
+    { kind: 'link', title: 'Автоматические копии', symbol: 'clock.arrow.circlepath', path: '/backups' },
     button('Сохранить копию', 'exportPlaylists', {}, { symbol: 'square.and.arrow.up' }),
     { kind: 'file', title: 'Восстановить из файла', symbol: 'square.and.arrow.down', types: ['json'], act: { name: 'inspectBackup' } },
   ];
@@ -619,6 +621,13 @@ function sound(): Screen {
 
 // MARK: routes and actions
 
+async function backups(): Promise<Screen> {
+  const { files } = await nativePlaybackControls()?.backups?.list() ?? { files: [] };
+  return { title: 'Резервные копии', sections: [{ footer: 'Последние пять копий. Локальные копии удаляются вместе с приложением — сохраните важную копию через «Поделиться».', rows: files.length ? files.map(file =>
+    button((file.cloud ? 'iCloud · ' : '') + file.name, 'inspectAutoBackup', file, { symbol: 'clock.arrow.circlepath' })) : [text('Резервных копий пока нет')] },
+    ...(backup ? [{ rows: [text(backup.name, 'Настройки, плейлисты, лайки и история будут восстановлены.'), button('Восстановить', 'restoreBackup', {}, { style: 'primary' }), button('Отмена', 'cancelBackup')] }] : [])] };
+}
+
 /** The native page for a hash route, or null when it stays web (NativeRoute in NativeShellState.swift lists the same routes). */
 export function describe(): Promise<Screen> | Screen | null {
   const { parts } = route();
@@ -636,6 +645,7 @@ export function describe(): Promise<Screen> | Screen | null {
       case 'import': return importPage();
       case 'sources': return sources();
       case 'settings': return settings();
+      case 'backups': return backups();
       case 'diagnostics': return diagnostics();
       case 'sound': return sound();
     }
@@ -853,6 +863,17 @@ export const actions: Record<string, (a: Args) => unknown> = {
     st().toast(r.missing ? `Не найдено файлов: ${r.missing}` : 'Все файлы на месте', r.missing ? 'error' : 'success');
   },
   exportPlaylists: async (): Promise<ActResult> => ({ share: { name: 'MORA-playlists.json', text: await (await fetch('/api/backup/playlists')).text() } }),
+  exportLibraryBackup: async (): Promise<ActResult> => {
+    const response = await fetch('/api/backup/playlists?library=1');
+    if (!response.ok) throw Error('Не удалось собрать резервную копию');
+    return { share: { name: 'MORA-library.json', text: await response.text() } };
+  },
+  inspectAutoBackup: async (a) => {
+    const result = await nativePlaybackControls()?.backups?.read(str(a.name), a.cloud === true);
+    if (!result) throw Error('Копия недоступна');
+    const data = JSON.parse(result.text);
+    backup = { data, count: data.playlists.length, name: str(a.name) };
+  },
   inspectBackup: (a) => {
     backupMessage = '';
     const bytes = decode(a.base64);

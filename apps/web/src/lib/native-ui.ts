@@ -86,6 +86,11 @@ type Args = Record<string, unknown>;
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
 /** Native → page. Arguments come from our own Swift code, but are still checked: a wrong call must fail, not misplay. */
 export const commands: Record<string, (a: Args) => unknown> = {
+  backup: async () => {
+    const response = await fetch('/api/backup/playlists?library=1');
+    if (!response.ok) throw Error('Не удалось собрать резервную копию');
+    return response.text();
+  },
   ...nativeVersionCommands,
   ...nativeCatalogCommands,
   go: (a) => { location.hash = str(a.path) || '/'; },

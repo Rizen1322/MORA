@@ -72,6 +72,8 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativeDownloadRemove", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeDownloadSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeSourceFromDownload", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeBackupList", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeBackupRead", returnType: CAPPluginReturnPromise),
     ]
 
     private var playing = false
@@ -438,6 +440,34 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
     @objc private func downloadsChanged() { notifyListeners("downloads", data: [:]) }
+    @objc func nativeBackupList(_ call: CAPPluginCall) {
+        Task.detached(priority: .utility) {
+            do {
+                var rows = try NativeBackupStore.files().map { ["name": $0.lastPathComponent, "cloud": false] as [String: Any] }
+                #if MORA_ICLOUD
+                if let root = try? NativeBackupStore.cloudFolder() { rows += try NativeBackupStore.files(in: root).map { ["name": $0.lastPathComponent, "cloud": true] as [String: Any] } }
+                #endif
+                call.resolve(["files": rows])
+            } catch { call.reject(error.localizedDescription) }
+        }
+    }
+    @objc func nativeBackupRead(_ call: CAPPluginCall) {
+        guard let name = call.getString("name") else { call.reject("Копия не выбрана"); return }
+        let cloud = call.getBool("cloud") == true
+        Task.detached(priority: .utility) {
+            do {
+                var root = NativeBackupStore.folder
+                if cloud {
+                    #if MORA_ICLOUD
+                    root = try NativeBackupStore.cloudFolder()
+                    #else
+                    throw CocoaError(.featureUnsupported)
+                    #endif
+                }
+                call.resolve(["text": try NativeBackupStore.read(name, in: root)])
+            } catch { call.reject(error.localizedDescription) }
+        }
+    }
     @objc func nativeDownloadList(_ call: CAPPluginCall) {
         DispatchQueue.main.async { call.resolve(NativeDownloadManager.shared.list()) }
     }

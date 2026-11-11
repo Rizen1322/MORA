@@ -22,10 +22,12 @@ cd apps/mobile
 # shortcut: patch+1 restarts at a minor bump; switch to a running counter if TestFlight ever needs it.
 node -e "const fs=require('fs'),v=require('./package.json').version,f='ios/App/App.xcodeproj/project.pbxproj';fs.writeFileSync(f,fs.readFileSync(f,'utf8').replace(/MARKETING_VERSION = [^;]+;/g,'MARKETING_VERSION = '+v+';').replace(/CURRENT_PROJECT_VERSION = [^;]+;/g,'CURRENT_PROJECT_VERSION = '+(+v.split('.')[2]+1)+';'))"
 npx cap sync ios
+SWIFT_CONDITIONS='$(inherited)'
+[ "${MORA_ICLOUD:-}" = 1 ] && SWIFT_CONDITIONS="$SWIFT_CONDITIONS MORA_ICLOUD"
 
 if [ "${1:-}" = "--check" ]; then
   xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
-    -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+    -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO SWIFT_ACTIVE_COMPILATION_CONDITIONS="$SWIFT_CONDITIONS" build
 fi
 
 if [ "${1:-}" = "--ipa" ]; then
@@ -33,7 +35,7 @@ if [ "${1:-}" = "--ipa" ]; then
   rm -rf build/ipa MORA-unsigned.ipa
   xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
     -destination 'generic/platform=iOS' -derivedDataPath build/ipa/dd \
-    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" SWIFT_ACTIVE_COMPILATION_CONDITIONS="$SWIFT_CONDITIONS" build
   mkdir -p build/ipa/Payload
   cp -R build/ipa/dd/Build/Products/Release-iphoneos/App.app build/ipa/Payload/
   # Sideloadly/AltStore read the requested entitlements from the bundle and re-sign with them:
@@ -42,6 +44,25 @@ if [ "${1:-}" = "--ipa" ]; then
   APP=build/ipa/Payload/App.app
   ENTITLEMENTS=ios/App/App/App.entitlements
   [ "${MORA_CARPLAY:-}" = 1 ] && ENTITLEMENTS=ios/App/App/CarPlay.entitlements
+  if [ "${MORA_ICLOUD:-}" = 1 ]; then
+    python3 - "$ENTITLEMENTS" build/ipa/iCloud.entitlements "$APP/Info.plist" <<'PY'
+import plistlib, sys
+with open(sys.argv[1], 'rb') as file:
+    entitlements = plistlib.load(file)
+container = 'iCloud.ru.mora.player'
+entitlements['com.apple.developer.icloud-container-identifiers'] = [container]
+entitlements['com.apple.developer.ubiquity-container-identifiers'] = [container]
+entitlements['com.apple.developer.icloud-services'] = ['CloudDocuments']
+with open(sys.argv[2], 'wb') as file:
+    plistlib.dump(entitlements, file)
+with open(sys.argv[3], 'rb') as file:
+    info = plistlib.load(file)
+info['NSUbiquitousContainers'] = {container: {'NSUbiquitousContainerIsDocumentScopePublic': True, 'NSUbiquitousContainerName': 'MORA', 'NSUbiquitousContainerSupportedFolderLevels': 'Any'}}
+with open(sys.argv[3], 'wb') as file:
+    plistlib.dump(info, file)
+PY
+    ENTITLEMENTS=build/ipa/iCloud.entitlements
+  fi
   find "$APP/Frameworks" -maxdepth 1 \( -name '*.framework' -o -name '*.dylib' \) -exec codesign --force --sign - {} \; 2>/dev/null || true
   codesign --force --sign - --entitlements ios/App/MORAWidgets/MORAWidgets.entitlements "$APP/PlugIns/MORAWidgets.appex"
   codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP"

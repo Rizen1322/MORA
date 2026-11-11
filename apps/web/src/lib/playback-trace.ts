@@ -9,6 +9,10 @@ export interface NativeProbe {
   command(action: MediaSessionAction, seekTime?: number): Promise<NativeProbeState>;
 }
 export interface NativePlaybackControls {
+  backups?: {
+    list(): Promise<{ files: { name: string; cloud: boolean }[] }>;
+    read(name: string, cloud: boolean): Promise<{ text: string }>;
+  };
   downloads?: {
     list(): Promise<{ jobs: import('./api.ts').DownloadJob[]; wifiOnly: boolean; cacheBytes: number }>;
     add(trackId: string, limitBytes: number): Promise<{ job: import('./api.ts').DownloadJob }>;

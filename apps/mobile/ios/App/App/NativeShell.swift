@@ -382,6 +382,46 @@ final class NativeShellStore: ObservableObject {
     private var stationWrite: DispatchWorkItem?
     private let stationIO = DispatchQueue(label: "ru.mora.station")
     private var station: NativeStationSnapshot?
+    private var backupTimer: Timer?
+    private var backingUp = false
+    private var backupRevision = -1
+
+    func captureBackup() {
+        guard ui.loaded, !backingUp, revision != backupRevision else { return }
+        backingUp = true
+        let revision = self.revision
+        Task { @MainActor in
+            let lease = UIApplication.shared.beginBackgroundTask(withName: "MORA backup", expirationHandler: nil)
+            defer { self.backingUp = false; if lease != .invalid { UIApplication.shared.endBackgroundTask(lease) } }
+            do {
+                guard let text = try await self.call("backup", timeout: 15) as? String else { throw CocoaError(.fileReadCorruptFile) }
+                try await Task.detached(priority: .utility) {
+                    _ = try NativeBackupStore.save(text)
+                    #if MORA_ICLOUD
+                    _ = try NativeBackupStore.save(text, folder: NativeBackupStore.cloudFolder())
+                    #endif
+                }.value
+                self.backupRevision = revision
+            } catch { self.show("Бэкап: \(error.localizedDescription)") }
+        }
+    }
+
+    private func offerBackupRestore() {
+        guard library.isEmpty, !UserDefaults.standard.bool(forKey: "mora.backup.offered"),
+              (try? NativeBackupStore.files().isEmpty) == false else { return }
+        Task { @MainActor in
+            for _ in 0..<80 {
+                if !NativeDeepLink.splashVisible { break }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            guard let presenter = self.presenter, presenter.presentedViewController == nil else { return }
+            let alert = UIAlertController(title: "Восстановить медиатеку?", message: "Найдены резервные копии настроек, плейлистов, лайков и истории.", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Выбрать копию", style: .default) { _ in self.go("/backups") })
+            alert.addAction(UIAlertAction(title: "Позже", style: .cancel))
+            UserDefaults.standard.set(true, forKey: "mora.backup.offered")
+            presenter.present(alert, animated: true)
+        }
+    }
 
     private func scheduleStation(_ value: [String: Any]) {
         guard let raw = value["station"] as? [String: Any], let data = try? JSONSerialization.data(withJSONObject: raw),
@@ -425,6 +465,8 @@ final class NativeShellStore: ObservableObject {
 
     init() {
         let nc = NotificationCenter.default
+        nc.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.captureBackup() }
+        backupTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in self?.captureBackup() }
         nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.stopPolling() }
         nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in self?.startPolling(); self?.flushReactions(); self?.sendNetwork() }
         nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.flushReactions() }
@@ -452,6 +494,7 @@ final class NativeShellStore: ObservableObject {
         if let rows = value["playlists"] as? [[String: Any]] { playlists = rows.compactMap(NativePlaylist.init) }
         if let rows = value["queue"] as? [[String: Any]] { queue = rows.compactMap(NativeQueuedTrack.init) }
         let next = NativeUiState(value)
+        if next.loaded && !ui.loaded { offerBackupRestore() }
         let widgetChanged = value["library"] != nil || Self.trackChanged(ui.now, next.now)
         if next.loaded && !ui.loaded && offline { sendNetwork() } // a page that (re)loaded without a network
         if next.toast != ui.toast, let toast = next.toast, screen != .web { show(toast.text) }
