@@ -21,12 +21,6 @@ private final class NativeTabsOverlay: UIView {
 }
 
 final class MoraRootViewController: UIViewController, UITabBarControllerDelegate {
-    var showLaunchSplash = false
-    #if DEBUG
-    var launchTrace: [[String: Any]] = []
-    private var splashCaptureStarted = false
-    private var splashCaptureVerified = false
-    #endif
     let bridge = MoraBridgeViewController()
     let shell = NativeShellStore()
     private let tabs = UITabBarController()
@@ -140,24 +134,6 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
 #if DEBUG
 // Exercises the real SwiftUI/UIKit field and bridge in the simulator, without external catalog calls.
 extension MoraRootViewController {
-    func captureLaunchSplash() {
-        guard ProcessInfo.processInfo.arguments.contains("--native-ui-check") else { return }
-        let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let file = folder.appendingPathComponent("native-splash.png")
-        guard !splashCaptureStarted else { return }
-        splashCaptureStarted = true
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(800))
-            guard NativeDeepLink.splashVisible, let web = self.shell.webView else { return }
-            let script = "(()=>{const c=document.querySelector('.splash canvas');if(!c||!c.width||!c.height)return false;const r=c.getBoundingClientRect();return r.width>=innerWidth-1&&r.height>=innerHeight-1&&getComputedStyle(c.parentElement).display!=='none'})()"
-            guard (try? await web.evaluateJavaScript(script)) as? Bool == true else { return }
-            web.takeSnapshot(with: nil) { image, _ in
-                guard let data = image?.pngData() else { return }
-                do { try data.write(to: file); self.splashCaptureVerified = true } catch {}
-            }
-        }
-    }
-
     @MainActor private func checkNativeUI() async {
         let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         func require(_ condition: Bool, _ message: String) throws {
@@ -180,9 +156,8 @@ extension MoraRootViewController {
         do {
             try await wait { self.shell.ui.loaded && self.shell.webView != nil }
             try await wait { !NativeDeepLink.splashVisible }
-            try require(splashCaptureVerified && FileManager.default.fileExists(atPath: folder.appendingPathComponent("native-splash.png").path), "Cold-launch splash screenshot missing: \(launchTrace)")
-            report["splash"] = "Visible full-screen splash.ts canvas captured through WKWebView"
-            report["launchTrace"] = launchTrace
+            try require(FileManager.default.fileExists(atPath: folder.appendingPathComponent("native-splash.png").path), "Cold-launch native splash screenshot missing")
+            report["splash"] = "Native launch splash (NativeSplash.swift) captured from the window"
             let web = shell.webView!
             _ = try await web.evaluateJavaScript("window.__waveOriginal=window.moraNativeUi;window.__waveSource=null;window.moraNativeUi=async(n,a)=>{if(n==='wave'){window.__waveSource=a.source;return;}return window.__waveOriginal(n,a);};0")
             NativeDeepLink.open(URL(string: "mora://wave?source=yandex")!)
@@ -455,7 +430,7 @@ final class NativeShellStore: ObservableObject {
             self.stationWrite = nil
             self.stationIO.async {
                 do { try NativeStationFiles.save(snapshot) }
-                catch { DispatchQueue.main.async { self.show("Не удалось сохранить станцию: \(error.localizedDescription)") } }
+                catch { NSLog("MORA station autosave failed: %@", error.localizedDescription) } // a background autosave must not toast every 1.5 s
             }
         }
         stationWrite = task

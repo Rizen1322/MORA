@@ -6,7 +6,9 @@ enum NativeStationFiles {
     private static let playbackIO = DispatchQueue(label: "ru.mora.station-position")
     private static var lastPositionWrite = 0.0 // playbackIO only
     static var root: URL? {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.ru.mora.player")?
+        // Sideload signing can drop the App Group; Siri and CarPlay run in the app and restore from its own container.
+        (FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.ru.mora.player")
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)?
             .appendingPathComponent("station", isDirectory: true)
     }
     static func name(_ trackId: String) -> String {

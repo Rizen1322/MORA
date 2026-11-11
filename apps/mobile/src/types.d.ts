@@ -98,3 +98,11 @@ declare module 'mora-server/db' {
 declare module 'mora-server/native-sources' {
   export function registerNativeSources(app: unknown, services: unknown): void;
 }
+
+declare module 'string_decoder' {
+  export class StringDecoder {
+    constructor(encoding?: BufferEncoding);
+    write(buffer: Uint8Array): string;
+    end(buffer?: Uint8Array): string;
+  }
+}

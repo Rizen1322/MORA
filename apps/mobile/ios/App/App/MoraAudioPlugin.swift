@@ -75,6 +75,13 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativeBackupList", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeBackupRead", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeRemapTracks", returnType: CAPPluginReturnPromise),
+        // NativeServerPlugin.swift: apps/server in JavaScriptCore instead of the WebView worker
+        CAPPluginMethod(name: "serverStatus", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "serverImportReset", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "serverImport", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "serverImportDone", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "serverStart", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "serverSend", returnType: CAPPluginReturnPromise),
     ]
 
     private var playing = false
@@ -88,7 +95,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private let nativeMix = NativeMixHost.shared
 
     override public func load() {
-        Task { @MainActor in NativeLiveActivity.install(self.nativeMix) }
+        Task { @MainActor in NativePlaybackHooks.install(self.nativeMix) }
         NotificationCenter.default.addObserver(self, selector: #selector(downloadsChanged), name: NativeDownloadManager.changed, object: nil)
         nativeMix.onLevels = { [weak self] rms, bands in
             DispatchQueue.main.async { self?.notifyListeners("levels", data: ["rms": rms, "bands": bands]) }
@@ -535,16 +542,10 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         let state = call.options as? [String: Any] ?? [:]
         DispatchQueue.main.async {
             guard let root = self.bridge?.viewController?.parent as? MoraRootViewController else { call.resolve(["shown": false]); return }
-            let launchSplash = state["launchIntro"] as? Bool == true && root.showLaunchSplash
-            if state["launchIntro"] as? Bool == true { root.showLaunchSplash = false }
-            else if state["splash"] as? Bool == false { NativeDeepLink.finishSplash() }
+            // The launch splash is native (NativeSplash.swift); no `launchSplash` reply keeps the page's intro off.
             root.installShell(host: self.nativeMix, webView: self.bridge?.webView)
             let shown = root.shell.receive(state)
-            #if DEBUG
-            if root.launchTrace.count < 10 { root.launchTrace.append(["eligible": root.showLaunchSplash, "reply": launchSplash, "intro": state["launchIntro"] ?? "missing", "splash": state["splash"] ?? "missing", "hidden": state["launchHidden"] ?? "missing", "active": UIApplication.shared.applicationState.rawValue]) }
-            if state["splash"] as? Bool == true { root.captureLaunchSplash() }
-            #endif
-            call.resolve(["shown": shown, "nativeContent": root.shell.nativeContentVisible, "launchSplash": launchSplash])
+            call.resolve(["shown": shown, "nativeContent": root.shell.nativeContentVisible])
         }
     }
 }

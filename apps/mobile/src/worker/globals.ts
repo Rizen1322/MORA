@@ -40,8 +40,9 @@ class Timeout {
   refresh() { return this; }
   [Symbol.toPrimitive]() { return this.id; }
 }
-const st = globalThis.setTimeout.bind(globalThis), si = globalThis.setInterval.bind(globalThis);
-const ct = globalThis.clearTimeout.bind(globalThis), ci = globalThis.clearInterval.bind(globalThis);
+// Looked up per call: in JavaScriptCore the timers come from src/jsc/prelude.ts, which runs after this module.
+const st = (...a: Parameters<typeof setTimeout>) => globalThis.setTimeout(...a), si = (...a: Parameters<typeof setInterval>) => globalThis.setInterval(...a);
+const ct = (id?: number) => globalThis.clearTimeout(id), ci = (id?: number) => globalThis.clearInterval(id);
 const idOf = (t: unknown) => (t instanceof Timeout ? t.id : (t as number));
 const _setTimeout = (fn: (...a: unknown[]) => void, ms?: number, ...args: unknown[]) => new Timeout(st(fn, ms, ...args) as unknown as number);
 const _setInterval = (fn: (...a: unknown[]) => void, ms?: number, ...args: unknown[]) => new Timeout(si(fn, ms, ...args) as unknown as number);

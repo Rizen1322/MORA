@@ -225,7 +225,6 @@ struct MoraWidgets: WidgetBundle {
         ContinueWidget()
         LikedWidget()
         LockScreenWidget()
-        MoraActivityWidget()
         if #available(iOSApplicationExtension 18.0, *) { MoraPlaybackControl() }
     }
 }

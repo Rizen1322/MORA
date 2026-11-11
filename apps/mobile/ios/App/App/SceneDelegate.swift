@@ -16,10 +16,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             && connectionOptions.shortcutItem == nil
         Self.coldLaunchClaimed = true
         let root = MoraRootViewController()
-        root.showLaunchSplash = showSplash
         NativeDeepLink.splashVisible = showSplash
         window?.rootViewController = root
         window?.makeKeyAndVisible()
+        if showSplash, let window { NativeSplashView.present(in: window) { [weak root] in root?.shell.ui.loaded == true } }
 
         SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
         // A widget that launched the app: handled once the page is up.

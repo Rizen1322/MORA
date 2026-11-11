@@ -1,7 +1,6 @@
-import initSqlJs from 'sql.js';
 import type { ToWorker } from '../shared/protocol.ts';
-import { initFs, promises as fsp, settled } from './opfs-fs.ts';
-import { provideSqlite, flushAll } from './shims/sqlite.ts';
+import { initFs, settled } from './opfs-fs.ts';
+import { openDatabase, flushAll } from './shims/sqlite.ts';
 import type { MiniFastify } from './shims/fastify.ts';
 import { post, onRpcResult, outboundFetch } from './rpc.ts';
 import { process } from './globals.ts';
@@ -60,14 +59,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
 
 async function boot(): Promise<void> {
   await initFs();
-  const SQL = await initSqlJs({ locateFile: (f: string) => new URL(f, self.location.href).href });
-  let image: Uint8Array | null = null;
-  try { image = await fsp.readFile(DB_FILE) as Uint8Array; } catch { image = null; }
-  if (!image) {
-    // a save interrupted between write and rename leaves only the temp image
-    try { image = await fsp.readFile(`${DB_FILE}.saving`) as Uint8Array; } catch { image = null; }
-  }
-  provideSqlite(SQL, DB_FILE, image);
+  await openDatabase(DB_FILE);
   // Provider tokens are sealed with the Keychain key, like the desktop's DPAPI key (read once by
   // providers/base.ts, which then removes it from the environment).
   const key = await secretKey;

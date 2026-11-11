@@ -90,7 +90,7 @@ function readEntitlements(macho) {
   assert.equal(info.MinimumOSVersion, '17.4');
   assert.equal(info.UIUserInterfaceStyle, 'Dark');
   assert.deepEqual(info.UIDeviceFamily, [1]);
-  assert.equal(info.NSSupportsLiveActivities, true);
+  assert.equal(info.NSSupportsLiveActivities, undefined);
   assert.equal(info.DTPlatformName, 'iphoneos');
   assert(info.UIBackgroundModes.includes('audio'));
   assert(info.UIRequiredDeviceCapabilities.includes('arm64'));
@@ -147,7 +147,7 @@ function readEntitlements(macho) {
     widgetSharedData: appText.includes('NativeWidgetData') && widgetText.includes('NativeWidgetData') && appText.includes('NativeDeepLink'),
     nativeStation: appText.includes('StationStarter') && appText.includes('NativeStationSnapshot'),
     backgroundDownloads: appText.includes('NativeDownloadManager'),
-    liveActivity: appText.includes('NativeActivityAttributes') && widgetText.includes('NativeActivityAttributes'),
+    noLiveActivity: !appText.includes('NativeActivityAttributes') && !widgetText.includes('NativeActivityAttributes'),
     configurableWaveWidget: widgetText.includes('WaveWidgetIntent'),
     localBackups: appText.includes('NativeBackupStore'),
     metrics: appText.includes('NativeMetrics'),

@@ -89,14 +89,18 @@ jobs:
         run: |
           swiftc apps/mobile/ios/App/App/NativeStationSnapshot.swift apps/mobile/test/native-station/main.swift -o "$RUNNER_TEMP/mora-station-check"
           "$RUNNER_TEMP/mora-station-check"
-          swiftc apps/mobile/ios/App/App/NativeActivityShared.swift apps/mobile/test/native-activity/main.swift -o "$RUNNER_TEMP/mora-activity-check"
-          "$RUNNER_TEMP/mora-activity-check"
           swiftc apps/mobile/ios/App/App/NativeDownloadQueue.swift apps/mobile/test/native-download-queue/main.swift -o "$RUNNER_TEMP/mora-download-queue-check"
           "$RUNNER_TEMP/mora-download-queue-check"
           swiftc apps/mobile/ios/App/App/NativeBackupStore.swift apps/mobile/test/native-backup/main.swift -o "$RUNNER_TEMP/mora-backup-check"
           "$RUNNER_TEMP/mora-backup-check"
           swiftc apps/mobile/ios/App/App/NativeDiagnosticArchive.swift apps/mobile/test/native-diagnostic-archive/main.swift -o "$RUNNER_TEMP/mora-diagnostics-check"
           "$RUNNER_TEMP/mora-diagnostics-check"
+      - name: Test native JavaScriptCore server
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node apps/mobile/build.mjs --no-web
+          swiftc apps/mobile/ios/App/App/NativeServer.swift apps/mobile/test/native-server/main.swift -lsqlite3 -o "$RUNNER_TEMP/mora-server-check"
+          "$RUNNER_TEMP/mora-server-check" apps/mobile/www/server-jsc.js
       - name: Build unsigned device IPA
         env:
           MORA_CARPLAY: ${{ inputs.carplay && '1' || '0' }}

@@ -19,7 +19,14 @@ WKWebView (Capacitor 8)
 │   • загрузка/декодирование → нативные PCM-файлы → Swift DSP → AVAudioEngine
 │   • Now Playing, Play/Pause/Next/Previous/Seek, прерывания и восстановление
 │   • будущие PCM готовятся независимо от анализа; MIR/планы — отдельный JavaScriptCore
-└─ server-worker.js: apps/server без изменений маршрутов
+├─ NativeServer (Swift + JavaScriptCore, процесс приложения) — на iPhone вместо server-worker.js
+│   • server-jsc.js: тот же apps/server и тот же протокол сообщений, без WebView
+│   • node:fs → настоящие файлы (Application Support/server), node:sqlite → SQLite-файл, запись сразу
+│   • fetch → URLSession, декодирование → AVFoundation, анализ → NativeRustAnalysis
+│   • при первом запуске страница один раз переносит медиатеку из OPFS (OPFS не удаляется);
+│     если перенос не удался, работает прежний worker
+│   • src/jsc/host.ts — контракт moraHost; JIT в JavaScriptCore приложения нет
+└─ server-worker.js: apps/server без изменений маршрутов (браузер; iPhone до переноса)
     • node:fs → OPFS (синхронные SyncAccessHandle), node:sqlite → sql.js (файл в OPFS)
     • ffmpeg → декодирование на странице, probe через music-metadata
     • yt-dlp → youtubei.js + HLS visionOS (YouTube), api-v2 (SoundCloud), склейка HLS в .aac/.m4a

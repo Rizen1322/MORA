@@ -13,10 +13,10 @@
 		FDF0C0DE2FF0000100000001 /* NativeBackupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDF0C0DE2FF0000100000002 /* NativeBackupStore.swift */; };
 		FCF0C0DE2FF0000100000001 /* NativeDownloadQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCF0C0DE2FF0000100000002 /* NativeDownloadQueue.swift */; };
 		FCF0C0DE2FF0000100000003 /* NativeDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCF0C0DE2FF0000100000004 /* NativeDownloadManager.swift */; };
-		FBF0C0DE2FF0000100000001 /* NativeActivityShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000002 /* NativeActivityShared.swift */; };
-		FBF0C0DE2FF0000100000003 /* NativeActivityShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000002 /* NativeActivityShared.swift */; };
-		FBF0C0DE2FF0000100000004 /* NativeLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000005 /* NativeLiveActivity.swift */; };
-		FBF0C0DE2FF0000100000006 /* MORAActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000007 /* MORAActivityWidget.swift */; };
+		FBF0C0DE2FF0000100000001 /* NativeSplash.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000002 /* NativeSplash.swift */; };
+		FBF0C0DE2FF0000100000004 /* NativePlaybackHooks.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000005 /* NativePlaybackHooks.swift */; };
+		FBF0C0DE2FF0000100000020 /* NativeServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000021 /* NativeServer.swift */; };
+		FBF0C0DE2FF0000100000022 /* NativeServerPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000023 /* NativeServerPlugin.swift */; };
 		FAF0C0DE2FF0000100000001 /* NativeStationSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAF0C0DE2FF0000100000002 /* NativeStationSnapshot.swift */; };
 		FAF0C0DE2FF0000100000003 /* NativeStationFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAF0C0DE2FF0000100000004 /* NativeStationFiles.swift */; };
 		FAF0C0DE2FF0000100000005 /* StationStarter.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAF0C0DE2FF0000100000006 /* StationStarter.swift */; };
@@ -66,9 +66,10 @@
 		FDF0C0DE2FF0000100000002 /* NativeBackupStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBackupStore.swift; sourceTree = "<group>"; };
 		FCF0C0DE2FF0000100000002 /* NativeDownloadQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDownloadQueue.swift; sourceTree = "<group>"; };
 		FCF0C0DE2FF0000100000004 /* NativeDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDownloadManager.swift; sourceTree = "<group>"; };
-		FBF0C0DE2FF0000100000002 /* NativeActivityShared.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeActivityShared.swift; sourceTree = "<group>"; };
-		FBF0C0DE2FF0000100000005 /* NativeLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLiveActivity.swift; sourceTree = "<group>"; };
-		FBF0C0DE2FF0000100000007 /* MORAActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MORAActivityWidget.swift; sourceTree = "<group>"; };
+		FBF0C0DE2FF0000100000002 /* NativeSplash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSplash.swift; sourceTree = "<group>"; };
+		FBF0C0DE2FF0000100000005 /* NativePlaybackHooks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlaybackHooks.swift; sourceTree = "<group>"; };
+		FBF0C0DE2FF0000100000021 /* NativeServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeServer.swift; sourceTree = "<group>"; };
+		FBF0C0DE2FF0000100000023 /* NativeServerPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeServerPlugin.swift; sourceTree = "<group>"; };
 		FAF0C0DE2FF0000100000002 /* NativeStationSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeStationSnapshot.swift; sourceTree = "<group>"; };
 		FAF0C0DE2FF0000100000004 /* NativeStationFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeStationFiles.swift; sourceTree = "<group>"; };
 		FAF0C0DE2FF0000100000006 /* StationStarter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationStarter.swift; sourceTree = "<group>"; };
@@ -165,8 +166,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				F8F0C0DE2FF0000100000006 /* MORAWidgets.swift in Sources */,
-				FBF0C0DE2FF0000100000003 /* NativeActivityShared.swift in Sources */,
-				FBF0C0DE2FF0000100000006 /* MORAActivityWidget.swift in Sources */,
 				F8F0C0DE2FF0000100000005 /* NativeWidgetShared.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -264,7 +263,6 @@
 			isa = PBXGroup;
 			children = (
 				F8F0C0DE2FF0000100000007 /* MORAWidgets.swift */,
-				FBF0C0DE2FF0000100000007 /* MORAActivityWidget.swift */,
 				F8F0C0DE2FF0000100000008 /* Info.plist */,
 				F8F0C0DE2FF0000100000009 /* MORAWidgets.entitlements */,
 			);
@@ -312,8 +310,10 @@
 				FAF0C0DE2FF0000100000002 /* NativeStationSnapshot.swift */,
 				FAF0C0DE2FF0000100000004 /* NativeStationFiles.swift */,
 				FAF0C0DE2FF0000100000006 /* StationStarter.swift */,
-				FBF0C0DE2FF0000100000002 /* NativeActivityShared.swift */,
-				FBF0C0DE2FF0000100000005 /* NativeLiveActivity.swift */,
+				FBF0C0DE2FF0000100000002 /* NativeSplash.swift */,
+				FBF0C0DE2FF0000100000005 /* NativePlaybackHooks.swift */,
+				FBF0C0DE2FF0000100000021 /* NativeServer.swift */,
+				FBF0C0DE2FF0000100000023 /* NativeServerPlugin.swift */,
 				FCF0C0DE2FF0000100000002 /* NativeDownloadQueue.swift */,
 				FCF0C0DE2FF0000100000004 /* NativeDownloadManager.swift */,
 				FDF0C0DE2FF0000100000002 /* NativeBackupStore.swift */,
@@ -449,8 +449,10 @@
 				FAF0C0DE2FF0000100000001 /* NativeStationSnapshot.swift in Sources */,
 				FAF0C0DE2FF0000100000003 /* NativeStationFiles.swift in Sources */,
 				FAF0C0DE2FF0000100000005 /* StationStarter.swift in Sources */,
-				FBF0C0DE2FF0000100000001 /* NativeActivityShared.swift in Sources */,
-				FBF0C0DE2FF0000100000004 /* NativeLiveActivity.swift in Sources */,
+				FBF0C0DE2FF0000100000001 /* NativeSplash.swift in Sources */,
+				FBF0C0DE2FF0000100000004 /* NativePlaybackHooks.swift in Sources */,
+				FBF0C0DE2FF0000100000020 /* NativeServer.swift in Sources */,
+				FBF0C0DE2FF0000100000022 /* NativeServerPlugin.swift in Sources */,
 				FCF0C0DE2FF0000100000001 /* NativeDownloadQueue.swift in Sources */,
 				FCF0C0DE2FF0000100000003 /* NativeDownloadManager.swift in Sources */,
 				FDF0C0DE2FF0000100000001 /* NativeBackupStore.swift in Sources */,

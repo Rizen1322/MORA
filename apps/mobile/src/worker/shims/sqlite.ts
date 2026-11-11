@@ -1,4 +1,4 @@
-import type { Database, SqlJsStatic, Statement, SqlValue } from 'sql.js';
+import initSqlJs, { type Database, type SqlJsStatic, type Statement, type SqlValue } from 'sql.js';
 import fs from '../opfs-fs.ts';
 
 /**
@@ -13,6 +13,18 @@ const preloaded = new Map<string, Uint8Array | null>();
 export function provideSqlite(sql: SqlJsStatic, file: string, bytes: Uint8Array | null): void {
   SQL = sql;
   preloaded.set(file, bytes);
+}
+
+/** Loads sql.js and the saved image of `file` from OPFS (the JavaScriptCore build opens a real file instead). */
+export async function openDatabase(file: string): Promise<void> {
+  const sql = await initSqlJs({ locateFile: (f: string) => new URL(f, self.location.href).href });
+  let image: Uint8Array | null = null;
+  try { image = await fs.promises.readFile(file) as Uint8Array; } catch { image = null; }
+  if (!image) {
+    // a save interrupted between write and rename leaves only the temp image
+    try { image = await fs.promises.readFile(`${file}.saving`) as Uint8Array; } catch { image = null; }
+  }
+  provideSqlite(sql, file, image);
 }
 
 const live = new Set<DatabaseSync>();
