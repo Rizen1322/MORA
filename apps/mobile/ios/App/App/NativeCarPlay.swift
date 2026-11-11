@@ -47,6 +47,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
         watch = store.$library.map { _ in () }
             .merge(with: store.$ui.map(\.wave).removeDuplicates().map { _ in () })
+            .merge(with: store.$offline.removeDuplicates().map { _ in () })
             .merge(with: store.$player.map { "\($0.trackId)|\($0.playing)" }.removeDuplicates().map { _ in () })
             .debounce(for: .seconds(1), scheduler: RunLoop.main)
             .sink { [weak self] in self?.reload() }
@@ -110,7 +111,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             let store = NativeShellStore.shared
             let current = store?.player.trackId == track.id || store?.ui.now?.id == track.id
             let state = current ? (store?.miniPlaying == true ? "Играет" : "На паузе") : nil
-            let detail = [track.artist, track.album, track.offline ? "Без сети" : "", state ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+            let detail = [track.artist, track.album, store?.offline == true ? "Нет сети" : "", track.offline ? "Без сети" : "", state ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
             let item = CPListItem(text: track.title, detailText: detail, image: UIImage(systemName: "music.note"))
             item.isPlaying = current && store?.miniPlaying == true
             if let cover = track.cover {

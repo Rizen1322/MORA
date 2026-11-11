@@ -50,3 +50,16 @@ precondition(NativePlayerState.mixLabel([:]) == "AutoMix · Плавный пе�
 precondition(!mix.blending, "A planned transition must not start the mixing animation")
 precondition(NativePlayerState(["blend": ["index": 1, "progress": 0.2]]).blending, "Only a real blend lights the mixing bar")
 precondition(!NativePlayerState(["blend": NSNull()]).blending, "The mixing bar stops when the host clears the blend")
+
+// Sleep fades respect the planned transition and count queue entries, including repeated tracks.
+var sleepState = NativePlayerState(["active": true, "playing": true, "entryId": "a", "duration": 100.0, "position": 93.0, "transitionStart": 96.0])
+precondition(NativeSleepStep.evaluate(remaining: 1, entryId: "a", state: sleepState).gain == 0.6)
+precondition(NativeSleepStep.evaluate(remaining: 2, entryId: "a", state: sleepState).gain == 1)
+sleepState.entryId = "b"
+let lastSleepTrack = NativeSleepStep.evaluate(remaining: 2, entryId: "a", state: sleepState)
+precondition(lastSleepTrack.remaining == 1 && lastSleepTrack.entryId == "b" && !lastSleepTrack.finished)
+precondition(NativeSleepStep.evaluate(remaining: 1, entryId: "a", state: sleepState).finished)
+sleepState.playing = false
+precondition(NativeSleepStep.evaluate(remaining: 1, entryId: "b", state: sleepState).gain == 1)
+precondition(NativeSleepStep.fade(seconds: .infinity) == 1 && NativeSleepStep.fade(seconds: -1) == 0)
+print("Native sleep: fade, pause, transition and track count")

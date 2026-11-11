@@ -35,6 +35,7 @@ final class NativePlayerModel: ObservableObject {
     @Published private(set) var changingMode = false
     @Published var actionError: String?
     @Published private(set) var banner: String?
+    @Published private(set) var offline = false
     /// When `state.position` was read: the scrubber runs the clock on from there between polls.
     private(set) var receivedAt = Date()
     weak var controller: UIViewController?
@@ -48,6 +49,7 @@ final class NativePlayerModel: ObservableObject {
         self.host = host
         NativeShellStore.shared?.$ui.map(\.playback).removeDuplicates().assign(to: &$modes)
         NativeShellStore.shared?.$banner.assign(to: &$banner)
+        NativeShellStore.shared?.$offline.assign(to: &$offline)
     }
     #if DEBUG
     var visualCheck = false
@@ -236,16 +238,17 @@ final class NativePlayerModel: ObservableObject {
 /// past it pauses on the next tick) or the end of the current track, where an AutoMix blend counts as the end.
 final class NativeSleepTimer: ObservableObject {
     static let shared = NativeSleepTimer()
-    enum Mode: Equatable { case until(Date), endOfTrack(entryId: String) }
+    enum Mode: Equatable { case until(Date), endOfTrack(entryId: String), tracks(remaining: Int, entryId: String) }
     @Published private(set) var mode: Mode?
     private var timer: Timer?
 
     func set(_ mode: Mode?) {
         self.mode = mode
+        NativeMixHost.shared.sleepGain(1)
         timer?.invalidate(); timer = nil
         guard mode != nil else { return }
         // Audio playback keeps the app running in the background, so the main run loop keeps ticking.
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
@@ -254,19 +257,27 @@ final class NativeSleepTimer: ObservableObject {
         guard let mode else { return }
         let host = NativeMixHost.shared
         switch mode {
-        case .until(let date): if Date() >= date { finish(host) }
-        case .endOfTrack(let entry):
-            host.playerState { [weak self] result in
-                guard let self, self.mode == mode, case .success(let value) = result else { return }
-                let blending = value["blend"].map { !($0 is NSNull) } ?? false
-                if value["active"] as? Bool != true || value["entryId"] as? String != entry || blending { self.finish(host) }
-            }
+        case .until(let date):
+            let seconds = date.timeIntervalSinceNow
+            if seconds <= 0 { finish(host) } else { host.sleepGain(NativeSleepStep.fade(seconds: seconds)) }
+        case .endOfTrack(let entry): checkTracks(host, count: 1, entry: entry, expected: mode)
+        case .tracks(let count, let entry): checkTracks(host, count: count, entry: entry, expected: mode)
+        }
+    }
+
+    private func checkTracks(_ host: NativeMixHost, count: Int, entry: String, expected: Mode) {
+        host.playerState { [weak self] result in
+            guard let self, self.mode == expected, case .success(let value) = result else { return }
+            let step = NativeSleepStep.evaluate(remaining: count, entryId: entry, state: NativePlayerState(value))
+            if step.finished { self.finish(host); return }
+            if step.entryId != entry { self.mode = .tracks(remaining: step.remaining, entryId: step.entryId) }
+            host.sleepGain(step.gain)
         }
     }
 
     private func finish(_ host: NativeMixHost) {
-        set(nil)
         host.command("pause", source: "player") { _ in }
+        set(nil)
     }
 
     /// «23 мин», «конец трека», nil when off.
@@ -274,6 +285,7 @@ final class NativeSleepTimer: ObservableObject {
         switch mode {
         case .until(let date): return "\(max(1, Int((date.timeIntervalSinceNow / 60).rounded(.up)))) мин"
         case .endOfTrack: return "конец трека"
+        case .tracks(let count, _): return "ещё треков: \(count)"
         case nil: return nil
         }
     }
@@ -324,13 +336,14 @@ struct NativePlayerView: View {
             HStack {
                 IconButton(symbol: "chevron.down", label: "Свернуть плеер") { model.close("close") }
                 Spacer()
-                Text("Сейчас играет").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
+                Text(model.offline ? "Нет сети" : "Сейчас играет").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
                     .accessibilityHidden(true)
                 Spacer()
                 Menu {
                     Button("Другая версия", systemImage: "arrow.triangle.swap") { model.versions() }
                     Button("Перейти к исполнителю", systemImage: "music.mic") { model.open("artist") }
                     Button("Перейти к альбому", systemImage: "square.stack") { model.open("album") }.disabled(model.albumPath == nil)
+                    if let url = URL(string: "mora://track/" + s.trackId), !s.trackId.isEmpty { ShareLink(item: url) { Label("Поделиться треком", systemImage: "square.and.arrow.up") } }
                     Button("Звук и эквалайзер", systemImage: "slider.vertical.3") { model.navigate("/sound") }
                 } label: {
                     Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
@@ -410,6 +423,10 @@ struct NativePlayerView: View {
             }
             Button("В конце трека", systemImage: "music.note") { sleep.set(.endOfTrack(entryId: model.state.entryId)) }
                 .disabled(model.state.entryId.isEmpty)
+            ForEach([2, 5, 10, 20], id: \.self) { count in
+                Button("После \(count) треков") { sleep.set(.tracks(remaining: count, entryId: model.state.entryId)) }
+                    .disabled(model.state.entryId.isEmpty)
+            }
         } label: {
             Image(systemName: sleep.mode == nil ? "moon" : "moon.fill").font(.title3.weight(.semibold))
                 .frame(width: 44, height: 44).contentShape(Rectangle())

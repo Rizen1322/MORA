@@ -863,6 +863,7 @@ final class NativeMixHost {
         wantsPlaying = false; failed = true; knownManifest = nil; epoch += 1
         player?.stop(); engine?.pause(); renderer = nil
         save(); MoraPlaybackJournal.record("native.mix.failed")
+        DispatchQueue.main.async { [weak self] in self?.onNowPlaying?([:], true) }
         let generation = epoch
         DispatchQueue.main.async { [weak self] in
             guard let self, self.active, self.snapshot["epoch"] as? Int == generation else { return }
@@ -1069,6 +1070,15 @@ final class NativeMixHost {
         guard refillTask != .invalid else { return }
         UIApplication.shared.endBackgroundTask(refillTask); refillTask = .invalid
     }
+    private var sleepVolume: Float = 1
+    func sleepGain(_ gain: Double) {
+        guard gain.isFinite else { return }
+        work.async {
+            let value = Float(min(1, max(0, gain)))
+            guard value != self.sleepVolume else { return }
+            self.sleepVolume = value; self.engine?.mainMixerNode.outputVolume = value
+        }
+    }
     private func buildGraph() throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback, mode: .default, options: [])
@@ -1077,6 +1087,7 @@ final class NativeMixHost {
         let engine = makeEngine(), player = AVAudioPlayerNode()
         self.engine = engine; self.player = player
         engine.attach(player); engine.connect(player, to: engine.mainMixerNode, format: format)
+        engine.mainMixerNode.outputVolume = sleepVolume
         engineObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self, weak engine] _ in
             guard let engine else { return }; self?.configurationChanged(engine)
         }
