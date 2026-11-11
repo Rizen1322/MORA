@@ -22,8 +22,11 @@
 
 - `npm run typecheck` проходит локально.
 - Полный Vitest в GitHub Actions запускается на Linux с ffmpeg/ffprobe. На Windows исходный baseline имел 7 падающих suites из-за отсутствия этих программ; это не объявлено регрессией релиза.
-- Промежуточный run [43004291173](https://github.com/Rizen1322/MORA/actions/runs/43004291173) прошёл Vitest, Swift checks, Release IPA, entitlement gate, Rust MIR, DSP, HTTP transport и фонового host; итог и финальные runs уточняются после сборки 1.0.40.
-- Отдельный UI run обязателен: заставка, deep link `source=yandex`, загрузки с прогрессом, существующие проверки поиска/плеера. Сценарии используют явно диагностические fixtures, не выдают fixture за реальную загрузку.
+- Обычная сборка [43017076416](https://github.com/Rizen1322/MORA/actions/runs/43017076416) на коммите `f3753bd`: Vitest, Swift-проверки, Release IPA, entitlement gate, Rust MIR, DSP, HTTP transport, фоновый host, очередь PCM и запуск приложения в симуляторе — зелёные. Обе IPA собраны из этого коммита.
+- Вариант [43017092785](https://github.com/Rizen1322/MORA/actions/runs/43017092785): та же сборка с `com.apple.developer.carplay-audio` и `com.apple.developer.icloud-services`; в обычной IPA оба entitlement отсутствуют.
+- Обе IPA повторно проверены локально `verify-ipa-1.0.40.cjs`: обычная — 4 785 392 байта, SHA-256 `95204be8d0541a9225e8845711c625adaf347500e3d3de99d5b59b85b8447070`; CarPlay/iCloud — 4 785 792 байта, SHA-256 `aafe7e9cc08fd858b2b457f24ad563d17848bdaa97c9a9c667b995f2c0be7ddc`.
+- UI-прогон [43024458162](https://github.com/Rizen1322/MORA/actions/runs/43024458162) на коммите `e30d112` (в нём только увеличен таймаут проверки до 75 минут): заставка подтверждена скриншотом видимого полноэкранного canvas «Одной линии», `mora://wave?source=yandex` дошёл до команды волны, экран загрузок с прогрессом, поиск, импорт WAV, плеер и восстановление очереди — все сценарии прошли. Предыдущий прогон срезал 45-минутный лимит на шаге проверки, поэтому бюджет поднят.
+- Сценарии UI используют явно диагностические fixtures и не выдают fixture за реальную загрузку.
 - `apps/mobile/scripts/verify-ipa-1.0.40.cjs` проверяет CRC каждого ZIP entry, arm64, bundle/version/build/minOS, iPhone-only, dark, Live Activities, расширение, ad-hoc signatures/App Group, отсутствие provisioning profile, feature symbols, entitlement gates. Создаёт рядом `.sha256` и `.verification.json` с commit и URL run.
 
 ## Ограничения и безопасное поведение
@@ -39,6 +42,12 @@
 - **Измерения:** физического iPhone 12 и автомобиля в окружении нет. Холодный первый кадр <1.5 с, память <250 МиБ, расход батареи на паузе, 10 реальных фоновых загрузок, 30 минут CarPlay и haptics не измерены. Симулятор не считается заменой этим измерениям.
 
 Подтверждение поведения платформы/API: [Apple background URLSession](https://developer.apple.com/documentation/foundation/urlsessionconfiguration/background%28withidentifier%3A%29), [ActivityKit intents](https://developer.apple.com/documentation/appintents/liveactivityintent), [MetricKit subscriber](https://developer.apple.com/documentation/metrickit/mxmetricmanagersubscriber), [Foundation ZIP snapshot](https://developer.apple.com/documentation/foundation/nsfilecoordinator/readingoptions/foruploading), [Yandex upstream playlist endpoints](https://github.com/MarshalX/yandex-music-api/blob/main/yandex_music/_client/playlists.py), [OAuth refresh](https://www.yandex.ru/dev/id/doc/ru/tokens/refresh-client).
+
+## Готовый пакет
+
+- `builds/MORA-iOS-1.0.40-build-41.ipa` — обычная ad-hoc IPA без CarPlay/iCloud: 4 785 392 байта, SHA-256 `95204be8d0541a9225e8845711c625adaf347500e3d3de99d5b59b85b8447070`.
+- `builds/MORA-iOS-1.0.40-build-41-carplay-icloud.ipa` — с `com.apple.developer.carplay-audio` и `com.apple.developer.icloud-services`: 4 785 792 байта, SHA-256 `aafe7e9cc08fd858b2b457f24ad563d17848bdaa97c9a9c667b995f2c0be7ddc`.
+- Рядом лежат `.sha256` и `.verification.json`; опубликованы как pre-release `ios-v1.0.40`.
 
 ## Ручная проверка на устройстве
 
