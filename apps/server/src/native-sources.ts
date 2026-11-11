@@ -25,9 +25,11 @@ function localFile(s: Services, trackId: string): string | null {
     ?? s.publicMusic.cachedAudioPath(t.id)
     ?? yandexCachedAudio(s, t);
 }
-export async function nativeSources(s: Services, entries: Entry[], previousId: string) {
+export async function nativeSources(s: Services, entries: Entry[], previousId: string, nativeFiles: string[] = []) {
   if (!Array.isArray(entries) || entries.length > 1000 || entries.some(e => !e || typeof e.trackId !== 'string'
     || typeof e.entryId !== 'string' || !Number.isSafeInteger(e.file) || e.file < 0 || e.file >= 1000000)) throw Error('Неверная очередь');
+  if (!Array.isArray(nativeFiles) || nativeFiles.length > 1000 || nativeFiles.some(id => typeof id !== 'string' || id.length > 512)) throw Error('Неверные локальные файлы');
+  const native = new Set(nativeFiles);
   let resolved = resolvedBy.get(s);
   if (!resolved) resolvedBy.set(s, resolved = new Map());
   let analysisBytes = 0;
@@ -41,6 +43,7 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
       const identity = s.lib.get(entry.trackId) ?? track;
       const sources = s.lib.sources(track.id), remote = sources.find(source => source.kind === 'remote');
       const resolving = (async (): Promise<NativeMediaSource> => {
+        if (native.has(entry.trackId)) return { kind: 'upload', trackId: entry.trackId };
         const local = localFile(s, track.id);
         if (local && await fs.stat(local).then(stat => stat.isFile()).catch(() => false)) return { kind: 'upload', trackId: track.id };
         const cached = resolved.get(track.id);
@@ -101,7 +104,7 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
 /** Mobile worker only. These private handoff routes are never registered by the desktop server. */
 export function registerNativeSources(app: FastifyInstance, services: Services) {
   app.post('/api/mobile/native-sources', async (req: any, reply: any) => {
-    try { return await nativeSources(services, req.body?.entries, req.body?.previousId); }
+    try { return await nativeSources(services, req.body?.entries, req.body?.previousId, req.body?.nativeFiles); }
     catch { return reply.code(409).send({ error: 'Не удалось передать источники очереди. Откройте приложение и повторите.' }); }
   });
   app.get('/api/mobile/native-file', async (req: any, reply: any) => {

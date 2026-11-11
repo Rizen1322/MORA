@@ -12,6 +12,7 @@ export interface NativeMixPort {
   nativeMixCommand(o: { action: string; seekTime?: number }): Promise<NativeMixState>;
   nativeSourceReserve?(o: { id: string; count: number }): Promise<{ keys: number[] }>;
   nativeSourceAppend?(o: { id: string; key: number; offset: number; base64: string }): Promise<void>;
+  nativeSourceFromDownload?(o: { id: string; key: number; trackId: string }): Promise<{ found: boolean }>;
   nativePrepareQueue?(o: { id: string; manifest: NativePreparationManifest }): Promise<NativeMixState>;
   /** Swift computes band levels only while this is on. */
   nativeLevels?(o: { on: boolean }): Promise<void>;
@@ -75,6 +76,11 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
       let key = assets.get(trackId);
       if (key === undefined) {
         key = item.file;
+        if (port.nativeSourceFromDownload && (await port.nativeSourceFromDownload({ id, key, trackId })).found) {
+          assets.set(trackId, key);
+          item.source = { kind: 'local', file: key };
+          continue;
+        }
         if (!hooks.sourceFile) throw Error('Передача локального файла недоступна');
         let at = 0;
         for (;;) {

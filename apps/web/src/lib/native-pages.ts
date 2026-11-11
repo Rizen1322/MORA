@@ -14,6 +14,7 @@ import { likeLibraryTrack } from '../components/LikeAll.tsx';
 import { react as reactTrack } from '../components/TrackList.tsx';
 import { openVersionPanel } from '../components/VersionPanel.tsx';
 import { sortTracks } from '../pages/Library.tsx';
+import { nativePlaybackControls } from './playback-trace.ts';
 
 /**
  * Native pages of the iPhone shell (NativePages.swift): the page describes a screen as sections of
@@ -266,14 +267,16 @@ async function downloads(): Promise<Screen> {
   await useDownloads.getState().load();
   const usage = await api.downloads().then((r) => r.usage, () => null);
   const active = [...useDownloads.getState().jobs.values()].filter((j) => j.state !== 'done' && j.state !== 'cancelled');
-  const pinned = library().filter((t) => t.pinned).sort((a, b) => a.title.localeCompare(b.title, 'ru'));
+  const downloaded = new Set([...useDownloads.getState().jobs.values()].filter(job => job.state === 'done').map(job => job.trackId));
+  const pinned = library().filter((t) => t.pinned || downloaded.has(t.id)).sort((a, b) => a.title.localeCompare(b.title, 'ru'));
   // Files picked from «Файлы» are copied into the app, so they play without the internet just like downloads.
   const own = library().filter((t) => t.provider === 'local' && !t.pinned).sort((a, b) => a.title.localeCompare(b.title, 'ru'));
   const jobAct = (id: string, action: string, title: string, symbol: string): ItemAction => ({ title, symbol, act: { name: 'downloadAction', args: { id, action } } });
   const sections: Section[] = [];
+  sections.push({ rows: [button('Скачать всё любимое', 'downloadTracks', { ids: library().filter(t => t.reaction > 0).map(t => t.id) }, { symbol: 'heart.fill' })] });
   if (active.length) sections.push({ title: 'Скачивается', rows: active.map((j) => ({
     kind: 'item', title: j.title || 'Трек', tone: j.state === 'failed' ? 'error' : undefined,
-    subtitle: `${j.error && j.state !== 'downloading' ? j.error : STATE[j.state]}${j.state === 'downloading' ? ` · ${Math.round(j.progress * 100)}%` : ''}`,
+    subtitle: `${j.error && j.state !== 'downloading' ? j.error : STATE[j.state]}${j.state === 'downloading' ? ` · ${Math.round(j.progress * 100)}%` : ''}${j.totalBytes ? ` · ${mb(j.bytes ?? 0)} / ${mb(j.totalBytes)}` : ''}${j.eta ? ` · осталось ${fmtTime(j.eta)}` : ''}`,
     actions: [
       ...(['queued', 'downloading', 'waiting'].includes(j.state) ? [jobAct(j.id, 'pause', 'Пауза', 'pause')] : []),
       ...(['paused', 'failed'].includes(j.state) ? [jobAct(j.id, 'retry', 'Повторить', 'arrow.clockwise')] : []),
@@ -465,6 +468,8 @@ async function settings(): Promise<Screen> {
     ] },
     { title: 'Офлайн', footer: 'Загрузка идёт через любое подключение, в том числе мобильное.', rows: [
       sw('Скачивать лайкнутые', 'autoLiked', !!s.downloads?.autoLiked, 'Любимое из YouTube, SoundCloud и Яндекса сохраняется на iPhone', false, 'downloads'),
+      sw('Только Wi-Fi', 'wifiOnly', !!s.downloads?.wifiOnly, 'Фоновые загрузки ждут Wi-Fi', false, 'downloads'),
+      pick('Держать волну скачанной', 'keepWave', String(s.downloads?.keepWave ?? 0), [['0', 'Выключено'], ['5', '5 треков'], ['10', '10 треков'], ['20', '20 треков'], ['50', '50 треков']], 'Следующие треки волны сохраняются с учётом лимита кэша', 'downloads', false, true),
       { kind: 'link', title: 'Загрузки', symbol: 'arrow.down.circle', path: '/downloads' },
     ] },
     { title: 'Внешний вид', rows: [
@@ -740,6 +745,7 @@ export const actions: Record<string, (a: Args) => unknown> = {
     if (a.map && typeof a.map === 'object') value = (a.map as Record<string, unknown>)[String(value)];
     else if (a.num === true) value = value === 'off' ? null : Number(value);
     await st().saveSettings({ [group]: { ...s[group], [key]: value } });
+    if (group === 'downloads' && key === 'wifiOnly') await nativePlaybackControls()?.downloads?.settings(value === true);
   },
   yandexSeed: async (a) => {
     const s = st().settings;

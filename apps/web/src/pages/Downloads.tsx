@@ -24,7 +24,10 @@ export function DownloadsPage() {
   const refresh = () => { void load(); void api.downloads().then((r) => setUsage(r.usage)).catch(() => {}); };
   useEffect(refresh, []);
   const active = [...jobs.values()].filter((j) => j.state !== 'done' && j.state !== 'cancelled');
-  const pinned = useMemo(() => [...tracks.values()].filter((t) => t.pinned).sort((a, b) => a.title.localeCompare(b.title, 'ru')), [tracks]);
+  const pinned = useMemo(() => {
+    const downloaded = new Set([...jobs.values()].filter(job => job.state === 'done').map(job => job.trackId));
+    return [...tracks.values()].filter(t => t.pinned || downloaded.has(t.id)).sort((a, b) => a.title.localeCompare(b.title, 'ru'));
+  }, [tracks, jobs]);
   const act = (id: string, a: 'pause' | 'resume' | 'cancel' | 'retry') => void api.downloadAction(id, a).then(refresh).catch((e) => toast((e as Error).message, 'error'));
 
   return <div className="main-inner downloads-page">

@@ -26,7 +26,7 @@ vi.mock('../src/components/VersionPanel.tsx', () => ({
 vi.mock('../src/lib/api.ts', () => ({ api: { imports: () => h.imports(), react: (...args: any[]) => h.react(...args), yandexWaveSettings: () => h.yandexWaveSettings(),
   addToPlaylist: (...a: any[]) => h.addToPlaylist(...a), createPlaylist: (...a: any[]) => h.createPlaylist(...a), downloads: () => h.downloads(),
   download: (...a: any[]) => h.download(...a), deleteTrack: (id: string) => h.deleteTrack(id) } }));
-vi.mock('../src/store/downloads.ts', () => ({ useDownloads: { getState: () => ({ jobs: new Map(), load: async () => {} }) } }));
+vi.mock('../src/store/downloads.ts', () => ({ useDownloads: { getState: () => ({ jobs: new Map(), load: async () => {} }), subscribe: vi.fn() } }));
 
 const track = (id: string, status = 'ok') => ({ id, title: id.toUpperCase(), artist: 'X', album: '', duration: 100, reaction: 0, coverUrl: null, status });
 

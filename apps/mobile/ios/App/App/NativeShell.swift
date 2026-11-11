@@ -182,6 +182,13 @@ extension MoraRootViewController {
             try require(waveLinkPassed, "Wave deep link lost selected source")
             _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__waveOriginal;0")
             report["waveLink"] = "mora://wave?source=yandex reached the wave command"
+            _ = try await web.evaluateJavaScript("window.__downloadOriginal=window.moraNativeUi;window.moraNativeUi=async(n,a)=>{if(n==='page'&&location.hash.includes('/downloads'))return{title:'Загрузки',sections:[{title:'Скачивается',rows:[{kind:'progress',title:'Проверка загрузки',value:0.4,detail:'4 МБ / 10 МБ · осталось 30 с'}]}]};return window.__downloadOriginal(n,a);};0")
+            shell.go("/downloads")
+            try await wait { self.shell.ui.path == "/downloads" }
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-downloads")
+            _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__downloadOriginal;0")
+            report["downloads"] = "Native progress row rendered with an explicit diagnostic fixture"
             func waitForQuery(_ query: String) async throws {
                 let encoded = String(data: try JSONSerialization.data(withJSONObject: query, options: .fragmentsAllowed), encoding: .utf8)!
                 for _ in 0..<40 {

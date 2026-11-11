@@ -13,6 +13,12 @@ import { playbackDiagnostics, tracePlayback, withPlaybackId, type NativePlayback
  */
 
 interface MoraAudio extends NativeDiagnostics, NativeProbePort, NativeMixPort {
+  nativeDownloadList(): ReturnType<NonNullable<NativePlaybackControls['downloads']>['list']>;
+  nativeDownloadAdd(item: Record<string, unknown>): Promise<{ id: string }>;
+  nativeDownloadAction(item: { id: string; action: string }): Promise<void>;
+  nativeDownloadRemove(item: { trackId: string }): Promise<void>;
+  nativeDownloadSettings(item: { wifiOnly: boolean }): Promise<void>;
+  addListener(ev: 'downloads', fn: () => void): Promise<PluginListenerHandle>;
   setRemoteNavigation(o: { actions: MediaSessionAction[]; seekable: boolean; route: NavigationRoute; epoch?: number }): Promise<void>;
   setPlaybackState(o: { playing: boolean; intentPlaying: boolean; webAudioSession: boolean }): Promise<void>;
   addListener(ev: 'command', fn: (e: { action: MediaSessionAction; seekTime?: number; id?: string; source?: string; routeEpoch?: number }) => void): Promise<PluginListenerHandle>;
@@ -169,6 +175,36 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
     },
   };
   window.moraNativePlayback = controls;
+  controls.downloads = {
+    list: () => MoraAudio.nativeDownloadList(),
+    async add(trackId, limitBytes) {
+      const response = await apiFetch('/api/mobile/native-sources', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entries: [{ trackId, entryId: trackId, file: 0 }], previousId: trackId }) });
+      if (!response.ok) throw Error('Не удалось получить адрес загрузки');
+      const manifest = await response.json();
+      const item = manifest.items?.[0];
+      if (!item) throw Error('Источник загрузки недоступен');
+      const { id } = await MoraAudio.nativeDownloadAdd({ ...item, limitBytes });
+      const job = (await MoraAudio.nativeDownloadList()).jobs.find(job => job.id === id);
+      if (!job) throw Error('Загрузка не появилась в очереди');
+      return { job };
+    },
+    async action(id, action) {
+      try { await MoraAudio.nativeDownloadAction({ id, action }); }
+      catch (error) {
+        if (action !== 'retry' && action !== 'resume') throw error;
+        const job = (await MoraAudio.nativeDownloadList()).jobs.find(job => job.id === id);
+        if (!job?.trackId) throw error;
+        const response = await apiFetch('/api/downloads');
+        if (!response.ok) throw error;
+        const { usage } = await response.json();
+        await controls.downloads!.add(job.trackId, Math.max(0, usage.limitBytes - usage.cacheBytes - usage.pinnedBytes));
+      }
+    },
+    remove: trackId => MoraAudio.nativeDownloadRemove({ trackId }),
+    settings: wifiOnly => MoraAudio.nativeDownloadSettings({ wifiOnly }),
+  };
+  void MoraAudio.addListener('downloads', () => window.dispatchEvent(new Event('mora-downloads')));
   const syncNavigation = () => {
     if (!nativeNavigation || switching) return;
     void MoraAudio.setRemoteNavigation({
@@ -329,7 +365,9 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
     async stop() { if (controls.mixActive) throw new Error('Остановите AutoMix'); await probe.stop(); } };
   const mix = createNativeMix(MoraAudio, {
     async sources(entries, previousId, signal) {
-      const response = await apiFetch('/api/mobile/native-sources', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entries, previousId }), signal });
+      const downloaded = await MoraAudio.nativeDownloadList();
+      const nativeFiles = downloaded.jobs.filter(job => job.state === 'done' && entries.some(entry => entry.trackId === job.trackId)).map(job => job.trackId);
+      const response = await apiFetch('/api/mobile/native-sources', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entries, previousId, nativeFiles }), signal });
       if (!response.ok) throw Error('Не удалось передать источники очереди. Держите приложение открытым и повторите.');
       return response.json();
     },

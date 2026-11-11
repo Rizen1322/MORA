@@ -34,7 +34,7 @@ export interface AppSettings {
   sound: SoundSettings;
   yandex: YandexIntegrationSettings;
   /** autoLiked: liking an online track also downloads it for offline listening. */
-  downloads: { autoLiked: boolean };
+  downloads: { autoLiked: boolean; wifiOnly?: boolean; keepWave?: number };
   /** onlyWhenIdle (desktop, default on there): the whole library is analyzed only while the computer is idle
    * and on mains power; the current and next tracks always are. */
   analysis: { onlyWhenIdle: boolean };

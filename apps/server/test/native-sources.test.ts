@@ -32,6 +32,12 @@ const svc = (resolve: (source: { external_id: string }) => Promise<unknown>) => 
   mixingPolicy: new Map([['test', true]]),
 }, providers: { get: () => ({ nativeSource: resolve }) }, analysis: { get: () => null }, publicMusic: { cachedAudioPath: () => null } } as unknown as Services);
 const list = (n: number) => Array.from({ length: n }, (_, i) => ({ trackId: `t${i}`, entryId: `e${i}`, file: i }));
+it('uses completed native downloads without contacting the remote provider', async () => {
+  const resolve = vi.fn(async () => { throw Error('offline'); });
+  const manifest = await nativeSources(svc(resolve), list(1), 't0', ['t0']);
+  expect(resolve).not.toHaveBeenCalled();
+  expect(manifest.items[0].source).toEqual({ kind: 'upload', trackId: 't0' });
+});
 it('drops failed and hung entries, keeping queue order', async () => {
   vi.useFakeTimers();
   const services = svc(async ({ external_id }) => {

@@ -11,6 +11,8 @@ import { actions, describe, describeWaveSettings, type ActResult } from './nativ
 import { nativeVersionCommands } from './native-versions.ts';
 import { nativeCatalogCommands } from './native-catalog.ts';
 import { playSplash, splashing, splashEnabled } from './splash.ts';
+import { useDownloads } from '../store/downloads.ts';
+import { waveDownloadIds } from './native-downloads.ts';
 
 /**
  * iPhone native shell (ios/App/App/NativeShell.swift). Data path: this page stays the only owner of
@@ -26,7 +28,7 @@ type Wave = 'own' | 'yandex' | 'online';
 export const uiTrack = (t: Track): NativeUiTrack => ({
   id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration, reaction: t.reaction, likedAt: t.likedAt, addedAt: t.addedAt, cover: t.coverUrl, ok: t.status === 'ok', binding: t.binding?.assetId,
   // Plays without the internet: a downloaded online track or a file of the library (CarPlay «Загрузки»).
-  offline: t.status === 'ok' && (!!t.pinned || t.sourceKind !== 'remote'),
+  offline: t.status === 'ok' && (!!t.pinned || t.sourceKind !== 'remote' || [...useDownloads.getState().jobs.values()].some(job => job.trackId === t.id && job.state === 'done')),
 });
 
 /** Everything but the library and playlists, which are sent only when they change. */
@@ -236,9 +238,32 @@ export function startNativeUi(): void {
   };
   let tracks: unknown, order: unknown, playlists: unknown, queue: unknown, last = '', timer: ReturnType<typeof setTimeout> | null = null;
   let launchRequested = false;
+  let syncedWiFi: boolean | undefined;
+  let keepingWave = false, keptWave = '';
+  const keepWave = async () => {
+    const s = useApp.getState(), native = nativePlaybackControls()?.downloads;
+    if (keepingWave || !native || !['wave', 'yandex-wave', 'online-radio'].includes(s.player.context?.type ?? '')) return;
+    const count = s.settings?.downloads?.keepWave ?? 0;
+    const available = new Set([...useDownloads.getState().jobs.values()].filter(job => !['failed', 'cancelled'].includes(job.state)).flatMap(job => job.trackId ? [job.trackId] : []));
+    const next = s.player.queue.slice(s.player.index + 1).map(entry => entry.trackId);
+    const todo = waveDownloadIds(next, count, available).filter(id => { const t = trackOf(id); return t?.sourceKind === 'remote' && !t.pinned; });
+    const key = JSON.stringify([todo, !!s.settings?.downloads?.wifiOnly]);
+    if (key === keptWave) return;
+    keptWave = key; keepingWave = true;
+    try {
+      await native.settings(!!s.settings?.downloads?.wifiOnly);
+      for (const trackId of todo) { const { job } = await api.download({ trackId }); useDownloads.getState().upsert(job); }
+    } catch (error) { s.toast(`Не удалось сохранить волну: ${(error as Error).message}`, 'error'); }
+    finally { keepingWave = false; }
+  };
   const send = (enable = false) => {
     timer = null;
     const s = useApp.getState();
+    if (s.settings && syncedWiFi !== !!s.settings.downloads?.wifiOnly && nativePlaybackControls()?.downloads) {
+      syncedWiFi = !!s.settings.downloads?.wifiOnly;
+      void nativePlaybackControls()!.downloads!.settings(syncedWiFi).catch(() => { syncedWiFi = undefined; });
+    }
+    void keepWave();
     const state: Record<string, unknown> = uiState(s);
     const key = JSON.stringify(state);
     state.launchIntro = !launchRequested;
@@ -275,6 +300,7 @@ export function startNativeUi(): void {
   usePublicPlayback.subscribe(schedule);
   useCatalogPlayback.subscribe(schedule);
   useVersionPanel.subscribe(schedule);
+  useDownloads.subscribe(() => { tracks = undefined; schedule(); });
   window.addEventListener('hashchange', schedule);
   window.addEventListener('mora-splash', schedule);
   schedule();

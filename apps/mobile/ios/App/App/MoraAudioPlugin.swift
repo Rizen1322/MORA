@@ -66,6 +66,12 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativePlayerPresent", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeLevels", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeUiState", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeDownloadList", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeDownloadAdd", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeDownloadAction", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeDownloadRemove", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeDownloadSettings", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeSourceFromDownload", returnType: CAPPluginReturnPromise),
     ]
 
     private var playing = false
@@ -80,6 +86,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     override public func load() {
         Task { @MainActor in NativeLiveActivity.install(self.nativeMix) }
+        NotificationCenter.default.addObserver(self, selector: #selector(downloadsChanged), name: NativeDownloadManager.changed, object: nil)
         nativeMix.onLevels = { [weak self] rms, bands in
             DispatchQueue.main.async { self?.notifyListeners("levels", data: ["rms": rms, "bands": bands]) }
         }
@@ -428,6 +435,47 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             let vc = bridge.parent ?? bridge
             guard vc.presentedViewController == nil else { call.reject("Native player already presented"); return }
             NativePlayerSheet.present(host: self.nativeMix, from: vc) { call.resolve(["action": $0]) }
+        }
+    }
+    @objc private func downloadsChanged() { notifyListeners("downloads", data: [:]) }
+    @objc func nativeDownloadList(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { call.resolve(NativeDownloadManager.shared.list()) }
+    }
+    @objc func nativeDownloadAdd(_ call: CAPPluginCall) {
+        guard let trackId = call.getString("trackId"), let source = call.getObject("source"),
+              let duration = call.getDouble("duration"), let limit = call.getDouble("limitBytes"), limit.isFinite, limit >= 0, limit <= 1e12 else { call.reject("Неверная загрузка"); return }
+        Task { @MainActor in
+            let http = NativeMediaHTTP(); defer { http.invalidate() }
+            do {
+                let request = try await NativeMediaLoader(http: http).backgroundRequest(source, ticket: NativePreparationTicket())
+                let job = try NativeDownloadManager.shared.add(trackId: trackId, title: call.getString("title") ?? "Трек", artist: call.getString("artist") ?? "",
+                    album: call.getString("album") ?? "", duration: duration, request: request, limit: Int64(limit))
+                call.resolve(["id": job.id])
+            } catch { call.reject(error.localizedDescription) }
+        }
+    }
+    @objc func nativeDownloadAction(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            do { try NativeDownloadManager.shared.action(call.getString("id") ?? "", call.getString("action") ?? ""); call.resolve() }
+            catch { call.reject(error.localizedDescription) }
+        }
+    }
+    @objc func nativeDownloadRemove(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            do { try NativeDownloadManager.shared.remove(call.getString("trackId") ?? ""); call.resolve() }
+            catch { call.reject(error.localizedDescription) }
+        }
+    }
+    @objc func nativeDownloadSettings(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { NativeDownloadManager.shared.setWiFiOnly(call.getBool("wifiOnly") == true); call.resolve() }
+    }
+    @objc func nativeSourceFromDownload(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let id = call.getString("id"), let key = call.getInt("key"), let trackId = call.getString("trackId") else { call.reject("Неверный локальный файл"); return }
+            guard let file = NativeDownloadManager.shared.localFile(trackId) else { call.resolve(["found": false]); return }
+            self.nativeMix.sourceFromDownload(id: id, key: key, file: file) { result in
+                switch result { case .success(let value): call.resolve(value); case .failure(let error): call.reject(error.localizedDescription) }
+            }
         }
     }
     /// iPhone native shell (NativeShell.swift): the page's snapshot; resolves with whether the shell is on screen.

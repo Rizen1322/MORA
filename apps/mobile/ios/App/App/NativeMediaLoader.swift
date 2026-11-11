@@ -7,6 +7,17 @@ final class NativeMediaLoader {
     let http: NativeMediaHTTP
     private let allowLoopback: Bool
     init(http: NativeMediaHTTP, allowLoopback: Bool = false) { self.http = http; self.allowLoopback = allowLoopback }
+    func backgroundRequest(_ source: [String: Any], ticket: NativePreparationTicket) async throws -> URLRequest {
+        let kind = source["kind"] as? String
+        let url: URL
+        if kind == "yandex" { url = try await yandex(source, ticket: ticket) }
+        else if kind == "direct", let text = source["url"] as? String, let direct = URL(string: text) { url = direct }
+        else { throw NSError(domain: "MORADownload", code: 1, userInfo: [NSLocalizedDescriptionKey: "Этот поток не поддерживает фоновую загрузку. Используйте загрузку в открытом приложении"]) }
+        guard url.scheme == "https", url.user == nil, url.password == nil else { throw Failure.source }
+        var request = URLRequest(url: url)
+        if kind != "yandex" { for (key, value) in source["headers"] as? [String: String] ?? [:] { request.setValue(value, forHTTPHeaderField: key) } }
+        return request
+    }
     func load(_ source: [String: Any], to destination: URL, folder: URL, ticket: NativePreparationTicket) async throws -> URL {
         if ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
         let kind = source["kind"] as? String ?? ""

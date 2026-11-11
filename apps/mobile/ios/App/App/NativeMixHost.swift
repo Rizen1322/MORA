@@ -366,6 +366,19 @@ final class NativeMixHost {
             self.reply(completion, .success(["keys": (first..<self.sourceKey).map { $0 }]))
         }
     }
+    func sourceFromDownload(id: String, key: Int, file: URL, completion: @escaping Reply) {
+        work.async {
+            do {
+                guard self.id == id, let folder = self.folder, (0..<500000).contains(key) else { throw Failure.invalid }
+                let bytes = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                guard bytes > 0, bytes <= 128 * 1024 * 1024, self.sourceBytes.values.reduce(0, +) + bytes <= 512 * 1024 * 1024 else { throw Failure.invalid }
+                let target = folder.appendingPathComponent("source-\(key).media")
+                try FileManager.default.linkItem(at: file, to: target)
+                self.sourceBytes[key] = bytes
+                self.reply(completion, .success(["found": true]))
+            } catch { self.reply(completion, .failure(error)) }
+        }
+    }
     /// Replaces the known future queue, then native playback callbacks release preparation permits.
     func prepareQueue(id: String, manifest incoming: [String: Any], completion: @escaping Reply) {
         work.async {

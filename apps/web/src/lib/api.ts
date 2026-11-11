@@ -1,6 +1,7 @@
 import type { SoundSettings } from '@automix/core';
 import type { TrackAnalysis, TransitionPlan, AutoMixSettings, TransitionRating, TransitionRatingReason } from '@automix/core';
 import type { CatalogAlbumPage, CatalogArtistPage, CatalogSearchResult, CatalogSearchType } from '@automix/core';
+import { nativePlaybackControls } from './playback-trace.ts';
 export interface ReactionSync { status: 'synced' | 'pending' | 'error' | 'local'; error?: string }
 export interface ReactionResult { value: number; sync?: ReactionSync }
 export interface YandexLikesJob { id: string; state: 'listing' | 'running' | 'paused' | 'done' | 'error' | 'cancelled'; busy: boolean; total: number; done: number; failed: number; skipped: number; preparing: number; message: string }
@@ -61,7 +62,7 @@ export interface VersionLabel { tag: string; origin: 'source' | 'title' }
 export interface ImportCandidate { provider: 'youtube' | 'soundcloud'; externalId: string; title: string; artist: string; duration: number; coverUrl: string | null; labels: VersionLabel[] }
 export interface ImportRow { position: number; title: string; artist: string; album?: string; duration?: number; status: 'pending' | 'matched' | 'uncertain' | 'missing'; confidence: number; how?: 'auto' | 'source' | 'user'; candidate?: ImportCandidate; trackId?: string | null }
 export interface ImportJob { id: string; name: string; source: string; cover: string | null; total: number | null; complete: boolean; note?: string; state: 'matching' | 'ready' | 'creating' | 'done' | 'failed'; error: string | null; rows: ImportRow[]; playlistId: string | null; createdAt: number; counts?: { matched: number; uncertain: number; missing: number; pending: number } }
-export interface DownloadJob { id: string; key: string; title: string; state: 'queued' | 'downloading' | 'waiting' | 'paused' | 'done' | 'failed' | 'cancelled'; progress: number; error: string | null; trackId: string | null }
+export interface DownloadJob { id: string; key: string; title: string; state: 'queued' | 'downloading' | 'waiting' | 'paused' | 'done' | 'failed' | 'cancelled'; progress: number; error: string | null; trackId: string | null; bytes?: number; totalBytes?: number; eta?: number }
 export interface DownloadUsage { cacheBytes: number; pinnedBytes: number; limitBytes: number; freeBytes: number | null }
 export interface Lyrics {
   status: 'synced' | 'plain' | 'none';
@@ -172,7 +173,7 @@ export interface AppSettings {
   ui: { showDiagnostics: boolean; motion?: 'system'|'full'|'reduced'; graphics?: 'auto'|'canvas' };
   sound: SoundSettings;
   yandex: { syncLikes: boolean; syncDislikes: boolean; importLikes: boolean; waveFeedback: boolean };
-  downloads?: { autoLiked: boolean };
+  downloads?: { autoLiked: boolean; wifiOnly?: boolean; keepWave?: number };
 }
 
 export interface WavePick {
@@ -281,10 +282,29 @@ export const api = {
   resolveImport: (id: string, position: number, choice: { trackId: string } | ImportCandidate | null) => req<ImportJob>('POST', `/api/imports/${id}/resolve`, { position, choice }),
   importPlaylist: (id: string, includeUncertain: boolean) => req<ImportJob>('POST', `/api/imports/${id}/playlist`, { includeUncertain }),
   deleteImport: (id: string) => req<{ ok: true }>('DELETE', `/api/imports/${id}`),
-  downloads: () => req<{ jobs: DownloadJob[]; usage: DownloadUsage }>('GET', '/api/downloads'),
-  download: (body: { trackId?: string; provider?: string; externalId?: string; title?: string }) => req<{ job: DownloadJob }>('POST', '/api/downloads', body),
-  downloadAction: (id: string, action: 'pause' | 'resume' | 'cancel' | 'retry') => req<{ ok: true }>('POST', `/api/downloads/${id}/${action}`, {}),
-  removeDownload: (trackId: string) => req<{ ok: true }>('DELETE', `/api/tracks/${trackId}/download`),
+  downloads: async () => {
+    const result = await req<{ jobs: DownloadJob[]; usage: DownloadUsage }>('GET', '/api/downloads');
+    const native = await nativePlaybackControls()?.downloads?.list();
+    if (native) { result.jobs.push(...native.jobs); result.usage.pinnedBytes += native.cacheBytes; }
+    return result;
+  },
+  download: async (body: { trackId?: string; provider?: string; externalId?: string; title?: string }) => {
+    const native = nativePlaybackControls()?.downloads;
+    if (native && body.trackId) {
+      const { usage } = await req<{ usage: DownloadUsage }>('GET', '/api/downloads');
+      return native.add(body.trackId, Math.max(0, usage.limitBytes - usage.cacheBytes - usage.pinnedBytes));
+    }
+    return req<{ job: DownloadJob }>('POST', '/api/downloads', body);
+  },
+  downloadAction: async (id: string, action: 'pause' | 'resume' | 'cancel' | 'retry') => {
+    const native = nativePlaybackControls()?.downloads;
+    if (native && (await native.list()).jobs.some(job => job.id === id)) { await native.action(id, action); return { ok: true }; }
+    return req<{ ok: true }>('POST', `/api/downloads/${id}/${action}`, {});
+  },
+  removeDownload: async (trackId: string) => {
+    await nativePlaybackControls()?.downloads?.remove(trackId);
+    return req<{ ok: true }>('DELETE', `/api/tracks/${trackId}/download`);
+  },
   downloadPlaylist: (id: string) => req<{ jobs: number }>('POST', `/api/playlists/${id}/download`, {}),
   setCacheLimit: (mb: number) => req<{ usage: DownloadUsage }>('PUT', '/api/downloads/settings', { cacheLimitMb: mb }),
   clearAudioCache: () => req<{ removed: number; usage: DownloadUsage }>('POST', '/api/downloads/clear-cache', {}),

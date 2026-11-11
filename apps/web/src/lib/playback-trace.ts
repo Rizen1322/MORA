@@ -9,6 +9,13 @@ export interface NativeProbe {
   command(action: MediaSessionAction, seekTime?: number): Promise<NativeProbeState>;
 }
 export interface NativePlaybackControls {
+  downloads?: {
+    list(): Promise<{ jobs: import('./api.ts').DownloadJob[]; wifiOnly: boolean; cacheBytes: number }>;
+    add(trackId: string, limitBytes: number): Promise<{ job: import('./api.ts').DownloadJob }>;
+    action(id: string, action: string): Promise<void>;
+    remove(trackId: string): Promise<void>;
+    settings(wifiOnly: boolean): Promise<void>;
+  };
   mix?: import('./native-mix.ts').NativeMix;
   mixActive?: boolean;
   ready?: Promise<void>;
