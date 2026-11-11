@@ -97,7 +97,7 @@ jobs:
         env:
           MORA_CARPLAY: ${{ inputs.carplay && '1' || '0' }}
         run: |
-          codesign -d --entitlements - apps/mobile/build/ipa/Payload/App.app > "$RUNNER_TEMP/mora-entitlements.plist" 2>/dev/null
+          codesign -d --entitlements - --xml apps/mobile/build/ipa/Payload/App.app > "$RUNNER_TEMP/mora-entitlements.plist" 2>/dev/null
           python3 -c 'import os,plistlib,sys; e=plistlib.load(open(sys.argv[1],"rb")); actual=e.get("com.apple.developer.carplay-audio",False); assert actual == (os.environ["MORA_CARPLAY"]=="1"), e' "$RUNNER_TEMP/mora-entitlements.plist"
       - name: Release notes from commits
         run: |

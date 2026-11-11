@@ -114,8 +114,8 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
         waveFeedback: !!y.waveFeedback,
       },
       downloads: { autoLiked: typeof b.downloads?.autoLiked === 'boolean' ? b.downloads.autoLiked : cur.downloads.autoLiked,
-        wifiOnly: typeof b.downloads?.wifiOnly === 'boolean' ? b.downloads.wifiOnly : cur.downloads.wifiOnly ?? false,
-        keepWave: typeof b.downloads?.keepWave === 'number' && [0, 5, 10, 20, 50].includes(b.downloads.keepWave) ? b.downloads.keepWave : cur.downloads.keepWave ?? 0 },
+        wifiOnly: typeof b.downloads?.wifiOnly === 'boolean' ? b.downloads.wifiOnly : cur.downloads.wifiOnly,
+        keepWave: typeof b.downloads?.keepWave === 'number' && [0, 5, 10, 20, 50].includes(b.downloads.keepWave) ? b.downloads.keepWave : cur.downloads.keepWave },
       analysis: { onlyWhenIdle: typeof b.analysis?.onlyWhenIdle === 'boolean' ? b.analysis.onlyWhenIdle : cur.analysis.onlyWhenIdle },
     };
     kvSet(db, 'settings', { ...next, version: 2 });
