@@ -1,8 +1,11 @@
 import Combine
 import MediaPlayer
+import Network
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 import WebKit
+import WidgetKit
 
 /// iPhone app root: the Capacitor web view with the native SwiftUI shell over it.
 /// Three layers: the WKWebView (always in the window, so the page keeps running), the native screens
@@ -102,7 +105,7 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
     }
     private func layoutShell() {
         guard let content, let bar else { return }
-        let visible = shell.shown && !shell.ui.overlay
+        let visible = shell.shown && !shell.ui.overlay && !NativeDeepLink.splashVisible
         content.view.isHidden = !shell.nativeContentVisible
         tabsOverlay.isHidden = !visible
         bar.view.isHidden = !visible || shell.miniTitle == nil
@@ -128,7 +131,6 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
     override var childForHomeIndicatorAutoHidden: UIViewController? { bridge }
 }
 
-
 #if DEBUG
 // Exercises the real SwiftUI/UIKit field and bridge in the simulator, without external catalog calls.
 extension MoraRootViewController {
@@ -153,7 +155,27 @@ extension MoraRootViewController {
         var report: [String: Any] = [:]
         do {
             try await wait { self.shell.ui.loaded && self.shell.webView != nil }
+            try await wait { !NativeDeepLink.splashVisible }
+            try require(FileManager.default.fileExists(atPath: folder.appendingPathComponent("native-splash.png").path), "Cold-launch native splash screenshot missing")
+            report["splash"] = "Native launch splash (NativeSplash.swift) captured from the window"
             let web = shell.webView!
+            _ = try await web.evaluateJavaScript("window.__waveOriginal=window.moraNativeUi;window.__waveSource=null;window.moraNativeUi=async(n,a)=>{if(n==='wave'){window.__waveSource=a.source;return;}return window.__waveOriginal(n,a);};0")
+            NativeDeepLink.open(URL(string: "mora://wave?source=yandex")!)
+            var waveLinkPassed = false
+            for _ in 0..<40 {
+                if try await web.evaluateJavaScript("window.__waveSource") as? String == "yandex" { waveLinkPassed = true; break }
+                try await Task.sleep(for: .milliseconds(250))
+            }
+            try require(waveLinkPassed, "Wave deep link lost selected source")
+            _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__waveOriginal;0")
+            report["waveLink"] = "mora://wave?source=yandex reached the wave command"
+            _ = try await web.evaluateJavaScript("window.__downloadOriginal=window.moraNativeUi;window.moraNativeUi=async(n,a)=>{if(n==='page'&&location.hash.includes('/downloads'))return{title:'Загрузки',sections:[{title:'Скачивается',rows:[{kind:'progress',title:'Проверка загрузки',value:0.4,detail:'4 МБ / 10 МБ · осталось 30 с'}]}]};return window.__downloadOriginal(n,a);};0")
+            shell.go("/downloads")
+            try await wait { self.shell.ui.path == "/downloads" }
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-downloads")
+            _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__downloadOriginal;0")
+            report["downloads"] = "Native progress row rendered with an explicit diagnostic fixture"
             func waitForQuery(_ query: String) async throws {
                 let encoded = String(data: try JSONSerialization.data(withJSONObject: query, options: .fragmentsAllowed), encoding: .utf8)!
                 for _ in 0..<40 {
@@ -231,18 +253,81 @@ extension MoraRootViewController {
             try capture("native-player-queue")
             player.playbackMode("repeat")
             try await wait { !player.changingMode }
-            try require(player.modeError == nil && player.modes.repeatMode == "all", "Repeat queue did not reach controller")
+            try require(player.actionError == nil && player.modes.repeatMode == "all", "Repeat queue did not reach controller")
             player.playbackMode("repeat")
             try await wait { !player.changingMode }
-            try require(player.modeError == nil && player.modes.repeatMode == "one", "Repeat one did not reach controller")
+            try require(player.actionError == nil && player.modes.repeatMode == "one", "Repeat one did not reach controller")
             player.playbackMode("shuffle")
             try await wait { !player.changingMode }
-            try require(player.modeError == nil && player.modes.shuffle, "Shuffle did not reach controller")
+            try require(player.actionError == nil && player.modes.shuffle, "Shuffle did not reach controller")
             player.playbackMode("automix")
             try await wait { !player.changingMode }
-            try require(player.modeError == nil && !player.modes.automix, "AutoMix did not save settings")
+            try require(player.actionError == nil && !player.modes.automix, "AutoMix did not save settings")
             try capture("native-player-modes")
             report["player"] = "visual mixing fixture and animated queue; real shuffle, repeat all/one and AutoMix bridge commands passed"
+            player.open("artist")
+            try await wait { self.shell.ui.path == "/catalog/artist/77" && self.presentedViewController == nil }
+            try await Task.sleep(for: .seconds(1))
+            try capture("native-player-artist-link")
+            shell.go("/import")
+            try await wait { self.shell.ui.path == "/import" }
+            let file = folder.appendingPathComponent("MORA Native Import.wav")
+            try NativeProbeWave.make(track: 0, seconds: 1).write(to: file)
+            let before = Set(shell.library.map(\.id))
+            var selected: [URL] = [], cancelled = false
+            let documentPicker = NativeDocumentPicker(types: [.audio], multiple: true) { result in
+                switch result {
+                case .success(let urls): selected = urls
+                case .failure(let error): cancelled = (error as NSError).code == CocoaError.Code.userCancelled.rawValue
+                }
+            }
+            let picker = documentPicker.controller
+            documentPicker.documentPickerWasCancelled(picker)
+            try require(cancelled, "File picker did not report cancellation")
+            try require(picker.allowsMultipleSelection, "File picker lost multiple selection")
+            documentPicker.present(from: self)
+            try await wait { self.presentedViewController === picker && picker.viewIfLoaded?.window != nil && !picker.isBeingPresented }
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-file-picker")
+            documentPicker.documentPicker(picker, didPickDocumentsAt: [file])
+            try await wait { selected == [file] && self.presentedViewController == nil }
+            NativePickedFile.discardTemporaryCopy(file)
+            try require(FileManager.default.fileExists(atPath: file.path), "Import removed the original document")
+            let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+            try NativeProbeWave.make(track: 0, seconds: 1).write(to: temporary)
+            NativePickedFile.discardTemporaryCopy(temporary)
+            try require(!FileManager.default.fileExists(atPath: temporary.path), "Temporary document copy was not removed")
+            let encoded = try await NativePickedFile.base64(selected[0])
+            _ = try await shell.call("act", ["name": "importAudio", "args": ["name": file.lastPathComponent, "base64": encoded]], timeout: 45)
+            try await Task.sleep(for: .seconds(1))
+            report["importMessage"] = shell.banner
+            try await wait { self.shell.library.contains { !before.contains($0.id) && $0.duration > 0 } }
+            shell.go("/library/tracks")
+            try await wait { self.shell.ui.path == "/library/tracks" }
+            try await Task.sleep(for: .seconds(1))
+            try capture("native-import-library")
+            report["import"] = "UIKit picker delegate, copied file read, real WAV upload and visible library row passed"
+            let restoredTrack = shell.library.first { !before.contains($0.id) && $0.duration > 0 }!
+            let saved: [String: Any] = ["items": [["entryId": "restored-fixture", "trackId": restoredTrack.id, "origin": "user"]],
+                "index": 0, "position": 0.25, "context": ["type": "library", "label": "Медиатека"], "shuffle": false, "repeat": "off", "volume": 1]
+            _ = try await web.callAsyncJavaScript("const r = await fetch('/api/queue',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(saved)}); if(!r.ok)throw Error(r.status); return 0;", arguments: ["saved": saved], in: nil, contentWorld: .page)
+            // The worker writes its database image up to 60 s later; leaving the page (pagehide) flushes it,
+            // as going to the background does on a phone. A reload alone would drop the saved queue.
+            _ = try await web.evaluateJavaScript("window.dispatchEvent(new Event('pagehide'));0")
+            try await Task.sleep(for: .seconds(3))
+            _ = try await web.evaluateJavaScript("location.reload();0")
+            try await wait { self.shell.ui.now?.entryId == "restored-fixture" && self.shell.ui.loaded }
+            try require(shell.ui.now?.playing == false, "Restore started music automatically")
+            shell.openPlayer()
+            try await wait { self.presentedViewController is UIHostingController<NativePlayerView> }
+            try await Task.sleep(for: .seconds(2))
+            guard let restoredPlayer = (presentedViewController as? UIHostingController<NativePlayerView>)?.rootView.model else { throw NativeShellError.page }
+            try require(restoredPlayer.state.trackId == restoredTrack.id && restoredPlayer.state.active, "Restored native player lost track")
+            try require(abs(restoredPlayer.state.position - 0.25) < 0.01 && !restoredPlayer.state.playing, "Restored player lost paused position")
+            try require(!shell.ui.overlay, "Restore opened the web full player")
+            try capture("native-restored-player")
+            restoredPlayer.close("close")
+            report["restore"] = "Persisted paused queue, WebContent reload and native player presentation without autoplay passed"
             report["status"] = "passed"
         } catch { report["status"] = "failed"; report["error"] = error.localizedDescription }
         try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: folder.appendingPathComponent("native-ui-check.json"))
@@ -281,34 +366,132 @@ final class NativeShellStore: ObservableObject {
     private var sendingReactions = false
     private var sheetOpen = false
     private var pending: (path: String, at: Date)?
+    private var stationWrite: DispatchWorkItem?
+    private let stationIO = DispatchQueue(label: "ru.mora.station")
+    private var station: NativeStationSnapshot?
+    private var backupTimer: Timer?
+    private var backingUp = false
+    private var backupRevision = -1
+    func remapReactions(_ mapping: [String: String]) { reactions.remap(mapping); flushReactions() }
+
+    func captureBackup() {
+        guard ui.loaded, !backingUp, revision != backupRevision else { return }
+        backingUp = true
+        let revision = self.revision
+        Task { @MainActor in
+            let lease = UIApplication.shared.beginBackgroundTask(withName: "MORA backup", expirationHandler: nil)
+            defer { self.backingUp = false; if lease != .invalid { UIApplication.shared.endBackgroundTask(lease) } }
+            do {
+                guard let text = try await self.call("backup", timeout: 15) as? String else { throw CocoaError(.fileReadCorruptFile) }
+                try await Task.detached(priority: .utility) {
+                    _ = try NativeBackupStore.save(text)
+                    #if MORA_ICLOUD
+                    _ = try NativeBackupStore.save(text, folder: NativeBackupStore.cloudFolder())
+                    #endif
+                }.value
+                self.backupRevision = revision
+            } catch { self.show("Бэкап: \(error.localizedDescription)") }
+        }
+    }
+
+    private func offerBackupRestore() {
+        guard library.isEmpty, !UserDefaults.standard.bool(forKey: "mora.backup.offered"),
+              (try? NativeBackupStore.files().isEmpty) == false else { return }
+        Task { @MainActor in
+            for _ in 0..<80 {
+                if !NativeDeepLink.splashVisible { break }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            guard let presenter = self.presenter, presenter.presentedViewController == nil else { return }
+            let alert = UIAlertController(title: "Восстановить медиатеку?", message: "Найдены резервные копии настроек, плейлистов, лайков и истории.", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Выбрать копию", style: .default) { _ in self.go("/backups") })
+            alert.addAction(UIAlertAction(title: "Позже", style: .cancel))
+            UserDefaults.standard.set(true, forKey: "mora.backup.offered")
+            presenter.present(alert, animated: true)
+        }
+    }
+
+    private func scheduleStation(_ value: [String: Any]) {
+        guard let raw = value["station"] as? [String: Any], let data = try? JSONSerialization.data(withJSONObject: raw),
+              let incoming = try? JSONDecoder().decode(NativeStationPayload.self, from: data) else { return }
+        let tracks = incoming.tracks.map { row -> NativeStationSnapshot.Track in
+            var track = row
+            track.localFile = NativeStationFiles.name(track.trackId)
+            return track
+        }
+        var next = NativeStationSnapshot(context: incoming.context, source: incoming.source, index: incoming.index,
+            position: incoming.position, settings: incoming.settings, tracks: tracks)
+        next.contextId = incoming.contextId
+        guard (try? next.validate()) != nil else { return }
+        station = next
+        guard stationWrite == nil else { return } // Throttle continuous position ticks rather than postponing forever.
+        let task = DispatchWorkItem { [weak self] in
+            guard let self, let snapshot = self.station else { return }
+            self.stationWrite = nil
+            self.stationIO.async {
+                do { try NativeStationFiles.save(snapshot) }
+                catch { NSLog("MORA station autosave failed: %@", error.localizedDescription) } // a background autosave must not toast every 1.5 s
+            }
+        }
+        stationWrite = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: task)
+    }
 
     @Published var searchQuery = ""
     @Published var searchSource = "all"
+    @Published var searchScope = "all"
     @Published var waveSource: NativeWaveSource?
     @Published var waveSettingsOpen = false
-    var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web }
+    /// «Добавить в плейлист» from a track menu or a selection: the sheet picks a playlist for these tracks.
+    @Published var playlistTarget: [NativeTrack] = []
+    /// No usable network path: online searches and streams fail, downloads still play.
+    @Published private(set) var offline = false
+    private let network = NWPathMonitor()
+    @MainActor var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web && !NativeDeepLink.splashVisible }
     var screen: NativeScreen { NativeRoute.screen(path) }
     var tab: NativeTab { NativeRoute.tab(path) }
     var liked: [NativeTrack] { NativeTrack.favorites(library) }
 
     init() {
         let nc = NotificationCenter.default
+        nc.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.captureBackup() }
+        backupTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in self?.captureBackup() }
         nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.stopPolling() }
-        nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in self?.startPolling(); self?.flushReactions() }
+        nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in self?.startPolling(); self?.flushReactions(); self?.sendNetwork() }
         nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.flushReactions() }
+        network.pathUpdateHandler = { [weak self] path in
+            DispatchQueue.main.async {
+                guard let self, (path.status != .satisfied) != self.offline else { return }
+                self.offline.toggle()
+                self.show(self.offline ? "Нет сети — волна продолжится скачанными треками" : "Сеть снова доступна")
+                self.sendNetwork()
+            }
+        }
+        network.start(queue: DispatchQueue(label: "ru.mora.network"))
     }
 
     /// A snapshot from the page (main thread). Returns whether the shell is on screen.
+    // Kept out of line: inlined into receive(), Swift 6.2's CopyPropagation pass crashes on these optional chains (Release).
+    @inline(never) private static func trackChanged(_ old: NativeNow?, _ new: NativeNow?) -> Bool {
+        old?.id != new?.id || old?.playing != new?.playing
+    }
+
     func receive(_ value: [String: Any]) -> Bool {
+        scheduleStation(value)
+        if value["library"] != nil { DispatchQueue.main.async { NativeSpotlight.update(self.library) } }
         if value["enable"] as? Bool == true { setShown(true, resync: false) }
         if let rows = value["library"] as? [[String: Any]] { library = rows.compactMap(NativeTrack.init) }
         if let rows = value["playlists"] as? [[String: Any]] { playlists = rows.compactMap(NativePlaylist.init) }
         if let rows = value["queue"] as? [[String: Any]] { queue = rows.compactMap(NativeQueuedTrack.init) }
         let next = NativeUiState(value)
+        if next.loaded && !ui.loaded { offerBackupRestore() }
+        let widgetChanged = value["library"] != nil || value["playlists"] != nil || Self.trackChanged(ui.now, next.now)
+        if next.loaded && !ui.loaded && offline { sendNetwork() } // a page that (re)loaded without a network
         if next.toast != ui.toast, let toast = next.toast, screen != .web { show(toast.text) }
-        if next.path != ui.path || next.searchQuery != ui.searchQuery || next.searchSource != ui.searchSource {
+        if next.path != ui.path || next.searchQuery != ui.searchQuery || next.searchSource != ui.searchSource || next.searchScope != ui.searchScope {
             if let query = next.searchQuery { searchQuery = query }
             if let source = next.searchSource { searchSource = source }
+            if let scope = next.searchScope { searchScope = scope }
         }
         if next != ui { ui = next }
         // A push sent before the page saw native's own navigation must not jump back.
@@ -320,6 +503,7 @@ final class NativeShellStore: ObservableObject {
             if let index = library.firstIndex(where: { $0.id == id }) { library[index].reaction = value }
         }
         flushReactions()
+        if widgetChanged { publishWidget() }
         revision &+= 1
         startPolling()
         return shown
@@ -389,6 +573,7 @@ final class NativeShellStore: ObservableObject {
         if let query = url?.queryItems?.first(where: { $0.name == "q" })?.value { searchQuery = String(query.prefix(200)) }
         if path.hasPrefix("/yandex") { searchSource = "yandex" }
         else if let source = url?.queryItems?.first(where: { $0.name == "src" })?.value, ["all", "local", "ytmusic", "youtube", "soundcloud", "yandex"].contains(source) { searchSource = source }
+        if let scope = url?.queryItems?.first(where: { $0.name == "type" })?.value, ["all", "track", "artist", "album"].contains(scope) { searchScope = scope }
         self.path = path.components(separatedBy: "?")[0]
         pending = (self.path, Date())
         run("go", ["path": path])
@@ -466,6 +651,7 @@ final class NativeShellStore: ObservableObject {
             let next = NativePlayerState(value)
             if next.title != self.player.title || next.artist != self.player.artist || next.playing != self.player.playing || next.active != self.player.active {
                 self.player = next
+                self.publishWidget()
             }
             let key = "\(next.entryId)|\(next.artworkReady)"
             if key != self.artworkKey {
@@ -473,6 +659,36 @@ final class NativeShellStore: ObservableObject {
                 self.artwork = (value["artwork"] as? MPMediaItemArtwork)?.image(at: CGSize(width: 120, height: 120))
             }
         }
+    }
+
+    /// The page's offline wave (lib/offline-wave.ts) follows this monitor; sent again on return to the foreground,
+    /// since a suspended page misses the call.
+    private func sendNetwork() {
+        let offline = self.offline
+        Task { @MainActor in _ = try? await call("network", ["offline": offline], timeout: 10) }
+    }
+
+    @MainActor func nativePlaybackChanged(_ state: [String: Any], ended: Bool) {
+        guard UIApplication.shared.applicationState != .active else { return }
+        var next = NativePlayerState(state)
+        if ended { next.playing = false }
+        guard next.trackId != player.trackId || next.playing != player.playing else { return }
+        player = next; publishWidget()
+    }
+
+    /// Home-screen widgets: the playing (or last) track and the newest likes; redrawn only when they change.
+    private var widget: NativeWidgetData?
+    private func publishWidget() {
+        let liked = self.liked
+        var next = NativeWidgetData(playing: miniPlaying, liked: liked.prefix(6).map { .init(title: $0.title, artist: $0.artist) }, likedCount: liked.count)
+        next.playlists = playlists.map { .init(id: $0.id, name: $0.name) }
+        if let title = miniTitle, !title.isEmpty { next.now = .init(title: title, artist: miniArtist) } else { next.now = widget?.now }
+        next.updatedAt = widget?.updatedAt
+        guard next != widget else { return }
+        next.updatedAt = .now
+        widget = next
+        next.save()
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     var nativePlaying: Bool { host?.active == true && player.active }
@@ -494,9 +710,9 @@ final class NativeShellStore: ObservableObject {
             host.command("nexttrack", source: "player") { [weak self] _ in self?.refreshPlayer() }
         } else { run("next") }
     }
-    /// The stage-1 SwiftUI player while native playback runs; the web full player otherwise.
+    /// A restored track opens natively before the audio engine starts.
     func openPlayer() {
-        guard nativePlaying, let host, let presenter, presenter.presentedViewController == nil, !sheetOpen else { run("player"); return }
+        guard miniTitle != nil, let host, let presenter, presenter.presentedViewController == nil, !sheetOpen else { return }
         sheetOpen = true
         NativePlayerSheet.present(host: host, from: presenter) { [weak self] action in
             self?.sheetOpen = false
@@ -586,8 +802,20 @@ struct NativeShellContent: View {
     var body: some View {
         ZStack(alignment: .top) {
             Color.moraBackground.ignoresSafeArea()
+                .sheet(isPresented: Binding(get: { !store.playlistTarget.isEmpty }, set: { if !$0 { store.playlistTarget = [] } })) {
+                    NativePlaylistPicker(tracks: store.playlistTarget).environmentObject(store)
+                }
             screen.id(store.path)
                 .transition(.opacity.combined(with: .offset(x: reduceMotion ? 0 : 18)))
+            if store.path != NativeRoute.root(store.tab) {
+                // Pages are route switches, not NavigationStack pushes, so iOS gives them no back swipe: this edge does.
+                Color.clear.frame(width: 18).frame(maxHeight: .infinity).contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 12).onEnded { g in
+                        if g.translation.width > 70 && abs(g.translation.height) < g.translation.width { store.back() }
+                    })
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityHidden(true)
+            }
             if let text = store.banner {
                 Text(text).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
                     .padding(.horizontal, 16).padding(.vertical, 10)
@@ -597,6 +825,16 @@ struct NativeShellContent: View {
                     .accessibilityHidden(true) // announced when it appears
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if store.offline {
+                Label("Нет сети — играет то, что на iPhone", systemImage: "wifi.slash")
+                    .font(.footnote.weight(.medium)).foregroundStyle(Color.moraGold)
+                    .frame(maxWidth: .infinity).padding(.vertical, 6)
+                    .background(Color.moraGold.opacity(0.12))
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: store.offline)
         .animation(.easeOut(duration: 0.25), value: store.banner)
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.32), value: store.path)
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }

@@ -1,15 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   app: {} as any, listeners: [] as (() => void)[], radio: { active: false, loading: false, error: null as string | null },
+  resume: vi.fn(), pause: vi.fn(), nextTrack: vi.fn(), prevTrack: vi.fn(), seek: vi.fn(),
   toggleShuffle: vi.fn(), cycleRepeat: vi.fn(), playTracks: vi.fn(), addToQueue: vi.fn(), toggle: vi.fn(), startWave: vi.fn(), startRadio: vi.fn(), toast: vi.fn(),
-  openVersionPanel: vi.fn(), yandexWaveSettings: vi.fn(), refreshYandexWave: vi.fn(), react: vi.fn(), patchTrack: vi.fn(),
+  importFiles: vi.fn(), imports: vi.fn(), openVersionPanel: vi.fn(), yandexWaveSettings: vi.fn(), refreshYandexWave: vi.fn(), react: vi.fn(), patchTrack: vi.fn(),
+  addToPlaylist: vi.fn(), createPlaylist: vi.fn(), loadPlaylists: vi.fn(), downloads: vi.fn(),
+  move: vi.fn(), removeAt: vi.fn(), jumpTo: vi.fn(), queueState: { queue: [] as any[], index: 0 }, download: vi.fn(), deleteTrack: vi.fn(),
 }));
 vi.mock('../src/store/app.ts', () => ({
   phone: true,
-  controller: { toggleShuffle: () => h.toggleShuffle(), cycleRepeat: () => h.cycleRepeat(), playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k), refreshYandexWave: () => h.refreshYandexWave() },
+  controller: { resume: () => h.resume(), pause: () => h.pause(), nextTrack: () => h.nextTrack(), prevTrack: () => h.prevTrack(), seek: (time: number) => h.seek(time), toggleShuffle: () => h.toggleShuffle(), cycleRepeat: () => h.cycleRepeat(), playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k), refreshYandexWave: () => h.refreshYandexWave(), subscribe: vi.fn(), setOfflineOnly: vi.fn(),
+    get state() { return h.queueState; }, move: (...a: any[]) => h.move(...a), removeAt: (i: number) => h.removeAt(i), jumpTo: (i: number) => h.jumpTo(i) },
   trackOf: (id: string) => h.app.tracks.get(id),
   useApp: { getState: () => h.app, setState: vi.fn(), subscribe: (fn: () => void) => h.listeners.push(fn) },
 }));
+vi.mock('../src/lib/importer.ts', () => ({ importFiles: (...a: any[]) => h.importFiles(...a) }));
 vi.mock('../src/lib/radio.ts', () => ({ startRadio: () => h.startRadio(), useRadio: { getState: () => h.radio, subscribe: vi.fn() } }));
 vi.mock('../src/store/catalog.ts', () => ({ catalogPlayer: {}, publicPlayer: {}, useCatalogPlayback: { getState: () => ({ phase: 'idle', title: '' }), subscribe: vi.fn() }, usePublicPlayback: { getState: () => ({ phase: 'idle', title: '' }), subscribe: vi.fn() } }));
 vi.mock('../src/pages/Search.tsx', () => ({ asCatalog: (t: any) => t, SOURCE_LABEL: {} }));
@@ -18,20 +23,34 @@ vi.mock('../src/components/VersionPanel.tsx', () => ({
   openVersionPanel: (...a: any[]) => h.openVersionPanel(...a),
   useVersionPanel: { getState: () => ({ target: null }), subscribe: vi.fn() },
 }));
-vi.mock('../src/lib/api.ts', () => ({ api: { react: (...args: any[]) => h.react(...args), yandexWaveSettings: () => h.yandexWaveSettings() } }));
+vi.mock('../src/lib/api.ts', () => ({ api: { imports: () => h.imports(), react: (...args: any[]) => h.react(...args), yandexWaveSettings: () => h.yandexWaveSettings(),
+  addToPlaylist: (...a: any[]) => h.addToPlaylist(...a), createPlaylist: (...a: any[]) => h.createPlaylist(...a), downloads: () => h.downloads(),
+  download: (...a: any[]) => h.download(...a), deleteTrack: (id: string) => h.deleteTrack(id) } }));
+vi.mock('../src/store/downloads.ts', () => ({ useDownloads: { getState: () => ({ jobs: new Map(), load: async () => {} }), subscribe: vi.fn() } }));
 
 const track = (id: string, status = 'ok') => ({ id, title: id.toUpperCase(), artist: 'X', album: '', duration: 100, reaction: 0, coverUrl: null, status });
 
 beforeEach(() => {
-  vi.resetModules(); vi.clearAllMocks(); h.listeners.length = 0;
+  vi.resetModules(); vi.clearAllMocks(); h.importFiles.mockReset(); h.imports.mockResolvedValue({ jobs: [] }); h.listeners.length = 0;
   h.radio = { active: false, loading: false, error: null };
   const tracks = new Map([['a', track('a')], ['b', track('b', 'missing')]]);
-  h.app = { patchTrack: h.patchTrack, tracks, order: ['a', 'b'], loaded: true, playlists: [], providers: [], toasts: [], fullPlayer: false, queueOpen: false, panel: null, toast: h.toast,
+  h.app = { patchTrack: h.patchTrack, tracks, order: ['a', 'b'], loaded: true, playlists: [], loadPlaylists: () => h.loadPlaylists(), providers: [], toasts: [], fullPlayer: false, queueOpen: false, panel: null, toast: h.toast,
     player: { status: 'playing', queue: [{ trackId: 'a' }], index: 0, context: { type: 'wave', label: 'Моя волна' }, error: null } };
   vi.stubGlobal('location', { hash: '#/liked?x=1' });
 });
 
 describe('native shell bridge (page side)', () => {
+  it('shares at most fifty station entries without provider credentials or audio URLs', async () => {
+    const { uiState } = await import('../src/lib/native-ui.ts');
+    h.app.settings = { wave: { mood: 'calm', diversity: 'discover', mode: 'mix' }, automix: { enabled: true }, token: 'secret' };
+    h.app.player.queue = Array.from({ length: 70 }, (_, i) => ({ trackId: 'a', entryId: String(i) }));
+    h.app.player.position = 17;
+    const station = uiState().station;
+    expect(station.tracks).toHaveLength(50);
+    expect(station).toMatchObject({ context: 'wave', source: 'own', index: 0, position: 17, settings: { mood: 'calm', diversity: 'discover', mode: 'mix' } });
+    expect(JSON.stringify(station)).not.toContain('secret');
+    expect(station.tracks[0]).not.toHaveProperty('url');
+  });
   it('passes like and addition dates to the native favorites list', async () => {
     const { uiTrack } = await import('../src/lib/native-ui.ts');
     expect(uiTrack({ ...track('a'), reaction: 1, likedAt: 123, addedAt: 456 } as any)).toMatchObject({ likedAt: 123, addedAt: 456 });
@@ -197,4 +216,148 @@ it('connects native queue modes to the real command paths and preserves other Au
   await expect(commands.playbackMode({ mode: 'invalid' })).rejects.toThrow('Неизвестный режим');
   h.app.settings = null;
   await expect(commands.playbackMode({ mode: 'automix' })).rejects.toThrow('Настройки ещё загружаются');
+});
+it('uses the same album and individual artist links as the web player', async () => {
+  const { commands } = await import('../src/lib/native-ui.ts');
+  h.app.tracks.set('a', { ...track('a'), provider: 'yandex', album: 'Original Album', catalogAlbumId: '88',
+    catalogArtists: [{ id: '1', name: 'Artist One' }, { id: '2', name: 'Artist Two' }], binding: { assetId: 'different-audio' } });
+  expect(commands.trackLinks({ id: 'a' })).toEqual({ album: '/catalog/album/88', artists: [
+    { id: '#/catalog/artist/1', title: 'Artist One', path: '/catalog/artist/1' },
+    { id: '#/catalog/artist/2', title: 'Artist Two', path: '/catalog/artist/2' },
+  ] });
+  expect(() => commands.trackLinks({ id: 'missing' })).toThrow('Трек не найден');
+});
+it('offers a separate native audio picker on the Import page', async () => {
+  const { describe } = await import('../src/lib/native-pages.ts');
+  (location as any).hash = '#/import';
+  const page = await describe() as any;
+  expect(page.sections[0].rows[0]).toMatchObject({ kind: 'file', title: 'Добавить аудиофайлы', multiple: true, act: { name: 'importAudio' } });
+  expect(page.sections[0].rows[0].types).toContain('mp3');
+  expect(page.sections[1].rows).toContainEqual(expect.objectContaining({ title: 'Файл плейлиста (CSV, M3U, JSON)' }));
+});
+it('passes native file bytes and the original name to the importer and surfaces failures', async () => {
+  const { actions } = await import('../src/lib/native-pages.ts');
+  await actions.importAudio({ name: 'Трек.wav', base64: 'AQID' });
+  const [file] = h.importFiles.mock.calls[0][0];
+  expect(file.name).toBe('Трек.wav');
+  expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([1, 2, 3]);
+  await expect(actions.importAudio({ name: 'empty.wav', base64: '' })).rejects.toThrow('пустой');
+  h.importFiles.mockImplementationOnce(() => { h.app.upload = { failed: [{ name: 'broken.mp3', error: 'Не удалось прочитать' }] }; });
+  await expect(actions.importAudio({ name: 'broken.mp3', base64: 'AQID' })).rejects.toThrow('broken.mp3: Не удалось прочитать');
+});
+
+
+it('adds a track to a playlist from the native menu, or creates one with it', async () => {
+  const { commands } = await import('../src/lib/native-ui.ts');
+  h.app.playlists = [{ id: 'p1', name: 'Дорога', count: 3 }];
+  h.addToPlaylist.mockResolvedValue({ added: 1 });
+  await expect(commands.addToPlaylist({ ids: ['a', 'zzz'], playlistId: 'p1' })).resolves.toEqual({ added: 1 });
+  expect(h.addToPlaylist).toHaveBeenCalledWith('p1', ['a']);
+  expect(h.loadPlaylists).toHaveBeenCalledTimes(1);
+  expect(h.toast).toHaveBeenCalledWith('Добавлено в «Дорога»: 1', 'success');
+  h.createPlaylist.mockResolvedValue({ id: 'p2' });
+  await expect(commands.addToPlaylist({ ids: ['a'], name: '  Новое  ' })).resolves.toEqual({ id: 'p2' });
+  expect(h.createPlaylist).toHaveBeenCalledWith('Новое', ['a']);
+  await expect(commands.addToPlaylist({ ids: ['zzz'], playlistId: 'p1' })).rejects.toThrow('Трек не найден');
+  await expect(commands.addToPlaylist({ ids: ['a'], name: '   ' })).rejects.toThrow('название');
+});
+
+it('keeps own phone files in Downloads next to downloaded tracks', async () => {
+  const { describe } = await import('../src/lib/native-pages.ts');
+  h.app.tracks.set('own', { ...track('own'), title: 'Своя запись', provider: 'local', pinned: false });
+  h.app.tracks.set('net', { ...track('net'), title: 'Из сети', provider: 'youtube', pinned: true });
+  h.app.order = ['a', 'b', 'own', 'net'];
+  h.downloads.mockResolvedValue({ usage: null });
+  (location as any).hash = '#/downloads';
+  const page = await describe() as any;
+  const own = page.sections.find((s: any) => s.title?.startsWith('Свои файлы'));
+  expect(own.rows).toEqual([{ kind: 'track', id: 'own' }]);
+  const downloaded = page.sections.find((s: any) => s.title?.startsWith('Скачано'));
+  expect(downloaded.rows[0]).toMatchObject({ id: 'net', remove: { title: 'Удалить загрузку' } });
+});
+
+it('presents restored metadata and dispatches transport without opening the web player', async () => {
+  const { uiState, commands } = await import('../src/lib/native-ui.ts');
+  h.app.player = { ...h.app.player, status: 'idle', position: 37, queue: [{ trackId: 'a', entryId: 'saved-entry' }] };
+  expect(uiState().now).toMatchObject({ id: 'a', entryId: 'saved-entry', position: 37, duration: 100, playing: false });
+  for (const action of ['play', 'pause', 'nexttrack', 'previoustrack']) await commands.playerCommand({ action });
+  expect(h.resume).toHaveBeenCalledTimes(1);
+  expect(h.pause).toHaveBeenCalledTimes(1);
+  expect(h.nextTrack).toHaveBeenCalledTimes(1);
+  expect(h.prevTrack).toHaveBeenCalledTimes(1);
+  commands.playerCommand({ action: 'seekto', time: 45 });
+  expect(h.seek).toHaveBeenCalledWith(45);
+  for (const time of [-1, NaN, Infinity, '45']) expect(() => commands.playerCommand({ action: 'seekto', time })).toThrow();
+  expect(() => commands.playerCommand({ action: 'invalid' })).toThrow();
+});
+
+it('edits the native player queue by entry ids, never by stale positions', async () => {
+  const { commands } = await import('../src/lib/native-ui.ts');
+  h.queueState = { index: 0, queue: ['cur', 'a', 'b', 'c'].map((entryId) => ({ entryId, trackId: 'a' })) };
+  commands.queueEdit({ action: 'move', entry: 'c', after: 'cur' });
+  expect(h.move).toHaveBeenLastCalledWith(3, 1);
+  commands.queueEdit({ action: 'move', entry: 'a', after: 'b' });
+  expect(h.move).toHaveBeenLastCalledWith(1, 2);
+  commands.queueEdit({ action: 'next', entry: 'c' });
+  expect(h.move).toHaveBeenLastCalledWith(3, 1);
+  h.move.mockClear();
+  commands.queueEdit({ action: 'next', entry: 'a' }); // already next
+  commands.queueEdit({ action: 'move', entry: 'b', after: 'b' });
+  expect(h.move).not.toHaveBeenCalled();
+  commands.queueEdit({ action: 'remove', entry: 'b' });
+  expect(h.removeAt).toHaveBeenCalledWith(2);
+  commands.queueEdit({ action: 'jump', entry: 'c' });
+  expect(h.jumpTo).toHaveBeenCalledWith(3);
+  expect(() => commands.queueEdit({ action: 'remove', entry: 'gone' })).toThrow('нет в очереди');
+  expect(() => commands.queueEdit({ action: 'move', entry: 'a', after: 'gone' })).toThrow('изменилась');
+  expect(() => commands.queueEdit({ action: 'evil', entry: 'a' })).toThrow('Неизвестное');
+});
+
+it('downloads only online tracks that are not on the phone yet, and deletes a selection', async () => {
+  const { commands } = await import('../src/lib/native-ui.ts');
+  h.app.tracks.set('net', { ...track('net'), sourceKind: 'remote', pinned: false });
+  h.app.tracks.set('saved', { ...track('saved'), sourceKind: 'remote', pinned: true });
+  h.app.tracks.set('file', { ...track('file'), sourceKind: 'local' });
+  h.download.mockResolvedValue({});
+  await commands.act({ name: 'downloadTracks', args: { ids: ['net', 'saved', 'file', 'zzz', 5] } });
+  expect(h.download.mock.calls).toEqual([[{ trackId: 'net' }]]);
+  expect(h.toast).toHaveBeenLastCalledWith(expect.stringContaining('Скачиваем: 1 трек'));
+  h.app.loadLibrary = vi.fn(async () => {});
+  h.deleteTrack.mockResolvedValue({});
+  await commands.act({ name: 'deleteTracks', args: { ids: ['net', 'file', 'zzz'] } });
+  expect(h.deleteTrack.mock.calls).toEqual([['net'], ['file']]);
+  expect(h.app.loadLibrary).toHaveBeenCalledTimes(1);
+});
+
+it('describes the equalizer and changes the same tone the web Sound panel does', async () => {
+  const { commands, } = await import('../src/lib/native-ui.ts');
+  const { describe } = await import('../src/lib/native-pages.ts');
+  h.app.settings = { sound: { tone: { enabled: false, gains: Array(10).fill(0) }, presets: [] } };
+  h.app.setTone = vi.fn((tone: any) => { h.app.settings = { ...h.app.settings, sound: { ...h.app.settings.sound, tone } }; });
+  (location as any).hash = '#/sound';
+  const page = await describe() as any;
+  expect(page.sections[0].rows[1]).toMatchObject({ kind: 'choice', value: 'Ровно' });
+  expect(page.sections[1].rows).toHaveLength(10);
+  await commands.act({ name: 'toneBand', args: { band: 1, value: 20 } });
+  expect(h.app.settings.sound.tone).toMatchObject({ enabled: true, gains: [0, 12, 0, 0, 0, 0, 0, 0, 0, 0] });
+  await commands.act({ name: 'toneBand', args: { band: 10, value: 1 } });
+  expect(h.app.setTone).toHaveBeenCalledTimes(1);
+  await commands.act({ name: 'tonePreset', args: { value: 'Больше баса' } });
+  expect(h.app.settings.sound.tone.gains[0]).toBe(4);
+  await commands.act({ name: 'tone', args: { value: false } });
+  expect(h.app.settings.sound.tone.enabled).toBe(false);
+});
+
+it('holds the native launch gate while a foreground WebKit document is still hidden', async () => {
+  vi.useFakeTimers();
+  const push = vi.fn(async (_state: Record<string, unknown>) => ({ shown: true, launchSplash: true }));
+  const listen = vi.fn();
+  vi.stubGlobal('window', { moraNativePlayback: { uiState: push }, addEventListener: vi.fn() });
+  vi.stubGlobal('document', { hidden: true, addEventListener: listen, documentElement: { classList: { toggle: vi.fn() } } });
+  const { startNativeUi } = await import('../src/lib/native-ui.ts');
+  startNativeUi();
+  await vi.advanceTimersByTimeAsync(500);
+  expect(listen).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+  expect(push.mock.calls.at(-1)?.[0]).toMatchObject({ launchIntro: false, splash: true, overlay: true });
+  vi.useRealTimers();
 });

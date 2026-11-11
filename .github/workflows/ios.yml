@@ -12,6 +12,14 @@ on:
       - '.github/workflows/ios.yml'
   workflow_dispatch:
     inputs:
+      icloud:
+        description: Request iCloud Drive entitlement (requires configured Apple container)
+        type: boolean
+        default: false
+      carplay:
+        description: Request CarPlay audio entitlement (requires Apple approval)
+        type: boolean
+        default: false
       ui_only:
         description: Run only the complete app UI startup check
         type: boolean
@@ -21,14 +29,32 @@ permissions:
   contents: read
 
 jobs:
+  # Server, bridge and web logic behind the native screens; a Linux runner is enough and quick.
+  vitest:
+    if: inputs.ui_only != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
+      - run: npm run demo:tracks
+      - run: npx vitest run apps/server/test apps/web/test apps/mobile/test --maxWorkers=2 --testTimeout=180000
+
   build:
     if: inputs.ui_only != true
     runs-on: macos-15-intel
-    timeout-minutes: 60
+    timeout-minutes: 75
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 60 # release notes come from recent commits
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -53,16 +79,54 @@ jobs:
         run: |
           swiftc apps/mobile/ios/App/App/NativeShellState.swift apps/mobile/test/native-shell/main.swift -o "$RUNNER_TEMP/mora-shell-check"
           "$RUNNER_TEMP/mora-shell-check"
+      - name: Test native wave links and widget compatibility
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeWaveLink.swift apps/mobile/test/native-wave-link/main.swift -o "$RUNNER_TEMP/mora-wave-link-check"
+          "$RUNNER_TEMP/mora-wave-link-check"
+          swiftc apps/mobile/ios/App/App/NativeWidgetShared.swift apps/mobile/test/native-widget/main.swift -o "$RUNNER_TEMP/mora-widget-check"
+          "$RUNNER_TEMP/mora-widget-check"
+      - name: Test native station snapshot
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeStationSnapshot.swift apps/mobile/test/native-station/main.swift -o "$RUNNER_TEMP/mora-station-check"
+          "$RUNNER_TEMP/mora-station-check"
+          swiftc apps/mobile/ios/App/App/NativeDownloadQueue.swift apps/mobile/test/native-download-queue/main.swift -o "$RUNNER_TEMP/mora-download-queue-check"
+          "$RUNNER_TEMP/mora-download-queue-check"
+          swiftc apps/mobile/ios/App/App/NativeBackupStore.swift apps/mobile/test/native-backup/main.swift -o "$RUNNER_TEMP/mora-backup-check"
+          "$RUNNER_TEMP/mora-backup-check"
+          swiftc apps/mobile/ios/App/App/NativeDiagnosticArchive.swift apps/mobile/test/native-diagnostic-archive/main.swift -o "$RUNNER_TEMP/mora-diagnostics-check"
+          "$RUNNER_TEMP/mora-diagnostics-check"
+      - name: Test native JavaScriptCore server
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node apps/mobile/build.mjs --no-web
+          swiftc apps/mobile/ios/App/App/NativeServer.swift apps/mobile/test/native-server/main.swift -lsqlite3 -o "$RUNNER_TEMP/mora-server-check"
+          "$RUNNER_TEMP/mora-server-check" apps/mobile/www/server-jsc.js
       - name: Build unsigned device IPA
+        env:
+          MORA_CARPLAY: ${{ inputs.carplay && '1' || '0' }}
+          MORA_ICLOUD: ${{ inputs.icloud && '1' || '0' }}
         run: sh apps/mobile/scripts/ios-mac.sh --ipa
+      - name: Verify CarPlay entitlement gate
+        env:
+          MORA_CARPLAY: ${{ inputs.carplay && '1' || '0' }}
+        run: |
+          codesign -d --entitlements - --xml apps/mobile/build/ipa/Payload/App.app > "$RUNNER_TEMP/mora-entitlements.plist" 2>/dev/null
+          python3 -c 'import os,plistlib,sys; e=plistlib.load(open(sys.argv[1],"rb")); actual=e.get("com.apple.developer.carplay-audio",False); assert actual == (os.environ["MORA_CARPLAY"]=="1"), e' "$RUNNER_TEMP/mora-entitlements.plist"
+      - name: Verify IPA integrity, identity and feature gates
+        env:
+          MORA_CARPLAY: ${{ inputs.carplay && '1' || '0' }}
+          MORA_ICLOUD: ${{ inputs.icloud && '1' || '0' }}
+        run: node apps/mobile/scripts/verify-ipa-1.0.40.cjs apps/mobile/MORA-unsigned.ipa "$GITHUB_SHA" "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
       - uses: actions/upload-artifact@v4
         with:
-          name: MORA-unsigned-ipa
-          path: apps/mobile/MORA-unsigned.ipa
+          name: MORA-unsigned-ipa${{ inputs.carplay && '-carplay' || '' }}${{ inputs.icloud && '-icloud' || '' }}
+          path: |
+            apps/mobile/MORA-unsigned.ipa
+            apps/mobile/MORA-unsigned.ipa.sha256
+            apps/mobile/MORA-unsigned.ipa.verification.json
+            apps/mobile/RELEASE-NOTES.md
           if-no-files-found: error
           retention-days: 14
-      - name: Test native UI bridge and recording replacement
-        run: npx vitest run apps/mobile/test/native-mix-client.test.ts apps/server/test/yandex-wave.test.ts apps/web/test/native-ui.test.ts apps/web/test/native-catalog.test.ts apps/web/test/native-versions.test.ts apps/web/test/native-controller.test.ts apps/server/test/library-dto.test.ts apps/server/test/yandex-catalog.test.ts apps/server/test/native-sources.test.ts
       - name: Compare compiled Rust MIR with the bundled analyzer
         run: node apps/mobile/scripts/check-native-rust-analysis.mjs
       - name: Test native media preparation
@@ -103,7 +167,7 @@ jobs:
   ui:
     if: inputs.ui_only == true
     runs-on: macos-15-intel
-    timeout-minutes: 35
+    timeout-minutes: 75
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
@@ -139,7 +203,7 @@ jobs:
           # Wait for simctl to confirm the actual app launch; cold iOS 26 registration can exceed 30 seconds.
           xcrun simctl launch --terminate-running-process "$DEVICE" ru.mora.player --native-ui-check > "$RUNNER_TEMP/mora-ui-console.log" 2>&1
           CONTAINER=$(xcrun simctl get_app_container "$DEVICE" ru.mora.player data)
-          for i in $(seq 1 90); do
+          for i in $(seq 1 300); do
             [ -f "$CONTAINER/Documents/native-ui-check.json" ] && break
             sleep 1
           done

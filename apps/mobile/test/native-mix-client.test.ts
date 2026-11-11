@@ -17,6 +17,16 @@ const sourceHooks = () => ({ prepare: vi.fn(async () => {}), restore: vi.fn(), s
   previous: { trackId: 'a', duration: 180, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS,
 })) });
 const reserve = async ({ count }: { count: number }) => ({ keys: Array.from({ length: count }, (_, i) => i) });
+it('reuses completed background audio without uploading it from WebKit', async () => {
+  const hooks = sourceHooks(), prepare = vi.fn(async () => state), read = vi.fn();
+  hooks.sources.mockImplementation(async entries => ({ items: entries.map(e => ({ ...e, title: e.trackId, artist: '', duration: 180,
+    mixingAllowed: true, source: { kind: 'upload', trackId: e.trackId } })), previous: { trackId: 'a', duration: 180, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS } as any));
+  const mix = createNativeMix({ ...port(), nativePrepareStart: prepare, nativeSourceReserve: reserve, nativeSourceAppend: vi.fn(),
+    nativeSourceFromDownload: async () => ({ found: true }) }, { ...hooks, sourceFile: read });
+  await mix.startSource!({ trackId: 'a', entryId: 'e' }, { sampleRate: 48000, position: 0 });
+  expect(read).not.toHaveBeenCalled();
+  expect(prepare.mock.calls[0][0].item.source).toEqual({ kind: 'local', file: 0 });
+});
 it('hands the first source to Swift without asking the page for decoded PCM', async () => {
   const prepare = vi.fn(async () => state), append = vi.fn(), start = vi.fn(), hooks = sourceHooks();
   const mix = createNativeMix({ ...port(), nativeMixStart: start, nativeMixAppend: append,

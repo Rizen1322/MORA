@@ -91,9 +91,12 @@ export interface SplashOptions {
 
 /** True while the intro owns the screen: the iPhone native shell steps aside (native-ui.ts). */
 export let splashing = false;
+let played = false;
 const release = () => { if (splashing) { splashing = false; dispatchEvent(new Event('mora-splash')); } };
 
 export function playSplash({ ready, target }: SplashOptions) {
+  if (played || document.hidden) return;
+  played = true;
   const root = document.createElement('div');
   root.className = 'splash';
   root.setAttribute('aria-hidden', 'true');
@@ -115,7 +118,7 @@ export function playSplash({ ready, target }: SplashOptions) {
 
   const reduced = () => {
     const m = document.documentElement.dataset.motion;
-    return m === 'reduced' || (m === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    return m === 'reduced' || ((m === 'system' || !m) && matchMedia('(prefers-reduced-motion: reduce)').matches);
   };
   const measure = () => {
     const el = target();
@@ -134,11 +137,15 @@ export function playSplash({ ready, target }: SplashOptions) {
   };
   const skip = () => { if (fade < 0) { fade = st; fadeLen = 0.35; } };
   const stop = () => {
+    done = true;
     root.removeEventListener('pointerdown', skip);
     removeEventListener('keydown', skip, true);
+    document.removeEventListener('visibilitychange', hidden);
     root.remove();
     release();
   };
+  const hidden = () => { if (document.hidden) stop(); };
+  document.addEventListener('visibilitychange', hidden);
   root.addEventListener('pointerdown', skip);
   addEventListener('keydown', skip, true);
   // nothing on the page uses the display face this early; the scene waits for it before the word
@@ -189,7 +196,11 @@ export function playSplash({ ready, target }: SplashOptions) {
     last = now;
     wall += dt;
     if (document.hidden && fade < 0) skip();
-    if (reduced() && fade < 0) { fade = st; fadeLen = 0.25; }
+    const minimal = reduced();
+    if (minimal) {
+      st = Math.max(st, T.hold);
+      if (fade < 0 && (ready() || wall >= MAX_WAIT)) { fade = st; fadeLen = 0.25; }
+    }
     if (W !== innerWidth || H !== innerHeight) {
       W = innerWidth; H = innerHeight;
       // weak GPUs and 4K screens: cap the backing store at ~3.6 MP
@@ -199,6 +210,7 @@ export function playSplash({ ready, target }: SplashOptions) {
     measure();
     // iPhone: native screens take over instead of the web Home, so there is nothing to aim at
     const cover = document.documentElement.classList.contains('mora-native-shell');
+    const advance = dt * (cover ? (T.fade + 0.2) / 2.2 : 1);
 
     // layout: mark over word, the pair centred a touch above the middle
     const mw = Math.min(W * 0.52, H * 0.36), fs = mw * 0.19;
@@ -207,10 +219,10 @@ export function playSplash({ ready, target }: SplashOptions) {
     const fontOk = document.fonts.check(font);
     const waiting = wall < MAX_WAIT && ((st >= LINE_END && st < T.grid && !fontOk) || (st >= T.hold && !(ready() && (aimed || cover))));
     if (freeze) st = freeze;
-    else if (!waiting) st += dt;
+    else if (!waiting) st += advance;
 
     // a slow push-in keeps the still frames alive
-    const zoom = 1 + 0.025 * smooth(st / T.hold);
+    const zoom = minimal ? 1 : 1 + 0.025 * smooth(st / T.hold);
     const flood = clamp((st - T.hold) / FLOOD);
     const graph = st >= T.grid && st < T.word;
     const paper = graph ? GRAPH : PAPER;
@@ -331,7 +343,7 @@ export function playSplash({ ready, target }: SplashOptions) {
     }
 
     if (fade >= 0) {
-      if (waiting) st += dt; // a skip runs on wall time even while the scene waits for the app
+      if (waiting) st += advance; // a skip advances even while the scene waits for the app
       if (cover) {
         // native screens appear over the page: go dark first, then let them in
         g.fillStyle = css(BG, k); g.fillRect(0, 0, W, H);

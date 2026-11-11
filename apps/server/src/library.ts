@@ -455,15 +455,17 @@ export class Library {
     this.events.emit({ type: 'library', reason: 'deleted', trackId: id });
   }
 
-  updateMeta(id: string, patch: Partial<Pick<TrackRow, 'title' | 'artist' | 'album' | 'genre'>>): TrackRow | null {
+  updateMeta(id: string, patch: Partial<Pick<TrackRow, 'title' | 'artist' | 'album' | 'genre' | 'album_artist' | 'year'>>): TrackRow | null {
     const t = this.get(id);
     if (!t) return null;
     const next = { title: patch.title ?? t.title, artist: patch.artist ?? t.artist, album: patch.album ?? t.album, genre: patch.genre ?? t.genre };
-    q(this.db, 'UPDATE tracks SET title = ?, artist = ?, album = ?, genre = ?, updated_at = ? WHERE id = ?').run(
+    q(this.db, 'UPDATE tracks SET title = ?, artist = ?, album = ?, genre = ?, album_artist = ?, year = ?, updated_at = ? WHERE id = ?').run(
       next.title.slice(0, 300),
       next.artist.slice(0, 300),
       next.album.slice(0, 300),
       next.genre.slice(0, 100),
+      (patch.album_artist ?? t.album_artist).slice(0, 300),
+      patch.year === undefined ? t.year : patch.year,
       Date.now(),
       id,
     );

@@ -2,6 +2,7 @@ import type { SoundSettings, PhraseMixRecipe } from '@automix/core';
 export interface TransitionRecipeContext { playlistId: string; fromItemId: number; toItemId: number }
 import type { TrackAnalysis, TransitionPlan, AutoMixSettings, TransitionRating, TransitionRatingReason } from '@automix/core';
 import type { CatalogAlbumPage, CatalogArtistPage, CatalogSearchResult, CatalogSearchType } from '@automix/core';
+import { nativePlaybackControls } from './playback-trace.ts';
 export interface ReactionSync { status: 'synced' | 'pending' | 'error' | 'local'; error?: string }
 export interface ReactionResult { value: number; sync?: ReactionSync }
 export interface YandexLikesJob { id: string; state: 'listing' | 'running' | 'paused' | 'done' | 'error' | 'cancelled'; busy: boolean; total: number; done: number; failed: number; skipped: number; preparing: number; message: string }
@@ -62,7 +63,7 @@ export interface VersionLabel { tag: string; origin: 'source' | 'title' }
 export interface ImportCandidate { provider: 'youtube' | 'soundcloud'; externalId: string; title: string; artist: string; duration: number; coverUrl: string | null; labels: VersionLabel[] }
 export interface ImportRow { position: number; title: string; artist: string; album?: string; duration?: number; status: 'pending' | 'matched' | 'uncertain' | 'missing'; confidence: number; how?: 'auto' | 'source' | 'user'; candidate?: ImportCandidate; trackId?: string | null }
 export interface ImportJob { id: string; name: string; source: string; cover: string | null; total: number | null; complete: boolean; note?: string; state: 'matching' | 'ready' | 'creating' | 'done' | 'failed'; error: string | null; rows: ImportRow[]; playlistId: string | null; createdAt: number; counts?: { matched: number; uncertain: number; missing: number; pending: number } }
-export interface DownloadJob { id: string; key: string; title: string; state: 'queued' | 'downloading' | 'waiting' | 'paused' | 'done' | 'failed' | 'cancelled'; progress: number; error: string | null; trackId: string | null }
+export interface DownloadJob { id: string; key: string; title: string; state: 'queued' | 'downloading' | 'waiting' | 'paused' | 'done' | 'failed' | 'cancelled'; progress: number; error: string | null; trackId: string | null; bytes?: number; totalBytes?: number; eta?: number }
 export interface DownloadUsage { cacheBytes: number; pinnedBytes: number; limitBytes: number; freeBytes: number | null }
 export interface ListeningReadiness { trackId: string; state: 'loading' | 'ready' | 'unavailable'; analysis?: string; message: string; jobId?: string }
 export interface ListeningPreparation { total: number; ready: number; unavailable: number; cancelled: boolean; complete: boolean; tracks: ListeningReadiness[]; plansReady: number; plansTotal: number; plansFailed: number }
@@ -175,7 +176,7 @@ export interface AppSettings {
   ui: { showDiagnostics: boolean; motion?: 'system'|'full'|'reduced'; graphics?: 'auto'|'canvas' };
   sound: SoundSettings;
   yandex: { syncLikes: boolean; syncDislikes: boolean; importLikes: boolean; waveFeedback: boolean };
-  downloads?: { autoLiked: boolean };
+  downloads?: { autoLiked: boolean; wifiOnly?: boolean; keepWave?: number };
 }
 
 export interface WavePick {
@@ -286,10 +287,29 @@ export const api = {
   resolveImport: (id: string, position: number, choice: { trackId: string } | ImportCandidate | null) => req<ImportJob>('POST', `/api/imports/${id}/resolve`, { position, choice }),
   importPlaylist: (id: string, includeUncertain: boolean) => req<ImportJob>('POST', `/api/imports/${id}/playlist`, { includeUncertain }),
   deleteImport: (id: string) => req<{ ok: true }>('DELETE', `/api/imports/${id}`),
-  downloads: () => req<{ jobs: DownloadJob[]; usage: DownloadUsage }>('GET', '/api/downloads'),
-  download: (body: { trackId?: string; provider?: string; externalId?: string; title?: string }) => req<{ job: DownloadJob }>('POST', '/api/downloads', body),
-  downloadAction: (id: string, action: 'pause' | 'resume' | 'cancel' | 'retry') => req<{ ok: true }>('POST', `/api/downloads/${id}/${action}`, {}),
-  removeDownload: (trackId: string) => req<{ ok: true }>('DELETE', `/api/tracks/${trackId}/download`),
+  downloads: async () => {
+    const result = await req<{ jobs: DownloadJob[]; usage: DownloadUsage }>('GET', '/api/downloads');
+    const native = await nativePlaybackControls()?.downloads?.list();
+    if (native) { result.jobs.push(...native.jobs); result.usage.pinnedBytes += native.cacheBytes; }
+    return result;
+  },
+  download: async (body: { trackId?: string; provider?: string; externalId?: string; title?: string }) => {
+    const native = nativePlaybackControls()?.downloads;
+    if (native && body.trackId) {
+      const { usage } = await req<{ usage: DownloadUsage }>('GET', '/api/downloads');
+      return native.add(body.trackId, Math.max(0, usage.limitBytes - usage.cacheBytes - usage.pinnedBytes));
+    }
+    return req<{ job: DownloadJob }>('POST', '/api/downloads', body);
+  },
+  downloadAction: async (id: string, action: 'pause' | 'resume' | 'cancel' | 'retry') => {
+    const native = nativePlaybackControls()?.downloads;
+    if (native && (await native.list()).jobs.some(job => job.id === id)) { await native.action(id, action); return { ok: true }; }
+    return req<{ ok: true }>('POST', `/api/downloads/${id}/${action}`, {});
+  },
+  removeDownload: async (trackId: string) => {
+    await nativePlaybackControls()?.downloads?.remove(trackId);
+    return req<{ ok: true }>('DELETE', `/api/tracks/${trackId}/download`);
+  },
   downloadPlaylist: (id: string) => req<{ jobs: number }>('POST', `/api/playlists/${id}/download`, {}),
   listeningReadiness: (trackIds: string[]) => req<{ tracks: ListeningReadiness[] }>('POST', '/api/listening/readiness', { trackIds }),
   listeningPreparation: (id: string) => req<ListeningPreparation | null>('GET', `/api/playlists/${encodeURIComponent(id)}/prepare-listening`),
@@ -305,7 +325,17 @@ export const api = {
   catalogAlbum: (id: string, signal?: AbortSignal) => req<CatalogAlbumPage>('GET', `/api/catalog/yandex/albums/${encodeURIComponent(id)}`, undefined, signal),
   library: () => req<{ tracks: Track[] }>('GET', '/api/library'),
   track: (id: string) => req<Track>('GET', `/api/tracks/${id}`),
-  updateTrack: (id: string, patch: Partial<Pick<Track, 'title' | 'artist' | 'album' | 'genre'>>) => req('PATCH', `/api/tracks/${id}`, patch),
+  updateTrack: (id: string, patch: Partial<Pick<Track, 'title' | 'artist' | 'album' | 'genre' | 'albumArtist' | 'year'>>) => req('PATCH', `/api/tracks/${id}`, patch),
+  updateArtwork: (id: string, base64: string) => req('POST', `/api/tracks/${id}/artwork`, { base64 }),
+  smartPlaylists: () => req<{ playlists: { id: string; name: string; rules: Record<string, unknown> }[] }>('GET', '/api/smart-playlists'),
+  smartPlaylist: (id: string) => req<{ id: string; name: string; rules: Record<string, unknown>; tracks: string[] }>('GET', `/api/smart-playlists/${id}`),
+  saveSmartPlaylist: (body: { id?: string; name: string; rules: Record<string, unknown> }) => req<{ id: string }>('POST', '/api/smart-playlists', body),
+  deleteSmartPlaylist: (id: string) => req('DELETE', `/api/smart-playlists/${id}`),
+  duplicates: () => req<{ groups: { hash: string; count: number; tracks: Track[] }[] }>('GET', '/api/library/duplicates'),
+  mergeDuplicates: (hash: string) => req<{ keep: string; mapping: Record<string, string>; filesRemoved: number; cleanupWarnings: string[] }>('POST', '/api/library/duplicates/merge', { hash }),
+  statistics: () => req<{ plays: number; playedMs: number; longestStreak: number; topTracks: { id: string; title: string; artist: string; plays: number }[]; topArtists: { artist: string; plays: number }[] }>('GET', '/api/library/statistics'),
+  yandexPlaylists: () => req<{ playlists: { kind: string; name: string; count: number }[] }>('GET', '/api/providers/yandex/playlists'),
+  importYandexPlaylist: (kind: string) => req<{ id: string; count: number; unavailable: number }>('POST', `/api/providers/yandex/playlists/${kind}/import`),
   deleteTrack: (id: string) => req('DELETE', `/api/tracks/${id}`),
   react: (id: string, value: number) => req<ReactionResult>('POST', `/api/tracks/${id}/reaction`, { value }),
   orderFavorites: (trackIds: string[]) => req<{ ok: boolean }>('POST', '/api/library/favorites/order', { trackIds }),
@@ -335,7 +365,7 @@ export const api = {
   rateTransition: (id: number, rating: TransitionRating | null, reason: TransitionRatingReason | null = null) => req('POST', `/api/automix/log/${id}/rating`, { rating, reason }),
   mixNow: (from:string,to:string,position:number) => req<{plan:TransitionPlan}>('POST','/api/automix/mix-now',{from,to,position}),
   transitions: (limit = 30) => req<{ items: TransitionLogItem[] }>('GET', `/api/automix/log?limit=${limit}`),
-  waveNext: (b: { currentId: string | null; session: string[]; count: number; mood?: string; diversity?: string; exclude?: string[] }) =>
+  waveNext: (b: { currentId: string | null; session: string[]; count: number; mood?: string; diversity?: string; exclude?: string[]; offline?: boolean }) =>
     req<{ picks: WavePick[] }>('POST', '/api/wave/next', b),
   startPlay: (trackId: string, context: string) => req<{ id: number }>('POST', '/api/plays', { trackId, context }),
   endPlay: (id: number, playedMs: number, endReason: string, transitionId?: string) => req('PATCH', `/api/plays/${id}`, { playedMs, endReason, transitionId }),

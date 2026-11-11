@@ -1,14 +1,14 @@
 import type { DecodeArgs, DecodedPlanes, FetchArgs, FetchResult, FromWorker, ToWorker } from '../shared/protocol.ts';
 import { isNative, nativeRequest, secretKey, setupNative } from './native.ts';
+import { nativePort, workerPort, type ServerPort } from './server-port.ts';
 
 /**
- * Loaded before the web app. Starts the in-app server worker and routes every
- * /api request of apps/web to it: fetch, XMLHttpRequest (uploads), EventSource
+ * Loaded before the web app. Starts the in-app server (the app-process server on iPhone,
+ * server-port.ts; the worker in a browser) and routes every /api request of apps/web to it: fetch, XMLHttpRequest (uploads), EventSource
  * and media/image src attributes. The worker in turn uses this page for audio
  * decoding and native HTTP.
  */
 
-const worker = new Worker(new URL('./server-worker.js', document.baseURI));
 let nextId = 1;
 
 interface Pending {
@@ -23,12 +23,15 @@ const rpcAborts = new Map<number, AbortController>();
 let readyResolve!: () => void;
 const ready = new Promise<void>((r) => (readyResolve = r));
 
-const send = (m: ToWorker, transfer: Transferable[] = []) => worker.postMessage(m, transfer);
+// Until the server is chosen (and, once, the library moved), messages wait in order.
+let port: ServerPort | null = null;
+const queued: [ToWorker, Transferable[]][] = [];
+const send = (m: ToWorker, transfer: Transferable[] = []) => { if (port) port.post(m, transfer); else queued.push([m, transfer]); };
+let debugHook: ((m: { t: string }) => void) | null = null;
 // the worker waits for it before opening the library
 void secretKey().then((key) => send({ t: 'secret-key', key }));
 
-worker.onmessage = (e: MessageEvent<FromWorker>) => {
-  const m = e.data;
+const handle = (m: FromWorker) => {
   switch (m.t) {
     case 'ready': readyResolve(); break;
     case 'boot-error': showBootError(m.error); break;
@@ -38,16 +41,40 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
     case 'fail': pending.get(m.id)?.fail(m.error); pending.delete(m.id); break;
     case 'rpc': void serveRpc(m); break;
     case 'rpc-abort': rpcAborts.get(m.id)?.abort(); rpcAborts.delete(m.id); break;
+    default: debugHook?.(m);
   }
 };
-worker.onerror = (e) => showBootError(e.message);
+
+async function choosePort(): Promise<ServerPort> {
+  if (!isNative()) return workerPort();
+  // null: the library could not be moved out of OPFS this time; the worker keeps it, nothing changed
+  return (await nativePort(showProgress)) ?? workerPort();
+}
+void choosePort().then((p) => {
+  port = p;
+  p.listen(handle, showBootError);
+  for (const [m, t] of queued.splice(0)) p.post(m, t);
+}, (e) => showBootError(String((e as Error)?.message ?? e)));
+
+function showProgress(text: string | null): void {
+  let el = document.querySelector<HTMLElement>('.mora-boot-progress');
+  if (!text) { el?.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'mora-boot-progress';
+    el.setAttribute('role', 'status');
+    el.style.cssText = 'position:fixed;inset:auto 16px calc(env(safe-area-inset-bottom) + 96px);z-index:3000;padding:12px 16px;border-radius:14px;background:#0d1f17;color:#e8f5ee;font:15px/1.35 system-ui;text-align:center';
+    (document.body ?? document.documentElement).append(el); // the bridge runs in <head>
+  }
+  el.textContent = text;
+}
 
 declare const __MORA_DEV__: boolean;
 if (__MORA_DEV__) {
   let n = 0;
   const waits = new Map<number, (v: unknown) => void>();
-  worker.addEventListener('message', (e) => { const d = e.data as { t: string; id: number; v: unknown }; if (d.t === 'debug-res') { waits.get(d.id)?.(d.v); waits.delete(d.id); } });
-  (window as unknown as { moraDebug: (code: string) => Promise<unknown> }).moraDebug = (code) => new Promise((r) => { const id = ++n; waits.set(id, r); worker.postMessage({ t: 'debug', id, code }); });
+  debugHook = (m) => { const d = m as { t: string; id: number; v: unknown }; if (d.t === 'debug-res') { waits.get(d.id)?.(d.v); waits.delete(d.id); } };
+  (window as unknown as { moraDebug: (code: string) => Promise<unknown> }).moraDebug = (code) => new Promise((r) => { const id = ++n; waits.set(id, r); send({ t: 'debug', id, code } as unknown as ToWorker); });
 }
 
 function showBootError(text: string): void {

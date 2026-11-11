@@ -4,9 +4,11 @@ import type { Services } from '../app.ts';
 import { kvGet, kvSet, q, tx } from '../db.ts';
 import { canonicalUrl, validExternalId } from '../public/provider.ts';
 import { isYandexTrackId } from '../providers/yandex-audio.ts';
+import { getSettings } from '../automix.ts';
+import { backupSettings, validateLibraryBackup, type LibraryBackupData } from '../library-backup.ts';
 
-interface BackupTrack { key: string; hash: string | null; title: string; artist: string; album: string; duration: number; source?: { provider: 'youtube' | 'soundcloud' | 'yandex'; externalId: string } }
-interface Backup { format: 'mora-playlists'; version: 1; origin: string; createdAt: string; tracks: BackupTrack[]; playlists: { key: string; name: string; description: string; tracks: string[] }[] }
+interface BackupTrack { key: string; hash: string | null; title: string; artist: string; album: string; duration: number; playCount?: number; skipCount?: number; lastPlayedAt?: number | null; source?: { provider: 'youtube' | 'soundcloud' | 'yandex'; externalId: string } }
+interface Backup { format: 'mora-playlists'; version: 1; origin: string; createdAt: string; tracks: BackupTrack[]; playlists: { key: string; name: string; description: string; tracks: string[] }[]; library?: LibraryBackupData }
 
 function validate(value: unknown): Backup {
   const b = value as Backup;
@@ -16,6 +18,7 @@ function validate(value: unknown): Backup {
   for (const t of b.tracks) {
     if (!t || !string(t.key, 100) || !t.key || keys.has(t.key) || !string(t.title) || !string(t.artist) || !string(t.album) || !Number.isFinite(t.duration) || t.duration < 0 || t.duration > 86400 || (t.hash !== null && (typeof t.hash !== 'string' || !/^[a-f0-9]{64}$/.test(t.hash)))) throw new Error('Повреждён список треков');
     keys.add(t.key);
+    if ([t.playCount, t.skipCount, t.lastPlayedAt].some(value => value !== undefined && value !== null && (!Number.isSafeInteger(value) || value < 0))) throw new Error('Повреждены счётчики прослушивания');
     if (t.source && (!['youtube', 'soundcloud', 'yandex'].includes(t.source.provider) || typeof t.source.externalId !== 'string' || !(t.source.provider === 'yandex' ? isYandexTrackId(t.source.externalId) : validExternalId(t.source.provider, t.source.externalId)))) throw new Error('Некорректный источник трека');
   }
   const lists = new Set<string>(); let entries = 0;
@@ -23,30 +26,46 @@ function validate(value: unknown): Backup {
     if (!p || !string(p.key, 100) || lists.has(p.key) || !string(p.name, 120) || !p.name.trim() || !string(p.description, 4000) || !Array.isArray(p.tracks) || p.tracks.some((k) => typeof k !== 'string' || !keys.has(k)) || (entries += p.tracks.length) > 50000) throw new Error('Повреждён список плейлистов');
     lists.add(p.key);
   }
+  if (b.library) validateLibraryBackup(b.library, keys);
   return b;
 }
 
 /** Metadata only: never exports provider secrets, machine paths, history or media bytes. */
 export function registerBackupRoutes(app: FastifyInstance, { db, lib, events }: Services): void {
-  app.get<{ Querystring: { playlist?: string } }>('/api/backup/playlists', async (req, reply) => {
+  app.get<{ Querystring: { playlist?: string; library?: string } }>('/api/backup/playlists', async (req, reply) => {
     let origin = kvGet<string | null>(db, 'backup.origin', null);
     if (!origin) { origin = crypto.randomUUID(); kvSet(db, 'backup.origin', origin); }
     const rows = q(db, 'SELECT id, name, description FROM playlists ORDER BY created_at').all() as { id: string; name: string; description: string }[];
     const selected = req.query.playlist ? rows.filter((p) => p.id === req.query.playlist) : rows;
     if (req.query.playlist && !selected.length) return reply.code(404).send({ error: 'Плейлист не найден' });
     const tracks = new Map<string, BackupTrack>();
+    const addTrack = (id: string) => {
+      if (tracks.has(id)) return;
+      const t = lib.get(id);
+      if (!t) return;
+      const s = lib.sources(t.id).find(s => s.kind === 'remote' && ['youtube', 'soundcloud', 'yandex'].includes(s.provider));
+      tracks.set(t.id, { key: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration, hash: /^[a-f0-9]{64}$/.test(t.content_hash) ? t.content_hash : null,
+        ...(req.query.library === '1' ? { playCount: t.play_count, skipCount: t.skip_count, lastPlayedAt: t.last_played_at } : {}),
+        ...(s?.external_id ? { source: { provider: s.provider as 'youtube' | 'soundcloud' | 'yandex', externalId: s.external_id } } : {}) });
+    };
     const playlists = selected.map((p) => {
       const entries = q(db, 'SELECT track_id FROM playlist_tracks WHERE playlist_id = ? ORDER BY position, id').all(p.id) as { track_id: string }[];
       for (const { track_id } of entries) {
-        if (tracks.has(track_id)) continue;
-        const t = lib.get(track_id)!;
-        const s = lib.sources(t.id).find((s) => s.kind === 'remote' && ['youtube', 'soundcloud', 'yandex'].includes(s.provider));
-        tracks.set(t.id, { key: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration, hash: /^[a-f0-9]{64}$/.test(t.content_hash) ? t.content_hash : null,
-          ...(s?.external_id ? { source: { provider: s.provider as 'youtube' | 'soundcloud' | 'yandex', externalId: s.external_id } } : {}) });
+        addTrack(track_id);
       }
       return { key: p.id, name: p.name, description: p.description, tracks: entries.map((e) => e.track_id) };
     });
+    if (req.query.library === '1') for (const row of q(db, 'SELECT id FROM tracks').all() as { id: string }[]) addTrack(row.id);
     const backup: Backup = { format: 'mora-playlists', version: 1, origin, createdAt: new Date().toISOString(), tracks: [...tracks.values()], playlists };
+    if (req.query.library === '1') {
+      backup.library = {
+        settings: backupSettings(getSettings(db)),
+        smartPlaylists: q(db, 'SELECT id,name,rules,created_at AS createdAt FROM smart_playlists').all().map(row => ({ ...row, rules: JSON.parse(row.rules as string) })) as unknown as LibraryBackupData['smartPlaylists'],
+        reactions: q(db, 'SELECT track_id AS trackId, value, updated_at AS updatedAt FROM reactions').all() as unknown as LibraryBackupData['reactions'],
+        history: q(db, 'SELECT id AS key, track_id AS trackId, started_at AS startedAt, ended_at AS endedAt, played_ms AS playedMs, duration_ms AS durationMs, end_reason AS endReason FROM plays ORDER BY id').all() as unknown as LibraryBackupData['history'],
+      };
+      validate(backup);
+    }
     return reply.header('Content-Disposition', 'attachment; filename="MORA-playlists.json"').header('Cache-Control', 'no-store').send(backup);
   });
 
@@ -78,6 +97,8 @@ export function registerBackupRoutes(app: FastifyInstance, { db, lib, events }: 
         }
         if (lib.get(id)?.status === 'missing') missingFiles++;
         ids.set(t.key, id);
+        if (b.library) q(db, 'UPDATE tracks SET play_count=MAX(play_count,?),skip_count=MAX(skip_count,?),last_played_at=MAX(COALESCE(last_played_at,0),?) WHERE id=?')
+          .run(t.playCount ?? 0, t.skipCount ?? 0, t.lastPlayedAt ?? 0, id);
       }
       for (const p of b.playlists) {
         const key = `backup.playlist.${crypto.createHash('sha256').update(`${b.origin}/${p.key}`).digest('hex')}`;
@@ -92,6 +113,25 @@ export function registerBackupRoutes(app: FastifyInstance, { db, lib, events }: 
           q(db, 'DELETE FROM playlist_tracks WHERE playlist_id = ?').run(id);
         }
         p.tracks.forEach((track, position) => q(db, 'INSERT INTO playlist_tracks(playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)').run(id, ids.get(track)!, position, now));
+      }
+      if (b.library) {
+        for (const row of b.library.reactions) {
+          q(db, 'INSERT INTO reactions(track_id,value,updated_at) VALUES(?,?,?) ON CONFLICT(track_id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at WHERE excluded.updated_at > reactions.updated_at').run(ids.get(row.trackId)!, row.value, row.updatedAt);
+        }
+        for (const row of b.library.history) {
+          const key = `backup.play.${crypto.createHash('sha256').update(`${b.origin}/${row.key}`).digest('hex')}`;
+          if (kvGet(db, key, false)) continue;
+          q(db, 'INSERT INTO plays(track_id,started_at,ended_at,played_ms,duration_ms,end_reason) VALUES(?,?,?,?,?,?)')
+            .run(ids.get(row.trackId)!, row.startedAt, row.endedAt, row.playedMs, row.durationMs, row.endReason);
+          kvSet(db, key, true);
+        }
+        kvSet(db, 'settings', { ...backupSettings(b.library.settings), version: 2 });
+        for (const playlist of b.library.smartPlaylists ?? []) {
+          const key = `backup.smart.${crypto.createHash('sha256').update(`${b.origin}/${playlist.id}`).digest('hex')}`;
+          const id = kvGet<string | null>(db, key, null) ?? crypto.randomUUID();
+          q(db, 'INSERT INTO smart_playlists(id,name,rules,created_at) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,rules=excluded.rules').run(id, playlist.name, JSON.stringify(playlist.rules), playlist.createdAt);
+          kvSet(db, key, id);
+        }
       }
       return { playlists: b.playlists.length, tracks: b.tracks.length, missingFiles };
     });

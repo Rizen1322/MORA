@@ -80,14 +80,40 @@ const leaked = Object.keys(worker.metafile.inputs).filter((f) => /apps[\/]server
 if (leaked.length) throw new Error(`server-worker.js содержит Node-версию ffmpeg: ${leaked.join(', ')}`);
 await esbuild({ ...common, entryPoints: [join(src, 'worker/analysis-worker.ts')], outfile: join(out, 'analysis-worker.js'), format: 'iife' });
 
+// 3b. The same server for JavaScriptCore in the app process: real files and SQLite through the native host.
+const jscRedirect = {
+  [join(src, 'worker/opfs-fs.ts')]: join(src, 'jsc/native-fs.ts'),
+  [join(src, 'worker/shims/sqlite.ts')]: join(src, 'jsc/native-sqlite.ts'),
+  [join(src, 'worker/shims/worker_threads.ts')]: join(src, 'jsc/worker-threads.ts'),
+};
+const jscSwaps = {
+  name: 'mora-jsc-swaps',
+  setup(b) {
+    b.onResolve({ filter: /(opfs-fs|sqlite|worker_threads)(\.ts)?$/ }, (a) => {
+      // relative imports by resolved path; bare ones may arrive before or after the alias is applied
+      const target = a.path.startsWith('.') ? resolve(dirname(a.importer), a.path) : alias[a.path] ?? a.path;
+      return target && jscRedirect[target] ? { path: jscRedirect[target] } : undefined;
+    });
+  },
+};
+const jsc = await esbuild({ ...common, entryPoints: [join(src, 'jsc/main.ts')], outfile: join(out, 'server-jsc.js'), format: 'iife', alias,
+  inject: [join(src, 'worker/globals.ts')], define: { ...common.define, 'import.meta.url': '"file:///app/server/src/app.ts"', 'process.env.NODE_ENV': '"production"' },
+  plugins: [jscSwaps, swaps], metafile: true });
+// OPFS, sql.js and Web Workers do not exist in JavaScriptCore.
+const foreign = Object.keys(jsc.metafile.inputs).filter((f) => /opfs-fs\.ts$|[\/]sql\.js[\/]|worker[\/]shims[\/](sqlite|worker_threads)\.ts$|apps[\/]server[\/]src[\/]ffmpeg\.ts$/.test(f));
+if (foreign.length) throw new Error(`server-jsc.js содержит модули WebView: ${foreign.join(', ')}`);
+
 // 4. Static files.
 for (const f of ['sql-wasm-browser.wasm', 'sql-wasm.wasm']) copyFileSync(mod(`sql.js/dist/${f}`), join(out, f));
 copyFileSync(join(src, 'mobile.css'), join(out, 'mobile.css'));
 
 const htmlFile = join(out, 'index.html');
+// --no-web on a clean checkout (the JavaScriptCore server test) has no page to patch
+if (existsSync(htmlFile)) {
 let html = readFileSync(htmlFile, 'utf8');
 html = html
   .replace(/<meta name="viewport"[^>]*>/, '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">')
   .replace('</head>', '  <link rel="stylesheet" href="/mobile.css">\n  <script src="/mora-bridge.js"></script>\n</head>');
 if (!readFileSync(htmlFile, 'utf8').includes('mora-bridge.js')) writeFileSync(htmlFile, html);
+}
 console.log('www/ готово');

@@ -90,3 +90,19 @@ enum NativePlayerTime {
         return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
     }
 }
+
+/// Foundation-only sleep decisions; gain is separate from the user's saved volume.
+struct NativeSleepStep {
+    let remaining: Int
+    let entryId: String
+    let gain: Double
+    let finished: Bool
+    static func fade(seconds: Double) -> Double { seconds.isFinite ? min(1, max(0, seconds / 5)) : 1 }
+    static func evaluate(remaining: Int, entryId: String, state: NativePlayerState) -> Self {
+        let left = remaining - (state.entryId != entryId ? 1 : 0)
+        let finished = !state.active || left <= 0 || (left == 1 && state.blending)
+        let end = state.mixStart ?? state.duration
+        let gain = finished ? 0 : left == 1 && state.playing && end > 0 ? fade(seconds: end - state.position) : 1
+        return Self(remaining: max(0, left), entryId: state.entryId, gain: gain, finished: finished)
+    }
+}

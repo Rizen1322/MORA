@@ -3,6 +3,7 @@ import Capacitor
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
+    static var backgroundLaunch = false
 
     var window: UIWindow?
 
@@ -10,12 +11,34 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // The audio session is activated on first playback (MoraAudioPlugin.setPlaybackState):
         // activating it here silenced other apps' music at launch.
         NativeMixAnalysis.compiled = (NativeRustAnalysis.version, NativeRustAnalysis.analyze)
+        _ = NativeDownloadManager.shared
+        _ = NativeMetrics.shared
+        application.shortcutItems = [
+            UIApplicationShortcutItem(type: "mora.wave", localizedTitle: "Волна", localizedSubtitle: nil, icon: UIApplicationShortcutIcon(systemImageName: "waveform")),
+            UIApplicationShortcutItem(type: "mora.search", localizedTitle: "Поиск", localizedSubtitle: nil, icon: UIApplicationShortcutIcon(systemImageName: "magnifyingglass")),
+            UIApplicationShortcutItem(type: "mora.import", localizedTitle: "Импорт", localizedSubtitle: nil, icon: UIApplicationShortcutIcon(systemImageName: "square.and.arrow.down")),
+        ]
         return true
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
         // Sent when the application is about to move from active to inactive state. This can occur for certain types of temporary interruptions (such as an incoming phone call or SMS message) or when the user quits the application and it begins the transition to the background state.
         // Use this method to pause ongoing tasks, disable timers, and invalidate graphics rendering callbacks. Games should use this method to pause the game.
+    }
+    static func handleShortcut(_ item: UIApplicationShortcutItem) -> Bool {
+        guard ["mora.wave", "mora.search", "mora.import"].contains(item.type), let route = item.type.split(separator: ".").last,
+              let url = URL(string: "mora://\(route)") else { return false }
+        NativeDeepLink.open(url)
+        return true
+    }
+    func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
+        completionHandler(Self.handleShortcut(shortcutItem))
+    }
+
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+        Self.backgroundLaunch = true
+        guard identifier == NativeDownloadManager.identifier else { completionHandler(); return }
+        NativeDownloadManager.shared.handleEvents(completionHandler)
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
@@ -38,6 +61,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      configurationForConnecting connectingSceneSession: UISceneSession,
                      options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        if connectingSceneSession.role == .carTemplateApplication {
+            let config = UISceneConfiguration(name: "CarPlay", sessionRole: connectingSceneSession.role)
+            config.delegateClass = CarPlaySceneDelegate.self
+            return config
+        }
         let config = UISceneConfiguration(name: "Default Configuration",
                                           sessionRole: connectingSceneSession.role)
         config.delegateClass = SceneDelegate.self

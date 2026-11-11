@@ -255,6 +255,21 @@ describe.skipIf(!haveDemo)('server end to end (demo library)', () => {
     }
   });
 
+  it('Моя волна without a network picks only songs stored on the device', async () => {
+    const lib = (await a.app.inject('/api/library')).json().tracks as { id: string; reaction: number }[];
+    const online = lib.filter((t) => t.reaction !== -1).slice(1).map((t) => t.id);
+    const ins = a.services.db.prepare("INSERT INTO track_sources (track_id, provider, kind, external_id) VALUES (?, 'youtube', 'remote', ?)");
+    online.forEach((id, i) => ins.run(id, `offline-test-${i}`));
+    try {
+      for (let i = 0; i < 5; i++) {
+        const r = (await a.app.inject({ method: 'POST', url: '/api/wave/next', payload: { currentId: null, session: [], count: 4, offline: true } })).json();
+        for (const p of r.picks) expect(online).not.toContain(p.id);
+      }
+    } finally {
+      a.services.db.prepare("DELETE FROM track_sources WHERE external_id LIKE 'offline-test-%'").run();
+    }
+  });
+
   it('reports honest provider states without credentials', async () => {
     const r = (await a.app.inject('/api/providers')).json().providers as { id: string; status: string; capabilities: { mixing: boolean } }[];
     const by = (id: string) => r.find((p) => p.id === id)!;

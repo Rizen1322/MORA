@@ -66,6 +66,23 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativePlayerPresent", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeLevels", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeUiState", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeDownloadList", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeDownloadAdd", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeDownloadAction", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeDownloadRemove", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeDownloadSettings", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeSourceFromDownload", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeBackupList", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeBackupRead", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeRemapTracks", returnType: CAPPluginReturnPromise),
+        // NativeServerPlugin.swift: apps/server in JavaScriptCore instead of the WebView worker
+        CAPPluginMethod(name: "serverStatus", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "serverImportReset", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "serverImport", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "serverImportDone", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "serverStart", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "serverAbandon", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "serverSend", returnType: CAPPluginReturnPromise),
     ]
 
     private var playing = false
@@ -76,9 +93,11 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private var navigationRoute = "webkit"
     private var navigationEpoch = 0
     private let nativeProbe = NativePlaybackProbe()
-    private let nativeMix = NativeMixHost()
+    private let nativeMix = NativeMixHost.shared
 
     override public func load() {
+        Task { @MainActor in NativePlaybackHooks.install(self.nativeMix) }
+        NotificationCenter.default.addObserver(self, selector: #selector(downloadsChanged), name: NativeDownloadManager.changed, object: nil)
         nativeMix.onLevels = { [weak self] rms, bands in
             DispatchQueue.main.async { self?.notifyListeners("levels", data: ["rms": rms, "bands": bands]) }
         }
@@ -285,6 +304,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             report["isSnapshotStale"] = stale
             report["nativeProbe"] = self.nativeProbe.snapshot
             report["nativeMix"] = state
+            report["nativeServer"] = NativeServerApp.shared.map { ["booted": $0.booted, "trace": $0.trace] as [String: Any] } ?? ["running": false]
             completion(report)
         }
         nativeMix.diagnosticState { result in
@@ -306,16 +326,19 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func diagnosticsShare(_ call: CAPPluginCall) {
         guard MoraPlaybackJournal.enabled else { call.reject("Diagnostics disabled"); return }
         diagnosticReport { report in
-            do {
-                let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
-                let url = FileManager.default.temporaryDirectory.appendingPathComponent("MORA-playback-diagnostics.json")
-                try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-                guard let vc = self.bridge?.viewController, vc.presentedViewController == nil else { call.reject("Share unavailable"); return }
-                let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-                sheet.popoverPresentationController?.sourceView = vc.view
-                sheet.popoverPresentationController?.sourceRect = CGRect(x: vc.view.bounds.midX, y: vc.view.bounds.midY, width: 1, height: 1)
-                vc.present(sheet, animated: true) { call.resolve() }
-            } catch { call.reject("Report export failed") }
+            DispatchQueue.global(qos: .utility).async {
+                do {
+                    let url = try NativeDiagnosticArchive.make(report: report, metrics: NativeMetrics.folder)
+                    DispatchQueue.main.async {
+                        guard let vc = self.bridge?.viewController, vc.presentedViewController == nil else { try? FileManager.default.removeItem(at: url); call.reject("Не удалось открыть экспорт"); return }
+                        let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                        sheet.completionWithItemsHandler = { _, _, _, _ in try? FileManager.default.removeItem(at: url) }
+                        sheet.popoverPresentationController?.sourceView = vc.view
+                        sheet.popoverPresentationController?.sourceRect = CGRect(x: vc.view.bounds.midX, y: vc.view.bounds.midY, width: 1, height: 1)
+                        vc.present(sheet, animated: true) { call.resolve() }
+                    }
+                } catch { call.reject("Не удалось создать архив диагностики: \(error.localizedDescription)") }
+            }
         }
     }
     @objc func diagnosticsTest(_ call: CAPPluginCall) {
@@ -420,10 +443,100 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     /// iPhone full player: resolves with the way the sheet closed; a rejection keeps the web player.
     @objc func nativePlayerPresent(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
-            guard self.nativeMix.active, let vc = self.bridge?.viewController, vc.presentedViewController == nil else {
+            guard self.nativeMix.active || NativeShellStore.shared?.ui.now != nil,
+                  let bridge = self.bridge?.viewController else {
                 call.reject("Native player unavailable"); return
             }
+            let vc = bridge.parent ?? bridge
+            guard vc.presentedViewController == nil else { call.reject("Native player already presented"); return }
             NativePlayerSheet.present(host: self.nativeMix, from: vc) { call.resolve(["action": $0]) }
+        }
+    }
+    @objc private func downloadsChanged() { notifyListeners("downloads", data: [:]) }
+    @objc func nativeRemapTracks(_ call: CAPPluginCall) {
+        guard let mapping = call.getObject("mapping") as? [String: String], mapping.count <= 1000,
+              mapping.allSatisfy({ !$0.key.isEmpty && !$0.value.isEmpty && $0.key.utf8.count <= 512 && $0.value.utf8.count <= 512 }) else { call.reject("Неверное слияние треков"); return }
+        DispatchQueue.main.async {
+            NativeShellStore.shared?.remapReactions(mapping)
+            NativeDownloadManager.shared.remapTracks(mapping)
+        }
+        nativeMix.remapTracks(mapping) { result in
+            switch result {
+            case .success:
+                DispatchQueue.global(qos: .utility).async {
+                    do { try NativeStationFiles.remapTracks(mapping); call.resolve() }
+                    catch { call.reject(error.localizedDescription) }
+                }
+            case .failure(let error): call.reject(error.localizedDescription)
+            }
+        }
+    }
+    @objc func nativeBackupList(_ call: CAPPluginCall) {
+        Task.detached(priority: .utility) {
+            do {
+                var rows = try NativeBackupStore.files().map { ["name": $0.lastPathComponent, "cloud": false] as [String: Any] }
+                #if MORA_ICLOUD
+                if let root = try? NativeBackupStore.cloudFolder() { rows += try NativeBackupStore.files(in: root).map { ["name": $0.lastPathComponent, "cloud": true] as [String: Any] } }
+                #endif
+                call.resolve(["files": rows])
+            } catch { call.reject(error.localizedDescription) }
+        }
+    }
+    @objc func nativeBackupRead(_ call: CAPPluginCall) {
+        guard let name = call.getString("name") else { call.reject("Копия не выбрана"); return }
+        let cloud = call.getBool("cloud") == true
+        Task.detached(priority: .utility) {
+            do {
+                var root = NativeBackupStore.folder
+                if cloud {
+                    #if MORA_ICLOUD
+                    root = try NativeBackupStore.cloudFolder()
+                    #else
+                    throw CocoaError(.featureUnsupported)
+                    #endif
+                }
+                call.resolve(["text": try NativeBackupStore.read(name, in: root)])
+            } catch { call.reject(error.localizedDescription) }
+        }
+    }
+    @objc func nativeDownloadList(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { call.resolve(NativeDownloadManager.shared.list()) }
+    }
+    @objc func nativeDownloadAdd(_ call: CAPPluginCall) {
+        guard let trackId = call.getString("trackId"), let source = call.getObject("source"),
+              let duration = call.getDouble("duration"), let limit = call.getDouble("limitBytes"), limit.isFinite, limit >= 0, limit <= 1e12 else { call.reject("Неверная загрузка"); return }
+        Task { @MainActor in
+            let http = NativeMediaHTTP(); defer { http.invalidate() }
+            do {
+                let request = try await NativeMediaLoader(http: http).backgroundRequest(source, ticket: NativePreparationTicket())
+                let job = try NativeDownloadManager.shared.add(trackId: trackId, title: call.getString("title") ?? "Трек", artist: call.getString("artist") ?? "",
+                    album: call.getString("album") ?? "", duration: duration, request: request, limit: Int64(limit))
+                call.resolve(["id": job.id])
+            } catch { call.reject(error.localizedDescription) }
+        }
+    }
+    @objc func nativeDownloadAction(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            do { try NativeDownloadManager.shared.action(call.getString("id") ?? "", call.getString("action") ?? ""); call.resolve() }
+            catch { call.reject(error.localizedDescription) }
+        }
+    }
+    @objc func nativeDownloadRemove(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            do { try NativeDownloadManager.shared.remove(call.getString("trackId") ?? ""); call.resolve() }
+            catch { call.reject(error.localizedDescription) }
+        }
+    }
+    @objc func nativeDownloadSettings(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { NativeDownloadManager.shared.setWiFiOnly(call.getBool("wifiOnly") == true); call.resolve() }
+    }
+    @objc func nativeSourceFromDownload(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let id = call.getString("id"), let key = call.getInt("key"), let trackId = call.getString("trackId") else { call.reject("Неверный локальный файл"); return }
+            guard let file = NativeDownloadManager.shared.localFile(trackId) else { call.resolve(["found": false]); return }
+            self.nativeMix.sourceFromDownload(id: id, key: key, file: file) { result in
+                switch result { case .success(let value): call.resolve(value); case .failure(let error): call.reject(error.localizedDescription) }
+            }
         }
     }
     /// iPhone native shell (NativeShell.swift): the page's snapshot; resolves with whether the shell is on screen.
@@ -431,6 +544,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         let state = call.options as? [String: Any] ?? [:]
         DispatchQueue.main.async {
             guard let root = self.bridge?.viewController?.parent as? MoraRootViewController else { call.resolve(["shown": false]); return }
+            // The launch splash is native (NativeSplash.swift); no `launchSplash` reply keeps the page's intro off.
             root.installShell(host: self.nativeMix, webView: self.bridge?.webView)
             let shown = root.shell.receive(state)
             call.resolve(["shown": shown, "nativeContent": root.shell.nativeContentVisible])

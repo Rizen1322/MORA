@@ -11,6 +11,8 @@ struct NativeTrack: Equatable, Identifiable {
     let cover: String?
     let ok: Bool
     let binding: String?
+    /// Plays without the internet (downloaded, or a file of the library).
+    let offline: Bool
     /// Lowercased, ё → е: what search-as-you-type matches against.
     let key: String
 
@@ -26,6 +28,7 @@ struct NativeTrack: Equatable, Identifiable {
         cover = value["cover"] as? String
         ok = value["ok"] as? Bool ?? true
         binding = value["binding"] as? String
+        offline = value["offline"] as? Bool == true
         key = NativeSearchText.normalize("\(title) \(artist) \(album)")
     }
     var liked: Bool { reaction > 0 }
@@ -92,6 +95,8 @@ struct NativeNow: Equatable {
     let id: String, title: String, artist: String, label: String
     let cover: String?
     let playing: Bool
+    var entryId = ""
+    var position = 0.0, duration = 0.0
 }
 
 struct NativeToast: Equatable { let id: Int, text: String, error: Bool }
@@ -116,7 +121,7 @@ struct NativeUiState: Equatable {
     var now: NativeNow?
     var toast: NativeToast?
     var preparing: String?
-    var searchQuery: String?, searchSource: String?
+    var searchQuery: String?, searchSource: String?, searchScope: String?
 
     init() {}
     init(_ value: [String: Any]) {
@@ -127,7 +132,8 @@ struct NativeUiState: Equatable {
         playback = NativePlaybackModes(value["playback"] as? [String: Any] ?? [:])
         if let now = value["now"] as? [String: Any], let id = now["id"] as? String {
             self.now = NativeNow(id: id, title: now["title"] as? String ?? "", artist: now["artist"] as? String ?? "",
-                                 label: now["label"] as? String ?? "", cover: now["cover"] as? String, playing: now["playing"] as? Bool == true)
+                                 label: now["label"] as? String ?? "", cover: now["cover"] as? String, playing: now["playing"] as? Bool == true,
+                                 entryId: now["entryId"] as? String ?? "", position: now["position"] as? Double ?? 0, duration: now["duration"] as? Double ?? 0)
         }
         if let toast = value["toast"] as? [String: Any], let id = toast["id"] as? Int, let text = toast["text"] as? String {
             self.toast = NativeToast(id: id, text: text, error: toast["kind"] as? String == "error")
@@ -135,6 +141,7 @@ struct NativeUiState: Equatable {
         preparing = value["preparing"] as? String
         let search = value["search"] as? [String: Any] ?? [:]
         if let query = search["q"] as? String { searchQuery = String(query.prefix(200)) }
+        if let scope = search["type"] as? String, ["all", "track", "artist", "album"].contains(scope) { searchScope = scope }
         if let source = search["source"] as? String, ["all", "local", "ytmusic", "youtube", "soundcloud", "yandex"].contains(source) { searchSource = source }
     }
 }
@@ -152,10 +159,12 @@ enum NativeRoute {
         case "/library", "/library/tracks", "/library/search": return .library
         case "/search", "/yandex": return .search
         // Described by the page (apps/web/src/lib/native-pages.ts `describe`, same routes).
-        case "/library/albums", "/library/artists", "/library/playlists", "/history", "/wave", "/downloads", "/import", "/sources", "/settings", "/diagnostics":
+        case "/library/albums", "/library/artists", "/library/playlists", "/history", "/wave", "/downloads", "/import", "/sources", "/settings", "/diagnostics", "/sound", "/backups", "/smart-playlists", "/duplicates", "/statistics", "/yandex-playlists":
             return .page
         default:
             let parts = path.split(separator: "/")
+            if parts.count == 2 && ["smart-playlist", "track-edit"].contains(parts[0]) { return .page }
+            if parts.count == 3 && parts[0] == "smart-playlist" && parts[2] == "edit" { return .page }
             if parts.count == 3 && (["catalog", "public"].contains(parts.first) && ["artist", "album"].contains(parts[1]) || parts.first == "soundcloud" && parts[1] == "artist") { return .page }
             if (parts.first == "album" && parts.count == 3) || (["artist", "playlist"].contains(parts.first) && parts.count == 2) { return .page }
             return .web
@@ -217,8 +226,13 @@ enum NativePageRow {
     case file(title: String, symbol: String?, types: [String], multiple: Bool, act: NativePageAct)
     case progress(title: String, value: Double?, detail: String?)
     /// `cover` is nil for rows without a picture, `.some(nil)` for a placeholder.
-    case item(title: String, subtitle: String?, cover: String??, tag: String?, tone: NativeTone?, path: String?, act: NativePageAct?, actions: [NativeItemAction])
+    /// `number` (an album's track list) is drawn in place of the cover.
+    case item(title: String, subtitle: String?, cover: String??, tag: String?, tone: NativeTone?, path: String?, act: NativePageAct?, actions: [NativeItemAction], number: Int?)
     case track(id: String, remove: NativeItemAction?)
+    /// A catalog page's header: an artist's full-width photo, or an album's centred cover, with play and shuffle.
+    case hero(style: String, title: String, subtitle: String?, detail: String?, cover: String?, play: NativePageAct?, shuffle: NativePageAct?)
+    /// A horizontal row of cards: albums, singles, artists.
+    case shelf(items: [NativeShelfItem])
 
     init?(_ v: [String: Any]) {
         let title = v["title"] as? String ?? "", detail = v["detail"] as? String, disabled = v["disabled"] as? Bool == true
@@ -257,10 +271,18 @@ enum NativePageRow {
         case "item":
             let cover: String?? = v.keys.contains("cover") ? .some(v["cover"] as? String) : nil
             self = .item(title: title, subtitle: v["subtitle"] as? String, cover: cover, tag: v["tag"] as? String, tone: (v["tone"] as? String).flatMap(NativeTone.init),
-                         path: v["path"] as? String, act: NativePageAct(v["act"]), actions: (v["actions"] as? [Any] ?? []).compactMap(NativeItemAction.init))
+                         path: v["path"] as? String, act: NativePageAct(v["act"]), actions: (v["actions"] as? [Any] ?? []).compactMap(NativeItemAction.init),
+                         number: (v["number"] as? NSNumber)?.intValue)
         case "track":
             guard let id = v["id"] as? String else { return nil }
             self = .track(id: id, remove: NativeItemAction(v["remove"]))
+        case "hero":
+            self = .hero(style: v["style"] as? String == "artist" ? "artist" : "album", title: title, subtitle: v["subtitle"] as? String, detail: detail,
+                         cover: v["cover"] as? String, play: NativePageAct(v["play"]), shuffle: NativePageAct(v["shuffle"]))
+        case "shelf":
+            let items = (v["items"] as? [[String: Any]] ?? []).compactMap(NativeShelfItem.init)
+            guard !items.isEmpty else { return nil }
+            self = .shelf(items: items)
         default: return nil
         }
     }
@@ -268,9 +290,19 @@ enum NativePageRow {
     /// What the page's search field matches (items and tracks only; other rows always show).
     var searchText: String? {
         switch self {
-        case .item(let title, let subtitle, _, _, _, _, _, _): return NativeSearchText.normalize("\(title) \(subtitle ?? "")")
+        case .item(let title, let subtitle, _, _, _, _, _, _, _): return NativeSearchText.normalize("\(title) \(subtitle ?? "")")
         default: return nil
         }
+    }
+}
+
+struct NativeShelfItem: Identifiable {
+    let title: String, subtitle: String?, cover: String?, path: String, round: Bool
+    var id: String { path }
+    init?(_ v: [String: Any]) {
+        guard let title = v["title"] as? String, let path = v["path"] as? String else { return nil }
+        self.title = title; self.path = path
+        subtitle = v["subtitle"] as? String; cover = v["cover"] as? String; round = v["round"] as? Bool == true
     }
 }
 
@@ -287,6 +319,8 @@ struct NativePage {
     let sections: [NativePageSection]
     let search: String?
     let refresh: Double?
+    /// "catalog": artist and album pages, drawn as a plain list with large section titles.
+    let style: String?
 
     init?(_ value: Any?) {
         guard let value = value as? [String: Any], let title = value["title"] as? String else { return nil }
@@ -298,6 +332,7 @@ struct NativePage {
         }
         search = value["search"] as? String
         refresh = (value["refresh"] as? Double).flatMap { $0 > 0 ? max(1, $0) : nil }
+        style = value["style"] as? String
     }
 }
 
@@ -343,6 +378,15 @@ struct NativeReactionOutbox {
         pending.removeValue(forKey: id)
         defaults.set(pending, forKey: "mora.pendingReactions")
     }
+    mutating func remap(_ mapping: [String: String]) {
+        var next: [String: Int] = [:]
+        for (id, value) in pending {
+            let key = mapping[id] ?? id, previous = next[key] ?? 0
+            next[key] = value == 1 || previous == 1 ? 1 : value == -1 || previous == -1 ? -1 : 0
+        }
+        pending = next
+        defaults.set(pending, forKey: "mora.pendingReactions")
+    }
 }
 
 
@@ -355,7 +399,7 @@ enum NativePreviewResume {
             && current["epoch"] as? Int == paused["epoch"] as? Int
     }
 }
-struct NativeSearchLink: Identifiable {
+struct NativeCatalogLink: Identifiable {
     let id: String, title: String, detail: String, path: String
     let cover: String?
     init?(_ value: [String: Any]) {
@@ -374,13 +418,13 @@ struct NativeSearchHit: Identifiable {
     }
 }
 struct NativeSearchResults {
-    let session: String, tracks: [NativeSearchHit], artists: [NativeSearchLink], albums: [NativeSearchLink], more: Bool
+    let session: String, tracks: [NativeSearchHit], artists: [NativeCatalogLink], albums: [NativeCatalogLink], more: Bool
     init?(_ value: Any?) {
         guard let value = value as? [String: Any], let session = value["session"] as? String, !session.isEmpty else { return nil }
         self.session = session
         tracks = (value["tracks"] as? [[String: Any]] ?? []).compactMap(NativeSearchHit.init)
-        artists = (value["artists"] as? [[String: Any]] ?? []).compactMap(NativeSearchLink.init)
-        albums = (value["albums"] as? [[String: Any]] ?? []).compactMap(NativeSearchLink.init)
+        artists = (value["artists"] as? [[String: Any]] ?? []).compactMap(NativeCatalogLink.init)
+        albums = (value["albums"] as? [[String: Any]] ?? []).compactMap(NativeCatalogLink.init)
         more = value["more"] as? Bool == true
     }
     var isEmpty: Bool { tracks.isEmpty && artists.isEmpty && albums.isEmpty }

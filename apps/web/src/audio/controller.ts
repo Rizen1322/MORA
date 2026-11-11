@@ -241,6 +241,23 @@ export class PlayerController {
     this.loudnessTarget = t;
   }
 
+  /** Equal content hashes keep the same PCM; only the library identity changes after a merge. */
+  remapTracks(mapping: Record<string, string>): void {
+    const remap = <T extends { trackId: string }>(entry: T): T => ({ ...entry, trackId: mapping[entry.trackId] ?? entry.trackId });
+    for (const slot of this.slots) if (slot) slot.trackId = mapping[slot.trackId] ?? slot.trackId;
+    if (this.next) this.next.entry = remap(this.next.entry);
+    if (this.originalOrder) this.originalOrder = this.originalOrder.map(remap);
+    this.nativeTracks = this.nativeTracks.map(remap);
+    for (const [old, id] of Object.entries(mapping)) {
+      const file = this.nativeFiles.get(old);
+      if (file && !this.nativeFiles.has(id)) this.nativeFiles.set(id, file);
+      this.nativeFiles.delete(old);
+    }
+    this.nativeManifestKey = '';
+    this.nativeQueueEditRevision++;
+    this.set({ queue: this.state.queue.map(remap), nextPlan: null, nextPending: [] });
+  }
+
   /** A saved mix setting must affect the already prepared pair as well. */
   onSettingsChanged(target: number | null): void {
     this.previewRevision++;
@@ -1237,7 +1254,7 @@ export class PlayerController {
       }
       if (kind === 'own') {
         this.yandexSession = null;
-        const r = await api.waveNext({ currentId: null, session: [], count: 3 });
+        const r = await api.waveNext({ currentId: null, session: [], count: 3, offline: this.offlineOnly || undefined });
         if (revision !== this.previewRevision) return;
         entries.push(...r.picks.map((p) => ({ entryId: uid(), trackId: p.id, origin: 'wave' as const, reasons: p.reasons })));
       }
@@ -1669,6 +1686,16 @@ export class PlayerController {
     return null;
   }
 
+  /** No usable network (lib/offline-wave.ts): «Моя волна» picks only songs that play from this device. */
+  offlineOnly = false;
+  setOfflineOnly(on: boolean): void {
+    if (this.offlineOnly === on) return;
+    this.offlineOnly = on;
+    // A refill that failed for lack of network may try again at once with what the device has.
+    this.waveRetryAt = 0; this.waveFailures = 0;
+    if (this.isWave()) void this.topUpWave();
+  }
+
   private isWave(): boolean {
     const t = this.state.context?.type;
     return t === 'wave' || t === 'yandex-wave';
@@ -1790,7 +1817,7 @@ export class PlayerController {
             reasons: ['из «Моей волны» Яндекса'] }] : []);
         } else {
           const r = await api.waveNext({ currentId: this.currentEntry?.trackId ?? null,
-            session: this.state.queue.map((e) => e.trackId), count });
+            session: this.state.queue.map((e) => e.trackId), count, offline: this.offlineOnly || undefined });
           added = r.picks.map((pick) => ({ entryId: uid(), trackId: pick.id, origin: 'wave', reasons: pick.reasons }));
         }
         if (!relevant()) return;

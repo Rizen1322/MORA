@@ -7,6 +7,7 @@ import UIKit
 /// Native playback plus a cancellable preparation producer, independent of page timers.
 /// Engine/file ownership is confined to work; analysis and downloads run off that queue.
 final class NativeMixHost {
+    static let shared = NativeMixHost()
     private let work = DispatchQueue(label: "ru.mora.native-mix", qos: .userInitiated)
     private let lock = NSLock()
     private var cached: [String: Any] = ["active": false, "playing": false, "index": 0, "position": 0.0, "duration": 0.0]
@@ -69,6 +70,7 @@ final class NativeMixHost {
     private var pendingSkips: Int { max(0, skipTarget - index) }
     private var initialTicket: NativePreparationTicket?
     private var knownManifest: [String: Any]?
+    private var identityAliases: [String: String] = [:]
     private var initialConfig: [String: Any] = [:]
     // Main queue only. Do not remove WebKit's or the baseline probe's targets.
     var onReaction: ((String, Int) -> Int)?
@@ -79,6 +81,7 @@ final class NativeMixHost {
     private var refillWaiting = false // one finite assertion per waiting interval
     // Levels for the page visualizer: computed only while the page listens, in the foreground and while playing.
     var onLevels: ((Double, [Double]) -> Void)? // called on work; the plugin hops to main
+    var onNowPlaying: (@MainActor ([String: Any], Bool) -> Void)?
     private var levelsOn = false, foreground = true
     private var levelBlocks: [(start: Int64, left: Data, right: Data)] = [] // rendered blocks still near the audible frame
     private var levelTimer: DispatchSourceTimer?
@@ -187,6 +190,7 @@ final class NativeMixHost {
                   let gain = track["gainDb"] as? Double, gain.isFinite, abs(gain) <= 36 else { throw Failure.invalid }
             // Keep encoded images/URLs out of the DSP context, including on seek/skip.
             var copy = track; copy.removeValue(forKey: "artwork"); copy.removeValue(forKey: "coverUrl")
+            if let id = copy["trackId"] as? String, let next = identityAliases[id] { copy["trackId"] = next }
             copy.removeValue(forKey: "artworkHTTPHost"); copy.removeValue(forKey: "_analysisPolicy"); return copy
         }
     }
@@ -284,6 +288,7 @@ final class NativeMixHost {
                   config["gainDb"] == nil || config["gainDb"] is Double, self.preparedFileKey < 999999 else {
                 self.reply(completion, .failure(Failure.invalid)); return
             }
+            NativeStationFiles.retainLocal(item, folder: folder)
             self.initialTicket?.cancel()
             let ticket = NativePreparationTicket(); self.initialTicket = ticket; self.initialConfig = config
             self.preparedFileKey += 1; let key = self.preparedFileKey
@@ -363,6 +368,38 @@ final class NativeMixHost {
             self.reply(completion, .success(["keys": (first..<self.sourceKey).map { $0 }]))
         }
     }
+    func sourceFromDownload(id: String, key: Int, file: URL, completion: @escaping Reply) {
+        work.async {
+            do {
+                guard self.id == id, let folder = self.folder, (0..<500000).contains(key) else { throw Failure.invalid }
+                let bytes = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                guard bytes > 0, bytes <= 128 * 1024 * 1024, self.sourceBytes.values.reduce(0, +) + bytes <= 512 * 1024 * 1024 else { throw Failure.invalid }
+                let target = folder.appendingPathComponent("source-\(key).media")
+                try FileManager.default.linkItem(at: file, to: target)
+                self.sourceBytes[key] = bytes
+                self.reply(completion, .success(["found": true]))
+            } catch { self.reply(completion, .failure(error)) }
+        }
+    }
+    func remapTracks(_ mapping: [String: String], completion: @escaping Reply) {
+        work.async {
+            self.identityAliases = self.identityAliases.mapValues { mapping[$0] ?? $0 }
+            self.identityAliases.merge(mapping) { _, new in new }
+            func remap(_ item: [String: Any]) -> [String: Any] {
+                var result = item
+                if let id = item["trackId"] as? String, let next = mapping[id] { result["trackId"] = next }
+                return result
+            }
+            self.tracks = self.tracks.map(remap); self.config["tracks"] = self.tracks
+            if var manifest = self.knownManifest {
+                for key in ["items", "loopItems"] { if let rows = manifest[key] as? [[String: Any]] { manifest[key] = rows.map(remap) } }
+                if let previous = manifest["previous"] as? [String: Any] { manifest["previous"] = remap(previous) }
+                self.knownManifest = manifest
+            }
+            if self.folder != nil { self.publish("merge") }
+            self.reply(completion, .success([:]))
+        }
+    }
     /// Replaces the known future queue, then native playback callbacks release preparation permits.
     func prepareQueue(id: String, manifest incoming: [String: Any], completion: @escaping Reply) {
         work.async {
@@ -378,6 +415,7 @@ final class NativeMixHost {
                 for item in items {
                     guard let key = item["file"] as? Int, (0..<1_000_000).contains(key), item["source"] is [String: Any] else { throw Failure.invalid }
                 }
+                for item in items.prefix(50) { NativeStationFiles.retainLocal(item, folder: folder) }
                 var configuration = manifest, future = items
                 var previous = manifest["previous"] as! [String: Any]
                 // A suspended page can send stale entries with a fresh native index.
@@ -733,8 +771,15 @@ final class NativeMixHost {
         if artworks.indices.contains(index), let artwork = artworks[index] { info[MPMediaItemPropertyArtwork] = artwork }
         let publishedInfo = info
         let publishedTrackId = tracks.indices.contains(index) ? tracks[index]["trackId"] as? String ?? "" : ""
+        NativeStationFiles.updatePosition(trackId: publishedTrackId, position: position)
         let canAdvance = tracks.indices.contains(index + 1) || preparation?.hasRemaining == true || pendingSkips > 0
         let canReverse = canGoBack
+        var event = state
+        event["title"] = title; event["artist"] = artist; event["trackId"] = publishedTrackId
+        event["currentTrack"] = ["title": title, "artist": artist, "trackId": publishedTrackId]
+        event["artwork"] = publishedInfo[MPMediaItemPropertyArtwork]
+        let finished = ended && !canAdvance && !continueWhenPrepared
+        DispatchQueue.main.async { [weak self] in self?.onNowPlaying?(event, finished) }
         // A tick republishes Now Playing only on a visible change or clock drift (tempo
         // stretch, stall); its journal row is kept every 5 s otherwise.
         let key = "\(generation)|\(index)|\(title)|\(artist)|\(state["duration"] ?? 0)|\(playbackRate)|\(info[MPMediaItemPropertyArtwork] != nil)|\(tracks.count)|\(canAdvance)|\(canReverse)|\(state["waitingForPreparation"] ?? false)"
@@ -819,6 +864,7 @@ final class NativeMixHost {
         wantsPlaying = false; failed = true; knownManifest = nil; epoch += 1
         player?.stop(); engine?.pause(); renderer = nil
         save(); MoraPlaybackJournal.record("native.mix.failed")
+        DispatchQueue.main.async { [weak self] in self?.onNowPlaying?([:], true) }
         let generation = epoch
         DispatchQueue.main.async { [weak self] in
             guard let self, self.active, self.snapshot["epoch"] as? Int == generation else { return }
@@ -943,7 +989,7 @@ final class NativeMixHost {
             self.preparation?.cancel(); self.preparation = nil; self.continueWhenPrepared = false; self.skipTarget = -1
             self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis()
             self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
-            DispatchQueue.main.async { [weak self] in self?.refillLease(waiting: false) }
+            DispatchQueue.main.async { [weak self] in self?.refillLease(waiting: false); self?.onNowPlaying?([:], true) }
             guard self.folder != nil || self.ownsSession else { self.reply(completion, .success(self.snapshot)); return }
             self.epoch += 1; self.wantsPlaying = false; self.resumeAfterInterruption = false
             self.discardGraph(); self.interrupted = false; self.mediaResetPending = false
@@ -1025,6 +1071,15 @@ final class NativeMixHost {
         guard refillTask != .invalid else { return }
         UIApplication.shared.endBackgroundTask(refillTask); refillTask = .invalid
     }
+    private var sleepVolume: Float = 1
+    func sleepGain(_ gain: Double) {
+        guard gain.isFinite else { return }
+        work.async {
+            let value = Float(min(1, max(0, gain)))
+            guard value != self.sleepVolume else { return }
+            self.sleepVolume = value; self.engine?.mainMixerNode.outputVolume = value
+        }
+    }
     private func buildGraph() throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback, mode: .default, options: [])
@@ -1033,6 +1088,7 @@ final class NativeMixHost {
         let engine = makeEngine(), player = AVAudioPlayerNode()
         self.engine = engine; self.player = player
         engine.attach(player); engine.connect(player, to: engine.mainMixerNode, format: format)
+        engine.mainMixerNode.outputVolume = sleepVolume
         engineObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self, weak engine] _ in
             guard let engine else { return }; self?.configurationChanged(engine)
         }

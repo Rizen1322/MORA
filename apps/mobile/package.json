@@ -1,6 +1,6 @@
 {
   "name": "@automix/mobile",
-  "version": "0.1.0",
+  "version": "1.0.40",
   "private": true,
   "description": "MORA для iPhone: веб-интерфейс и встроенный сервер в Capacitor",
   "type": "module",

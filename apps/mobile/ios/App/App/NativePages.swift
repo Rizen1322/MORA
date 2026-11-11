@@ -2,6 +2,50 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+/// A private copy is available before the delegate fires, including files supplied by iCloud.
+@MainActor final class NativeDocumentPicker: NSObject, UIDocumentPickerDelegate {
+    let controller: UIDocumentPickerViewController
+    private let complete: (Result<[URL], Error>) -> Void
+    init(types: [UTType], multiple: Bool, complete: @escaping (Result<[URL], Error>) -> Void) {
+        controller = UIDocumentPickerViewController(forOpeningContentTypes: types.isEmpty ? [.data] : types, asCopy: true)
+        controller.allowsMultipleSelection = multiple
+        self.complete = complete
+        super.init()
+        controller.delegate = self
+        controller.modalPresentationStyle = .fullScreen
+    }
+    func present(from parent: UIViewController) {
+        parent.view.endEditing(true)
+        parent.present(controller, animated: true)
+    }
+    private func finish(_ result: Result<[URL], Error>) {
+        if controller.presentingViewController != nil {
+            controller.dismiss(animated: true) { self.complete(result) }
+        } else { complete(result) }
+    }
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { finish(.success(urls)) }
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { finish(.failure(CocoaError(.userCancelled))) }
+}
+
+enum NativePickedFile {
+    static func discardTemporaryCopy(_ url: URL) {
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path
+        // Only app-owned temporary copies may be removed; provider originals stay untouched.
+        guard url.isFileURL, url.resolvingSymlinksInPath().path.hasPrefix(root.hasSuffix("/") ? root : root + "/") else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+    static func base64(_ url: URL) async throws -> String {
+        guard url.isFileURL else { throw CocoaError(.fileReadUnsupportedScheme) }
+        return try await Task.detached(priority: .userInitiated) {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            guard !data.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
+            return data.base64EncodedString()
+        }.value
+    }
+}
+
 /// Native pages described by the page (apps/web/src/lib/native-pages.ts): albums, artists, playlists,
 /// history, wave, downloads, import, sources, settings and diagnostics. The page owns the data and the
 /// actions; this view draws the rows (NativeShellState.swift, `NativePage`) and sends the actions back.
@@ -18,17 +62,19 @@ struct NativePageView: View {
     @State private var confirm: (row: NativePageRow.Confirm, act: NativePageAct)?
     @State private var prompt: (row: NativePageRow.Prompt, act: NativePageAct)?
     @State private var promptText = ""
-    @State private var picker = false
-    /// Kept after the picker closes: its completion can arrive after `picker` is reset.
-    @State private var pick: (types: [UTType], multiple: Bool, act: NativePageAct)?
+    @State private var documentPicker: NativeDocumentPicker?
+    @State private var importingFile: String?
 
     var body: some View {
         NavigationStack { dialogs(pageList) }
     }
 
     // Split out of body: as one expression it exceeds the Swift type checker's time limit.
+    private var catalog: Bool { page?.style == "catalog" }
+
     private var pageList: some View {
-        withSearch(List {
+        styled(withSearch(List {
+            if let name = importingFile { ProgressView("Добавляем «" + name + "»…").frame(maxWidth: .infinity).listRowBackground(Color.clear) }
             if let waveSource { waveHeader(waveSource) }
             if let page {
                 ForEach(Array(page.sections.enumerated()), id: \.offset) { _, section in sectionView(section) }
@@ -39,12 +85,12 @@ struct NativePageView: View {
             } else {
                 ProgressView(waveSource == nil ? "Загрузка…" : "Загружаем настройки…").frame(maxWidth: .infinity).listRowBackground(Color.clear)
             }
-        })
-        .listStyle(.insetGrouped)
+        }))
         .scrollContentBackground(.hidden)
         .background(Color.moraBackground)
-        .navigationTitle(page?.title ?? "")
-        .navigationBarTitleDisplayMode(waveSource == nil ? .automatic : .inline)
+        // the header carries the title on artist and album pages
+        .navigationTitle(catalog ? "" : page?.title ?? "")
+        .navigationBarTitleDisplayMode(waveSource == nil && !catalog ? .automatic : .inline)
         .toolbar { toolbar }
     }
 
@@ -113,10 +159,6 @@ struct NativePageView: View {
                 Button("Готово") { run(p.act, ["value": promptText]) }
                 Button("Отмена", role: .cancel) {}
             }
-            .fileImporter(isPresented: $picker, allowedContentTypes: pick?.types ?? [.data], allowsMultipleSelection: pick?.multiple ?? false) { result in
-                guard let act = pick?.act, case .success(let urls) = result else { return }
-                send(urls, act)
-            }
             .onChange(of: store.path) { page = nil; failure = nil; form = [:]; query = "" }
             .onChange(of: waveSource?.wrappedValue) { page = nil; failure = nil }
             .safeAreaInset(edge: .bottom) {
@@ -125,6 +167,10 @@ struct NativePageView: View {
                         .background(.ultraThinMaterial).accessibilityIdentifier("wave.message")
                 }
             }
+    }
+
+    @ViewBuilder private func styled(_ list: some View) -> some View {
+        if catalog { list.listStyle(.plain) } else { list.listStyle(.insetGrouped) }
     }
 
     @ViewBuilder private func withSearch(_ list: some View) -> some View {
@@ -155,13 +201,38 @@ struct NativePageView: View {
                         guard query.isEmpty else { return nil }
                         return { from, to in if let first = from.first { run(act, ["from": first, "to": to]) } }
                     })
-                    .listRowBackground(Color.white.opacity(0.06))
+                    .listRowBackground(catalog ? Color.moraBackground : Color.white.opacity(0.06))
             } header: {
-                if let title = section.title { Text(title) }
+                if let title = section.title {
+                    if catalog { Text(title).textCase(nil).font(.title3.bold()).foregroundStyle(.white) }
+                    else { Text(title).textCase(nil).font(.footnote.weight(.semibold)) }
+                }
             } footer: {
                 if let footer = section.footer { Text(footer) }
             }
         }
+    }
+
+    private func heroButtons(play: NativePageAct?, shuffle: NativePageAct?, capsule: Bool) -> some View {
+        HStack(spacing: 16) {
+            if let shuffle {
+                Button { run(shuffle) } label: {
+                    Image(systemName: "shuffle").font(.title3.weight(.semibold)).frame(width: 52, height: 52).background(.white.opacity(0.14), in: Circle())
+                }.accessibilityLabel("Вперемешку")
+            }
+            if let play {
+                Button { run(play) } label: {
+                    if capsule {
+                        Label("Слушать", systemImage: "play.fill").font(.headline).foregroundStyle(Color.moraBackground)
+                            .padding(.horizontal, 34).frame(height: 52).background(.white, in: Capsule())
+                    } else {
+                        Image(systemName: "play.fill").font(.title.weight(.bold)).foregroundStyle(Color.moraBackground)
+                            .frame(width: 68, height: 68).background(.white, in: Circle())
+                    }
+                }.accessibilityLabel("Слушать")
+            }
+        }
+        .buttonStyle(.plain).foregroundStyle(.white).disabled(running)
     }
 
     @ViewBuilder private func rowView(_ row: NativePageRow, section: NativePageSection, tracks: [NativeTrack]) -> some View {
@@ -212,33 +283,44 @@ struct NativePageView: View {
                 .disabled(disabled || running)
 
         case .button(let title, let symbol, let act, let style, let disabled, let confirmRow, let promptRow):
-            Button(role: style == "destructive" ? .destructive : nil) {
+            let primary = style == "primary", destructive = style == "destructive"
+            Button(role: destructive ? .destructive : nil) {
                 if let confirmRow { confirm = (confirmRow, act) }
                 else if let promptRow { promptText = promptRow.initial; prompt = (promptRow, act) }
                 else { run(act, ["form": form]) }
             } label: {
-                if style == "primary" {
+                if primary {
                     Group { if let symbol { Label(title, systemImage: symbol) } else { Text(title) } }
-                        .fontWeight(.semibold)
+                        .font(.headline)
                         .foregroundStyle(Color.moraBackground)
-                        .frame(minHeight: 44)
-                        .padding(.horizontal, 22)
+                        .frame(maxWidth: .infinity, minHeight: 50)
                         .background(Color.moraMint.opacity(disabled ? 0.4 : 1), in: Capsule())
-                        .frame(maxWidth: .infinity)
-                } else {
+                } else if destructive {
                     Group { if let symbol { Label(title, systemImage: symbol) } else { Text(title) } }
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        .foregroundStyle(style == "destructive" ? Color.red : Color.moraMint)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .foregroundStyle(Color.red)
+                } else if let symbol {
+                    HStack(spacing: 12) {
+                        NativeIconBadge(symbol: symbol)
+                        Text(title).foregroundStyle(.white)
+                        Spacer(minLength: 0)
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                } else {
+                    Text(title).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).foregroundStyle(Color.moraMint)
+                        .contentShape(Rectangle())
                 }
             }
             .buttonStyle(.plain)
-            .listRowBackground(Color.white.opacity(0.06))
+            .listRowBackground(primary ? Color.clear : Color.white.opacity(0.06))
+            .listRowInsets(primary ? EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0) : EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
             .disabled(disabled || running)
 
         case .link(let title, let detail, let symbol, let path):
             Button { store.go(path) } label: {
                 HStack(spacing: 12) {
-                    if let symbol { Image(systemName: symbol).foregroundStyle(Color.moraMint).frame(width: 24) }
+                    if let symbol { NativeIconBadge(symbol: symbol) }
                     labelled(title, detail)
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.35))
@@ -249,7 +331,15 @@ struct NativePageView: View {
             .buttonStyle(.plain)
 
         case .url(let title, let url):
-            Link(destination: url) { Label(title, systemImage: "arrow.up.right.square").frame(minHeight: 44) }
+            Link(destination: url) {
+                HStack(spacing: 12) {
+                    NativeIconBadge(symbol: "safari")
+                    Text(title).foregroundStyle(.white)
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.up.right").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.35))
+                }
+                .frame(minHeight: 44)
+            }
 
         case .field(let key, let title, let value, let placeholder, let secure, let help):
             VStack(alignment: .leading, spacing: 4) {
@@ -265,9 +355,17 @@ struct NativePageView: View {
             }
 
         case .file(let title, let symbol, let types, let multiple, let act):
-            Button { pick = (types.compactMap { UTType(filenameExtension: $0) }, multiple, act); picker = true } label: {
-                Label(title, systemImage: symbol ?? "doc").frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            Button { chooseFiles(types: types.compactMap { UTType(filenameExtension: $0) }, multiple: multiple, act: act) } label: {
+                HStack(spacing: 12) {
+                    NativeIconBadge(symbol: symbol ?? "doc")
+                    Text(title).foregroundStyle(.white).multilineTextAlignment(.leading)
+                    Spacer(minLength: 0)
+                    Image(systemName: "plus").font(.footnote.weight(.semibold)).foregroundStyle(Color.moraMint)
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             .disabled(running)
 
         case .progress(let title, let value, let detail):
@@ -279,13 +377,56 @@ struct NativePageView: View {
             .padding(.vertical, 4)
             .tint(.moraMint)
 
-        case .item(let title, let subtitle, let cover, let tag, let tone, let path, let act, let actions):
+        case .hero(let style, let title, let subtitle, let detail, let cover, let play, let shuffle):
+            if style == "artist" {
+                let width = UIScreen.main.bounds.width
+                ZStack(alignment: .bottom) {
+                    NativeCover(url: cover, size: width, radius: 0).frame(width: width, height: width * 0.95).clipped()
+                    LinearGradient(colors: [.clear, Color.moraBackground.opacity(0.55), Color.moraBackground], startPoint: .center, endPoint: .bottom)
+                    VStack(spacing: 12) {
+                        Text(title).font(.system(size: 40, weight: .heavy)).multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.6).shadow(radius: 8)
+                        if let subtitle, !subtitle.isEmpty { Text(subtitle).font(.subheadline).foregroundStyle(.white.opacity(0.7)).lineLimit(1) }
+                        heroButtons(play: play, shuffle: shuffle, capsule: false)
+                    }.padding(.horizontal, 20).padding(.bottom, 16)
+                }
+                .listRowInsets(EdgeInsets()).listRowSeparator(.hidden)
+            } else {
+                VStack(spacing: 8) {
+                    NativeCover(url: cover, size: min(UIScreen.main.bounds.width * 0.68, 300), radius: 14)
+                        .shadow(color: .black.opacity(0.5), radius: 18, y: 8).padding(.bottom, 10)
+                    Text(title).font(.title2.bold()).multilineTextAlignment(.center)
+                    if let subtitle, !subtitle.isEmpty { Text(subtitle).font(.title3).foregroundStyle(Color.moraMint).multilineTextAlignment(.center) }
+                    if let detail, !detail.isEmpty { Text(detail).font(.footnote.weight(.medium)).foregroundStyle(.secondary) }
+                    heroButtons(play: play, shuffle: shuffle, capsule: true).padding(.top, 8)
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 12)
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)).listRowSeparator(.hidden)
+            }
+
+        case .shelf(let items):
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 14) {
+                    ForEach(items) { item in
+                        Button { store.go(item.path) } label: {
+                            VStack(alignment: item.round ? .center : .leading, spacing: 4) {
+                                NativeCover(url: item.cover, size: 150, radius: item.round ? 75 : 10)
+                                Text(item.title).font(.subheadline.weight(.medium)).lineLimit(1)
+                                if let detail = item.subtitle, !detail.isEmpty { Text(detail).font(.footnote).foregroundStyle(.secondary).lineLimit(1) }
+                            }.frame(width: 150, alignment: item.round ? .center : .leading)
+                        }.buttonStyle(.plain)
+                    }
+                }.padding(.horizontal, 16)
+            }
+            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 12, trailing: 0)).listRowSeparator(.hidden)
+
+        case .item(let title, let subtitle, let cover, let tag, let tone, let path, let act, let actions, let number):
             HStack(spacing: 12) {
                 Button {
                     if let path { store.go(path) } else if let act { run(act) }
                 } label: {
                     HStack(spacing: 12) {
-                        if let cover { NativeCover(url: cover, size: 48) }
+                        if let number { Text("\(number)").font(.body.monospacedDigit()).foregroundStyle(.secondary).frame(width: 26) }
+                        else if let cover { NativeCover(url: cover, size: 48) }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(title).font(.body.weight(.medium)).lineLimit(2)
                             if let subtitle { Text(subtitle).font(.subheadline).foregroundStyle(color(tone) ?? .white.opacity(0.6)).lineLimit(3) }
@@ -303,14 +444,31 @@ struct NativePageView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(path == nil && act == nil)
-                ForEach(Array(actions.enumerated()), id: \.offset) { _, a in
-                    Button(role: a.destructive ? .destructive : nil) { run(a.act) } label: {
-                        Image(systemName: a.symbol).frame(width: 36, height: 44)
-                    }
-                    .buttonStyle(.borderless)
-                    .tint(a.destructive ? Color.red : Color.moraMint)
-                    .accessibilityLabel(a.title)
+                // A catalog track has eight actions: inline they squeeze the title out of the row, so past two they go in a menu.
+                if actions.count > 2 {
+                    Menu {
+                        ForEach(Array(actions.enumerated()), id: \.offset) { _, a in
+                            Button(role: a.destructive ? .destructive : nil) { run(a.act) } label: { Label(a.title, systemImage: a.symbol) }
+                        }
+                    } label: { Image(systemName: "ellipsis").frame(width: 36, height: 44) }
+                    .tint(Color.moraMint)
+                    .accessibilityLabel("Действия")
                     .disabled(running)
+                } else {
+                    ForEach(Array(actions.enumerated()), id: \.offset) { _, a in
+                        Button(role: a.destructive ? .destructive : nil) { run(a.act) } label: {
+                            Image(systemName: a.symbol).frame(width: 36, height: 44)
+                        }
+                        .buttonStyle(.borderless)
+                        .tint(a.destructive ? Color.red : Color.moraMint)
+                        .accessibilityLabel(a.title)
+                        .disabled(running)
+                    }
+                }
+            }
+            .contextMenu {
+                ForEach(Array(actions.enumerated()), id: \.offset) { _, a in
+                    Button(role: a.destructive ? .destructive : nil) { run(a.act) } label: { Label(a.title, systemImage: a.symbol) }
                 }
             }
             .accessibilityElement(children: .contain)
@@ -377,16 +535,33 @@ struct NativePageView: View {
     /// Picked files go to the page one by one as base64.
     /// shortcut: a whole file is read into memory and copied across the bridge; fine for songs, upgrade to a
     /// streamed upload if multi-hundred-megabyte files must be imported.
+    private func chooseFiles(types: [UTType], multiple: Bool, act: NativePageAct) {
+        guard documentPicker == nil, let root = store.presenter else { return }
+        var parent = root
+        while let presented = parent.presentedViewController { parent = presented }
+        let picker = NativeDocumentPicker(types: types, multiple: multiple) { result in
+            documentPicker = nil
+            switch result {
+            case .success(let urls):
+                if urls.isEmpty { store.show("Файлы не выбраны") } else { send(urls, act) }
+            case .failure(let error):
+                if (error as NSError).code != CocoaError.Code.userCancelled.rawValue { store.show(Self.message(error)) }
+            }
+        }
+        documentPicker = picker
+        picker.present(from: parent)
+    }
+
     private func send(_ urls: [URL], _ act: NativePageAct) {
         running = true
         Task { @MainActor in
-            defer { running = false; reload &+= 1 }
+            defer { running = false; importingFile = nil; reload &+= 1 }
             for url in urls {
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                defer { NativePickedFile.discardTemporaryCopy(url) }
+                importingFile = url.lastPathComponent
                 do {
-                    let data = try Data(contentsOf: url)
-                    let args = act.args.merging(["name": url.lastPathComponent, "base64": data.base64EncodedString()]) { _, new in new }
+                    let base64 = try await NativePickedFile.base64(url)
+                    let args = act.args.merging(["name": url.lastPathComponent, "base64": base64]) { _, new in new }
                     _ = try await store.call("act", ["name": act.name, "args": args], timeout: 300)
                 } catch {
                     store.show("\(url.lastPathComponent): \(Self.message(error))")

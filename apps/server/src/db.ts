@@ -107,6 +107,13 @@ CREATE TABLE IF NOT EXISTS playlists (
   updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS smart_playlists (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  rules TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS playlist_tracks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,

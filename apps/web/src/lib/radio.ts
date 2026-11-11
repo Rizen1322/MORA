@@ -216,6 +216,15 @@ export async function returnOnline(): Promise<void> {
   }
 }
 
+/** The online radio fell back to the device's wave for lack of network (offline-wave.ts): from now on the
+ * station takes over again from the next song as soon as it can be reached. */
+export function resumeStationOnline(label: string): void {
+  const context = controller.state.context;
+  if (!context) return;
+  offline = { context, label, lastTry: 0, busy: false };
+  void returnOnline();
+}
+
 if (typeof window !== 'undefined') window.addEventListener('online', () => void returnOnline());
 useApp.subscribe((s, prev) => { if (s.serverOnline && !prev.serverOnline) void returnOnline(); });
 

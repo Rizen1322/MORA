@@ -1,0 +1,26 @@
+import Foundation
+
+var job = NativeDownloadJob(trackId: "one", title: "Трек", artist: "Исполнитель", album: "", duration: 180, expectedBytes: 1000)
+assert(job.state == .queued)
+job.receivedBytes = 400
+assert(job.progress == 0.4)
+assert(job.eta(elapsed: 4) == 6)
+job.apply("pause")
+assert(job.state == .paused)
+job.apply("resume")
+assert(job.state == .queued)
+job.apply("cancel")
+assert(job.state == .cancelled)
+job.apply("resume")
+assert(job.state == .cancelled)
+let encoded = try JSONEncoder().encode([job])
+let restored = try JSONDecoder().decode([NativeDownloadJob].self, from: encoded)
+assert(restored == [job])
+assert(NativeDownloadJob.retryDelay(attempt: 1) == 10)
+assert(NativeDownloadJob.retryDelay(attempt: 99) == 300)
+print("Native download queue passed")
+
+job.receivedBytes = 1400
+assert(job.reservedBytes == 1400, "Unknown content length must reserve received bytes")
+job.receivedBytes = 400
+assert(job.reservedBytes == 1000, "Queued transfers keep their estimate reserved")

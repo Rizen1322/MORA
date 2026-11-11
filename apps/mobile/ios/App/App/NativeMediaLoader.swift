@@ -7,9 +7,24 @@ final class NativeMediaLoader {
     let http: NativeMediaHTTP
     private let allowLoopback: Bool
     init(http: NativeMediaHTTP, allowLoopback: Bool = false) { self.http = http; self.allowLoopback = allowLoopback }
+    func backgroundRequest(_ source: [String: Any], ticket: NativePreparationTicket) async throws -> URLRequest {
+        let kind = source["kind"] as? String
+        let url: URL
+        if kind == "yandex" { url = try await yandex(source, ticket: ticket) }
+        else if kind == "direct", let text = source["url"] as? String, let direct = URL(string: text) { url = direct }
+        else { throw NSError(domain: "MORADownload", code: 1, userInfo: [NSLocalizedDescriptionKey: "Этот поток не поддерживает фоновую загрузку. Используйте загрузку в открытом приложении"]) }
+        guard url.scheme == "https", url.user == nil, url.password == nil else { throw Failure.source }
+        var request = URLRequest(url: url)
+        if kind != "yandex" { for (key, value) in source["headers"] as? [String: String] ?? [:] { request.setValue(value, forHTTPHeaderField: key) } }
+        return request
+    }
     func load(_ source: [String: Any], to destination: URL, folder: URL, ticket: NativePreparationTicket) async throws -> URL {
         if ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
         let kind = source["kind"] as? String ?? ""
+        if kind == "station" {
+            guard let name = source["file"] as? String else { throw Failure.source }
+            return try NativeStationFiles.localURL(name)
+        }
         if kind == "local" {
             guard let key = source["file"] as? Int, (0..<1_000_000).contains(key) else { throw Failure.source }
             let file = folder.appendingPathComponent("source-\(key).media")
@@ -88,7 +103,9 @@ final class NativeMediaLoader {
         var total = 0, byteOffset = 0
         var range: String?
         let map = lines.first(where: { $0.hasPrefix("#EXT-X-MAP:") }).map(attributes)
-        func append(_ value: String, range: String?, packed: Bool) async throws {
+        struct Part { let url: URL; let headers: [String: String]; let expected: Int?; let packed: Bool }
+        // Byte ranges follow from the lines before them, so the playlist is read in order first.
+        func part(_ value: String, range: String?, packed: Bool) throws -> Part {
             guard let segmentURL = URL(string: value, relativeTo: url)?.absoluteURL else { throw Failure.playlist }
             var requestHeaders = headers
             var expected: Int?
@@ -98,17 +115,40 @@ final class NativeMediaLoader {
                 guard count > 0, byteOffset >= 0, count <= 128 * 1024 * 1024 else { throw Failure.playlist }
                 requestHeaders["Range"] = "bytes=\(byteOffset)-\(byteOffset + count - 1)"; expected = count; byteOffset += count
             }
-            let data = try await http.data(segmentURL, headers: requestHeaders, limit: 16 * 1024 * 1024, ticket: ticket)
-            if let expected, data.count != expected { throw Failure.playlist }
-            let audio = packed ? try Self.packedAudio(data) : data
-            total += audio.count; guard total <= 128 * 1024 * 1024 else { throw NativeMediaHTTP.Failure.tooLarge }
-            try file.write(contentsOf: audio)
+            return Part(url: segmentURL, headers: requestHeaders, expected: expected, packed: packed)
         }
-        if let map, let initURL = map["URI"] { try await append(initURL, range: map["BYTERANGE"], packed: false) }
+        var parts: [Part] = []
+        if let map, let initURL = map["URI"] { parts.append(try part(initURL, range: map["BYTERANGE"], packed: false)) }
         for line in lines {
-            if ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
             if line.hasPrefix("#EXT-X-BYTERANGE:") { range = String(line.dropFirst("#EXT-X-BYTERANGE:".count)) }
-            else if !line.hasPrefix("#") { try await append(line, range: range, packed: map == nil); range = nil }
+            else if !line.hasPrefix("#") { parts.append(try part(line, range: range, packed: map == nil)); range = nil }
+        }
+        // A YouTube track is ~35 short segments: one at a time that was 7–21 s of round trips on a phone.
+        // Up to six download at once; they are written strictly in playlist order.
+        let http = self.http, width = 6
+        try await withThrowingTaskGroup(of: (Int, Data).self) { group in
+            var launched = 0, written = 0
+            var ready: [Int: Data] = [:]
+            while launched < min(width, parts.count) {
+                let i = launched, p = parts[i]; launched += 1
+                group.addTask { (i, try await http.data(p.url, headers: p.headers, limit: 16 * 1024 * 1024, ticket: ticket)) }
+            }
+            while let (i, data) = try await group.next() {
+                if ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
+                ready[i] = data
+                while let data = ready.removeValue(forKey: written) {
+                    let p = parts[written]
+                    if let expected = p.expected, data.count != expected { throw Failure.playlist }
+                    let audio = p.packed ? try Self.packedAudio(data) : data
+                    total += audio.count; guard total <= 128 * 1024 * 1024 else { throw NativeMediaHTTP.Failure.tooLarge }
+                    try file.write(contentsOf: audio)
+                    written += 1
+                }
+                if launched < parts.count {
+                    let i = launched, p = parts[i]; launched += 1
+                    group.addTask { (i, try await http.data(p.url, headers: p.headers, limit: 16 * 1024 * 1024, ticket: ticket)) }
+                }
+            }
         }
         guard total > 0 else { throw Failure.playlist }
         if ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }

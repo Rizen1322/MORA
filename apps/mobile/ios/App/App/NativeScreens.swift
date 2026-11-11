@@ -4,6 +4,22 @@ import UIKit
 /// Native screens of the shell (NativeShell.swift). They link to other sections through the page's router;
 /// the page-described ones (albums, playlists, settings…) are drawn by NativePages.swift, the rest stay web.
 
+/// A white symbol on a tinted rounded square, as in iOS Settings; the tint follows the symbol so rows stay stable.
+struct NativeIconBadge: View {
+    let symbol: String
+    var size: CGFloat = 30
+    private static let palette: [Color] = [Color(red: 0.10, green: 0.52, blue: 0.36), .blue, .indigo, .orange, .pink, .teal, .purple]
+
+    var body: some View {
+        let sum: Int = symbol.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
+        let tint = Self.palette[sum % Self.palette.count]
+        Image(systemName: symbol).font(.system(size: size * 0.5, weight: .semibold)).foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(tint.gradient, in: RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+            .accessibilityHidden(true)
+    }
+}
+
 // MARK: Home
 
 struct NativeHomeView: View {
@@ -12,16 +28,18 @@ struct NativeHomeView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 24) {
                     header
                     NativeWaveHero(wave: store.ui.wave)
                     tiles
                     if store.ui.loaded && store.library.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 10) {
                             Text("Добавьте свою музыку").font(.title3.bold())
                             Text("Импортируйте файлы или плейлист, либо найдите музыку в поиске.").foregroundStyle(.white.opacity(0.65))
-                            Button("Импорт") { store.go("/import") }.buttonStyle(.borderedProminent).frame(minHeight: 44)
+                            Button("Импорт") { store.go("/import") }.buttonStyle(.borderedProminent).tint(.moraMint).frame(minHeight: 44)
                         }
+                        .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     }
                     rail("Недавно добавленные", Array(store.library.prefix(16)), type: "library", all: "/library")
                     rail("Любимое", Array(store.liked.prefix(16)), type: "liked", all: "/liked")
@@ -53,20 +71,32 @@ struct NativeHomeView: View {
     }
 
     private var tiles: some View {
-        let items: [(String, String, String, Bool)] = [("/liked", "Любимое", "heart.fill", false), ("/downloads", "Загрузки", "arrow.down.circle.fill", false),
-                                                      ("/history", "История", "clock.arrow.circlepath", true), ("/import", "Импорт", "square.and.arrow.down.fill", true)]
-        return HStack(alignment: .top, spacing: 8) {
+        let items: [(String, String, String, Bool, String?)] = [
+            ("/liked", "Любимое", "heart.fill", false, store.liked.isEmpty ? nil : NativeText.tracks(store.liked.count)),
+            ("/downloads", "Загрузки", "arrow.down.circle.fill", false, nil),
+            ("/history", "История", "clock.arrow.circlepath", true, nil),
+            ("/import", "Импорт", "square.and.arrow.down.fill", true, nil)]
+        return LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
             ForEach(items, id: \.0) { item in
+                let tint = item.3 ? Color.moraGold : Color.moraMint
                 Button { store.go(item.0) } label: {
-                    VStack(spacing: 6) {
-                        Image(systemName: item.2).font(.title3)
-                            .foregroundStyle(item.3 ? Color.moraGold : Color.moraMint)
-                            .frame(width: 56, height: 56)
-                            .background((item.3 ? Color.moraGold : Color.moraMint).opacity(0.14), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        Text(item.1).font(.caption.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
+                    HStack(spacing: 12) {
+                        Image(systemName: item.2).font(.body.weight(.semibold))
+                            .foregroundStyle(tint)
+                            .frame(width: 38, height: 38)
+                            .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.1).font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.8)
+                            if let detail = item.4 { Text(detail).font(.caption).foregroundStyle(.white.opacity(0.55)).lineLimit(1) }
+                        }
+                        Spacer(minLength: 0)
                     }
-                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
+                    .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .accessibilityElement(children: .combine)
             }
         }
@@ -78,7 +108,11 @@ struct NativeHomeView: View {
                 HStack {
                     Text(title).font(.title3.bold()).accessibilityAddTraits(.isHeader)
                     Spacer()
-                    Button("Показать все") { store.go(all) }.font(.subheadline.weight(.medium)).frame(minHeight: 44)
+                    Button { store.go(all) } label: {
+                        HStack(spacing: 4) { Text("Все"); Image(systemName: "chevron.forward").font(.caption.weight(.bold)) }
+                            .font(.subheadline.weight(.medium)).foregroundStyle(Color.moraMint).frame(minHeight: 44)
+                    }
+                    .accessibilityLabel("Показать все: " + title)
                 }
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(alignment: .top, spacing: 12) {
@@ -135,9 +169,13 @@ struct NativeWaveHero: View {
     var body: some View {
         let selected = store.waveSource.flatMap { wave.sources.contains($0) ? $0 : nil } ?? wave.preferred
         let button = wave.button(selected)
-        VStack(alignment: .leading, spacing: 14) {
-            (Text("Моя волна") + Text(".").foregroundColor(.moraMint)).font(.title.bold()).accessibilityAddTraits(.isHeader)
-            Text("Знакомое, любимое и то, что ещё предстоит открыть.").foregroundStyle(.white.opacity(0.7))
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(wave.active != nil ? "Сейчас в эфире" : "Для вас", systemImage: "waveform")
+                    .font(.caption.weight(.bold)).foregroundStyle(Color.moraMint)
+                (Text("Моя волна") + Text(".").foregroundColor(.moraMint)).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
+                Text("Знакомое, любимое и то, что ещё предстоит открыть.").font(.subheadline).foregroundStyle(.white.opacity(0.7))
+            }
             Picker("Источник волны", selection: Binding(get: { selected }, set: { store.waveSource = $0 })) {
                 ForEach(wave.sources, id: \.self) { s in
                     Text(s == .own ? "Коллекция" : s == .online ? "Радио" : "Яндекс").tag(s)
@@ -147,13 +185,13 @@ struct NativeWaveHero: View {
             HStack(spacing: 10) {
                 Button { store.run("wave", ["source": selected.rawValue]) } label: {
                     Label(button.title, systemImage: button.symbol).font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .frame(maxWidth: .infinity, minHeight: 54)
                         .foregroundStyle(Color.moraBackground)
                         .background(Color.moraMint.opacity(button.enabled ? 1 : 0.4), in: Capsule())
                 }
                 .disabled(!button.enabled)
                 Button { store.waveSource = selected; store.go("/wave") } label: {
-                    Image(systemName: "slider.horizontal.3").font(.headline).frame(width: 50, height: 50)
+                    Image(systemName: "slider.horizontal.3").font(.headline).frame(width: 54, height: 54)
                         .background(.white.opacity(0.1), in: Circle())
                 }
                 .accessibilityLabel("Настроить волну").accessibilityIdentifier("wave.settings")
@@ -164,10 +202,15 @@ struct NativeWaveHero: View {
         }
         .padding(20)
         .background {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(LinearGradient(colors: [Color(red: 0.10, green: 0.30, blue: 0.21), Color(red: 0.04, green: 0.11, blue: 0.08)],
-                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-                .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.moraMint.opacity(0.18)))
+            let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+            ZStack(alignment: .topTrailing) {
+                shape.fill(LinearGradient(colors: [Color(red: 0.10, green: 0.30, blue: 0.21), Color(red: 0.04, green: 0.11, blue: 0.08)],
+                                          startPoint: .topLeading, endPoint: .bottomTrailing))
+                Image(systemName: "waveform").font(.system(size: 130, weight: .ultraLight))
+                    .foregroundStyle(Color.moraMint.opacity(0.10)).offset(x: 28, y: -6).accessibilityHidden(true)
+            }
+            .clipShape(shape)
+            .overlay(shape.stroke(Color.moraMint.opacity(0.18)))
         }
         .onChange(of: wave.active) { _, active in if active != nil { store.waveSource = nil } } // follow what plays now
     }
@@ -181,6 +224,9 @@ struct NativeTrackListView: View {
     let tracks: [NativeTrack]
     @EnvironmentObject private var store: NativeShellStore
     @State private var query = ""
+    /// Non-nil while choosing tracks: rows toggle instead of playing and a bar of bulk actions shows.
+    @State private var selection: Set<String>?
+    @State private var confirmDelete = false
 
     var body: some View {
         let shown = NativeSearchText.filter(tracks, query)
@@ -195,9 +241,20 @@ struct NativeTrackListView: View {
                     ContentUnavailableView(title, systemImage: liked ? "heart" : "music.note.list", description: Text(hint))
                         .listRowBackground(Color.clear)
                 } else {
+                    if query.isEmpty && selection == nil {
+                        HStack(spacing: 10) {
+                            playButton("Слушать", "play.fill", prominent: true) { store.play(shown, at: 0, type: type, label: title) }
+                            playButton("Вперемешку", "shuffle", prominent: false) { store.play(shown.shuffled(), at: 0, type: type, label: title) }
+                        }
+                        .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                    }
                     Section {
                         ForEach(Array(shown.enumerated()), id: \.element.id) { i, t in
-                            NativeTrackRow(track: t) { store.play(shown, at: i, type: type, label: title) }
+                            if let selection {
+                                NativeTrackRow(track: t, play: { self.selection = selection.symmetricDifference([t.id]) }, selected: selection.contains(t.id))
+                            } else {
+                                NativeTrackRow(track: t) { store.play(shown, at: i, type: type, label: title) }
+                            }
                         }
                     } header: {
                         Text(NativeText.tracks(shown.count)).font(.footnote).foregroundStyle(.white.opacity(0.55))
@@ -208,20 +265,97 @@ struct NativeTrackListView: View {
             .scrollContentBackground(.hidden)
             .background(Color.moraBackground)
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Название, исполнитель, альбом")
-            .navigationTitle(title)
+            .navigationTitle(selection.map { $0.isEmpty ? "Выберите треки" : NativeText.tracks($0.count) } ?? title)
+            .navigationBarTitleDisplayMode(selection == nil ? .automatic : .inline)
+            .safeAreaInset(edge: .bottom) { if let selection { bulkBar(shown.filter { selection.contains($0.id) }) } }
+            .confirmationDialog("Удалить из медиатеки?", isPresented: $confirmDelete, titleVisibility: .visible) {
+                Button("Удалить: " + NativeText.tracks(selection?.count ?? 0), role: .destructive) {
+                    bulk("deleteTracks", shown.filter { selection?.contains($0.id) == true })
+                }
+            } message: { Text("Скачанные копии и файлы в папке приложения тоже удалятся. Исходные файлы на устройстве не затрагиваются.") }
             .toolbar {
-                if type == "library" {
-                    Menu {
-                        Button("Альбомы") { store.go("/library/albums") }
-                        Button("Исполнители") { store.go("/library/artists") }
-                        Button("Плейлисты") { store.go("/library/playlists") }
-                    } label: {
-                        Image(systemName: "square.stack").frame(width: 44, height: 44)
+                ToolbarItem(placement: .topBarLeading) {
+                    if !shown.isEmpty || selection != nil {
+                        Button(selection == nil ? "Выбрать" : "Готово") { selection = selection == nil ? [] : nil }
+                            .frame(minHeight: 44)
                     }
-                    .accessibilityLabel("Разделы медиатеки")
+                }
+                if let selection {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(selection.count == shown.count ? "Снять все" : "Все") {
+                            self.selection = selection.count == shown.count ? [] : Set(shown.map(\.id))
+                        }.frame(minHeight: 44)
+                    }
+                } else if type == "liked" && !tracks.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { store.run("act", ["name": "downloadTracks", "args": ["ids": tracks.map(\.id)]]) } label: {
+                            Image(systemName: "arrow.down.circle").frame(width: 44, height: 44)
+                        }
+                        .accessibilityLabel("Скачать всё любимое на iPhone")
+                    }
+                }
+                if type == "library" && selection == nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Button("Альбомы") { store.go("/library/albums") }
+                            Button("Исполнители") { store.go("/library/artists") }
+                            Button("Плейлисты") { store.go("/library/playlists") }
+                        } label: {
+                            Image(systemName: "square.stack").frame(width: 44, height: 44)
+                        }
+                        .accessibilityLabel("Разделы медиатеки")
+                    }
                 }
             }
         }
+    }
+
+    private func playButton(_ title: String, _ symbol: String, prominent: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol).font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .foregroundStyle(prominent ? Color.moraBackground : Color.moraMint)
+                .background(prominent ? Color.moraMint : Color.moraMint.opacity(0.15), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func bulkBar(_ chosen: [NativeTrack]) -> some View {
+        let playable = chosen.filter(\.ok)
+        return HStack(spacing: 4) {
+            bulkButton("Следующим", "text.line.first.and.arrowtriangle.forward", disabled: playable.isEmpty) {
+                store.run("queue", ["ids": playable.map(\.id), "next": true]); selection = nil
+            }
+            bulkButton("В очередь", "text.append", disabled: playable.isEmpty) {
+                store.run("queue", ["ids": playable.map(\.id), "next": false]); selection = nil
+            }
+            bulkButton("В плейлист", "text.badge.plus", disabled: chosen.isEmpty) { store.playlistTarget = chosen; selection = nil }
+            bulkButton("Скачать", "arrow.down.circle", disabled: chosen.isEmpty) { bulk("downloadTracks", chosen) }
+            bulkButton("Удалить", "trash", disabled: chosen.isEmpty) { confirmDelete = true }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .moraGlass(Capsule())
+        .padding(.horizontal, 12).padding(.bottom, 8)
+    }
+
+    private func bulkButton(_ title: String, _ symbol: String, disabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: symbol).font(.body.weight(.semibold))
+                Text(title).font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.4 : 1)
+    }
+
+    private func bulk(_ action: String, _ chosen: [NativeTrack]) {
+        guard !chosen.isEmpty else { return }
+        store.run("act", ["name": action, "args": ["ids": chosen.map(\.id)]])
+        selection = nil
     }
 }
 
@@ -230,11 +364,18 @@ struct NativeTrackRow: View {
     let play: () -> Void
     /// A page's own action for the row (remove from a playlist, delete a download).
     var remove: (title: String, symbol: String, run: () -> Void)? = nil
+    /// Set while the list is choosing tracks: a tap toggles this row.
+    var selected: Bool? = nil
     @EnvironmentObject private var store: NativeShellStore
 
     var body: some View {
         Button(action: play) {
             HStack(spacing: 12) {
+                if let selected {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle").font(.title3)
+                        .foregroundStyle(selected ? Color.moraMint : .white.opacity(0.4))
+                        .accessibilityHidden(true)
+                }
                 NativeCover(url: track.cover, size: 48)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.title).font(.body.weight(.medium)).lineLimit(1)
@@ -249,14 +390,15 @@ struct NativeTrackRow: View {
             }
             .frame(minHeight: 56)
             .contentShape(Rectangle())
-            .opacity(track.ok ? 1 : 0.45)
+            .opacity(track.ok || selected != nil ? 1 : 0.45)
         }
         .buttonStyle(.plain)
-        .disabled(!track.ok)
+        .disabled(!track.ok && selected == nil)
         .listRowBackground(Color.clear)
         .accessibilityLabel("\(track.title), \(track.artist)\(track.liked ? ", в любимом" : "")")
         .accessibilityValue(NativePlayerTime.text(track.duration))
-        .accessibilityHint(track.ok ? "Играть" : "Файл недоступен")
+        .accessibilityHint(selected != nil ? "Выбрать" : track.ok ? "Играть" : "Файл недоступен")
+        .accessibilityAddTraits(selected == true ? .isSelected : [])
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             Button { store.queue(track, next: true) } label: { Label("Следующим", systemImage: "text.line.first.and.arrowtriangle.forward") }
                 .tint(.moraMint)
@@ -291,6 +433,7 @@ struct NativeTrackActions: View {
         Button(action: play) { Label("Играть", systemImage: "play") }.disabled(!track.ok)
         Button { store.queue(track, next: true) } label: { Label("Играть следующим", systemImage: "text.line.first.and.arrowtriangle.forward") }.disabled(!track.ok)
         Button { store.queue(track, next: false) } label: { Label("Добавить в очередь", systemImage: "text.append") }.disabled(!track.ok)
+        Button { store.playlistTarget = [track] } label: { Label("Добавить в плейлист", systemImage: "text.badge.plus") }
         Divider()
         Button { store.react(track, track.liked ? 0 : 1) } label: {
             Label(track.liked ? "Убрать из любимого" : "Нравится", systemImage: track.liked ? "heart.slash" : "heart")
@@ -299,12 +442,87 @@ struct NativeTrackActions: View {
             Label(track.reaction < 0 ? "Убрать «Не нравится»" : "Не нравится", systemImage: "hand.thumbsdown")
         }
         Divider()
+        if let url = URL(string: "mora://track/" + track.id) { ShareLink(item: url) { Label("Поделиться треком", systemImage: "square.and.arrow.up") } }
         // The page's version picker takes over the screen (lib/native-ui.ts `versions`); the shell steps aside.
         Button { store.run("versions", ["id": track.id]) } label: { Label("Заменить трек", systemImage: "arrow.triangle.swap") }
+        Button { store.go("/track-edit/\(track.id)") } label: { Label("Сведения о треке", systemImage: "pencil") }
         if !track.album.isEmpty {
             Button { store.run("open", ["id": track.id, "to": "album"]) } label: { Label("Перейти к альбому", systemImage: "square.stack") }
         }
         Button { store.run("open", ["id": track.id, "to": "artist"]) } label: { Label("Перейти к исполнителю", systemImage: "music.mic") }
+    }
+}
+
+/// «Добавить в плейлист» from the track menu: an existing playlist or a new one, without leaving the screen.
+struct NativePlaylistPicker: View {
+    let tracks: [NativeTrack]
+    @EnvironmentObject private var store: NativeShellStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var creating = false
+    @State private var name = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Button { name = ""; creating = true } label: { Label("Новый плейлист", systemImage: "plus") }
+                        .accessibilityIdentifier("playlist.new")
+                } footer: {
+                    Text(subject)
+                }
+                Section("Мои плейлисты") {
+                    if store.playlists.isEmpty {
+                        Text("Плейлистов пока нет — создайте первый.").foregroundStyle(.white.opacity(0.6))
+                    }
+                    ForEach(store.playlists) { playlist in
+                        Button { add(to: playlist.id) } label: {
+                            HStack(spacing: 12) {
+                                NativeCover(url: playlist.cover, size: 36, radius: 6)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(playlist.name).lineLimit(1)
+                                    Text(NativeText.tracks(playlist.count)).font(.caption).foregroundStyle(.white.opacity(0.55))
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "plus.circle.fill").foregroundStyle(Color.moraMint)
+                            }
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Добавить в «\(playlist.name)»")
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(Color.moraBackground)
+            .navigationTitle("В плейлист")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } } }
+            .alert("Новый плейлист", isPresented: $creating) {
+                TextField("Название", text: $name)
+                Button("Создать") { create() }
+                Button("Отмена", role: .cancel) { name = "" }
+            } message: { Text(subject + " — в новый плейлист.") }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .tint(.moraMint)
+        .preferredColorScheme(.dark)
+    }
+
+    private var subject: String { tracks.count == 1 ? "«\(tracks[0].title)» — \(tracks[0].artist)" : NativeText.tracks(tracks.count) }
+
+    private func add(to playlistId: String) {
+        store.run("addToPlaylist", ["ids": tracks.map(\.id), "playlistId": playlistId])
+        dismiss()
+    }
+
+    private func create() {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        store.run("addToPlaylist", ["ids": tracks.map(\.id), "name": value])
+        dismiss()
     }
 }
 
@@ -315,7 +533,6 @@ struct NativeSearchView: View {
     private static let publicSources = ["ytmusic", "youtube", "soundcloud"]
     @EnvironmentObject private var store: NativeShellStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var scope = "all"
     @State private var results: [String: NativeSearchResults] = [:]
     @State private var errors: [String: String] = [:]
     @State private var searching: Set<String> = []
@@ -324,6 +541,7 @@ struct NativeSearchView: View {
     @State private var failure: String?
     private var query: String { store.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var source: String { store.searchSource }
+    private var scope: String { store.searchScope }
     private var key: String { query + "|" + source + "|" + scope }
     private var sources: [String] { source == "all" ? Self.publicSources + (store.ui.wave.yandex ? ["yandex"] : []) : source == "local" ? [] : [source] }
     private var local: [NativeTrack] { query.isEmpty ? [] : NativeSearchText.filter(store.library, query) }
@@ -360,6 +578,7 @@ struct NativeSearchView: View {
             .task(id: key) { await search() }
             .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: source)
             .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: scope)
+            .onChange(of: store.searchSource) { _, value in if value != "yandex" { store.searchScope = "all" } }
             .onChange(of: store.searchQuery) { _, value in if value.count > 200 { store.searchQuery = String(value.prefix(200)) } }
             .alert("Не удалось выполнить", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(failure ?? "") }
         }
@@ -380,7 +599,7 @@ struct NativeSearchView: View {
                 ForEach(["all", "local"] + Self.publicSources + ["yandex"], id: \.self) { value in Text(Self.title(value)).tag(value) }
             }.accessibilityIdentifier("search.source")
             if source == "yandex" {
-                Picker("Что искать", selection: $scope) {
+                Picker("Что искать", selection: $store.searchScope) {
                     Text("Всё").tag("all"); Text("Треки").tag("track"); Text("Артисты").tag("artist"); Text("Альбомы").tag("album")
                 }.pickerStyle(.segmented).accessibilityIdentifier("search.scope")
             }
@@ -431,7 +650,7 @@ struct NativeSearchView: View {
             }
         }
     }
-    private func linkRow(_ item: NativeSearchLink, symbol: String) -> some View {
+    private func linkRow(_ item: NativeCatalogLink, symbol: String) -> some View {
         Button { remember(); store.go(item.path) } label: {
             HStack(spacing: 12) {
                 NativeCover(url: item.cover, size: 48, radius: symbol == "music.mic" ? 24 : 8)
@@ -542,6 +761,9 @@ struct NativeMoreView: View {
                 Section("Музыка") {
                     link("/wave", "Моя волна", "Бесконечный поток под ваше настроение", "waveform")
                     link("/history", "История", "Что звучало и как сменялись треки", "clock.arrow.circlepath")
+                    link("/statistics", "Статистика", "Музыка за последние 30 дней", "chart.bar")
+                    link("/duplicates", "Дубликаты", "Объединить одинаковые файлы", "square.on.square")
+                    link("/smart-playlists", "Умные плейлисты", "Подборки по вашим правилам", "sparkles")
                     link("/downloads", "Загрузки", "Музыка на этом iPhone", "arrow.down.circle")
                     link("/import", "Импорт", "Плейлисты из Spotify, Apple Music, YouTube", "square.and.arrow.down")
                 }
@@ -551,8 +773,9 @@ struct NativeMoreView: View {
                     }
                 }
                 Section("Приложение") {
-                    link("/sources", "Источники музыки", "Файлы, серверы и Яндекс Музыка", "powerplug")
+                    link("/sources", "Яндекс Музыка", "Аккаунт и синхронизация лайков", "person.crop.circle")
                     link("/settings", "Настройки", "Переходы, громкость и офлайн", "gearshape")
+                    link("/sound", "Звук", "Эквалайзер и пресеты", "slider.vertical.3")
                     link("/diagnostics", "Диагностика AutoMix", "Всё ли в порядке со звуком и переходами", "waveform.path.ecg")
                 }
                 Section {
@@ -579,7 +802,7 @@ struct NativeMoreView: View {
     private func link(_ path: String, _ title: String, _ hint: String, _ symbol: String) -> some View {
         Button { store.go(path) } label: {
             HStack(spacing: 14) {
-                Image(systemName: symbol).font(.body.weight(.semibold)).foregroundStyle(Color.moraMint).frame(width: 28)
+                NativeIconBadge(symbol: symbol)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).foregroundStyle(.white)
                     Text(hint).font(.footnote).foregroundStyle(.white.opacity(0.55))
@@ -638,11 +861,14 @@ struct NativeLibraryView: View {
     }
     private func destination(_ title: String, _ symbol: String, _ path: String) -> some View {
         Button { store.go(path) } label: {
-            HStack {
-                Label(title, systemImage: symbol).font(.title3).padding(.vertical, 8)
+            HStack(spacing: 14) {
+                NativeIconBadge(symbol: symbol, size: 34)
+                Text(title).font(.title3).foregroundStyle(.white)
                 Spacer()
-                Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.secondary)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.35))
             }
-        }.listRowBackground(Color.clear)
+            .frame(minHeight: 48)
+            .contentShape(Rectangle())
+        }.buttonStyle(.plain).listRowBackground(Color.clear)
     }
 }

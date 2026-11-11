@@ -9,3 +9,4 @@ export const useDownloads = create<{ jobs: Map<string, DownloadJob>; load: () =>
   },
   upsert: (j) => { const m = new Map(get().jobs); m.set(j.id, j); set({ jobs: m }); },
 }));
+if (typeof window !== 'undefined') window.addEventListener('mora-downloads', () => { void useDownloads.getState().load(); });
