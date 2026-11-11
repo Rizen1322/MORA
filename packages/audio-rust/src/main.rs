@@ -383,6 +383,7 @@ fn main() {
         Some("--realtime")=>realtime(args.get(2).map_or("",String::as_str)),
         Some("--analyze") if args.len()>=4=>analyze(&args[2],&args[3],args.get(4).and_then(|v|v.parse().ok()).unwrap_or(300.)),
         Some("--compute")=>compute(),
+        Some("--compute-server")=>mora_audio::compute::server(),
         _=>Err("Usage: mora-audio --realtime [device] | --devices | --offline input.json output.f32 report.json | --analyze input.f32 output.json [expectedSeconds] | --compute".into()),
     };
     if let Err(error) = result {
