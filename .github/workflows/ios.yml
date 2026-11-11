@@ -118,6 +118,8 @@ jobs:
           name: MORA-unsigned-ipa${{ inputs.carplay && '-carplay' || '' }}${{ inputs.icloud && '-icloud' || '' }}
           path: |
             apps/mobile/MORA-unsigned.ipa
+            apps/mobile/MORA-unsigned.ipa.sha256
+            apps/mobile/MORA-unsigned.ipa.verification.json
             apps/mobile/RELEASE-NOTES.md
           if-no-files-found: error
           retention-days: 14

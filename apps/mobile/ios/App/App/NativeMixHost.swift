@@ -776,6 +776,7 @@ final class NativeMixHost {
         let canReverse = canGoBack
         var event = state
         event["title"] = title; event["artist"] = artist; event["trackId"] = publishedTrackId
+        event["currentTrack"] = ["title": title, "artist": artist, "trackId": publishedTrackId]
         event["artwork"] = publishedInfo[MPMediaItemPropertyArtwork]
         let finished = ended && !canAdvance && !continueWhenPrepared
         DispatchQueue.main.async { [weak self] in self?.onNowPlaying?(event, finished) }
