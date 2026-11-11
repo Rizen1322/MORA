@@ -12,6 +12,19 @@ import MediaPlayer
     private static var artworkFile: String?
 
     static func install(_ host: NativeMixHost) {
+        // A Siri cold start has no page yet; keep reactions in the existing durable outbox.
+        if host.onReaction == nil {
+            host.onReaction = { id, desired in
+                if let store = NativeShellStore.shared {
+                    let value = store.reaction(id) == desired ? 0 : desired
+                    store.react(id: id, value: value); return value
+                }
+                var outbox = NativeReactionOutbox()
+                let value = outbox.pending[id] == desired ? 0 : desired
+                outbox.set(id, value); return value
+            }
+            host.reactionState = { id in NativeShellStore.shared?.reaction(id) ?? NativeReactionOutbox().pending[id] ?? 0 }
+        }
         NativePlaybackActions.handler = { [weak host] action in
             guard let host, host.active else { return }
             _ = await withCheckedContinuation { done in
@@ -32,12 +45,14 @@ import MediaPlayer
                         do { try data.write(to: root.appendingPathComponent("activity-artwork.jpg"), options: .atomic); artworkFile = "activity-artwork.jpg" } catch {}
                     }
                 }
+                let reactionId = state["trackId"] as? String ?? ""
+                let reaction = store?.reaction(reactionId) ?? NativeReactionOutbox().pending[reactionId] ?? 0
                 content = NativeActivityState(trackId: state["trackId"] as? String ?? "",
                     title: String((state["title"] as? String ?? "MORA").prefix(150)),
                     artist: String((state["artist"] as? String ?? "").prefix(150)), artwork: artworkFile,
                     isPlaying: state["playing"] as? Bool == true, position: state["position"] as? Double ?? 0,
                     duration: state["duration"] as? Double ?? 0, offline: store?.offline == true,
-                    liked: store.map { $0.reaction(state["trackId"] as? String ?? "") > 0 } ?? false)
+                    liked: reaction > 0)
             }
             enqueue(content, station: store?.ui.now?.label ?? "Моя волна")
         }
