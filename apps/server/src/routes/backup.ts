@@ -60,6 +60,7 @@ export function registerBackupRoutes(app: FastifyInstance, { db, lib, events }: 
     if (req.query.library === '1') {
       backup.library = {
         settings: backupSettings(getSettings(db)),
+        smartPlaylists: q(db, 'SELECT id,name,rules,created_at AS createdAt FROM smart_playlists').all().map(row => ({ ...row, rules: JSON.parse(row.rules as string) })) as unknown as LibraryBackupData['smartPlaylists'],
         reactions: q(db, 'SELECT track_id AS trackId, value, updated_at AS updatedAt FROM reactions').all() as unknown as LibraryBackupData['reactions'],
         history: q(db, 'SELECT id AS key, track_id AS trackId, started_at AS startedAt, ended_at AS endedAt, played_ms AS playedMs, duration_ms AS durationMs, end_reason AS endReason FROM plays ORDER BY id').all() as unknown as LibraryBackupData['history'],
       };
@@ -125,6 +126,12 @@ export function registerBackupRoutes(app: FastifyInstance, { db, lib, events }: 
           kvSet(db, key, true);
         }
         kvSet(db, 'settings', { ...backupSettings(b.library.settings), version: 2 });
+        for (const playlist of b.library.smartPlaylists ?? []) {
+          const key = `backup.smart.${crypto.createHash('sha256').update(`${b.origin}/${playlist.id}`).digest('hex')}`;
+          const id = kvGet<string | null>(db, key, null) ?? crypto.randomUUID();
+          q(db, 'INSERT INTO smart_playlists(id,name,rules,created_at) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,rules=excluded.rules').run(id, playlist.name, JSON.stringify(playlist.rules), playlist.createdAt);
+          kvSet(db, key, id);
+        }
       }
       return { playlists: b.playlists.length, tracks: b.tracks.length, missingFiles };
     });

@@ -74,6 +74,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nativeSourceFromDownload", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeBackupList", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nativeBackupRead", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nativeRemapTracks", returnType: CAPPluginReturnPromise),
     ]
 
     private var playing = false
@@ -440,6 +441,24 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
     @objc private func downloadsChanged() { notifyListeners("downloads", data: [:]) }
+    @objc func nativeRemapTracks(_ call: CAPPluginCall) {
+        guard let mapping = call.getObject("mapping") as? [String: String], mapping.count <= 1000,
+              mapping.allSatisfy({ !$0.key.isEmpty && !$0.value.isEmpty && $0.key.utf8.count <= 512 && $0.value.utf8.count <= 512 }) else { call.reject("Неверное слияние треков"); return }
+        DispatchQueue.main.async {
+            NativeShellStore.shared?.remapReactions(mapping)
+            NativeDownloadManager.shared.remapTracks(mapping)
+        }
+        nativeMix.remapTracks(mapping) { result in
+            switch result {
+            case .success:
+                DispatchQueue.global(qos: .utility).async {
+                    do { try NativeStationFiles.remapTracks(mapping); call.resolve() }
+                    catch { call.reject(error.localizedDescription) }
+                }
+            case .failure(let error): call.reject(error.localizedDescription)
+            }
+        }
+    }
     @objc func nativeBackupList(_ call: CAPPluginCall) {
         Task.detached(priority: .utility) {
             do {

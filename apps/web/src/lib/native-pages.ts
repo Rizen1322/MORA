@@ -127,9 +127,51 @@ function artist(name: string): Screen {
 function playlists(): Screen {
   const rows: Row[] = st().playlists.map((p) => ({ kind: 'item', title: p.name, subtitle: tracksWord(p.count), cover: p.coverUrl, path: `/playlist/${p.id}` }));
   return { title: 'Плейлисты', sections: [
-    { rows: [button('Создать плейлист', 'createPlaylist', {}, { symbol: 'plus', style: 'primary', prompt: { title: 'Новый плейлист', placeholder: 'Название' } })] },
+    { rows: [button('Создать плейлист', 'createPlaylist', {}, { symbol: 'plus', style: 'primary', prompt: { title: 'Новый плейлист', placeholder: 'Название' } }),
+      { kind: 'link', title: 'Умные плейлисты', symbol: 'sparkles', path: '/smart-playlists' }] },
     { title: 'Собрано вами', footer: rows.length ? undefined : 'Добавляйте музыку в плейлист через меню трека.', rows },
   ] };
+}
+
+async function smartPlaylists(): Promise<Screen> {
+  const { playlists } = await api.smartPlaylists();
+  return { title: 'Умные плейлисты', sections: [{ rows: [{ kind: 'link', title: 'Создать умный плейлист', symbol: 'plus', path: '/smart-playlist/new' }] },
+    { rows: playlists.map(p => ({ kind: 'item', title: p.name, path: `/smart-playlist/${p.id}` })) }] };
+}
+async function smartPlaylist(id: string, editing: boolean): Promise<Screen> {
+  const playlist = id === 'new' ? { id: undefined, name: '', rules: {} as Record<string, unknown>, tracks: [] as string[] } : await api.smartPlaylist(id);
+  if (!editing && id !== 'new') return { title: playlist.name, sections: [...header(playlist.tracks, { type: 'playlist', id, label: playlist.name }, tracksWord(playlist.tracks.length)),
+    { rows: [{ kind: 'link', title: 'Изменить правила', path: `/smart-playlist/${id}/edit`, symbol: 'slider.horizontal.3' }] },
+    tracks(playlist.tracks.map(trackOf).filter((t): t is Track => !!t), { type: 'playlist', id, label: playlist.name })] };
+  const defaults = { name: playlist.name, genre: str(playlist.rules.genre), yearFrom: String(playlist.rules.yearFrom ?? ''), yearTo: String(playlist.rules.yearTo ?? ''),
+    liked: playlist.rules.liked === true ? 'да' : playlist.rules.liked === false ? 'нет' : '', minPlays: String(playlist.rules.minPlays ?? ''), notPlayedDays: String(playlist.rules.notPlayedDays ?? '') };
+  const labels = { name: 'Название', genre: 'Жанр содержит', yearFrom: 'Год от', yearTo: 'Год до', liked: 'В любимом: да / нет / пусто', minPlays: 'Не меньше прослушиваний', notPlayedDays: 'Не слушал дней' };
+  return { title: 'Правила плейлиста', sections: [{ footer: 'Все заполненные условия действуют одновременно. Пустое поле не ограничивает подборку.', rows: Object.entries(defaults).map(([key, value]) =>
+    ({ kind: 'field', key, title: labels[key as keyof typeof labels], value })) },
+    { rows: [button('Сохранить', 'saveSmartPlaylist', { id: playlist.id, defaults }, { style: 'primary' }),
+      ...(playlist.id ? [button('Удалить', 'deleteSmartPlaylist', { id }, { style: 'destructive', confirm: { title: 'Удалить умный плейлист?', text: 'Треки останутся в медиатеке.', button: 'Удалить' } })] : [])] }] };
+}
+
+async function duplicates(): Promise<Screen> {
+  const { groups } = await api.duplicates();
+  return { title: 'Дубликаты', sections: groups.length ? groups.map(group => ({ title: group.tracks[0]?.title ?? 'Одинаковые файлы', rows: [
+    ...group.tracks.map(t => text(t.title, t.artist, `${t.playCount} прослушиваний`)),
+    button('Объединить', 'mergeDuplicates', { hash: group.hash }, { confirm: { title: 'Объединить дубликаты?', text: 'Сохранится запись с наибольшим числом прослушиваний. История, лайки и записи плейлистов будут перенесены. Оригиналы связанных файлов останутся на месте.', button: 'Объединить' } })] })) : [{ rows: [text('Дубликатов по содержимому не найдено')] }] };
+}
+async function statistics(): Promise<Screen> {
+  const data = await api.statistics();
+  return { title: 'Статистика', sections: [{ title: 'За 30 дней', rows: [text('Прослушиваний', undefined, String(data.plays)), text('Время', undefined, fmtTotal(data.playedMs / 1000)), text('Самая длинная серия', undefined, `${data.longestStreak} дней`)] },
+    { title: 'Топ треков', rows: data.topTracks.map(t => text(t.title, t.artist, String(t.plays))) },
+    { title: 'Топ исполнителей', rows: data.topArtists.map(t => text(t.artist || 'Неизвестный исполнитель', undefined, String(t.plays))) }] };
+}
+function editTrack(id: string): Screen {
+  const t = trackOf(id);
+  if (!t) throw Error('Трек не найден');
+  const fields = { title: 'Название', artist: 'Исполнитель', album: 'Альбом', albumArtist: 'Исполнитель альбома', genre: 'Жанр', year: 'Год' };
+  return { title: 'Сведения о треке', sections: [{ footer: 'Изменения сохраняются в медиатеке. Теги исходного файла не переписываются.', rows: Object.entries(fields).map(([key, title]) =>
+    ({ kind: 'field', key, title, value: String(t[key as keyof Track] ?? '') })) },
+    { rows: [button('Сохранить сведения', 'saveTrackMetadata', { id }, { style: 'primary' }),
+      ...(t.provider === 'local' ? [{ kind: 'file', title: 'Выбрать обложку', types: ['png', 'jpeg', 'webp'], act: { name: 'setTrackArtwork', args: { id } } } as Row] : [])] }] };
 }
 
 /** A playlist's view order on the phone; the saved order stays as it is (and can still be dragged when shown). */
@@ -637,6 +679,8 @@ export function describe(): Promise<Screen> | Screen | null {
   if (a === 'album' && parts.length === 3) return album(b, c);
   if (a === 'artist' && parts.length === 2) return artist(b);
   if (a === 'playlist' && parts.length === 2) return playlist(b);
+  if (a === 'smart-playlist' && b) return smartPlaylist(b, c === 'edit');
+  if (a === 'track-edit' && b) return editTrack(b);
   if (parts.length === 1) {
     switch (a) {
       case 'history': return history();
@@ -646,6 +690,9 @@ export function describe(): Promise<Screen> | Screen | null {
       case 'sources': return sources();
       case 'settings': return settings();
       case 'backups': return backups();
+      case 'smart-playlists': return smartPlaylists();
+      case 'duplicates': return duplicates();
+      case 'statistics': return statistics();
       case 'diagnostics': return diagnostics();
       case 'sound': return sound();
     }
@@ -663,6 +710,31 @@ const SETTING_GROUPS = ['automix', 'wave', 'ui', 'downloads', 'yandex'] as const
 async function importBody(body: Parameters<typeof api.startImport>[0]) { importJob = await api.startImport(body); }
 
 export const actions: Record<string, (a: Args) => unknown> = {
+  saveSmartPlaylist: async (a): Promise<ActResult> => {
+    const values = { ...(a.defaults as Record<string, string> ?? {}), ...form(a) };
+    const rules: Record<string, unknown> = {};
+    if (values.genre) rules.genre = values.genre.trim();
+    if (values.liked) { if (!['да', 'нет'].includes(values.liked.trim().toLowerCase())) throw Error('В поле «В любимом» укажите «да», «нет» или оставьте его пустым'); rules.liked = values.liked.trim().toLowerCase() === 'да'; }
+    for (const key of ['yearFrom', 'yearTo', 'minPlays', 'notPlayedDays']) if (values[key]?.trim()) rules[key] = Number(values[key]);
+    const result = await api.saveSmartPlaylist({ id: str(a.id) || undefined, name: values.name, rules });
+    return { go: `/smart-playlist/${result.id}` };
+  },
+  deleteSmartPlaylist: async (a): Promise<ActResult> => { await api.deleteSmartPlaylist(str(a.id)); return { go: '/smart-playlists' }; },
+  mergeDuplicates: async (a) => {
+    const result = await api.mergeDuplicates(str(a.hash));
+    await st().loadLibrary();
+    controller.remapTracks(result.mapping);
+    await nativePlaybackControls()?.remapTracks?.(result.mapping);
+    st().toast(result.cleanupWarnings.length ? result.cleanupWarnings.join('. ') : 'Дубликаты объединены');
+  },
+  saveTrackMetadata: async (a) => {
+    const t = trackOf(str(a.id)); if (!t) throw Error('Трек не найден');
+    const values = form(a), patch = { title: values.title ?? t.title, artist: values.artist ?? t.artist, album: values.album ?? t.album,
+      albumArtist: values.albumArtist ?? t.albumArtist, genre: values.genre ?? t.genre, year: values.year === undefined ? t.year : values.year.trim() ? Number(values.year) : null };
+    if (!patch.title.trim()) throw Error('Введите название');
+    await api.updateTrack(t.id, patch); st().patchTrack(t.id, patch);
+  },
+  setTrackArtwork: async (a) => { await api.updateArtwork(str(a.id), str(a.base64)); await st().loadLibrary(); },
   searchItem: (a) => nativeCatalogCommands.searchAction(a),
   catalogMore: (a) => nativeCatalogCommands.catalogMore(a),
   playAll: (a) => {

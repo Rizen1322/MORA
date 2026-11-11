@@ -47,7 +47,7 @@ export function uiState(s = useApp.getState(), radio = useRadio.getState(), prep
     loaded: s.loaded,
     station: {
       context: p.context?.type ?? 'library', source: ctx === 'yandex-wave' ? 'yandex' : ctx === 'online-radio' ? 'online' : ctx === 'wave' ? 'own' : null,
-      index: 0, position: p.position,
+      index: 0, position: p.position, contextId: p.context?.id ?? null,
       settings: { mood: s.settings?.wave?.mood ?? 'normal', diversity: s.settings?.wave?.diversity ?? 'balanced', mode: s.settings?.wave?.mode ?? 'normal' },
       tracks: p.queue.slice(p.index, p.index + 50).flatMap(entry => {
         const t = trackOf(entry.trackId);
@@ -86,6 +86,19 @@ type Args = Record<string, unknown>;
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
 /** Native → page. Arguments come from our own Swift code, but are still checked: a wrong call must fail, not misplay. */
 export const commands: Record<string, (a: Args) => unknown> = {
+  openTrack: async (a) => {
+    const id = str(a.id); if (!trackOf(id)) throw Error('Трек не найден в медиатеке');
+    await controller.playTracks([id], 0, { type: 'library', label: 'Медиатека' });
+  },
+  playPlaylist: async (a) => {
+    const playlist = await api.playlist(str(a.id));
+    await controller.playTracks(playlist.entries.map(entry => entry.trackId), 0, { type: 'playlist', id: playlist.id, label: playlist.name });
+  },
+  downloadCurrent: async () => {
+    const id = controller.state.queue[controller.state.index]?.trackId;
+    if (!id) throw Error('Сейчас ничего не играет');
+    return api.download({ trackId: id });
+  },
   backup: async () => {
     const response = await fetch('/api/backup/playlists?library=1');
     if (!response.ok) throw Error('Не удалось собрать резервную копию');

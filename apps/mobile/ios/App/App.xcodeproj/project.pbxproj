@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		FEF0C0DE2FF0000100000001 /* NativeSpotlight.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEF0C0DE2FF0000100000002 /* NativeSpotlight.swift */; };
 		FDF0C0DE2FF0000100000001 /* NativeBackupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDF0C0DE2FF0000100000002 /* NativeBackupStore.swift */; };
 		FCF0C0DE2FF0000100000001 /* NativeDownloadQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCF0C0DE2FF0000100000002 /* NativeDownloadQueue.swift */; };
 		FCF0C0DE2FF0000100000003 /* NativeDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCF0C0DE2FF0000100000004 /* NativeDownloadManager.swift */; };
@@ -57,6 +58,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		FEF0C0DE2FF0000100000002 /* NativeSpotlight.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpotlight.swift; sourceTree = "<group>"; };
 		FDF0C0DE2FF0000100000002 /* NativeBackupStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBackupStore.swift; sourceTree = "<group>"; };
 		FCF0C0DE2FF0000100000002 /* NativeDownloadQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDownloadQueue.swift; sourceTree = "<group>"; };
 		FCF0C0DE2FF0000100000004 /* NativeDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDownloadManager.swift; sourceTree = "<group>"; };
@@ -311,6 +313,7 @@
 				FCF0C0DE2FF0000100000002 /* NativeDownloadQueue.swift */,
 				FCF0C0DE2FF0000100000004 /* NativeDownloadManager.swift */,
 				FDF0C0DE2FF0000100000002 /* NativeBackupStore.swift */,
+				FEF0C0DE2FF0000100000002 /* NativeSpotlight.swift */,
 				F8F0C0DE2FF0000100000002 /* NativeCarPlay.swift */,
 				F8F0C0DE2FF0000100000004 /* NativeWidgetShared.swift */,
 				F8F0C0DE2FF000010000000A /* App.entitlements */,
@@ -445,6 +448,7 @@
 				FCF0C0DE2FF0000100000001 /* NativeDownloadQueue.swift in Sources */,
 				FCF0C0DE2FF0000100000003 /* NativeDownloadManager.swift in Sources */,
 				FDF0C0DE2FF0000100000001 /* NativeBackupStore.swift in Sources */,
+				FEF0C0DE2FF0000100000001 /* NativeSpotlight.swift in Sources */,
 				F8F0C0DE2FF0000100000001 /* NativeCarPlay.swift in Sources */,
 				F8F0C0DE2FF0000100000003 /* NativeWidgetShared.swift in Sources */,
 				E5F0C0DE2FF0000100000007 /* NativePages.swift in Sources */,

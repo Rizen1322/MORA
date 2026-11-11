@@ -13,6 +13,7 @@ import { playbackDiagnostics, tracePlayback, withPlaybackId, type NativePlayback
  */
 
 interface MoraAudio extends NativeDiagnostics, NativeProbePort, NativeMixPort {
+  nativeRemapTracks(item: { mapping: Record<string, string> }): Promise<void>;
   nativeBackupList(): Promise<{ files: { name: string; cloud: boolean }[] }>;
   nativeBackupRead(item: { name: string; cloud: boolean }): Promise<{ text: string }>;
   nativeDownloadList(): ReturnType<NonNullable<NativePlaybackControls['downloads']>['list']>;
@@ -177,6 +178,7 @@ export function setupNative(apiFetch: ApiFetch, onPower: (saver: boolean) => voi
     },
   };
   window.moraNativePlayback = controls;
+  controls.remapTracks = mapping => MoraAudio.nativeRemapTracks({ mapping });
   controls.backups = { list: () => MoraAudio.nativeBackupList(), read: (name, cloud) => MoraAudio.nativeBackupRead({ name, cloud }) };
   controls.downloads = {
     list: () => MoraAudio.nativeDownloadList(),

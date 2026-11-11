@@ -70,4 +70,18 @@ enum NativeStationFiles {
         guard url.deletingLastPathComponent() == root.resolvingSymlinksInPath(), FileManager.default.isReadableFile(atPath: url.path) else { throw NativeStationSnapshot.Failure.noLocalFiles }
         return url
     }
+    static func remapTracks(_ mapping: [String: String]) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard var snapshot = try? load(), let root else { return }
+        for i in snapshot.tracks.indices {
+            guard let id = mapping[snapshot.tracks[i].trackId] else { continue }
+            if let old = snapshot.tracks[i].localFile, let original = try? localURL(old) {
+                let destination = root.appendingPathComponent(name(id))
+                if !FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.linkItem(at: original, to: destination) }
+                snapshot.tracks[i].localFile = destination.lastPathComponent
+            }
+            snapshot.tracks[i].trackId = id
+        }
+        try save(snapshot)
+    }
 }

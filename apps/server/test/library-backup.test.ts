@@ -15,6 +15,7 @@ it('round trips settings, reactions and history without credentials, and restore
   kvSet(db, 'secret.fixture', 'SECRET');
   kvSet(db, 'settings', { version: 2, automix: { enabled: false, token: 'SECRET' }, wave: { mood: 'calm' } });
   q(db, 'INSERT INTO reactions(track_id,value,updated_at) VALUES(?,1,100)').run(t.id);
+  q(db, 'INSERT INTO smart_playlists(id,name,rules,created_at) VALUES(?,?,?,1)').run('smart-original', 'Любимое', JSON.stringify({ liked: true }));
   q(db, 'INSERT INTO plays(track_id,started_at,ended_at,played_ms,duration_ms,end_reason) VALUES(?,1,100,99000,180000,?)').run(t.id, 'stop');
   const backup = await app.app.inject('/api/backup/playlists?library=1');
   expect(backup.statusCode, backup.body).toBe(200);
@@ -27,6 +28,7 @@ it('round trips settings, reactions and history without credentials, and restore
   expect((await restore()).statusCode).toBe(200);
   expect(q(db, 'SELECT value FROM reactions WHERE track_id=?').get(t.id)).toMatchObject({ value: 1 });
   expect(q(db, 'SELECT COUNT(*) AS n FROM plays').get()).toMatchObject({ n: 1 });
+  expect(q(db, 'SELECT COUNT(*) AS n FROM smart_playlists').get()).toMatchObject({ n: 2 });
   const invalid = backup.json(); invalid.library.history[0].trackId = 'absent';
   expect((await app.app.inject({ method: 'POST', url: '/api/backup/playlists/restore', payload: invalid })).statusCode).toBe(400);
 });

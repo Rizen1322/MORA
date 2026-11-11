@@ -70,6 +70,7 @@ final class NativeMixHost {
     private var pendingSkips: Int { max(0, skipTarget - index) }
     private var initialTicket: NativePreparationTicket?
     private var knownManifest: [String: Any]?
+    private var identityAliases: [String: String] = [:]
     private var initialConfig: [String: Any] = [:]
     // Main queue only. Do not remove WebKit's or the baseline probe's targets.
     var onReaction: ((String, Int) -> Int)?
@@ -189,6 +190,7 @@ final class NativeMixHost {
                   let gain = track["gainDb"] as? Double, gain.isFinite, abs(gain) <= 36 else { throw Failure.invalid }
             // Keep encoded images/URLs out of the DSP context, including on seek/skip.
             var copy = track; copy.removeValue(forKey: "artwork"); copy.removeValue(forKey: "coverUrl")
+            if let id = copy["trackId"] as? String, let next = identityAliases[id] { copy["trackId"] = next }
             copy.removeValue(forKey: "artworkHTTPHost"); copy.removeValue(forKey: "_analysisPolicy"); return copy
         }
     }
@@ -377,6 +379,25 @@ final class NativeMixHost {
                 self.sourceBytes[key] = bytes
                 self.reply(completion, .success(["found": true]))
             } catch { self.reply(completion, .failure(error)) }
+        }
+    }
+    func remapTracks(_ mapping: [String: String], completion: @escaping Reply) {
+        work.async {
+            self.identityAliases = self.identityAliases.mapValues { mapping[$0] ?? $0 }
+            self.identityAliases.merge(mapping) { _, new in new }
+            func remap(_ item: [String: Any]) -> [String: Any] {
+                var result = item
+                if let id = item["trackId"] as? String, let next = mapping[id] { result["trackId"] = next }
+                return result
+            }
+            self.tracks = self.tracks.map(remap); self.config["tracks"] = self.tracks
+            if var manifest = self.knownManifest {
+                for key in ["items", "loopItems"] { if let rows = manifest[key] as? [[String: Any]] { manifest[key] = rows.map(remap) } }
+                if let previous = manifest["previous"] as? [String: Any] { manifest["previous"] = remap(previous) }
+                self.knownManifest = manifest
+            }
+            if self.folder != nil { self.publish("merge") }
+            self.reply(completion, .success([:]))
         }
     }
     /// Replaces the known future queue, then native playback callbacks release preparation permits.

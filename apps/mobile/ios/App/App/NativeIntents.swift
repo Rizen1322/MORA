@@ -1,5 +1,6 @@
 import AppIntents
 import MediaPlayer
+import UIKit
 
 /// Siri and Shortcuts («Включи волну в MORA», «Что играет в MORA», «Лайкни трек в MORA»).
 /// They act through the same shell store as the native screens. Starting the wave needs the page,
@@ -74,6 +75,11 @@ enum NativeDeepLink {
             case "player": if store.miniPlaying { store.openPlayer() } else if store.miniTitle != nil { store.togglePlayback() }
             case "liked": store.go("/liked")
             case "search": store.go("/search")
+            case "import": store.go("/import")
+            case "track":
+                guard let link = NativeTrackLink(url) else { return }
+                do { _ = try await store.call("openTrack", ["id": link.id]); store.openPlayer() }
+                catch { store.show(error.localizedDescription) }
             default: break
             }
         }
@@ -86,6 +92,7 @@ struct StartWaveIntent: AppIntent {
     static let openAppWhenRun = false
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+        if UIApplication.shared.applicationState == .background { AppDelegate.backgroundLaunch = true }
         do {
             try await StationStarter.start()
             return .result(dialog: "Включаю сохранённую волну")
@@ -131,5 +138,60 @@ struct MoraShortcuts: AppShortcutsProvider {
                     shortTitle: "Что играет", systemImageName: "music.note")
         AppShortcut(intent: LikeCurrentTrackIntent(), phrases: ["Лайкни трек в \(.applicationName)", "Мне нравится этот трек в \(.applicationName)"],
                     shortTitle: "Нравится", systemImageName: "heart")
+        AppShortcut(intent: PlayPlaylistIntent(), phrases: ["Включи плейлист \(\.$playlist) в \(.applicationName)"], shortTitle: "Включить плейлист", systemImageName: "music.note.list")
+        AppShortcut(intent: SetSleepTimerIntent(), phrases: ["Таймер сна в \(.applicationName)"], shortTitle: "Таймер сна", systemImageName: "moon.zzz")
+        AppShortcut(intent: DownloadCurrentIntent(), phrases: ["Скачай текущий трек в \(.applicationName)"], shortTitle: "Скачать трек", systemImageName: "arrow.down.circle")
+    }
+}
+
+struct MoraPlaylistEntity: AppEntity {
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Плейлист"
+    static var defaultQuery = MoraPlaylistQuery()
+    var id: String, name: String
+    var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(name)") }
+}
+struct MoraPlaylistQuery: EntityStringQuery {
+    private func all() -> [MoraPlaylistEntity] { (NativeWidgetData.load()?.playlists ?? []).map { .init(id: $0.id, name: $0.name) } }
+    func entities(for identifiers: [String]) async throws -> [MoraPlaylistEntity] { all().filter { identifiers.contains($0.id) } }
+    func entities(matching string: String) async throws -> [MoraPlaylistEntity] { all().filter { $0.name.localizedCaseInsensitiveContains(string) } }
+    func suggestedEntities() async throws -> [MoraPlaylistEntity] { all() }
+}
+struct PlayPlaylistIntent: AppIntent {
+    static var title: LocalizedStringResource = "Включить плейлист"
+    static var openAppWhenRun = false
+    @Parameter(title: "Плейлист") var playlist: MoraPlaylistEntity
+    @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+        do {
+            if UIApplication.shared.applicationState == .active, let store = NativeShellStore.shared, store.ui.loaded {
+                _ = try await store.call("playPlaylist", ["id": playlist.id])
+            } else { try await StationStarter.start(playlistId: playlist.id) }
+            return .result(dialog: "Включаю плейлист")
+        } catch { return .result(dialog: "Откройте MORA, чтобы начать этот плейлист") }
+    }
+}
+struct SetSleepTimerIntent: AppIntent {
+    static var title: LocalizedStringResource = "Таймер сна"
+    @Parameter(title: "Минуты", default: 30) var minutes: Int
+    @Parameter(title: "В конце трека", default: false) var endOfTrack: Bool
+    @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+        guard NativeMixHost.shared.active else { return .result(dialog: "Сейчас ничего не играет") }
+        if endOfTrack {
+            let id = NativeMixHost.shared.snapshot["entryId"] as? String ?? ""
+            guard !id.isEmpty else { return .result(dialog: "Трек ещё загружается") }
+            NativeSleepTimer.shared.set(.endOfTrack(entryId: id))
+        } else {
+            guard (1...720).contains(minutes) else { return .result(dialog: "Укажите от 1 до 720 минут") }
+            NativeSleepTimer.shared.set(.until(Date().addingTimeInterval(Double(minutes) * 60)))
+        }
+        return .result(dialog: "Таймер сна включён")
+    }
+}
+struct DownloadCurrentIntent: AppIntent {
+    static var title: LocalizedStringResource = "Скачать текущий трек"
+    static var openAppWhenRun = true
+    @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+        guard let store = await NativeIntentShell.ready() else { return .result(dialog: "Откройте MORA, чтобы скачать трек") }
+        _ = try await store.call("downloadCurrent", timeout: 60)
+        return .result(dialog: "Трек добавлен в очередь загрузок")
     }
 }

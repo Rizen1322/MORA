@@ -385,6 +385,7 @@ final class NativeShellStore: ObservableObject {
     private var backupTimer: Timer?
     private var backingUp = false
     private var backupRevision = -1
+    func remapReactions(_ mapping: [String: String]) { reactions.remap(mapping); flushReactions() }
 
     func captureBackup() {
         guard ui.loaded, !backingUp, revision != backupRevision else { return }
@@ -431,8 +432,9 @@ final class NativeShellStore: ObservableObject {
             track.localFile = NativeStationFiles.name(track.trackId)
             return track
         }
-        let next = NativeStationSnapshot(context: incoming.context, source: incoming.source, index: incoming.index,
+        var next = NativeStationSnapshot(context: incoming.context, source: incoming.source, index: incoming.index,
             position: incoming.position, settings: incoming.settings, tracks: tracks)
+        next.contextId = incoming.contextId
         guard (try? next.validate()) != nil else { return }
         station = next
         guard stationWrite == nil else { return } // Throttle continuous position ticks rather than postponing forever.
@@ -489,13 +491,14 @@ final class NativeShellStore: ObservableObject {
 
     func receive(_ value: [String: Any]) -> Bool {
         scheduleStation(value)
+        if value["library"] != nil { DispatchQueue.main.async { NativeSpotlight.update(self.library) } }
         if value["enable"] as? Bool == true { setShown(true, resync: false) }
         if let rows = value["library"] as? [[String: Any]] { library = rows.compactMap(NativeTrack.init) }
         if let rows = value["playlists"] as? [[String: Any]] { playlists = rows.compactMap(NativePlaylist.init) }
         if let rows = value["queue"] as? [[String: Any]] { queue = rows.compactMap(NativeQueuedTrack.init) }
         let next = NativeUiState(value)
         if next.loaded && !ui.loaded { offerBackupRestore() }
-        let widgetChanged = value["library"] != nil || Self.trackChanged(ui.now, next.now)
+        let widgetChanged = value["library"] != nil || value["playlists"] != nil || Self.trackChanged(ui.now, next.now)
         if next.loaded && !ui.loaded && offline { sendNetwork() } // a page that (re)loaded without a network
         if next.toast != ui.toast, let toast = next.toast, screen != .web { show(toast.text) }
         if next.path != ui.path || next.searchQuery != ui.searchQuery || next.searchSource != ui.searchSource || next.searchScope != ui.searchScope {
@@ -683,6 +686,7 @@ final class NativeShellStore: ObservableObject {
     private func publishWidget() {
         let liked = self.liked
         var next = NativeWidgetData(playing: miniPlaying, liked: liked.prefix(6).map { .init(title: $0.title, artist: $0.artist) }, likedCount: liked.count)
+        next.playlists = playlists.map { .init(id: $0.id, name: $0.name) }
         if let title = miniTitle, !title.isEmpty { next.now = .init(title: title, artist: miniArtist) } else { next.now = widget?.now }
         next.updatedAt = widget?.updatedAt
         guard next != widget else { return }

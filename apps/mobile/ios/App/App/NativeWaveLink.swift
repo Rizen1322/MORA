@@ -13,3 +13,13 @@ struct NativeWaveLink {
         source = value.flatMap { ["own", "online", "yandex"].contains($0) ? $0 : nil }
     }
 }
+
+struct NativeTrackLink {
+    let id: String
+    init?(_ url: URL) {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), parts.scheme?.lowercased() == "mora", parts.host?.lowercased() == "track" else { return nil }
+        let path = parts.path.split(separator: "/")
+        guard path.count == 1, String(path[0]).range(of: "^[A-Za-z0-9_-]{1,100}$", options: .regularExpression) != nil else { return nil }
+        id = String(path[0])
+    }
+}

@@ -159,10 +159,12 @@ enum NativeRoute {
         case "/library", "/library/tracks", "/library/search": return .library
         case "/search", "/yandex": return .search
         // Described by the page (apps/web/src/lib/native-pages.ts `describe`, same routes).
-        case "/library/albums", "/library/artists", "/library/playlists", "/history", "/wave", "/downloads", "/import", "/sources", "/settings", "/diagnostics", "/sound", "/backups":
+        case "/library/albums", "/library/artists", "/library/playlists", "/history", "/wave", "/downloads", "/import", "/sources", "/settings", "/diagnostics", "/sound", "/backups", "/smart-playlists", "/duplicates", "/statistics":
             return .page
         default:
             let parts = path.split(separator: "/")
+            if parts.count == 2 && ["smart-playlist", "track-edit"].contains(parts[0]) { return .page }
+            if parts.count == 3 && parts[0] == "smart-playlist" && parts[2] == "edit" { return .page }
             if parts.count == 3 && (["catalog", "public"].contains(parts.first) && ["artist", "album"].contains(parts[1]) || parts.first == "soundcloud" && parts[1] == "artist") { return .page }
             if (parts.first == "album" && parts.count == 3) || (["artist", "playlist"].contains(parts.first) && parts.count == 2) { return .page }
             return .web
@@ -348,6 +350,15 @@ struct NativeReactionOutbox {
     mutating func acknowledge(_ id: String, _ value: Int) {
         guard pending[id] == value else { return }
         pending.removeValue(forKey: id)
+        defaults.set(pending, forKey: "mora.pendingReactions")
+    }
+    mutating func remap(_ mapping: [String: String]) {
+        var next: [String: Int] = [:]
+        for (id, value) in pending {
+            let key = mapping[id] ?? id, previous = next[key] ?? 0
+            next[key] = value == 1 || previous == 1 ? 1 : value == -1 || previous == -1 ? -1 : 0
+        }
+        pending = next
         defaults.set(pending, forKey: "mora.pendingReactions")
     }
 }

@@ -5,6 +5,7 @@ struct NativeStationPayload: Decodable {
     let index: Int, position: Double
     let settings: NativeStationSnapshot.Settings
     let tracks: [NativeStationSnapshot.Track]
+    let contextId: String?
 }
 
 struct NativeStationSnapshot: Codable, Equatable {
@@ -23,6 +24,7 @@ struct NativeStationSnapshot: Codable, Equatable {
     var settings: Settings
     var tracks: [Track]
     var updatedAt = Date()
+    var contextId: String?
 
     enum Failure: LocalizedError {
         case invalid, noLocalFiles

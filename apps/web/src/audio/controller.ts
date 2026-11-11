@@ -257,6 +257,23 @@ export class PlayerController {
     this.loudnessTarget = t;
   }
 
+  /** Equal content hashes keep the same PCM; only the library identity changes after a merge. */
+  remapTracks(mapping: Record<string, string>): void {
+    const remap = <T extends { trackId: string }>(entry: T): T => ({ ...entry, trackId: mapping[entry.trackId] ?? entry.trackId });
+    for (const slot of this.slots) if (slot) slot.trackId = mapping[slot.trackId] ?? slot.trackId;
+    if (this.next) this.next.entry = remap(this.next.entry);
+    if (this.originalOrder) this.originalOrder = this.originalOrder.map(remap);
+    this.nativeTracks = this.nativeTracks.map(remap);
+    for (const [old, id] of Object.entries(mapping)) {
+      const file = this.nativeFiles.get(old);
+      if (file && !this.nativeFiles.has(id)) this.nativeFiles.set(id, file);
+      this.nativeFiles.delete(old);
+    }
+    this.nativeManifestKey = '';
+    this.nativeQueueEditRevision++;
+    this.set({ queue: this.state.queue.map(remap), nextPlan: null, nextPending: [] });
+  }
+
   /** A saved mix setting must affect the already prepared pair as well. */
   onSettingsChanged(target: number | null): void {
     this.previewRevision++;

@@ -1,5 +1,6 @@
 import { DEFAULT_AUTOMIX_SETTINGS, sanitizeSound } from '@automix/core';
 import { DEFAULT_SETTINGS, type AppSettings } from './automix.ts';
+import { validateSmartRules, type SmartRules } from './smart-playlists.ts';
 
 /** Explicit settings fields only; arbitrary kv/provider configuration never enters a backup. */
 export function backupSettings(raw: AppSettings): AppSettings {
@@ -21,6 +22,7 @@ export function backupSettings(raw: AppSettings): AppSettings {
 }
 
 export interface LibraryBackupData {
+  smartPlaylists?: { id: string; name: string; rules: SmartRules; createdAt: number }[];
   settings: AppSettings;
   reactions: { trackId: string; value: number; updatedAt: number }[];
   history: { key: number; trackId: string; startedAt: number; endedAt: number | null; playedMs: number; durationMs: number | null; endReason: string | null }[];
@@ -36,4 +38,8 @@ export function validateLibraryBackup(value: LibraryBackupData, ids: Set<string>
       || (row.endedAt !== null && !integer(row.endedAt)) || (row.durationMs !== null && !integer(row.durationMs))
       || (row.endReason !== null && !['finished', 'transition', 'skip', 'stop', 'error'].includes(row.endReason)))) throw Error('Повреждена копия медиатеки');
   backupSettings(value.settings);
+  if (value.smartPlaylists !== undefined) {
+    if (!Array.isArray(value.smartPlaylists) || value.smartPlaylists.length > 1000 || value.smartPlaylists.some(p => !p || typeof p.id !== 'string' || p.id.length > 100 || typeof p.name !== 'string' || !p.name.trim() || p.name.length > 120 || !integer(p.createdAt))) throw Error('Повреждены умные плейлисты');
+    for (const playlist of value.smartPlaylists) validateSmartRules(playlist.rules);
+  }
 }

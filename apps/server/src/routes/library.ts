@@ -39,15 +39,34 @@ export function registerLibraryRoutes(app: FastifyInstance, s: Services): void {
     return lib.trackDTO(t.id);
   });
 
-  app.patch<{ Params: { id: string }; Body: { title?: string; artist?: string; album?: string; genre?: string } }>('/api/tracks/:id', async (req, reply) => {
+  app.patch<{ Params: { id: string }; Body: { title?: string; artist?: string; album?: string; genre?: string; albumArtist?: string; year?: number | null } }>('/api/tracks/:id', async (req, reply) => {
     const b = req.body ?? {};
+    if (b.year !== undefined && b.year !== null && (!Number.isInteger(b.year) || b.year < 1 || b.year > 3000)) return reply.code(400).send({ error: 'Год должен быть от 1 до 3000' });
     const t = lib.updateMeta(req.params.id, {
       title: typeof b.title === 'string' ? b.title.trim() || undefined : undefined,
       artist: typeof b.artist === 'string' ? b.artist.trim() : undefined,
       album: typeof b.album === 'string' ? b.album.trim() : undefined,
       genre: typeof b.genre === 'string' ? b.genre.trim() : undefined,
+      album_artist: typeof b.albumArtist === 'string' ? b.albumArtist.trim() : undefined,
+      year: b.year,
     });
     if (!t) return reply.code(404).send({ error: 'трек не найден' });
+    return { ok: true };
+  });
+
+  app.post<{ Params: { id: string }; Body: { base64?: string } }>('/api/tracks/:id/artwork', { bodyLimit: 8 * 1024 * 1024 }, async (req, reply) => {
+    const track = lib.get(req.params.id);
+    if (!track || track.provider !== 'local') return reply.code(400).send({ error: 'Обложку можно менять только у своих файлов' });
+    const text = req.body?.base64;
+    if (typeof text !== 'string' || text.length > 7 * 1024 * 1024 || !/^[A-Za-z0-9+/]+={0,2}$/.test(text)) return reply.code(400).send({ error: 'Некорректная обложка' });
+    const data = Buffer.from(text, 'base64');
+    const format = data.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ? 'png'
+      : data[0] === 255 && data[1] === 216 && data[2] === 255 ? 'jpeg'
+      : data.toString('ascii', 0, 4) === 'RIFF' && data.toString('ascii', 8, 12) === 'WEBP' ? 'webp' : null;
+    if (!format || data.length > 5 * 1024 * 1024) return reply.code(400).send({ error: 'Выберите JPEG, PNG или WebP до 5 МБ' });
+    const cover = await lib.saveCover(data, format);
+    q(db, 'UPDATE tracks SET cover_id=?,updated_at=? WHERE id=?').run(cover, Date.now(), track.id);
+    events.emit({ type: 'library', reason: 'cover', trackId: track.id });
     return { ok: true };
   });
 

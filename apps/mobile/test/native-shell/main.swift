@@ -93,6 +93,10 @@ outbox.acknowledge("track", -1)
 precondition(NativeReactionOutbox(defaults: reactionDefaults).pending.isEmpty)
 outbox.set("", 1); outbox.set("bad", 7)
 precondition(outbox.pending.isEmpty)
+outbox.set("old", 1); outbox.set("kept", -1)
+outbox.remap(["old": "kept"])
+precondition(outbox.pending == ["kept": 1], "merging preserves pending likes")
+outbox.acknowledge("kept", 1)
 reactionDefaults.removePersistentDomain(forName: reactionSuite)
 
 let previewPaused: [String: Any] = ["active": true, "playing": false, "entryId": "same", "controlRevision": 4, "epoch": 7]

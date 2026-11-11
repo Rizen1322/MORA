@@ -191,10 +191,11 @@ export function PlaylistPicker({ trackIds, onClose }: { trackIds: string[]; onCl
 }
 
 function EditTrack({ track, onClose }: { track: Track; onClose: () => void }) {
-  const [v, setV] = useState({ title: track.title, artist: track.artist, album: track.album, genre: track.genre });
+  const [v, setV] = useState({ title: track.title, artist: track.artist, album: track.album, genre: track.genre, albumArtist: track.albumArtist, year: String(track.year ?? '') });
   const save = async () => {
-    await api.updateTrack(track.id, v);
-    useApp.getState().patchTrack(track.id, v);
+    const patch = { ...v, year: v.year.trim() ? Number(v.year) : null };
+    await api.updateTrack(track.id, patch);
+    useApp.getState().patchTrack(track.id, patch);
     onClose();
   };
   return (
@@ -212,9 +213,9 @@ function EditTrack({ track, onClose }: { track: Track; onClose: () => void }) {
         </>
       }
     >
-      {(['title', 'artist', 'album', 'genre'] as const).map((k) => (
+      {(['title', 'artist', 'album', 'albumArtist', 'year', 'genre'] as const).map((k) => (
         <div className="field" key={k}>
-          <label htmlFor={`edit-${k}`}>{{ title: 'Название', artist: 'Исполнитель', album: 'Альбом', genre: 'Жанр' }[k]}</label>
+          <label htmlFor={`edit-${k}`}>{{ title: 'Название', artist: 'Исполнитель', album: 'Альбом', albumArtist: 'Исполнитель альбома', year: 'Год', genre: 'Жанр' }[k]}</label>
           <input id={`edit-${k}`} className="input" value={v[k]} onChange={(e) => setV({ ...v, [k]: e.target.value })} />
         </div>
       ))}

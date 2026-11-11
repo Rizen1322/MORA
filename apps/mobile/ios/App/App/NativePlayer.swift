@@ -251,7 +251,8 @@ final class NativeSleepTimer: ObservableObject {
     }
 
     private func tick() {
-        guard let mode, let host = NativeShellStore.shared?.host else { return }
+        guard let mode else { return }
+        let host = NativeMixHost.shared
         switch mode {
         case .until(let date): if Date() >= date { finish(host) }
         case .endOfTrack(let entry):

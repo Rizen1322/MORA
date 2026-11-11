@@ -9,6 +9,7 @@ export interface NativeProbe {
   command(action: MediaSessionAction, seekTime?: number): Promise<NativeProbeState>;
 }
 export interface NativePlaybackControls {
+  remapTracks?: (mapping: Record<string, string>) => Promise<void>;
   backups?: {
     list(): Promise<{ files: { name: string; cloud: boolean }[] }>;
     read(name: string, cloud: boolean): Promise<{ text: string }>;

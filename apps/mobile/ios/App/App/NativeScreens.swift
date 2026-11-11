@@ -444,6 +444,7 @@ struct NativeTrackActions: View {
         Divider()
         // The page's version picker takes over the screen (lib/native-ui.ts `versions`); the shell steps aside.
         Button { store.run("versions", ["id": track.id]) } label: { Label("Заменить трек", systemImage: "arrow.triangle.swap") }
+        Button { store.go("/track-edit/\(track.id)") } label: { Label("Сведения о треке", systemImage: "pencil") }
         if !track.album.isEmpty {
             Button { store.run("open", ["id": track.id, "to": "album"]) } label: { Label("Перейти к альбому", systemImage: "square.stack") }
         }
@@ -759,6 +760,9 @@ struct NativeMoreView: View {
                 Section("Музыка") {
                     link("/wave", "Моя волна", "Бесконечный поток под ваше настроение", "waveform")
                     link("/history", "История", "Что звучало и как сменялись треки", "clock.arrow.circlepath")
+                    link("/statistics", "Статистика", "Музыка за последние 30 дней", "chart.bar")
+                    link("/duplicates", "Дубликаты", "Объединить одинаковые файлы", "square.on.square")
+                    link("/smart-playlists", "Умные плейлисты", "Подборки по вашим правилам", "sparkles")
                     link("/downloads", "Загрузки", "Музыка на этом iPhone", "arrow.down.circle")
                     link("/import", "Импорт", "Плейлисты из Spotify, Apple Music, YouTube", "square.and.arrow.down")
                 }

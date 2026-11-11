@@ -5,11 +5,13 @@ import Foundation
 /// lacks it) each side gets its own defaults: the widgets then show their launch buttons only.
 struct NativeWidgetData: Codable, Equatable {
     struct Song: Codable, Equatable { var title: String, artist: String }
+    struct Playlist: Codable, Equatable { var id: String, name: String }
     var now: Song?
     var playing = false
     var liked: [Song] = []
     var likedCount = 0
     var updatedAt: Date?
+    var playlists: [Playlist]?
 
     static let group = "group.ru.mora.player"
     private static let key = "mora.widget"

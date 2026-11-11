@@ -130,6 +130,10 @@ import Network
         }
         jobs.removeAll { $0.trackId == trackId }; try save(); publish(force: true)
     }
+    func remapTracks(_ mapping: [String: String]) {
+        for i in jobs.indices { jobs[i].trackId = mapping[jobs[i].trackId] ?? jobs[i].trackId }
+        publish(force: true)
+    }
     func list() -> [String: Any] {
         let rows = jobs.map { job -> [String: Any] in
             var row: [String: Any] = ["id": job.id, "key": "native:" + job.trackId, "trackId": job.trackId, "title": job.title, "artist": job.artist, "album": job.album,

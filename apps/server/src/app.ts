@@ -12,6 +12,7 @@ import { Library } from './library.ts';
 import { PcmCache } from './pcmCache.ts';
 import { ProviderRegistry } from './providers/index.ts';
 import { registerLibraryRoutes } from './routes/library.ts';
+import { registerSmartLibraryRoutes } from './routes/smart-library.ts';
 import { registerPlaybackRoutes } from './routes/playback.ts';
 import { registerPreviewRoutes } from './routes/preview.ts';
 import { registerMiscRoutes } from './routes/misc.ts';
@@ -147,6 +148,7 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
   }
 
   registerLibraryRoutes(app, services);
+  registerSmartLibraryRoutes(app, services);
   registerPlaybackRoutes(app, services);
   registerPreviewRoutes(app, services);
   registerMiscRoutes(app, services);
