@@ -24,6 +24,8 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
     var showLaunchSplash = false
     #if DEBUG
     var launchTrace: [[String: Any]] = []
+    private var splashCaptureStarted = false
+    private var splashCaptureVerified = false
     #endif
     let bridge = MoraBridgeViewController()
     let shell = NativeShellStore()
@@ -142,14 +144,20 @@ extension MoraRootViewController {
         guard ProcessInfo.processInfo.arguments.contains("--native-ui-check") else { return }
         let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let file = folder.appendingPathComponent("native-splash.png")
-        guard !FileManager.default.fileExists(atPath: file.path) else { return }
+        guard !splashCaptureStarted else { return }
+        splashCaptureStarted = true
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(100))
-            guard NativeDeepLink.splashVisible, let window = self.view.window else { return }
-            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
-            try? image.pngData()?.write(to: file)
+            try? await Task.sleep(for: .milliseconds(800))
+            guard NativeDeepLink.splashVisible, let web = self.shell.webView else { return }
+            let script = "(()=>{const c=document.querySelector('.splash canvas');if(!c||!c.width||!c.height)return false;const r=c.getBoundingClientRect();return r.width>=innerWidth-1&&r.height>=innerHeight-1&&getComputedStyle(c.parentElement).display!=='none'})()"
+            guard (try? await web.evaluateJavaScript(script)) as? Bool == true else { return }
+            web.takeSnapshot(with: nil) { image, _ in
+                guard let data = image?.pngData() else { return }
+                do { try data.write(to: file); self.splashCaptureVerified = true } catch {}
+            }
         }
     }
+
     @MainActor private func checkNativeUI() async {
         let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         func require(_ condition: Bool, _ message: String) throws {
@@ -172,8 +180,9 @@ extension MoraRootViewController {
         do {
             try await wait { self.shell.ui.loaded && self.shell.webView != nil }
             try await wait { !NativeDeepLink.splashVisible }
-            try require(FileManager.default.fileExists(atPath: folder.appendingPathComponent("native-splash.png").path), "Cold-launch splash screenshot missing: \(launchTrace)")
-            report["splash"] = "Existing splash.ts captured while the interface loaded underneath"
+            try require(splashCaptureVerified && FileManager.default.fileExists(atPath: folder.appendingPathComponent("native-splash.png").path), "Cold-launch splash screenshot missing: \(launchTrace)")
+            report["splash"] = "Visible full-screen splash.ts canvas captured through WKWebView"
+            report["launchTrace"] = launchTrace
             let web = shell.webView!
             _ = try await web.evaluateJavaScript("window.__waveOriginal=window.moraNativeUi;window.__waveSource=null;window.moraNativeUi=async(n,a)=>{if(n==='wave'){window.__waveSource=a.source;return;}return window.__waveOriginal(n,a);};0")
             NativeDeepLink.open(URL(string: "mora://wave?source=yandex")!)
