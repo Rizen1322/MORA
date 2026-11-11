@@ -52,11 +52,24 @@ let pageRows = page.sections[0].rows
 precondition(page.title == "Плейлист" && page.refresh == 1 && page.search == nil && page.sections[0].reorder?.name == "reorderPlaylist")
 precondition(pageRows.count == 5, "invalid sliders, plain http links and unknown kinds are dropped")
 if case .track(let id, let remove) = pageRows[0] { precondition(id == "a" && remove?.act.args["entry"] as? Int == 3) } else { preconditionFailure() }
-if case .item(_, _, let cover, _, _, let path, _, _) = pageRows[1] { precondition(cover != nil && cover! == nil && path == "/album/x/y") } else { preconditionFailure() }
-if case .item(_, _, let cover, _, _, _, _, _) = pageRows[2] { precondition(cover == nil, "no cover key: no picture") } else { preconditionFailure() }
+if case .item(_, _, let cover, _, _, let path, _, _, _) = pageRows[1] { precondition(cover != nil && cover! == nil && path == "/album/x/y") } else { preconditionFailure() }
+if case .item(_, _, let cover, _, _, _, _, _, _) = pageRows[2] { precondition(cover == nil, "no cover key: no picture") } else { preconditionFailure() }
 if case .choice(_, _, let value, let options, _, _) = pageRows[4] { precondition(value == "auto" && options.count == 1) } else { preconditionFailure() }
 precondition(pageRows[1].searchText == "елка звери" && pageRows[0].searchText == nil)
 precondition(NativePage(["sections": []]) == nil)
+
+// Catalog pages: header, numbered album tracks, card shelves (an empty shelf is dropped).
+let catalogPage = NativePage(["title": "Альбом", "style": "catalog", "sections": [["rows": [
+    ["kind": "hero", "style": "album", "title": "SZN", "subtitle": "OG Buda", "detail": "2025 · 12 треков", "cover": "https://x/c.jpg", "play": ["name": "searchItem", "args": ["kind": "playAll"]]],
+    ["kind": "item", "title": "Интро", "number": 1],
+    ["kind": "shelf", "items": [["title": "FREERIO", "subtitle": "2024", "path": "/public/album/1"], ["title": "no path"]]],
+    ["kind": "shelf", "items": []],
+]]]])!
+let catalogRows = catalogPage.sections[0].rows
+precondition(catalogPage.style == "catalog" && catalogRows.count == 3)
+if case .hero(let style, let title, _, let detail, _, let play, let shuffle) = catalogRows[0] { precondition(style == "album" && title == "SZN" && detail == "2025 · 12 треков" && play?.name == "searchItem" && shuffle == nil) } else { preconditionFailure() }
+if case .item(_, _, _, _, _, _, _, _, let number) = catalogRows[1] { precondition(number == 1) } else { preconditionFailure() }
+if case .shelf(let items) = catalogRows[2] { precondition(items.count == 1 && items[0].path == "/public/album/1" && !items[0].round) } else { preconditionFailure() }
 print("Native shell: described pages")
 
 var wave = NativeWave(["own": true, "yandex": false, "playing": true, "loading": false, "active": NSNull()])

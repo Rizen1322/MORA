@@ -40,12 +40,18 @@ export type Row =
   /** The picked files go one by one to the action as `{ name, base64 }`. */
   | { kind: 'file'; title: string; symbol?: string; types: string[]; multiple?: boolean; act: Act }
   | { kind: 'progress'; title: string; value: number | null; detail?: string }
-  | { kind: 'item'; title: string; subtitle?: string; cover?: string | null; tag?: string; tone?: Tone; path?: string; act?: Act; actions?: ItemAction[] }
+  /** `number` (an album's track list) is drawn in place of the cover. */
+  | { kind: 'item'; title: string; subtitle?: string; cover?: string | null; tag?: string; tone?: Tone; path?: string; act?: Act; actions?: ItemAction[]; number?: number }
+  /** Header of an artist (full-width photo) or album (centred cover) page, with its play and shuffle actions. */
+  | { kind: 'hero'; style: 'artist' | 'album'; title: string; subtitle?: string; detail?: string; cover?: string | null; play?: Act; shuffle?: Act }
+  /** A horizontal row of cards. */
+  | { kind: 'shelf'; items: { title: string; subtitle?: string; cover?: string | null; path: string; round?: boolean }[] }
   /** A library track: native draws it from its snapshot; the section's `play` starts the section's tracks. */
   | { kind: 'track'; id: string; remove?: ItemAction };
 
 export interface Section { title?: string; footer?: string; rows: Row[]; play?: { type: string; id?: string; label: string }; reorder?: Act }
-export interface Screen { title: string; sections: Section[]; search?: string; refresh?: number }
+/** style 'catalog': artist and album pages, a plain list with large section titles; the hero carries the title. */
+export interface Screen { title: string; sections: Section[]; search?: string; refresh?: number; style?: 'catalog' }
 /** What an action asks native to do after it ran (it always reloads the screen). */
 export interface ActResult { versions?: string; go?: string; share?: { name: string; text: string } }
 

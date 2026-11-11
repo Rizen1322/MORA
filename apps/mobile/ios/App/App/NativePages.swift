@@ -70,8 +70,10 @@ struct NativePageView: View {
     }
 
     // Split out of body: as one expression it exceeds the Swift type checker's time limit.
+    private var catalog: Bool { page?.style == "catalog" }
+
     private var pageList: some View {
-        withSearch(List {
+        styled(withSearch(List {
             if let name = importingFile { ProgressView("Добавляем «" + name + "»…").frame(maxWidth: .infinity).listRowBackground(Color.clear) }
             if let waveSource { waveHeader(waveSource) }
             if let page {
@@ -83,12 +85,12 @@ struct NativePageView: View {
             } else {
                 ProgressView(waveSource == nil ? "Загрузка…" : "Загружаем настройки…").frame(maxWidth: .infinity).listRowBackground(Color.clear)
             }
-        })
-        .listStyle(.insetGrouped)
+        }))
         .scrollContentBackground(.hidden)
         .background(Color.moraBackground)
-        .navigationTitle(page?.title ?? "")
-        .navigationBarTitleDisplayMode(waveSource == nil ? .automatic : .inline)
+        // the header carries the title on artist and album pages
+        .navigationTitle(catalog ? "" : page?.title ?? "")
+        .navigationBarTitleDisplayMode(waveSource == nil && !catalog ? .automatic : .inline)
         .toolbar { toolbar }
     }
 
@@ -167,6 +169,10 @@ struct NativePageView: View {
             }
     }
 
+    @ViewBuilder private func styled(_ list: some View) -> some View {
+        if catalog { list.listStyle(.plain) } else { list.listStyle(.insetGrouped) }
+    }
+
     @ViewBuilder private func withSearch(_ list: some View) -> some View {
         if let prompt = page?.search {
             list.searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: prompt)
@@ -195,13 +201,38 @@ struct NativePageView: View {
                         guard query.isEmpty else { return nil }
                         return { from, to in if let first = from.first { run(act, ["from": first, "to": to]) } }
                     })
-                    .listRowBackground(Color.white.opacity(0.06))
+                    .listRowBackground(catalog ? Color.moraBackground : Color.white.opacity(0.06))
             } header: {
-                if let title = section.title { Text(title).textCase(nil).font(.footnote.weight(.semibold)) }
+                if let title = section.title {
+                    if catalog { Text(title).textCase(nil).font(.title3.bold()).foregroundStyle(.white) }
+                    else { Text(title).textCase(nil).font(.footnote.weight(.semibold)) }
+                }
             } footer: {
                 if let footer = section.footer { Text(footer) }
             }
         }
+    }
+
+    private func heroButtons(play: NativePageAct?, shuffle: NativePageAct?, capsule: Bool) -> some View {
+        HStack(spacing: 16) {
+            if let shuffle {
+                Button { run(shuffle) } label: {
+                    Image(systemName: "shuffle").font(.title3.weight(.semibold)).frame(width: 52, height: 52).background(.white.opacity(0.14), in: Circle())
+                }.accessibilityLabel("Вперемешку")
+            }
+            if let play {
+                Button { run(play) } label: {
+                    if capsule {
+                        Label("Слушать", systemImage: "play.fill").font(.headline).foregroundStyle(Color.moraBackground)
+                            .padding(.horizontal, 34).frame(height: 52).background(.white, in: Capsule())
+                    } else {
+                        Image(systemName: "play.fill").font(.title.weight(.bold)).foregroundStyle(Color.moraBackground)
+                            .frame(width: 68, height: 68).background(.white, in: Circle())
+                    }
+                }.accessibilityLabel("Слушать")
+            }
+        }
+        .buttonStyle(.plain).foregroundStyle(.white).disabled(running)
     }
 
     @ViewBuilder private func rowView(_ row: NativePageRow, section: NativePageSection, tracks: [NativeTrack]) -> some View {
@@ -346,13 +377,56 @@ struct NativePageView: View {
             .padding(.vertical, 4)
             .tint(.moraMint)
 
-        case .item(let title, let subtitle, let cover, let tag, let tone, let path, let act, let actions):
+        case .hero(let style, let title, let subtitle, let detail, let cover, let play, let shuffle):
+            if style == "artist" {
+                let width = UIScreen.main.bounds.width
+                ZStack(alignment: .bottom) {
+                    NativeCover(url: cover, size: width, radius: 0).frame(width: width, height: width * 0.95).clipped()
+                    LinearGradient(colors: [.clear, Color.moraBackground.opacity(0.55), Color.moraBackground], startPoint: .center, endPoint: .bottom)
+                    VStack(spacing: 12) {
+                        Text(title).font(.system(size: 40, weight: .heavy)).multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.6).shadow(radius: 8)
+                        if let subtitle, !subtitle.isEmpty { Text(subtitle).font(.subheadline).foregroundStyle(.white.opacity(0.7)).lineLimit(1) }
+                        heroButtons(play: play, shuffle: shuffle, capsule: false)
+                    }.padding(.horizontal, 20).padding(.bottom, 16)
+                }
+                .listRowInsets(EdgeInsets()).listRowSeparator(.hidden)
+            } else {
+                VStack(spacing: 8) {
+                    NativeCover(url: cover, size: min(UIScreen.main.bounds.width * 0.68, 300), radius: 14)
+                        .shadow(color: .black.opacity(0.5), radius: 18, y: 8).padding(.bottom, 10)
+                    Text(title).font(.title2.bold()).multilineTextAlignment(.center)
+                    if let subtitle, !subtitle.isEmpty { Text(subtitle).font(.title3).foregroundStyle(Color.moraMint).multilineTextAlignment(.center) }
+                    if let detail, !detail.isEmpty { Text(detail).font(.footnote.weight(.medium)).foregroundStyle(.secondary) }
+                    heroButtons(play: play, shuffle: shuffle, capsule: true).padding(.top, 8)
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 12)
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)).listRowSeparator(.hidden)
+            }
+
+        case .shelf(let items):
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 14) {
+                    ForEach(items) { item in
+                        Button { store.go(item.path) } label: {
+                            VStack(alignment: item.round ? .center : .leading, spacing: 4) {
+                                NativeCover(url: item.cover, size: 150, radius: item.round ? 75 : 10)
+                                Text(item.title).font(.subheadline.weight(.medium)).lineLimit(1)
+                                if let detail = item.subtitle, !detail.isEmpty { Text(detail).font(.footnote).foregroundStyle(.secondary).lineLimit(1) }
+                            }.frame(width: 150, alignment: item.round ? .center : .leading)
+                        }.buttonStyle(.plain)
+                    }
+                }.padding(.horizontal, 16)
+            }
+            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 12, trailing: 0)).listRowSeparator(.hidden)
+
+        case .item(let title, let subtitle, let cover, let tag, let tone, let path, let act, let actions, let number):
             HStack(spacing: 12) {
                 Button {
                     if let path { store.go(path) } else if let act { run(act) }
                 } label: {
                     HStack(spacing: 12) {
-                        if let cover { NativeCover(url: cover, size: 48) }
+                        if let number { Text("\(number)").font(.body.monospacedDigit()).foregroundStyle(.secondary).frame(width: 26) }
+                        else if let cover { NativeCover(url: cover, size: 48) }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(title).font(.body.weight(.medium)).lineLimit(2)
                             if let subtitle { Text(subtitle).font(.subheadline).foregroundStyle(color(tone) ?? .white.opacity(0.6)).lineLimit(3) }

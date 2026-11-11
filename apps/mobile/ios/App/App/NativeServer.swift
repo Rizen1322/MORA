@@ -17,7 +17,10 @@ final class NativeServer {
     }
 
     let root: URL
-    let queue = DispatchQueue(label: "ru.mora.server", qos: .userInitiated)
+    /// Its own thread, not a GCD queue: JavaScriptCore sizes its stack limit from the thread's stack, and GCD
+    /// threads have 512 KB, which deep provider code overflowed ("Maximum call stack size exceeded").
+    let queue = ServerThread(name: "ru.mora.server", stackSize: 16 << 20)
+    private let timerQueue = DispatchQueue(label: "ru.mora.server.timers", qos: .userInitiated)
     /// Server → page messages (head/chunk/end/fail/ready/boot-error), called on `queue`. Binary parts are Data.
     /// Set through `attach`, which may be called again when the WebView reloads.
     private var onMessage: (([String: Any]) -> Void)?
@@ -41,7 +44,7 @@ final class NativeServer {
     private var dbs: [Int: SQLiteConnection] = [:]
     private var nextDb = 1
     private var requests: [Int: URLSessionTask] = [:]
-    private var analyses: [Int: Bool] = [:] // job → cancelled
+    private var analyses: [Int: CancelFlag] = [:]
     private var nextAnalysis = 1
     private let work = DispatchQueue(label: "ru.mora.server.work", qos: .utility, attributes: .concurrent)
     private let session: URLSession = {
@@ -242,7 +245,7 @@ final class NativeServer {
         set(host, "analyze", { [unowned self] (file: String, _: Double, version: String, done: JSValue, progress: JSValue) -> Int in
             self.analyze(file, version, done)
         } as @convention(block) (String, Double, String, JSValue, JSValue) -> Int)
-        set(host, "cancelAnalysis", { [unowned self] (job: Int) in if self.analyses[job] != nil { self.analyses[job] = true } } as @convention(block) (Int) -> Void)
+        set(host, "cancelAnalysis", { [unowned self] (job: Int) in self.analyses[job]?.set() } as @convention(block) (Int) -> Void)
 
         let fs = JSValue(newObjectIn: context)!
         set(fs, "stat", { [unowned self] (p: String) -> JSValue? in
@@ -521,14 +524,17 @@ final class NativeServer {
 
     private func arm(_ id: Int, _ ms: Double, _ repeating: Bool) {
         timers.removeValue(forKey: id)?.cancel()
-        let timer = DispatchSource.makeTimerSource(queue: queue)
+        let timer = DispatchSource.makeTimerSource(queue: timerQueue)
         // Node's limit; Int(.infinity) would trap (prelude.ts clamps too)
         let interval = DispatchTimeInterval.microseconds(Int((ms.isFinite ? min(max(0, ms), 2_147_483_647) : 0) * 1000))
         timer.schedule(deadline: .now() + interval, repeating: repeating ? (ms > 0 ? interval : .milliseconds(1)) : .never, leeway: .milliseconds(1))
         timer.setEventHandler { [weak self] in
-            guard let self else { return }
-            if !repeating { self.timers.removeValue(forKey: id)?.cancel() }
-            self.timed("timer") { _ = self.context.objectForKeyedSubscript("__moraTimer")?.call(withArguments: [id]) }
+            // a fire already on its way after clearTimer is harmless: the prelude ignores unknown ids
+            self?.queue.async {
+                guard let self else { return }
+                if !repeating { self.timers.removeValue(forKey: id)?.cancel() }
+                self.timed("timer") { _ = self.context.objectForKeyedSubscript("__moraTimer")?.call(withArguments: [id]) }
+            }
         }
         timers[id] = timer
         timer.resume()
@@ -612,17 +618,18 @@ final class NativeServer {
 
     private func analyze(_ file: String, _ version: String, _ done: JSValue) -> Int {
         let job = nextAnalysis; nextAnalysis += 1
-        analyses[job] = false
+        let flag = CancelFlag()
+        analyses[job] = flag
         let finish = { (error: String?, result: Any?) in
             self.queue.async {
-                guard self.analyses.removeValue(forKey: job) == false else { return } // cancelled
+                guard self.analyses.removeValue(forKey: job) != nil, !flag.isSet else { return } // cancelled
                 self.note("analysis \(error ?? "done")")
                 self.timed("analysis result") { _ = done.call(withArguments: [error.map { $0 as Any } ?? NSNull(), self.js(result)]) }
             }
         }
         guard let path = real(file) else { finish("недопустимый путь", nil); return job }
         guard services.analyzerVersion() == version else { finish("анализатор приложения \(services.analyzerVersion()), сервер ждёт \(version)", nil); return job }
-        let cancelled = { [weak self] () -> Bool in self?.queue.sync { self?.analyses[job] != false } ?? true }
+        let cancelled = { flag.isSet }
         work.async {
             do {
                 guard let result = try self.services.analyze(URL(fileURLWithPath: path), cancelled) else { finish("отменено", nil); return }
@@ -686,4 +693,36 @@ final class SQLiteConnection {
         statements.removeAll(); order.removeAll()
         sqlite3_close_v2(handle)
     }
+}
+
+/// A serial executor on one thread with an explicit stack size (see NativeServer.queue).
+final class ServerThread {
+    private let condition = NSCondition()
+    private var jobs: [() -> Void] = []
+    init(name: String, stackSize: Int) {
+        let thread = Thread { [unowned self] in
+            while true {
+                self.condition.lock()
+                while self.jobs.isEmpty { self.condition.wait() }
+                let batch = self.jobs; self.jobs.removeAll()
+                self.condition.unlock()
+                for job in batch { autoreleasepool { job() } }
+            }
+        }
+        thread.name = name
+        thread.stackSize = stackSize
+        thread.qualityOfService = .userInitiated
+        thread.start()
+    }
+    func async(execute job: @escaping () -> Void) {
+        condition.lock(); jobs.append(job); condition.signal(); condition.unlock()
+    }
+}
+
+/// Cancellation read from the analysis worker while the server thread may be busy.
+final class CancelFlag {
+    private let lock = NSLock()
+    private var value = false
+    func set() { lock.lock(); value = true; lock.unlock() }
+    var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
 }

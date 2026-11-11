@@ -85,6 +85,10 @@ var decoded: [Any] = []
 for _ in 0..<100 where decoded.isEmpty { decoded = evaluate("globalThis.__decoded") as? [Any] ?? []; if decoded.isEmpty { Thread.sleep(forTimeInterval: 0.05) } }
 assert(decoded.count == 3 && decoded[0] as? Bool == true && decoded[1] as? Double == 2 && decoded[2] as? Double == 0.25, "decoded \(decoded)")
 
+// Deep recursion fits: JavaScriptCore's stack limit follows the thread's stack (512 KB on a GCD thread overflowed).
+let depth = evaluate("(() => { const f = (n) => n ? f(n - 1) + 1 : 0; try { return f(30000); } catch (e) { return String(e); } })()")
+assert(depth as? Double == 30000, "recursion \(depth)")
+
 // A reloaded WebView attaches again and must get ready again (the server outlives the page).
 lock.lock(); messages.removeAll(); lock.unlock()
 server.attach { message in lock.lock(); messages.append(message); lock.broadcast(); lock.unlock() }

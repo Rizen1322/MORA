@@ -143,9 +143,9 @@ export const nativeCatalogCommands = {
   },
 };
 
-function trackRows(value: Session): Row[] {
+function trackRows(value: Session, numbered = false): Row[] {
   const token = remember(value);
-  return value.items.map(item => {
+  return value.items.map((item, i) => {
     const known = player(value.source).known(catalog(item));
     const reaction = (known ? useApp.getState().tracks.get(known)?.reaction : undefined) ?? ('reaction' in item ? item.reaction : 0) ?? 0;
     const act = (kind: string) => ({ name: 'searchItem', args: { session: token, id: item.externalId, kind } });
@@ -155,17 +155,23 @@ function trackRows(value: Session): Row[] {
       ['Скачать', 'arrow.down.circle', 'download'], ['Другая версия', 'arrow.triangle.swap', 'versions'],
       ['Исполнитель', 'music.mic', 'artist'], ['Альбом', 'square.stack', 'album'], ['Радио по треку', 'dot.radiowaves.left.and.right', 'radio'],
     ].map(([title, symbol, kind]) => ({ title, symbol, act: act(kind) }));
-    return { kind: 'item', title: item.title, subtitle: item.artist, cover: item.coverUrl, tag: (item.explicit ? 'E · ' : '') + fmtTime(item.duration),
+    // artist pages from YouTube Music carry no durations: no "0:00" tag then
+    const tag = [item.explicit ? 'E' : '', item.duration ? fmtTime(item.duration) : ''].filter(Boolean).join(' · ') || undefined;
+    return { kind: 'item', title: item.title, subtitle: item.artist, ...(numbered ? { number: i + 1 } : { cover: item.coverUrl }), tag,
       act: item.playable ? act('play') : undefined, actions: item.playable ? actions : [], tone: item.playable ? undefined : 'warn' };
   });
 }
-const linkRows = (items: Link[]): Row[] => items.map(item => ({ kind: 'item', title: item.title, subtitle: item.detail, cover: item.cover, path: item.path }));
-function playRows(value: Session): Row[] {
-  const token = remember(value);
-  return [['Слушать', 'play.fill', 'playAll'], ['Вперемешку', 'shuffle', 'shuffleAll']].map(([title, symbol, kind]) => ({
-    kind: 'button', title, symbol, disabled: !value.items.some(v => v.playable), act: { name: 'searchItem', args: { session: token, kind } },
-  }));
+/** Cards in a horizontal shelf; artists get round pictures. */
+const shelf = (items: Link[], round = false): Row[] => items.length
+  ? [{ kind: 'shelf', items: items.map(item => ({ title: item.title, subtitle: item.detail, cover: item.cover, path: item.path, round })) }] : [];
+/** The page header with play and shuffle for the page's tracks (none when nothing on it can play). */
+function hero(style: 'artist' | 'album', value: Session, title: string, cover: string | null | undefined, subtitle?: string, detail?: string): Row {
+  const token = remember(value), playable = value.items.some(v => v.playable);
+  const act = (kind: string) => playable ? { name: 'searchItem', args: { session: token, kind } } : undefined;
+  return { kind: 'hero', style, title, subtitle, detail, cover, play: act('playAll'), shuffle: act('shuffleAll') };
 }
+const tracksWord = (n: number) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? 'трек' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'трека' : 'треков'}`;
+const top = (value: Session, n = 10): Session => ({ ...value, items: value.items.slice(0, n) });
 export async function describeNativeCatalog(parts: string[]): Promise<Screen> {
   const [source, kind, id] = parts;
   if (!id || !['artist', 'album'].includes(kind)) throw Error('Неизвестная страница каталога');
@@ -173,21 +179,30 @@ export async function describeNativeCatalog(parts: string[]): Promise<Screen> {
     if (kind === 'album') {
       const data = await cached('yandex/album/' + id, () => api.catalogAlbum(id));
       const value: Session = { source: 'yandex', q: '', scope: 'all', page: 0, items: data.tracks, artists: [], albums: [], context: { type: 'album', id, label: data.album.title } };
-      return { title: data.album.title, sections: [{ rows: [{ kind: 'item', title: data.album.title, subtitle: data.album.artists.map(v => v.name).join(', '), cover: data.album.imageUrl }, ...playRows(value)] },
-        { title: 'Треки', rows: trackRows(value) }, { title: 'Исполнители', rows: linkRows(data.album.artists.map(artistLink)) }] };
+      const detail = [data.album.year, tracksWord(data.tracks.length)].filter(Boolean).join(' · ');
+      return { title: data.album.title, style: 'catalog', sections: [
+        { rows: [hero('album', value, data.album.title, data.album.imageUrl, data.album.artists.map(v => v.name).join(', '), detail)] },
+        { rows: trackRows(value, true) },
+        { title: 'Исполнители', rows: shelf(data.album.artists.map(artistLink), true) }] };
     }
     const data: CatalogArtistPage = await cached('yandex/artist/' + id, () => api.catalogArtist(id));
     const value: Session = { source: 'yandex', q: '', scope: 'all', page: 0, items: data.popularTracks, artists: [], albums: [], context: { type: 'artist', id, label: data.artist.name } };
-    return { title: data.artist.name, sections: [{ rows: [{ kind: 'item', title: data.artist.name, subtitle: data.artist.genres.join(' · '), cover: data.artist.imageUrl }, ...playRows(value)] },
-      { title: 'Популярное', rows: trackRows(value) }, { title: 'Альбомы', rows: [...linkRows(data.albums.map(albumLink)), ...(data.hasMoreAlbums ? [{ kind: 'button' as const, title: 'Ещё альбомы', act: { name: 'catalogMore', args: { id } } }] : [])] },
-      { title: 'Похожие исполнители', rows: linkRows(data.similarArtists.map(artistLink)) },
+    return { title: data.artist.name, style: 'catalog', sections: [
+      { rows: [hero('artist', value, data.artist.name, data.artist.imageUrl, data.artist.genres.join(' · '))] },
+      { title: 'Популярные треки', rows: trackRows(top(value)) },
+      { title: 'Альбомы', rows: [...shelf(data.albums.map(albumLink)), ...(data.hasMoreAlbums ? [{ kind: 'button' as const, title: 'Ещё альбомы', act: { name: 'catalogMore', args: { id } } }] : [])] },
+      { title: 'Похожие исполнители', rows: shelf(data.similarArtists.map(artistLink), true) },
       ...(data.artist.description ? [{ title: 'Об исполнителе', rows: [{ kind: 'text' as const, title: data.artist.description }] }] : [])] };
   }
   const data = source === 'soundcloud'
     ? await cached('soundcloud/artist/' + id, () => api.soundCloudArtist(id))
     : await cached('public/' + kind + '/' + id, () => api.publicCatalog(kind as 'artist' | 'album', id));
   const value: Session = { source: data.source, q: '', scope: 'all', page: 0, items: data.tracks, artists: [], albums: [], context: { type: kind as 'artist' | 'album', id, label: data.title } };
-  return { title: data.title, sections: [{ rows: [{ kind: 'item', title: data.title, subtitle: data.description, cover: data.coverUrl }, ...playRows(value)] },
-    { title: 'Треки', rows: trackRows(value), footer: data.limited ? 'Показаны записи, доступные в этом источнике.' : undefined },
-    ...('albums' in data ? [{ title: 'Альбомы', rows: data.albums.map(album => ({ kind: 'item' as const, title: album.title, subtitle: album.artist, cover: album.coverUrl, path: publicAlbumHref(album.id).slice(1) })) }] : [])] };
+  const albums: Link[] = 'albums' in data ? data.albums.map(album => ({ id: album.id, title: album.title, detail: album.artist, cover: album.coverUrl, path: publicAlbumHref(album.id).slice(1) })) : [];
+  const artist = kind === 'artist';
+  return { title: data.title, style: 'catalog', sections: [
+    { rows: [artist ? hero('artist', value, data.title, data.coverUrl, data.description || undefined)
+      : hero('album', value, data.title, data.coverUrl, data.tracks[0]?.artist, tracksWord(data.tracks.length))] },
+    { title: artist ? 'Популярные треки' : undefined, rows: trackRows(value, !artist), footer: data.limited ? 'Показаны записи, доступные в этом источнике.' : undefined },
+    ...(albums.length ? [{ title: 'Альбомы', rows: shelf(albums) }] : [])] };
 }

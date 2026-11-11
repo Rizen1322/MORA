@@ -95,6 +95,25 @@ it('renders an album using native rows and reuses metadata across playback snaps
   await describeNativeCatalog(['catalog', 'album', 'album']);
   expect(h.api.catalogAlbum).toHaveBeenCalledOnce();
 });
+it('lays out album and artist pages as catalog pages: header, numbered album tracks, card shelves', async () => {
+  const { describeNativeCatalog } = await import('../src/lib/native-catalog.ts');
+  h.api.catalogAlbum.mockResolvedValue({ album: { title: 'Album', year: 2025, artists: [{ id: 'artist', name: 'Artist' }] }, tracks: [item('a'), item('b')] });
+  const album = await describeNativeCatalog(['catalog', 'album', 'album']);
+  expect(album.style).toBe('catalog');
+  expect(album.sections[0].rows[0]).toMatchObject({ kind: 'hero', style: 'album', title: 'Album', subtitle: 'Artist', detail: '2025 · 2 трека',
+    play: { name: 'searchItem', args: { kind: 'playAll' } }, shuffle: { name: 'searchItem', args: { kind: 'shuffleAll' } } });
+  expect(album.sections[1].rows.map((r) => 'number' in r && r.number)).toEqual([1, 2]);
+  expect(album.sections[2].rows[0]).toMatchObject({ kind: 'shelf', items: [{ title: 'Artist', round: true }] });
+
+  h.api.publicCatalog.mockResolvedValue({ source: 'ytmusic', title: 'OG Buda', description: '', coverUrl: 'c', limited: false,
+    tracks: Array.from({ length: 3 }, (_, i) => ({ ...item('t' + i), duration: 0, source: 'ytmusic', audioProvider: 'youtube', labels: [] })),
+    albums: [{ id: 'MPREb_x', title: 'SZN', artist: '2025', coverUrl: 'a' }] });
+  const artist = await describeNativeCatalog(['public', 'artist', 'UC1']);
+  expect(artist.sections[0].rows[0]).toMatchObject({ kind: 'hero', style: 'artist', title: 'OG Buda' });
+  // YouTube Music artist pages carry no durations: the tag must not read "0:00"
+  expect(artist.sections[1].rows[0]).toMatchObject({ kind: 'item', cover: null, tag: 'E' });
+  expect(artist.sections[2]).toMatchObject({ title: 'Альбомы', rows: [{ kind: 'shelf', items: [{ title: 'SZN', round: false }] }] });
+});
 it('aborts a superseded provider request while retaining the new results', async () => {
   const { nativeCatalogCommands: c } = await import('../src/lib/native-catalog.ts');
   h.api.publicSearch.mockImplementationOnce((_source, _q, signal: AbortSignal) => new Promise((_resolve, reject) => {

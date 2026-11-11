@@ -226,8 +226,13 @@ enum NativePageRow {
     case file(title: String, symbol: String?, types: [String], multiple: Bool, act: NativePageAct)
     case progress(title: String, value: Double?, detail: String?)
     /// `cover` is nil for rows without a picture, `.some(nil)` for a placeholder.
-    case item(title: String, subtitle: String?, cover: String??, tag: String?, tone: NativeTone?, path: String?, act: NativePageAct?, actions: [NativeItemAction])
+    /// `number` (an album's track list) is drawn in place of the cover.
+    case item(title: String, subtitle: String?, cover: String??, tag: String?, tone: NativeTone?, path: String?, act: NativePageAct?, actions: [NativeItemAction], number: Int?)
     case track(id: String, remove: NativeItemAction?)
+    /// A catalog page's header: an artist's full-width photo, or an album's centred cover, with play and shuffle.
+    case hero(style: String, title: String, subtitle: String?, detail: String?, cover: String?, play: NativePageAct?, shuffle: NativePageAct?)
+    /// A horizontal row of cards: albums, singles, artists.
+    case shelf(items: [NativeShelfItem])
 
     init?(_ v: [String: Any]) {
         let title = v["title"] as? String ?? "", detail = v["detail"] as? String, disabled = v["disabled"] as? Bool == true
@@ -266,10 +271,18 @@ enum NativePageRow {
         case "item":
             let cover: String?? = v.keys.contains("cover") ? .some(v["cover"] as? String) : nil
             self = .item(title: title, subtitle: v["subtitle"] as? String, cover: cover, tag: v["tag"] as? String, tone: (v["tone"] as? String).flatMap(NativeTone.init),
-                         path: v["path"] as? String, act: NativePageAct(v["act"]), actions: (v["actions"] as? [Any] ?? []).compactMap(NativeItemAction.init))
+                         path: v["path"] as? String, act: NativePageAct(v["act"]), actions: (v["actions"] as? [Any] ?? []).compactMap(NativeItemAction.init),
+                         number: (v["number"] as? NSNumber)?.intValue)
         case "track":
             guard let id = v["id"] as? String else { return nil }
             self = .track(id: id, remove: NativeItemAction(v["remove"]))
+        case "hero":
+            self = .hero(style: v["style"] as? String == "artist" ? "artist" : "album", title: title, subtitle: v["subtitle"] as? String, detail: detail,
+                         cover: v["cover"] as? String, play: NativePageAct(v["play"]), shuffle: NativePageAct(v["shuffle"]))
+        case "shelf":
+            let items = (v["items"] as? [[String: Any]] ?? []).compactMap(NativeShelfItem.init)
+            guard !items.isEmpty else { return nil }
+            self = .shelf(items: items)
         default: return nil
         }
     }
@@ -277,9 +290,19 @@ enum NativePageRow {
     /// What the page's search field matches (items and tracks only; other rows always show).
     var searchText: String? {
         switch self {
-        case .item(let title, let subtitle, _, _, _, _, _, _): return NativeSearchText.normalize("\(title) \(subtitle ?? "")")
+        case .item(let title, let subtitle, _, _, _, _, _, _, _): return NativeSearchText.normalize("\(title) \(subtitle ?? "")")
         default: return nil
         }
+    }
+}
+
+struct NativeShelfItem: Identifiable {
+    let title: String, subtitle: String?, cover: String?, path: String, round: Bool
+    var id: String { path }
+    init?(_ v: [String: Any]) {
+        guard let title = v["title"] as? String, let path = v["path"] as? String else { return nil }
+        self.title = title; self.path = path
+        subtitle = v["subtitle"] as? String; cover = v["cover"] as? String; round = v["round"] as? Bool == true
     }
 }
 
@@ -296,6 +319,8 @@ struct NativePage {
     let sections: [NativePageSection]
     let search: String?
     let refresh: Double?
+    /// "catalog": artist and album pages, drawn as a plain list with large section titles.
+    let style: String?
 
     init?(_ value: Any?) {
         guard let value = value as? [String: Any], let title = value["title"] as? String else { return nil }
@@ -307,6 +332,7 @@ struct NativePage {
         }
         search = value["search"] as? String
         refresh = (value["refresh"] as? Double).flatMap { $0 > 0 ? max(1, $0) : nil }
+        style = value["style"] as? String
     }
 }
 
