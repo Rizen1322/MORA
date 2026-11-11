@@ -103,6 +103,10 @@ export const commands: Record<string, (a: Args) => unknown> = {
   },
   /** The native page for the current route (native-pages.ts); null when it stays web. */
   page: () => describe(),
+  recent: async () => {
+    const { items } = await api.history(50);
+    return [...new Set(items.map(item => item.trackId))].flatMap(id => { const t = trackOf(id); return t ? [uiTrack(t)] : []; });
+  },
   waveSettings: (a) => describeWaveSettings(a.source),
   /** A row action of a native page. Its errors become toasts, as on the web page. */
   act: async (a): Promise<ActResult | null> => {

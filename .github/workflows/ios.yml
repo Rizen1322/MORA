@@ -12,6 +12,10 @@ on:
       - '.github/workflows/ios.yml'
   workflow_dispatch:
     inputs:
+      carplay:
+        description: Request CarPlay audio entitlement (requires Apple approval)
+        type: boolean
+        default: false
       ui_only:
         description: Run only the complete app UI startup check
         type: boolean
@@ -82,14 +86,22 @@ jobs:
           swiftc apps/mobile/ios/App/App/NativeStationSnapshot.swift apps/mobile/test/native-station/main.swift -o "$RUNNER_TEMP/mora-station-check"
           "$RUNNER_TEMP/mora-station-check"
       - name: Build unsigned device IPA
+        env:
+          MORA_CARPLAY: ${{ inputs.carplay && '1' || '0' }}
         run: sh apps/mobile/scripts/ios-mac.sh --ipa
+      - name: Verify CarPlay entitlement gate
+        env:
+          MORA_CARPLAY: ${{ inputs.carplay && '1' || '0' }}
+        run: |
+          codesign -d --entitlements - apps/mobile/build/ipa/Payload/App.app > "$RUNNER_TEMP/mora-entitlements.plist" 2>/dev/null
+          python3 -c 'import os,plistlib,sys; e=plistlib.load(open(sys.argv[1],"rb")); actual=e.get("com.apple.developer.carplay-audio",False); assert actual == (os.environ["MORA_CARPLAY"]=="1"), e' "$RUNNER_TEMP/mora-entitlements.plist"
       - name: Release notes from commits
         run: |
           { echo "# MORA iOS $(node -p "require('./apps/mobile/package.json').version")"; echo
             git log --no-merges --format='- %s' -30 -- apps/mobile apps/web/src/lib/native-ui.ts apps/web/src/lib/native-pages.ts; } > apps/mobile/RELEASE-NOTES.md
       - uses: actions/upload-artifact@v4
         with:
-          name: MORA-unsigned-ipa
+          name: MORA-unsigned-ipa${{ inputs.carplay && '-carplay' || '' }}
           path: |
             apps/mobile/MORA-unsigned.ipa
             apps/mobile/RELEASE-NOTES.md

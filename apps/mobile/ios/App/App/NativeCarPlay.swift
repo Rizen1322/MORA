@@ -15,13 +15,20 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private let wave = CPListTemplate(title: "Волна", sections: [])
     private let liked = CPListTemplate(title: "Любимое", sections: [])
     private let offline = CPListTemplate(title: "Загрузки", sections: [])
+    private let resume = CPListTemplate(title: "Продолжить", sections: [])
+    private let recent = CPListTemplate(title: "Недавние", sections: [])
+    private var recentTracks: [NativeTrack] = []
+    private var loadingRecent = false
+    private static let thumbnails: NSCache<NSString, UIImage> = { let cache = NSCache<NSString, UIImage>(); cache.countLimit = 100; return cache }()
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene, didConnect interfaceController: CPInterfaceController) {
         interface = interfaceController
         wave.tabImage = UIImage(systemName: "waveform")
         liked.tabImage = UIImage(systemName: "heart.fill")
         offline.tabImage = UIImage(systemName: "arrow.down.circle.fill")
-        interfaceController.setRootTemplate(CPTabBarTemplate(templates: [wave, liked, offline]), animated: false, completion: nil)
+        resume.tabImage = UIImage(systemName: "play.circle.fill")
+        recent.tabImage = UIImage(systemName: "clock")
+        interfaceController.setRootTemplate(CPTabBarTemplate(templates: [resume, wave, liked, offline, recent]), animated: false, completion: nil)
         attach()
     }
 
@@ -39,18 +46,33 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
         watch = store.$library.map { _ in () }
             .merge(with: store.$ui.map(\.wave).removeDuplicates().map { _ in () })
+            .merge(with: store.$player.map { "\($0.trackId)|\($0.playing)" }.removeDuplicates().map { _ in () })
             .debounce(for: .seconds(1), scheduler: RunLoop.main)
             .sink { [weak self] in self?.reload() }
     }
 
     private func reload() {
+        if let snapshot = try? NativeStationFiles.load(), snapshot.tracks.indices.contains(snapshot.index) {
+            let track = snapshot.tracks[snapshot.index]
+            let item = CPListItem(text: track.title, detailText: track.artist, image: UIImage(systemName: "play.circle.fill"))
+            item.handler = { [weak self] _, done in
+                Task { @MainActor in
+                    do { try await StationStarter.start(); self?.showNowPlaying() }
+                    catch { self?.askToOpen() }
+                    done()
+                }
+            }
+            resume.updateSections([CPListSection(items: [item])])
+        } else {
+            resume.updateSections([CPListSection(items: [CPListItem(text: "Начните слушать в MORA", detailText: "Здесь появится последняя станция")])])
+        }
         guard let store = NativeShellStore.shared else {
             let hint = CPListSection(items: [CPListItem(text: "Откройте MORA на iPhone", detailText: "Медиатека загрузится за пару секунд")])
-            [wave, liked, offline].forEach { $0.updateSections([hint]) }
+            [wave, liked, offline, recent].forEach { $0.updateSections([hint]) }
             return
         }
         let current = store.ui.wave
-        wave.updateSections([CPListSection(items: current.sources.map { source in
+        wave.updateSections([CPListSection(items: NativeWaveSource.allCases.map { source in
             let state = current.active == source ? (current.playing ? "Играет" : "На паузе") : nil
             let item = CPListItem(text: Self.title(source), detailText: state, image: UIImage(systemName: source == .online ? "dot.radiowaves.left.and.right" : "waveform"))
             item.handler = { [weak self] _, done in self?.startWave(source); done() }
@@ -58,6 +80,18 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         })])
         liked.updateSections([tracks(store.liked, type: "liked", label: "Любимое")])
         offline.updateSections([tracks(store.library.filter(\.offline), type: "library", label: "Загрузки")])
+        recent.updateSections([tracks(recentTracks, type: "history", label: "Недавние")])
+        if !loadingRecent, UIApplication.shared.applicationState == .active {
+            loadingRecent = true
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.loadingRecent = false }
+                if let rows = try? await store.call("recent", timeout: 5) as? [[String: Any]] {
+                    self.recentTracks = rows.compactMap(NativeTrack.init)
+                    self.recent.updateSections([self.tracks(self.recentTracks, type: "history", label: "Недавние")])
+                }
+            }
+        }
     }
 
     private static func title(_ source: NativeWaveSource) -> String {
@@ -72,7 +106,23 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let shown = Array(list.filter(\.ok).prefix(CPListTemplate.maximumItemCount))
         guard !shown.isEmpty else { return CPListSection(items: [CPListItem(text: "Здесь пока пусто", detailText: nil)]) }
         return CPListSection(items: shown.enumerated().map { index, track in
-            let item = CPListItem(text: track.title, detailText: track.artist)
+            let store = NativeShellStore.shared
+            let current = store?.player.trackId == track.id || store?.ui.now?.id == track.id
+            let state = current ? (store?.miniPlaying == true ? "Играет" : "На паузе") : nil
+            let detail = [track.artist, track.album, track.offline ? "Без сети" : "", state ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+            let item = CPListItem(text: track.title, detailText: detail, image: UIImage(systemName: "music.note"))
+            item.isPlaying = current && store?.miniPlaying == true
+            if let cover = track.cover {
+                if let image = Self.thumbnails.object(forKey: cover as NSString) { item.setImage(image) }
+                else {
+                    Task { @MainActor [weak item] in
+                        if let image = await NativeCovers.image(cover), let thumbnail = await image.byPreparingThumbnail(ofSize: CGSize(width: 40, height: 40)) {
+                            Self.thumbnails.setObject(thumbnail, forKey: cover as NSString)
+                            item?.setImage(thumbnail)
+                        }
+                    }
+                }
+            }
             item.handler = { [weak self] _, done in self?.play(shown, at: index, type: type, label: label); done() }
             return item
         })
@@ -89,8 +139,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func startWave(_ source: NativeWaveSource) {
-        guard let store = NativeShellStore.shared else { askToOpen(); return }
         Task { @MainActor in
+            guard let store = NativeShellStore.shared, UIApplication.shared.applicationState == .active else {
+                do { try await StationStarter.start(source: source.rawValue); showNowPlaying() }
+                catch {
+                    do { try await StationStarter.start(); showNowPlaying() } catch { askToOpen(); return }
+                    askToOpen("Откройте MORA, чтобы выбрать другую волну")
+                }
+                return
+            }
             let current = store.ui.wave
             // The page's `wave` command toggles a playing wave: only show what already plays.
             if !(current.active == source && current.playing) {
@@ -105,9 +162,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         interface.pushTemplate(CPNowPlayingTemplate.shared, animated: true, completion: nil)
     }
 
-    private func askToOpen() {
+    private func askToOpen(_ message: String = "Откройте MORA на iPhone, чтобы начать") {
         guard let interface, interface.presentedTemplate == nil else { return }
         let ok = CPAlertAction(title: "Понятно", style: .cancel) { [weak interface] _ in interface?.dismissTemplate(animated: true, completion: nil) }
-        interface.presentTemplate(CPAlertTemplate(titleVariants: ["Откройте MORA на iPhone, чтобы начать", "Откройте MORA на iPhone"], actions: [ok]), animated: true, completion: nil)
+        interface.presentTemplate(CPAlertTemplate(titleVariants: [message], actions: [ok]), animated: true, completion: nil)
     }
 }
