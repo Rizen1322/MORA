@@ -386,7 +386,7 @@ export function SettingsPage() {
               <option value="system">Как в системе</option><option value="full">Полные анимации</option><option value="reduced">Минимум движения</option>
             </select>
           </Row>
-          {(desktop || mobileApp) && <SplashRow />}
+          {desktop && <SplashRow />}
           <Row wide title="Графика волны" desc="Совместимый режим помогает на старых видеокартах.">
             <select className="select" aria-label="Графика волны" value={s.ui.graphics ?? 'auto'} onChange={(e) => void save({ ui: { ...s.ui, graphics: e.target.value as 'auto' | 'canvas' } })}>
               <option value="auto">Автоматически</option><option value="canvas">Совместимый режим</option>
