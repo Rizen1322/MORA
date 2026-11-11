@@ -22,7 +22,6 @@ private final class NativeTabsOverlay: UIView {
 
 final class MoraRootViewController: UIViewController, UITabBarControllerDelegate {
     var showLaunchSplash = false
-    private var splash: UIViewController?
     let bridge = MoraBridgeViewController()
     let shell = NativeShellStore()
     private let tabs = UITabBarController()
@@ -30,38 +29,6 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
     private var content: UIViewController?
     private var bar: UIViewController?
     private var observer: AnyCancellable?
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        guard showLaunchSplash else { return }
-        showLaunchSplash = false
-        let overlay = UIHostingController(rootView: NativeLaunchSplash { [weak self] in
-            guard let self else { NativeDeepLink.finishSplash(); return }
-            self.splash?.willMove(toParent: nil)
-            self.splash?.view.removeFromSuperview()
-            self.splash?.removeFromParent()
-            self.splash = nil
-            NativeDeepLink.finishSplash()
-        })
-        overlay.view.backgroundColor = .clear
-        embed(overlay)
-        overlay.view.frame = view.bounds
-        overlay.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        splash = overlay
-        #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--native-ui-check") {
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(180))
-                guard self.splash != nil, let window = self.view.window else { return }
-                let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
-                    window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
-                }
-                let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                try? image.pngData()?.write(to: folder.appendingPathComponent("native-splash.png"))
-            }
-        }
-        #endif
-    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -139,14 +106,13 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
     }
     private func layoutShell() {
         guard let content, let bar else { return }
-        let visible = shell.shown && !shell.ui.overlay
+        let visible = shell.shown && !shell.ui.overlay && !NativeDeepLink.splashVisible
         content.view.isHidden = !shell.nativeContentVisible
         tabsOverlay.isHidden = !visible
         bar.view.isHidden = !visible || shell.miniTitle == nil
         if let index = NativeTab.allCases.firstIndex(of: shell.tab), tabs.selectedIndex != index { tabs.selectedIndex = index }
         view.bringSubviewToFront(tabsOverlay)
         view.bringSubviewToFront(bar.view)
-        if let splash { view.bringSubviewToFront(splash.view) }
         view.setNeedsLayout()
     }
     override func viewDidLayoutSubviews() {
@@ -166,48 +132,21 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
     override var childForHomeIndicatorAutoHidden: UIViewController? { bridge }
 }
 
-private struct NativeLaunchSplash: View {
-    let finished: () -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var appeared = false
-    @State private var breathing = false
-    @State private var fading = false
-
-    var body: some View {
-        ZStack {
-            Color.moraBackground.ignoresSafeArea()
-            VStack(spacing: 20) {
-                HStack(spacing: 7) {
-                    ForEach(0..<7) { index in
-                        Capsule().frame(width: 9, height: CGFloat([30, 54, 76, 100, 76, 54, 30][index]))
-                            .scaleEffect(y: breathing ? 0.75 : 1)
-                    }
-                }
-                .foregroundStyle(LinearGradient(colors: [.moraMint, Color(red: 0.06, green: 0.35, blue: 0.22)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                Text("MORA").font(.system(size: 36, weight: .semibold, design: .rounded)).tracking(7).foregroundStyle(.white)
-            }
-            .accessibilityElement(children: .ignore).accessibilityLabel("MORA")
-            .opacity(appeared ? 1 : 0)
-            .scaleEffect(reduceMotion ? 1 : appeared ? 1 : 0.94)
-        }
-        .opacity(fading ? 0 : 1)
-        .task {
-            withAnimation(.easeOut(duration: reduceMotion ? 0.15 : 0.35)) { appeared = true }
-            try? await Task.sleep(for: .milliseconds(reduceMotion ? 180 : 350))
-            if !reduceMotion {
-                withAnimation(.easeInOut(duration: 0.65).repeatCount(2, autoreverses: true)) { breathing = true }
-                try? await Task.sleep(for: .milliseconds(1350))
-            }
-            withAnimation(.easeOut(duration: reduceMotion ? 0.2 : 0.45)) { fading = true }
-            try? await Task.sleep(for: .milliseconds(reduceMotion ? 200 : 450))
-            finished()
-        }
-    }
-}
-
 #if DEBUG
 // Exercises the real SwiftUI/UIKit field and bridge in the simulator, without external catalog calls.
 extension MoraRootViewController {
+    func captureLaunchSplash() {
+        guard ProcessInfo.processInfo.arguments.contains("--native-ui-check") else { return }
+        let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let file = folder.appendingPathComponent("native-splash.png")
+        guard !FileManager.default.fileExists(atPath: file.path) else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(800))
+            guard NativeDeepLink.splashVisible, let window = self.view.window else { return }
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+            try? image.pngData()?.write(to: file)
+        }
+    }
     @MainActor private func checkNativeUI() async {
         let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         func require(_ condition: Bool, _ message: String) throws {
@@ -231,7 +170,7 @@ extension MoraRootViewController {
             try await wait { self.shell.ui.loaded && self.shell.webView != nil }
             try await wait { !NativeDeepLink.splashVisible }
             try require(FileManager.default.fileExists(atPath: folder.appendingPathComponent("native-splash.png").path), "Cold-launch splash screenshot missing")
-            report["splash"] = "Cold foreground overlay captured; closed without waiting for WebView"
+            report["splash"] = "Existing splash.ts captured while the interface loaded underneath"
             let web = shell.webView!
             _ = try await web.evaluateJavaScript("window.__waveOriginal=window.moraNativeUi;window.__waveSource=null;window.moraNativeUi=async(n,a)=>{if(n==='wave'){window.__waveSource=a.source;return;}return window.__waveOriginal(n,a);};0")
             NativeDeepLink.open(URL(string: "mora://wave?source=yandex")!)
@@ -472,7 +411,7 @@ final class NativeShellStore: ObservableObject {
     /// No usable network path: online searches and streams fail, downloads still play.
     @Published private(set) var offline = false
     private let network = NWPathMonitor()
-    var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web }
+    var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web && !NativeDeepLink.splashVisible }
     var screen: NativeScreen { NativeRoute.screen(path) }
     var tab: NativeTab { NativeRoute.tab(path) }
     var liked: [NativeTrack] { NativeTrack.favorites(library) }

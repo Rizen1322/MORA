@@ -434,9 +434,15 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         let state = call.options as? [String: Any] ?? [:]
         DispatchQueue.main.async {
             guard let root = self.bridge?.viewController?.parent as? MoraRootViewController else { call.resolve(["shown": false]); return }
+            let launchSplash = state["launchIntro"] as? Bool == true && root.showLaunchSplash
+            if state["launchIntro"] as? Bool == true { root.showLaunchSplash = false }
+            else if state["splash"] as? Bool == false { NativeDeepLink.finishSplash() }
             root.installShell(host: self.nativeMix, webView: self.bridge?.webView)
             let shown = root.shell.receive(state)
-            call.resolve(["shown": shown, "nativeContent": root.shell.nativeContentVisible])
+            #if DEBUG
+            if state["splash"] as? Bool == true { root.captureLaunchSplash() }
+            #endif
+            call.resolve(["shown": shown, "nativeContent": root.shell.nativeContentVisible, "launchSplash": launchSplash])
         }
     }
 }

@@ -1,0 +1,13 @@
+/* Launch intro (lib/splash.ts). Starts and ends on --bg, so there is never a black frame. */
+.splash { position: fixed; inset: 0; z-index: 2000; background: var(--bg); cursor: default; }
+.splash canvas { display: block; width: 100%; height: 100%; }
+/* the app's own grain over the sheet */
+.splash::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: var(--grain); opacity: 0.09; mix-blend-mode: overlay; }
+
+/* Handoff: Home's copy comes into focus out of the last light while the canvas dissolves. */
+.splash-reveal .wave-hero-title { animation: splash-focus 1s var(--ease) both; }
+.splash-reveal .wave-hero-copy > :not(h2) { animation: splash-rise 1.1s var(--ease) both; }
+.splash-reveal .wave-hero-copy > :nth-child(3) { animation-delay: 80ms; }
+.splash-reveal .wave-hero-copy > :nth-child(4) { animation-delay: 160ms; }
+@keyframes splash-focus { from { filter: blur(7px); } }
+@keyframes splash-rise { from { transform: translateY(16px); } }

@@ -10,6 +10,7 @@ import { useVersionPanel, openVersionPanel } from '../components/VersionPanel.ts
 import { actions, describe, describeWaveSettings, type ActResult } from './native-pages.ts';
 import { nativeVersionCommands } from './native-versions.ts';
 import { nativeCatalogCommands } from './native-catalog.ts';
+import { playSplash, splashing, splashEnabled } from './splash.ts';
 
 /**
  * iPhone native shell (ios/App/App/NativeShell.swift). Data path: this page stays the only owner of
@@ -52,7 +53,8 @@ export function uiState(s = useApp.getState(), radio = useRadio.getState(), prep
       }),
     },
     // The web full player, side panels and the version picker cover everything: native steps aside while they are open.
-    overlay: s.fullPlayer || s.queueOpen || s.panel !== null || useVersionPanel.getState().target !== null,
+    overlay: splashing || s.fullPlayer || s.queueOpen || s.panel !== null || useVersionPanel.getState().target !== null,
+    splash: splashing,
     wave: {
       own: s.order.length > 0,
       yandex: s.providers.some((v) => v.id === 'yandex' && v.status === 'connected'),
@@ -233,11 +235,13 @@ export function startNativeUi(): void {
     return (await fn(args ?? {})) ?? null;
   };
   let tracks: unknown, order: unknown, playlists: unknown, queue: unknown, last = '', timer: ReturnType<typeof setTimeout> | null = null;
+  let launchRequested = false;
   const send = (enable = false) => {
     timer = null;
     const s = useApp.getState();
     const state: Record<string, unknown> = uiState(s);
     const key = JSON.stringify(state);
+    state.launchIntro = !launchRequested;
     const libraryChanged = s.tracks !== tracks || s.order !== order;
     if (!enable && !libraryChanged && s.playlists === playlists && s.player.queue === queue && key === last) return;
     if (libraryChanged) state.library = s.order.map((id) => s.tracks.get(id)).filter((t): t is Track => !!t).map(uiTrack);
@@ -245,7 +249,15 @@ export function startNativeUi(): void {
     if (enable) state.enable = true;
     if (s.player.queue !== queue) state.queue = s.player.queue.map(({ entryId, trackId }) => ({ entryId, trackId }));
     tracks = s.tracks; order = s.order; playlists = s.playlists; queue = s.player.queue; last = key;
-    push(state).then(({ shown, nativeContent }) => {
+    push(state).then(({ shown, nativeContent, launchSplash }) => {
+      if (!launchRequested) {
+        launchRequested = true;
+        if (launchSplash && splashEnabled() && !document.hidden) {
+          playSplash({ ready: () => useApp.getState().loaded || !useApp.getState().serverOnline,
+            target: () => document.querySelector('.wave-hero-title span') });
+        }
+        if (launchSplash !== undefined) schedule();
+      }
       disabled = !shown;
       document.documentElement.classList.toggle('mora-native-shell', shown);
       const root = document.getElementById?.('root');
@@ -264,5 +276,6 @@ export function startNativeUi(): void {
   useCatalogPlayback.subscribe(schedule);
   useVersionPanel.subscribe(schedule);
   window.addEventListener('hashchange', schedule);
+  window.addEventListener('mora-splash', schedule);
   schedule();
 }
