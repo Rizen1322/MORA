@@ -3,11 +3,12 @@ import Foundation
 @MainActor enum StationStarter {
     private static var starting = false
 
-    static func start(source: String? = nil, playlistId: String? = nil) async throws {
-        guard !starting else { return }
+    static func start(source: String? = nil, playlistId: String? = nil, waveOnly: Bool = false) async throws {
+        guard !starting else { throw NativeStationSnapshot.Failure.noLocalFiles }
         starting = true
         defer { starting = false }
         let snapshot = try NativeStationFiles.load()
+        guard !waveOnly || snapshot.isWave else { throw NativeStationSnapshot.Failure.noLocalFiles }
         if let playlistId, snapshot.context != "playlist" || snapshot.contextId != playlistId { throw NativeStationSnapshot.Failure.noLocalFiles }
         guard source == nil || source == snapshot.source, let root = NativeStationFiles.root else { throw NativeStationSnapshot.Failure.noLocalFiles }
         let tracks = try snapshot.localTracks(in: root)

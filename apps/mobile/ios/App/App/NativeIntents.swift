@@ -63,7 +63,7 @@ enum NativeDeepLink {
         Task { @MainActor in
             if splashVisible { pending.append(url); return }
             if let link = NativeWaveLink(url), URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains(where: { $0.name == "autoplay" && $0.value == "1" }) == true {
-                do { try await StationStarter.start(source: link.source); return }
+                do { try await StationStarter.start(source: link.source, waveOnly: true); return }
                 catch { NativeShellStore.shared?.show(error.localizedDescription) }
             }
             guard let store = await NativeIntentShell.ready() else { return }
@@ -94,7 +94,7 @@ struct StartWaveIntent: AppIntent {
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
         if UIApplication.shared.applicationState == .background { AppDelegate.backgroundLaunch = true }
         do {
-            try await StationStarter.start()
+            try await StationStarter.start(waveOnly: true)
             return .result(dialog: "Включаю сохранённую волну")
         } catch {
             return .result(dialog: "Откройте MORA, чтобы начать")

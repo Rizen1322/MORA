@@ -9,7 +9,9 @@ let track = NativeStationSnapshot.Track(trackId: "one", title: "Трек", artis
 let snapshot = NativeStationSnapshot(context: "wave", source: "own", index: 0, position: 12, settings: .init(mood: "calm", diversity: "balanced", mode: "normal"), tracks: [track])
 let encoded = try JSONEncoder().encode(snapshot)
 let decoded = try NativeStationSnapshot.decode(encoded)
-assert(decoded == snapshot)
+assert(decoded == snapshot && decoded.isWave)
+var librarySnapshot = snapshot; librarySnapshot.context = "library"
+assert(!librarySnapshot.isWave)
 let local = try decoded.localTracks(in: root)
 assert(local.count == 1)
 for bytes in [Data(), Data("broken".utf8), Data("{}".utf8)] {

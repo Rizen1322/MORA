@@ -41,6 +41,7 @@ struct NativeStationSnapshot: Codable, Equatable {
         try value.validate()
         return value
     }
+    var isWave: Bool { ["wave", "yandex-wave", "online-radio"].contains(context) }
     func validate() throws {
         guard schemaVersion == 1, !tracks.isEmpty, tracks.count <= 50, tracks.indices.contains(index),
               position.isFinite, position >= 0,
