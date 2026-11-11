@@ -26,7 +26,7 @@ import MediaPlayer
                 if key != artworkKey {
                     artworkKey = key; artworkFile = nil
                     if let artwork = state["artwork"] as? MPMediaItemArtwork,
-                       let data = artwork.image(at: CGSize(width: 64, height: 64)).jpegData(compressionQuality: 0.4), data.count <= 16384,
+                       let data = artwork.image(at: CGSize(width: 64, height: 64))?.jpegData(compressionQuality: 0.4), data.count <= 16384,
                        let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: NativeWidgetData.group) {
                         do { try data.write(to: root.appendingPathComponent("activity-artwork.jpg"), options: .atomic); artworkFile = "activity-artwork.jpg" } catch {}
                     }

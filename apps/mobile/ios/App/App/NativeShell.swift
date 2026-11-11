@@ -411,7 +411,7 @@ final class NativeShellStore: ObservableObject {
     /// No usable network path: online searches and streams fail, downloads still play.
     @Published private(set) var offline = false
     private let network = NWPathMonitor()
-    var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web && !NativeDeepLink.splashVisible }
+    @MainActor var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web && !NativeDeepLink.splashVisible }
     var screen: NativeScreen { NativeRoute.screen(path) }
     var tab: NativeTab { NativeRoute.tab(path) }
     var liked: [NativeTrack] { NativeTrack.favorites(library) }
