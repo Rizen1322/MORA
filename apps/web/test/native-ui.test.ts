@@ -347,3 +347,17 @@ it('describes the equalizer and changes the same tone the web Sound panel does',
   await commands.act({ name: 'tone', args: { value: false } });
   expect(h.app.settings.sound.tone.enabled).toBe(false);
 });
+
+it('holds the native launch gate while a foreground WebKit document is still hidden', async () => {
+  vi.useFakeTimers();
+  const push = vi.fn(async (_state: Record<string, unknown>) => ({ shown: true, launchSplash: true }));
+  const listen = vi.fn();
+  vi.stubGlobal('window', { moraNativePlayback: { uiState: push }, addEventListener: vi.fn() });
+  vi.stubGlobal('document', { hidden: true, addEventListener: listen, documentElement: { classList: { toggle: vi.fn() } } });
+  const { startNativeUi } = await import('../src/lib/native-ui.ts');
+  startNativeUi();
+  await vi.advanceTimersByTimeAsync(500);
+  expect(listen).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+  expect(push.mock.calls.at(-1)?.[0]).toMatchObject({ launchIntro: false, splash: true, overlay: true });
+  vi.useRealTimers();
+});
