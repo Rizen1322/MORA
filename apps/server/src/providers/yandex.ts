@@ -308,7 +308,7 @@ export class YandexProvider implements Provider {
   }
 
   /** Prepare only a small playable batch, never the whole recommendation catalog. */
-  private async prepareWave(items: YandexWaveItem[], count = 2): Promise<YandexWaveItem[]> {
+  private async prepareWave(items: YandexWaveItem[], count = 2, tracks: YTrack[] = []): Promise<YandexWaveItem[]> {
     let ready = items.filter((item) => item.trackId).length;
     let attempts = 0, cursor = 0;
     const pending = items.filter((item) => !item.trackId);
@@ -320,7 +320,8 @@ export class YandexProvider implements Provider {
       attempts += size;
       await Promise.all(batch.map(async (item) => {
         try {
-          item.trackId = await this.importTrack({ externalId: item.yandexId, title: item.title, artist: item.artist,
+          const known = this.metadataOnlyImport && tracks.find(track => String(track.id).split(':')[0] === item.yandexId.split(':')[0]);
+          item.trackId = known ? await this.saveTrack(known, item.yandexId.split(':')[1]) : await this.importTrack({ externalId: item.yandexId, title: item.title, artist: item.artist,
             album: '', duration: 0, coverUrl: null, pageUrl: null, license: null, playable: true });
           ready++;
         } catch (e) { item.error = (e as Error).message; }
@@ -342,7 +343,7 @@ export class YandexProvider implements Provider {
         seen.add(id);
         return true;
       });
-      return this.prepareWave(items, count);
+      return this.prepareWave(items, count, sequence.map(s => s.track));
     };
     if (sessionId) {
       const r = await this.call<{ sequence?: { track: YTrack }[]; batchId?: string; unknownSession?: boolean }>('POST', `/rotor/session/${encodeURIComponent(sessionId)}/tracks`, { queue });
@@ -441,12 +442,16 @@ export class YandexProvider implements Provider {
     const session = this.reactionSession();
     if (!session) throw new Error('Подключите Яндекс Музыку');
     const uid = await session.account();
-    const result = await this.call<{ library?: { tracks?: { id: string | number; albumId?: string | number }[] } }>('GET', `/users/${uid}/likes/tracks`);
+    const result = await this.call<{ library?: { tracks?: { id: string | number; albumId?: string | number; timestamp?: string }[] } }>('GET', `/users/${uid}/likes/tracks`);
     if (!session.current()) throw new Error('Подключение Яндекса изменилось');
     const tracks = result.library?.tracks;
     if (!Array.isArray(tracks)) throw new Error('Яндекс не вернул список любимых треков');
     if (tracks.length > 50000) throw new Error('В коллекции больше 50 000 записей. Импорт не начат, список не обрезан.');
-    const ids = tracks.map((t) => this.checkedId(t.albumId ? `${t.id}:${t.albumId}` : String(t.id)));
+    // Source dates define recency; response order and download completion do not.
+    const ids = tracks.map((t) => {
+      const time = typeof t.timestamp === 'string' ? Date.parse(t.timestamp) : NaN;
+      return { id: this.checkedId(t.albumId ? `${t.id}:${t.albumId}` : String(t.id)), time: Number.isFinite(time) ? time : 0 };
+    }).sort((a, b) => b.time - a.time).map((t) => t.id);
     return { key: session.key, ids: [...new Set(ids)] };
   }
 

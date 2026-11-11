@@ -5,7 +5,7 @@ import type { RatingStats } from './plan/feedback.ts';
 export type NativeMediaSource =
   | { kind: 'direct' | 'hls'; url: string; headers?: Record<string, string>; ext?: string; allowHTTP?: boolean }
   | { kind: 'yandex'; externalId: string; token: string; apiBase: string }
-  | { kind: 'upload'; trackId: string }
+  | { kind: 'upload'; trackId: string; serverPath?: string }
   | { kind: 'unavailable' }
   | { kind: 'local'; file: number };
 export interface NativePreparationItem {

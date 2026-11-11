@@ -36,6 +36,22 @@ it('hands the first source to Swift without asking the page for decoded PCM', as
     config: { sampleRate: 48000, position: 7, gainDb: -3 } });
   expect(append).not.toHaveBeenCalled();expect(start).not.toHaveBeenCalled();
 });
+it.each([true, false])('hands shared server audio to Swift, with chunk fallback when found=%s', async found => {
+  const hooks = sourceHooks(), prepare = vi.fn(async () => state), append = vi.fn();
+  hooks.sources.mockImplementation(async entries => ({ items: entries.map(e => ({ ...e, title: e.trackId, artist: '', duration: 3,
+    mixingAllowed: true, source: { kind: 'upload', trackId: 'replacement', serverPath: '/data/library/song.mp3' } })),
+    previous: { trackId: 'a', duration: 3, mixingAllowed: true }, settings: DEFAULT_AUTOMIX_SETTINGS } as any));
+  const local = vi.fn(async () => ({ found }));
+  const read = vi.fn(async () => new Response(Uint8Array.of(1, 2, 3), { headers: { 'X-Native-Length': '3' } }));
+  const mix = createNativeMix({ ...port(), nativePrepareStart: prepare, nativeSourceReserve: reserve,
+    nativeSourceAppend: append, nativeSourceFromDownload: local }, { ...hooks, sourceFile: read });
+  await mix.startSource!({ trackId: 'a', entryId: 'e' }, { sampleRate: 48000, position: 0 });
+  expect(local).toHaveBeenCalledWith({ id: 'test', key: 0, trackId: 'replacement', serverPath: '/data/library/song.mp3' });
+  expect(read).toHaveBeenCalledTimes(found ? 0 : 1);
+  expect(append).toHaveBeenCalledTimes(found ? 0 : 1);
+  if (!found) expect(read).toHaveBeenCalledWith('replacement', 0, undefined);
+  expect(prepare.mock.calls[0][0].item).toMatchObject({ trackId: 'a', source: { kind: 'local', file: 0 } });
+});
 it('preserves Pause and settings changes while the first source is being resolved', async () => {
   const hooks = sourceHooks(), prepare = vi.fn(async () => state);
   let resolved!: (manifest: Awaited<ReturnType<typeof hooks.sources>>) => void;

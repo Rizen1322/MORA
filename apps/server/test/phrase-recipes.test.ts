@@ -132,14 +132,18 @@ describe('playlist phrase recipe API', () => {
     expect(await plan()).toEqual(automatic);
   });
   it('hands the original queue identity to native planning when another recording is bound', async () => {
-    a.services.lib.bind('a', 'c');
-    expect((await save()).statusCode).toBe(200);
-    const manifest = await nativeSources(a.services, [{ trackId: 'b', entryId: 'entry-b', fromEntryId: 'entry-a', file: 10, transitionContext: context() }], 'a');
-    expect(manifest.items[0].phraseTransition?.fromTrackId).toBe('a');
-    expect(manifest.items[0].phraseTransition?.fromEntryId).toBe('entry-a');
-    expect(manifest.items[0].phraseTransition?.recipe.audioHashes).toEqual({ a: 'hash-c', b: 'hash-b' });
-    const oldClient = await nativeSources(a.services, [{ trackId: 'b', entryId: 'entry-b', file: 10, transitionContext: context() }], 'a');
-    expect(oldClient.items[0].phraseTransition).toBeUndefined();
+    const stat = vi.spyOn(fs.promises, 'stat').mockResolvedValue({ isFile: () => true } as fs.Stats);
+    const sources = vi.spyOn(a.services.lib, 'sources').mockImplementation(id => [{ kind: 'managed', path: '/data/' + id + '.mp3' } as any]);
+    try {
+      a.services.lib.bind('a', 'c');
+      expect((await save()).statusCode).toBe(200);
+      const manifest = await nativeSources(a.services, [{ trackId: 'b', entryId: 'entry-b', fromEntryId: 'entry-a', file: 10, transitionContext: context() }], 'a');
+      expect(manifest.items[0].phraseTransition?.fromTrackId).toBe('a');
+      expect(manifest.items[0].phraseTransition?.fromEntryId).toBe('entry-a');
+      expect(manifest.items[0].phraseTransition?.recipe.audioHashes).toEqual({ a: 'hash-c', b: 'hash-b' });
+      const oldClient = await nativeSources(a.services, [{ trackId: 'b', entryId: 'entry-b', file: 10, transitionContext: context() }], 'a');
+      expect(oldClient.items[0].phraseTransition).toBeUndefined();
+    } finally { sources.mockRestore(); stat.mockRestore(); }
   });
 
   it('rejects an old draft after the selected recording changes without replacing the saved recipe', async () => {

@@ -29,7 +29,7 @@ interface MoraAudio extends NativeDiagnostics, NativeProbePort, NativeMixPort {
   power(): Promise<Power>;
   secretKey(): Promise<{ key: string }>;
   nativePlayerPresent(): Promise<{ action: 'close' | 'more' }>;
-  nativeUiState(state: Record<string, unknown>): Promise<{ shown: boolean; nativeContent?: boolean; launchSplash?: boolean }>;
+  nativeUiState(state: Record<string, unknown>): Promise<{ shown: boolean; nativeContent?: boolean; launchSplash?: boolean; libraryInSwift?: boolean }>;
 }
 /** ProcessInfo.thermalState (0 nominal … 3 critical) and Low Power Mode. */
 interface Power { thermal: number; lowPower: boolean }

@@ -46,7 +46,8 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
       const resolving = (async (): Promise<NativeMediaSource> => {
         if (native.has(entry.trackId)) return { kind: 'upload', trackId: entry.trackId };
         const local = localFile(s, track.id);
-        if (local && await fs.stat(local).then(stat => stat.isFile()).catch(() => false)) return { kind: 'upload', trackId: track.id };
+        if (local && await fs.stat(local).then(stat => stat.isFile()).catch(() => false))
+          return { kind: 'upload', trackId: track.id, ...(local.startsWith('/data/') ? { serverPath: local } : {}) };
         const cached = resolved.get(track.id);
         if (cached && Date.now() - cached.at < RESOLVED_TTL_MS) return cached.source;
         let found: NativeMediaSource;

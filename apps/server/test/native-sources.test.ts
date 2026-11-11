@@ -100,3 +100,18 @@ it('replaces audio while keeping the original title, artist and artwork', async 
   const manifest = await nativeSources(services, [{ trackId: 'original', entryId: 'entry', file: 1 }], 'original');
   expect(manifest.items[0]).toMatchObject({ trackId: 'original', title: 'Original title', artist: 'Original artist', duration: 240, coverUrl: 'https://covers.test/original.jpg', source: { url: 'https://audio.test/new.mp3' } });
 });
+it('hands off a bound local recording by its virtual server path', async () => {
+  const resolve = vi.fn(async () => { throw Error('must stay offline'); });
+  const services = svc(resolve);
+  services.lib.get = vi.fn(() => ({ id: 'original', title: 'Original', artist: 'Artist', cover_id: null })) as any;
+  services.lib.media = vi.fn(() => ({ id: 'replacement', title: 'Replacement', artist: '', provider: 'local',
+    duration: 240, content_hash: 'replacement', cover_id: null })) as any;
+  services.lib.sources = vi.fn(() => [{ kind: 'managed', path: '/data/library/song.mp3' }]) as any;
+  const stat = vi.spyOn(fs.promises, 'stat').mockResolvedValue({ isFile: () => true } as any);
+  try {
+    const manifest = await nativeSources(services, [{ trackId: 'original', entryId: 'entry', file: 7 }], 'original');
+    expect(manifest.items[0]).toMatchObject({ trackId: 'original', title: 'Original', duration: 240,
+      source: { kind: 'upload', trackId: 'replacement', serverPath: '/data/library/song.mp3' } });
+    expect(resolve).not.toHaveBeenCalled();
+  } finally { stat.mockRestore(); }
+});

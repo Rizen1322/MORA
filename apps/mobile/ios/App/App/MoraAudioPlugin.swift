@@ -533,7 +533,8 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func nativeSourceFromDownload(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             guard let id = call.getString("id"), let key = call.getInt("key"), let trackId = call.getString("trackId") else { call.reject("Неверный локальный файл"); return }
-            guard let file = NativeDownloadManager.shared.localFile(trackId) else { call.resolve(["found": false]); return }
+            let shared = NativeServerApp.shared != nil ? call.getString("serverPath").flatMap { NativeMediaLoader.sharedFile($0, root: NativeServerApp.root) } : nil
+            guard let file = shared ?? NativeDownloadManager.shared.localFile(trackId) else { call.resolve(["found": false]); return }
             self.nativeMix.sourceFromDownload(id: id, key: key, file: file) { result in
                 switch result { case .success(let value): call.resolve(value); case .failure(let error): call.reject(error.localizedDescription) }
             }
@@ -547,7 +548,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             // The launch splash is native (NativeSplash.swift); no `launchSplash` reply keeps the page's intro off.
             root.installShell(host: self.nativeMix, webView: self.bridge?.webView)
             let shown = root.shell.receive(state)
-            call.resolve(["shown": shown, "nativeContent": root.shell.nativeContentVisible])
+            call.resolve(["shown": shown, "nativeContent": root.shell.nativeContentVisible, "libraryInSwift": root.shell.sharedLibrary])
         }
     }
 }

@@ -2,7 +2,7 @@ name: iOS unsigned IPA
 
 on:
   push:
-    branches: [ios]
+    branches: [ios, unified/mora-2026-11-10]
     paths:
       - 'apps/mobile/**'
       - 'apps/web/**'
@@ -79,6 +79,10 @@ jobs:
         run: |
           swiftc apps/mobile/ios/App/App/NativeShellState.swift apps/mobile/test/native-shell/main.swift -o "$RUNNER_TEMP/mora-shell-check"
           "$RUNNER_TEMP/mora-shell-check"
+      - name: Test native SQLite library
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeShellState.swift apps/mobile/ios/App/App/NativeLibraryStore.swift apps/mobile/test/native-library/main.swift -lsqlite3 -o "$RUNNER_TEMP/mora-library-check"
+          "$RUNNER_TEMP/mora-library-check"
       - name: Test native wave links and widget compatibility
         run: |
           swiftc apps/mobile/ios/App/App/NativeWaveLink.swift apps/mobile/test/native-wave-link/main.swift -o "$RUNNER_TEMP/mora-wave-link-check"
@@ -116,7 +120,7 @@ jobs:
         env:
           MORA_CARPLAY: ${{ inputs.carplay && '1' || '0' }}
           MORA_ICLOUD: ${{ inputs.icloud && '1' || '0' }}
-        run: node apps/mobile/scripts/verify-ipa-1.0.40.cjs apps/mobile/MORA-unsigned.ipa "$GITHUB_SHA" "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+        run: node apps/mobile/scripts/verify-ipa.cjs apps/mobile/MORA-unsigned.ipa "$GITHUB_SHA" "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
       - uses: actions/upload-artifact@v4
         with:
           name: MORA-unsigned-ipa${{ inputs.carplay && '-carplay' || '' }}${{ inputs.icloud && '-icloud' || '' }}

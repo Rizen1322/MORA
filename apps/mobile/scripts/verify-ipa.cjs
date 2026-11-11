@@ -1,4 +1,4 @@
-// Checks the 1.0.40 IPA: bundle, version, widget extension, ad-hoc signature with App Group,
+// Checks the current IPA: bundle, version, widget extension, ad-hoc signature with App Group,
 // CarPlay code, offline wave, and the integrity of every archive entry.
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -9,6 +9,8 @@ const zlib = require('node:zlib');
 const crc32 = require('buffer-crc32');
 const bplist = require('bplist-parser');
 const plist = require('plist');
+const { version } = require('../package.json');
+const build = String(Number(version.split('.')[2]) + 1);
 
 const readPlist = (buf) => (buf.subarray(0, 8).toString() === 'bplist00' ? bplist.parseBuffer(buf)[0] : plist.parse(buf.toString()));
 
@@ -85,8 +87,8 @@ function readEntitlements(macho) {
   assert(appPlistRaw, 'App Info.plist missing');
   const info = readPlist(appPlistRaw);
   assert.equal(info.CFBundleIdentifier, 'ru.mora.player');
-  assert.equal(info.CFBundleShortVersionString, '1.0.40');
-  assert.equal(String(info.CFBundleVersion), '41');
+  assert.equal(info.CFBundleShortVersionString, version);
+  assert.equal(String(info.CFBundleVersion), build);
   assert.equal(info.MinimumOSVersion, '17.4');
   assert.equal(info.UIUserInterfaceStyle, 'Dark');
   assert.deepEqual(info.UIDeviceFamily, [1]);
@@ -103,8 +105,8 @@ function readEntitlements(macho) {
   const widget = readPlist(widgetPlistRaw);
   assert.equal(widget.CFBundleIdentifier, 'ru.mora.player.widgets');
   assert.equal(widget.NSExtension.NSExtensionPointIdentifier, 'com.apple.widgetkit-extension');
-  assert.equal(widget.CFBundleShortVersionString, '1.0.40');
-  assert.equal(String(widget.CFBundleVersion), '41');
+  assert.equal(widget.CFBundleShortVersionString, version);
+  assert.equal(String(widget.CFBundleVersion), build);
 
   const appBinary = entries.get('Payload/App.app/' + info.CFBundleExecutable);
   assert(appBinary, 'App executable missing');

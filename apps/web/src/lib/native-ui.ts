@@ -15,9 +15,9 @@ import { useDownloads } from '../store/downloads.ts';
 import { waveDownloadIds } from './native-downloads.ts';
 
 /**
- * iPhone native shell (ios/App/App/NativeShell.swift). Data path: this page stays the only owner of
- * the library, playlists, likes and the wave (the server worker answers it over /api). It pushes a
- * compact snapshot to native whenever the store changes, and native calls `window.moraNativeUi`
+ * iPhone native shell (ios/App/App/NativeShell.swift). Swift reads the shared SQLite library;
+ * older native shells and the pre-migration OPFS worker receive library snapshots. The page pushes
+ * playback/routing state whenever it changes, and native calls `window.moraNativeUi`
  * (WKWebView.callAsyncJavaScript) for actions. Both only run while the app is in the foreground,
  * which is the only time native screens can be touched; native keeps the last snapshot meanwhile.
  */
@@ -256,6 +256,7 @@ export function startNativeUi(): void {
   };
   let tracks: unknown, order: unknown, playlists: unknown, queue: unknown, last = '', timer: ReturnType<typeof setTimeout> | null = null;
   let launchRequested = false, pendingIntro = false;
+  let libraryInSwift = false;
   let syncedWiFi: boolean | undefined;
   let keepingWave = false, keptWave = '';
   const keepWave = async () => {
@@ -287,14 +288,19 @@ export function startNativeUi(): void {
     state.launchIntro = !launchRequested;
     state.launchHidden = document.hidden;
     if (pendingIntro) { state.splash = true; state.overlay = true; }
-    const libraryChanged = s.tracks !== tracks || s.order !== order;
-    if (!enable && !libraryChanged && s.playlists === playlists && s.player.queue === queue && key === last) return;
+    const libraryChanged = !libraryInSwift && (s.tracks !== tracks || s.order !== order);
+    const playlistsChanged = !libraryInSwift && s.playlists !== playlists;
+    if (!enable && !libraryChanged && !playlistsChanged && s.player.queue === queue && key === last) return;
     if (libraryChanged) state.library = s.order.map((id) => s.tracks.get(id)).filter((t): t is Track => !!t).map(uiTrack);
-    if (s.playlists !== playlists) state.playlists = s.playlists.map((p) => ({ id: p.id, name: p.name, count: p.count, cover: p.coverUrl }));
+    if (playlistsChanged) state.playlists = s.playlists.map((p) => ({ id: p.id, name: p.name, count: p.count, cover: p.coverUrl }));
     if (enable) state.enable = true;
     if (s.player.queue !== queue) state.queue = s.player.queue.map(({ entryId, trackId }) => ({ entryId, trackId }));
     tracks = s.tracks; order = s.order; playlists = s.playlists; queue = s.player.queue; last = key;
-    push(state).then(({ shown, nativeContent, launchSplash }) => {
+    push(state).then(({ shown, nativeContent, launchSplash, libraryInSwift: nativeLibrary }) => {
+      if (libraryInSwift !== (nativeLibrary === true)) {
+        libraryInSwift = nativeLibrary === true;
+        if (!libraryInSwift) { tracks = order = playlists = undefined; schedule(); }
+      }
       if (!launchRequested) {
         launchRequested = true;
         if (launchSplash && splashEnabled()) {

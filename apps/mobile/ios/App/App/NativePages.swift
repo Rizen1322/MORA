@@ -504,7 +504,9 @@ struct NativePageView: View {
 
     @MainActor private func load() async {
         do {
-            let value = try await store.call(waveSource == nil ? "page" : "waveSettings", waveSource.map { ["source": $0.wrappedValue.rawValue] } ?? [:])
+            let value: Any?
+            if waveSource == nil, let local = try store.libraryPage() { value = local }
+            else { value = try await store.call(waveSource == nil ? "page" : "waveSettings", waveSource.map { ["source": $0.wrappedValue.rawValue] } ?? [:]) }
             guard !Task.isCancelled else { return }
             page = NativePage(value)
             failure = nil
@@ -518,6 +520,12 @@ struct NativePageView: View {
     private func run(_ act: NativePageAct, _ extra: [String: Any] = [:]) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         let args = act.args.merging(extra) { _, new in new }
+        if act.name == "playlistSort", let id = args["id"] as? String, let value = args["value"] as? String,
+           (try? store.libraryPage()) != nil {
+            store.playlistSort[id] = value
+            reload &+= 1
+            return
+        }
         running = true
         Task { @MainActor in
             defer { running = false; reload &+= 1 }

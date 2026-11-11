@@ -54,11 +54,11 @@ const alias = {
 };
 const serverSrc = join(repo, 'apps/server/src');
 // By resolved path: './ffmpeg.ts' from src/ and '../ffmpeg.ts' from src/providers/ are the same module.
-const replaced = { [join(serverSrc, 'ffmpeg.ts')]: join(src, 'worker/replace/ffmpeg.ts'), [join(serverSrc, 'public/ytdlp.ts')]: join(src, 'worker/replace/ytdlp.ts') };
+const replaced = { [join(serverSrc, 'ffmpeg.ts')]: join(src, 'worker/replace/ffmpeg.ts'), [join(serverSrc, 'public/ytdlp.ts')]: join(src, 'worker/replace/ytdlp.ts'), [join(serverSrc, 'rust-network.ts')]: join(src, 'worker/replace/rust-network.ts') };
 const swaps = {
   name: 'mora-ios-swaps',
   setup(b) {
-    b.onResolve({ filter: /(ffmpeg|ytdlp)\.ts$/ }, (a) => {
+    b.onResolve({ filter: /(ffmpeg|ytdlp|rust-network)\.ts$/ }, (a) => {
       const to = a.importer.startsWith(serverSrc) && a.path.startsWith('.') ? replaced[resolve(dirname(a.importer), a.path)] : undefined;
       return to ? { path: to } : undefined;
     });

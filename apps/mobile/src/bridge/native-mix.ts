@@ -12,7 +12,7 @@ export interface NativeMixPort {
   nativeMixCommand(o: { action: string; seekTime?: number }): Promise<NativeMixState>;
   nativeSourceReserve?(o: { id: string; count: number }): Promise<{ keys: number[] }>;
   nativeSourceAppend?(o: { id: string; key: number; offset: number; base64: string }): Promise<void>;
-  nativeSourceFromDownload?(o: { id: string; key: number; trackId: string }): Promise<{ found: boolean }>;
+  nativeSourceFromDownload?(o: { id: string; key: number; trackId: string; serverPath?: string }): Promise<{ found: boolean }>;
   nativePrepareQueue?(o: { id: string; manifest: NativePreparationManifest }): Promise<NativeMixState>;
   /** Swift computes band levels only while this is on. */
   nativeLevels?(o: { on: boolean }): Promise<void>;
@@ -76,7 +76,8 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
       let key = assets.get(trackId);
       if (key === undefined) {
         key = item.file;
-        if (port.nativeSourceFromDownload && (await port.nativeSourceFromDownload({ id, key, trackId })).found) {
+        if (port.nativeSourceFromDownload && (await port.nativeSourceFromDownload({ id, key, trackId,
+          ...(item.source.serverPath ? { serverPath: item.source.serverPath } : {}) })).found) {
           assets.set(trackId, key);
           item.source = { kind: 'local', file: key };
           continue;
@@ -168,7 +169,7 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
       const items = new Map<string, NativePreparationManifest['items'][number]>();
       let state: NativeMixState | undefined;
       let metadataBytes = 0;
-      // shortcut: local sources retain the native 512 MiB upload budget; use shared native storage for larger offline handoffs.
+      // shortcut: local files, including shared-disk links, retain the 512 MiB lease budget; revisit for larger offline queues.
       // Give native the next two songs before resolving/copying the rest of a large likes list.
       for (let offset = 0; offset < Math.max(1, unique.length);) {
         const batch = unique.slice(offset, offset + (offset === 0 ? 2 : 32));

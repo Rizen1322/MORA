@@ -7,6 +7,19 @@ final class NativeMediaLoader {
     let http: NativeMediaHTTP
     private let allowLoopback: Bool
     init(http: NativeMediaHTTP, allowLoopback: Bool = false) { self.http = http; self.allowLoopback = allowLoopback }
+    /// The JSC filesystem's virtual path; never accept an arbitrary path from the page.
+    static func sharedFile(_ path: String, root: URL) -> URL? {
+        let parts = path.split(separator: "/", omittingEmptySubsequences: true)
+        guard path.hasPrefix("/data/"), !path.contains("\0"),
+              !parts.contains(where: { $0 == "." || $0 == ".." }) else { return nil }
+        let root = root.resolvingSymlinksInPath().standardizedFileURL
+        let file = root.appendingPathComponent(parts.joined(separator: "/")).resolvingSymlinksInPath().standardizedFileURL
+        guard file.path.hasPrefix(root.path + "/"),
+              let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true, let size = values.fileSize, size > 0, size <= 128 * 1024 * 1024,
+              FileManager.default.isReadableFile(atPath: file.path) else { return nil }
+        return file
+    }
     func backgroundRequest(_ source: [String: Any], ticket: NativePreparationTicket) async throws -> URLRequest {
         let kind = source["kind"] as? String
         let url: URL

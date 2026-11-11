@@ -36,7 +36,7 @@ export interface NativePlaybackControls {
   /** iPhone: SwiftUI full player; resolves when it closes. */
   presentPlayer?: () => Promise<{ action: 'close' | 'more' }>;
   /** iPhone: state for the native SwiftUI shell (lib/native-ui.ts); shown = the shell covers the web tab bar. */
-  uiState?: (state: Record<string, unknown>) => Promise<{ shown: boolean; nativeContent?: boolean; launchSplash?: boolean }>;
+  uiState?: (state: Record<string, unknown>) => Promise<{ shown: boolean; nativeContent?: boolean; launchSplash?: boolean; libraryInSwift?: boolean }>;
 }
 export interface PlaybackDiagnostics {
   currentId?: string;

@@ -340,10 +340,10 @@ enum NativeShellError: LocalizedError {
     var errorDescription: String? { self == .timeout ? "Медиатека не отвечает" : "Медиатека ещё загружается" }
 }
 
-/// Native side of lib/native-ui.ts. The page owns the data; this keeps its last snapshot.
+/// Swift reads library data from the server's SQLite; the page still owns routing and commands.
 final class NativeShellStore: ObservableObject {
     static weak var shared: NativeShellStore?
-    @Published private(set) var library: [NativeTrack] = [] { didSet { byId = Dictionary(library.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }) } }
+    @Published private(set) var library: [NativeTrack] = []
     private(set) var byId: [String: NativeTrack] = [:]
     /// Bumped on every snapshot: native pages reload their description from the page.
     @Published private(set) var revision = 0
@@ -372,6 +372,12 @@ final class NativeShellStore: ObservableObject {
     private var backupTimer: Timer?
     private var backingUp = false
     private var backupRevision = -1
+    private let libraryIO = DispatchQueue(label: "ru.mora.library", qos: .userInitiated)
+    private var libraryReader: NativeLibraryStore? // accessed only on libraryIO
+    private var libraryReading = false
+    private var librarySnapshot: NativeLibraryStore.Snapshot?
+    private var libraryFailure: String?
+    var playlistSort: [String: String] = [:]
     func remapReactions(_ mapping: [String: String]) { reactions.remap(mapping); flushReactions() }
 
     func captureBackup() {
@@ -452,6 +458,58 @@ final class NativeShellStore: ObservableObject {
     var tab: NativeTab { NativeRoute.tab(path) }
     var liked: [NativeTrack] { NativeTrack.favorites(library) }
 
+    var sharedLibrary: Bool { NativeServerApp.booted && NativeServerApp.shared != nil }
+
+    func refreshLibrary() {
+        guard sharedLibrary, !libraryReading else { return }
+        libraryReading = true
+        libraryIO.async { [weak self] in
+            guard let self else { return }
+            let result: Result<NativeLibraryStore.Snapshot?, Error> = Result {
+                if self.libraryReader == nil { self.libraryReader = try NativeLibraryStore(path: NativeServerApp.root.appendingPathComponent("data/automix.sqlite").path) }
+                return try self.libraryReader!.readIfChanged()
+            }
+            DispatchQueue.main.async {
+                self.libraryReading = false
+                switch result {
+                case .success(let snapshot):
+                    self.libraryFailure = nil
+                    guard let snapshot else { return }
+                    self.librarySnapshot = snapshot
+                    self.library = snapshot.library
+                    self.byId = Dictionary(uniqueKeysWithValues: snapshot.tracks.map { ($0.id, $0) })
+                    self.playlists = snapshot.playlists
+                    self.applyPendingReactions()
+                    self.revision &+= 1
+                    NativeSpotlight.update(self.library)
+                    self.publishWidget()
+                    if self.ui.loaded { self.offerBackupRestore() }
+                case .failure(let error):
+                    let message = error.localizedDescription
+                    if self.libraryFailure != message { self.show("Медиатека: \(message)") }
+                    self.libraryFailure = message
+                }
+            }
+        }
+    }
+
+    func libraryPage() throws -> [String: Any]? {
+        let parts = path.split(separator: "/")
+        let local = path == "/history" || path == "/library/playlists" || (parts.count == 2 && parts[0] == "playlist")
+        guard sharedLibrary, local else { return nil }
+        guard let snapshot = librarySnapshot else { throw NativeLibraryStore.Failure(message: libraryFailure ?? "Медиатека загружается") }
+        let current = NativeLibraryStore.Snapshot(tracks: Array(byId.values), library: library, playlists: playlists, entries: snapshot.entries, history: snapshot.history)
+        let id = parts.last.flatMap { String($0).removingPercentEncoding } ?? ""
+        return try current.page(path, sort: playlistSort[id] ?? "")
+    }
+
+    private func applyPendingReactions() {
+        for (id, value) in reactions.pending {
+            byId[id]?.reaction = value
+            if let index = library.firstIndex(where: { $0.id == id }) { library[index].reaction = value }
+        }
+    }
+
     init() {
         let nc = NotificationCenter.default
         nc.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.captureBackup() }
@@ -478,13 +536,19 @@ final class NativeShellStore: ObservableObject {
 
     func receive(_ value: [String: Any]) -> Bool {
         scheduleStation(value)
-        if value["library"] != nil { DispatchQueue.main.async { NativeSpotlight.update(self.library) } }
         if value["enable"] as? Bool == true { setShown(true, resync: false) }
-        if let rows = value["library"] as? [[String: Any]] { library = rows.compactMap(NativeTrack.init) }
-        if let rows = value["playlists"] as? [[String: Any]] { playlists = rows.compactMap(NativePlaylist.init) }
+        if sharedLibrary { refreshLibrary() }
+        else { // Pre-migration OPFS fallback: there is no shared SQLite file yet.
+            if let rows = value["library"] as? [[String: Any]] {
+                library = rows.compactMap(NativeTrack.init)
+                byId = Dictionary(library.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                DispatchQueue.main.async { NativeSpotlight.update(self.library) }
+            }
+            if let rows = value["playlists"] as? [[String: Any]] { playlists = rows.compactMap(NativePlaylist.init) }
+        }
         if let rows = value["queue"] as? [[String: Any]] { queue = rows.compactMap(NativeQueuedTrack.init) }
         let next = NativeUiState(value)
-        if next.loaded && !ui.loaded { offerBackupRestore() }
+        if next.loaded && !ui.loaded && (!sharedLibrary || librarySnapshot != nil) { offerBackupRestore() }
         let widgetChanged = value["library"] != nil || value["playlists"] != nil || Self.trackChanged(ui.now, next.now)
         if next.loaded && !ui.loaded && offline { sendNetwork() } // a page that (re)loaded without a network
         if next.toast != ui.toast, let toast = next.toast, screen != .web { show(toast.text) }
@@ -499,9 +563,7 @@ final class NativeShellStore: ObservableObject {
             pending = nil
             if path != next.path { path = next.path }
         }
-        for (id, value) in reactions.pending {
-            if let index = library.firstIndex(where: { $0.id == id }) { library[index].reaction = value }
-        }
+        applyPendingReactions()
         flushReactions()
         if widgetChanged { publishWidget() }
         revision &+= 1
@@ -602,6 +664,7 @@ final class NativeShellStore: ObservableObject {
     func react(id: String, value: Int) {
         guard !id.isEmpty, [-1, 0, 1].contains(value) else { return }
         reactions.set(id, value)
+        byId[id]?.reaction = value
         if let index = library.firstIndex(where: { $0.id == id }) { library[index].reaction = value }
         flushReactions()
     }
@@ -635,7 +698,8 @@ final class NativeShellStore: ObservableObject {
     func startPolling() {
         guard timer == nil, UIApplication.shared.applicationState != .background else { return }
         refreshPlayer()
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.refreshPlayer() }
+        refreshLibrary()
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.refreshPlayer(); self?.refreshLibrary() }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }

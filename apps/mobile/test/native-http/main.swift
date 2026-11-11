@@ -30,6 +30,26 @@ Task.detached {
     let client = NativeMediaHTTP(allowLoopback: true)
     defer { client.invalidate(); group.leave() }
     do {
+        let sharedRoot = root.appendingPathComponent("server", isDirectory: true)
+        let sharedData = sharedRoot.appendingPathComponent("data", isDirectory: true)
+        try FileManager.default.createDirectory(at: sharedData, withIntermediateDirectories: true)
+        let sharedAudio = sharedData.appendingPathComponent("song.mp3")
+        try Data([1, 2, 3]).write(to: sharedAudio)
+        let sharedFile = NativeMediaLoader.sharedFile("/data/song.mp3", root: sharedRoot)
+        precondition(sharedFile == sharedAudio.resolvingSymlinksInPath())
+        let sharedBytes = try Data(contentsOf: sharedFile!)
+        precondition(sharedBytes == Data([1, 2, 3]))
+        for path in ["/data/missing.mp3", "/data/../outside.mp3", "/data/./song.mp3", "/data", "/data/", "/elsewhere/song.mp3", "/data/song.mp3\0"] {
+            precondition(NativeMediaLoader.sharedFile(path, root: sharedRoot) == nil)
+        }
+        let outside = root.appendingPathComponent("outside.mp3")
+        try Data([9]).write(to: outside)
+        try FileManager.default.createSymbolicLink(at: sharedData.appendingPathComponent("escape.mp3"), withDestinationURL: outside)
+        precondition(NativeMediaLoader.sharedFile("/data/escape.mp3", root: sharedRoot) == nil)
+        try FileManager.default.createSymbolicLink(at: sharedData.appendingPathComponent("escape"), withDestinationURL: root)
+        precondition(NativeMediaLoader.sharedFile("/data/escape/outside.mp3", root: sharedRoot) == nil)
+        try FileManager.default.createSymbolicLink(at: sharedData.appendingPathComponent("alias.mp3"), withDestinationURL: sharedAudio)
+        precondition(NativeMediaLoader.sharedFile("/data/alias.mp3", root: sharedRoot) == sharedAudio.resolvingSymlinksInPath())
         let pendingStart = NativeQueuePreparation(index: 0, remaining: 6)
         precondition(pendingStart.hasRemaining) // Before run()/JavaScriptCore is scheduled.
         let pendingRepeat = NativeQueuePreparation(index: 0, loopCount: 1)

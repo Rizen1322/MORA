@@ -1,8 +1,8 @@
 # MORA для iPhone
 
-MORA работает на самом iPhone: без ПК и собственного сервера. Интерфейс — `apps/web` в Capacitor. Звук по умолчанию играет Swift-движок AutoMix через AVAudioEngine; AudioWorklet оставлен для диагностического сравнения. Медиатека, поиск, волна, тексты и импорт работают во встроенном worker. Нативная подготовка очереди загружает и декодирует записи вне WebView; анализ и планирование выполняются в JavaScriptCore процесса приложения, на отдельной очереди.
+MORA работает на самом iPhone: без ПК и собственного сервера. Интерфейс — `apps/web` в Capacitor. Звук по умолчанию играет Swift-движок AutoMix через AVAudioEngine; AudioWorklet оставлен для диагностического сравнения. Сервер на iPhone работает в JavaScriptCore с настоящими файлами и SQLite; Swift читает медиатеку, лайки, плейлисты и историю напрямую из этой базы. Поиск, волна, тексты, импорт и записи в базу пока используют сервер JS. Нативная подготовка очереди загружает и декодирует записи вне WebView; анализ и планирование выполняются в JavaScriptCore процесса приложения, на отдельной очереди.
 
-Текущий этап: [нативная подготовка первого трека](../../docs/ios-native-first-source-2026-11-01.md). Проверки JS/TS и мобильная сборка доступны на Windows; компиляция Swift и Simulator требуют macOS/Xcode.
+Текущий этап: [прямое чтение SQLite в Swift и общий план миграции](../../docs/ios-native-migration.md). Проверки JS/TS и мобильная сборка доступны на Windows; компиляция Swift и Simulator требуют macOS/Xcode.
 
 Старый нативный прототип в `apps/ios` с этой версией не связан.
 
@@ -11,7 +11,7 @@ MORA работает на самом iPhone: без ПК и собственн�
 ```
 WKWebView (Capacitor 8)
 ├─ страница: apps/web + mora-bridge.js
-│   • /api-запросы (fetch, XHR, EventSource, <img>/<audio> src) → server worker
+│   • /api-запросы (fetch, XHR, EventSource, <img>/<audio> src) → NativeServer; worker до миграции
 │   • для worker: decodeAudioData (декодирование и ресэмплинг), внешний HTTP (CapacitorHttp)
 │   • выбор записей и передача манифеста источников в MoraAudio
 │   • navigator.mediaSession используется только в диагностическом WebKit-пути

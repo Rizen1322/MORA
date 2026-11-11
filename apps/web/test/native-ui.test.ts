@@ -114,6 +114,32 @@ describe('native shell bridge (page side)', () => {
   });
 });
 
+it('stops sending library copies after Swift takes ownership, and restores the OPFS fallback', async () => {
+  vi.useFakeTimers();
+  let libraryInSwift = true;
+  const push = vi.fn(async (_state: Record<string, unknown>) => ({ shown: true, libraryInSwift }));
+  vi.stubGlobal('window', { moraNativePlayback: { uiState: push }, addEventListener: vi.fn() });
+  vi.stubGlobal('document', { documentElement: { classList: { toggle: vi.fn() } } });
+  const { startNativeUi, enableNativeUi } = await import('../src/lib/native-ui.ts');
+  startNativeUi();
+  await vi.advanceTimersByTimeAsync(200);
+  expect(push.mock.calls[0][0].library).toBeDefined();
+  h.app = { ...h.app, tracks: new Map(h.app.tracks), playlists: [{ id: 'p', name: 'Playlist', count: 0, coverUrl: null }] };
+  h.listeners.forEach(fn => fn());
+  await vi.advanceTimersByTimeAsync(200);
+  expect(push).toHaveBeenCalledTimes(1);
+  enableNativeUi();
+  await vi.advanceTimersByTimeAsync(200);
+  expect(push.mock.calls.at(-1)?.[0]).not.toHaveProperty('library');
+  expect(push.mock.calls.at(-1)?.[0]).not.toHaveProperty('playlists');
+  libraryInSwift = false;
+  enableNativeUi();
+  await vi.advanceTimersByTimeAsync(200);
+  expect(push.mock.calls.at(-1)?.[0].library).toBeDefined();
+  expect(push.mock.calls.at(-1)?.[0].playlists).toEqual([{ id: 'p', name: 'Playlist', count: 0, cover: null }]);
+  vi.useRealTimers();
+});
+
 it('acknowledges native lock-screen reactions only after persistence succeeds', async () => {
   const { commands } = await import('../src/lib/native-ui.ts');
   h.react.mockRejectedValueOnce(new Error('offline'));

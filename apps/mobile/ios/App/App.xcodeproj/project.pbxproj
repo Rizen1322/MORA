@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		FBF0C0DE2FF0000100000024 /* NativeLibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000025 /* NativeLibraryStore.swift */; };
 		FFF0C0DE2FF0000100000001 /* NativeDiagnosticArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF0C0DE2FF0000100000002 /* NativeDiagnosticArchive.swift */; };
 		FFF0C0DE2FF0000100000003 /* NativeMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF0C0DE2FF0000100000004 /* NativeMetrics.swift */; };
 		FEF0C0DE2FF0000100000001 /* NativeSpotlight.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEF0C0DE2FF0000100000002 /* NativeSpotlight.swift */; };
@@ -60,6 +61,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		FBF0C0DE2FF0000100000025 /* NativeLibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLibraryStore.swift; sourceTree = "<group>"; };
 		FFF0C0DE2FF0000100000002 /* NativeDiagnosticArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDiagnosticArchive.swift; sourceTree = "<group>"; };
 		FFF0C0DE2FF0000100000004 /* NativeMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMetrics.swift; sourceTree = "<group>"; };
 		FEF0C0DE2FF0000100000002 /* NativeSpotlight.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpotlight.swift; sourceTree = "<group>"; };
@@ -215,7 +217,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = MORAWidgets/MORAWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-                CURRENT_PROJECT_VERSION = 41;
+                CURRENT_PROJECT_VERSION = 42;
 				INFOPLIST_FILE = MORAWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.4;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -223,7 +225,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-                MARKETING_VERSION = 1.0.40;
+                MARKETING_VERSION = 1.0.41;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.mora.player.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -238,7 +240,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = MORAWidgets/MORAWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-                CURRENT_PROJECT_VERSION = 41;
+                CURRENT_PROJECT_VERSION = 42;
 				INFOPLIST_FILE = MORAWidgets/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.4;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -246,7 +248,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-                MARKETING_VERSION = 1.0.40;
+                MARKETING_VERSION = 1.0.41;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.mora.player.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -313,6 +315,7 @@
 				FBF0C0DE2FF0000100000002 /* NativeSplash.swift */,
 				FBF0C0DE2FF0000100000005 /* NativePlaybackHooks.swift */,
 				FBF0C0DE2FF0000100000021 /* NativeServer.swift */,
+				FBF0C0DE2FF0000100000025 /* NativeLibraryStore.swift */,
 				FBF0C0DE2FF0000100000023 /* NativeServerPlugin.swift */,
 				FCF0C0DE2FF0000100000002 /* NativeDownloadQueue.swift */,
 				FCF0C0DE2FF0000100000004 /* NativeDownloadManager.swift */,
@@ -452,6 +455,7 @@
 				FBF0C0DE2FF0000100000001 /* NativeSplash.swift in Sources */,
 				FBF0C0DE2FF0000100000004 /* NativePlaybackHooks.swift in Sources */,
 				FBF0C0DE2FF0000100000020 /* NativeServer.swift in Sources */,
+				FBF0C0DE2FF0000100000024 /* NativeLibraryStore.swift in Sources */,
 				FBF0C0DE2FF0000100000022 /* NativeServerPlugin.swift in Sources */,
 				FCF0C0DE2FF0000100000001 /* NativeDownloadQueue.swift in Sources */,
 				FCF0C0DE2FF0000100000003 /* NativeDownloadManager.swift in Sources */,
@@ -613,7 +617,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-                CURRENT_PROJECT_VERSION = 41;
+                CURRENT_PROJECT_VERSION = 42;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.4;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -624,7 +628,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/../../../../packages/audio-rust/target/ios/$(PLATFORM_NAME)/libmora_audio.a",
 				);
-                MARKETING_VERSION = 1.0.40;
+                MARKETING_VERSION = 1.0.41;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = ru.mora.player;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -640,7 +644,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-                CURRENT_PROJECT_VERSION = 41;
+                CURRENT_PROJECT_VERSION = 42;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.4;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -651,7 +655,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/../../../../packages/audio-rust/target/ios/$(PLATFORM_NAME)/libmora_audio.a",
 				);
-                MARKETING_VERSION = 1.0.40;
+                MARKETING_VERSION = 1.0.41;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.mora.player;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
