@@ -218,6 +218,17 @@ private struct LockScreenWidgetView: View {
     WaveEntry(date: .now, source: .online)
 }
 
+@available(iOSApplicationExtension 18.0, *)
+struct MoraPlaybackControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: "mora.playback") {
+            ControlWidgetButton(action: NativePlaybackToggleIntent()) {
+                Label("Пауза / продолжить", systemImage: "playpause.fill")
+            }
+        }.displayName("Плеер MORA").description("Пауза или продолжение нативного воспроизведения.")
+    }
+}
+
 @main
 struct MoraWidgets: WidgetBundle {
     var body: some Widget {

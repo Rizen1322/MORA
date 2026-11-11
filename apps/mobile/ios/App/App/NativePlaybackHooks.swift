@@ -17,5 +17,9 @@ import Foundation
             host.reactionState = { id in NativeShellStore.shared?.reaction(id) ?? NativeReactionOutbox().pending[id] ?? 0 }
         }
         host.onNowPlaying = { state, ended in NativeShellStore.shared?.nativePlaybackChanged(state, ended: ended) }
+        NativePlaybackActions.handler = { [weak host] in
+            guard let host, host.active else { return }
+            _ = await withCheckedContinuation { done in host.command("toggle", source: "control") { done.resume(returning: $0) } }
+        }
     }
 }

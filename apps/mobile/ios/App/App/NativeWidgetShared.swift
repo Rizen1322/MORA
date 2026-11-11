@@ -26,3 +26,22 @@ struct NativeWidgetData: Codable, Equatable {
         UserDefaults(suiteName: Self.group)?.set(data, forKey: Self.key)
     }
 }
+
+#if os(iOS)
+import AppIntents
+
+/// The Control Center button «Плеер MORA» (MoraPlaybackControl): runs in the app, where
+/// NativePlaybackHooks sets `handler` to the native player's play/pause.
+@MainActor enum NativePlaybackActions {
+    static var handler: (() async -> Void)?
+}
+
+struct NativePlaybackToggleIntent: AudioPlaybackIntent {
+    static var title: LocalizedStringResource = "Пауза / продолжить MORA"
+    static var openAppWhenRun = false
+    @MainActor func perform() async throws -> some IntentResult {
+        await NativePlaybackActions.handler?()
+        return .result()
+    }
+}
+#endif
