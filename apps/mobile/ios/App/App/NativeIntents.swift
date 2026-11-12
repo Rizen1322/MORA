@@ -124,7 +124,7 @@ struct LikeCurrentTrackIntent: AppIntent {
         guard let store = NativeShellStore.shared else { throw NativeIntentError.notReady }
         guard let id = await NativeIntentShell.currentTrackId(store), !id.isEmpty else { return .result(dialog: "Сейчас ничего не играет") }
         if store.reaction(id) > 0 { return .result(dialog: "Трек уже в любимом") }
-        // The same outbox as the lock-screen like: saved now, synced when the page can take it.
+        // The lock-screen outbox persists now and flushes while active; shared SQLite needs no page.
         store.react(id: id, value: 1)
         return .result(dialog: "Трек в любимом")
     }

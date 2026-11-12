@@ -127,7 +127,7 @@ final class NativeLibraryStore {
 }
 
 extension NativeLibraryStore.Snapshot {
-    /// These pages read their contents here; mutations still use the existing server commands.
+    /// Page contents come from SQLite; NativeLibraryActions sends mutations directly to the JSC API.
     func page(_ path: String, sort: String = "") throws -> [String: Any]? {
         typealias Row = [String: Any]
         func act(_ name: String, _ args: Row = [:]) -> Row { ["name": name, "args": args] }

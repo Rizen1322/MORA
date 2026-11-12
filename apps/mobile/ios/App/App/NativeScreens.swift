@@ -61,8 +61,7 @@ extension NativeShellStore {
     }
 }
 
-/// Native screens of the shell (NativeShell.swift). They link to other sections through the page's router;
-/// the page-described ones (albums, playlists, settings…) are drawn by NativePages.swift, the rest stay web.
+/// SwiftUI screens of the shell; navigation still uses the page's router.
 
 /// A white symbol on a tinted rounded square, as in iOS Settings; the tint follows the symbol so rows stay stable.
 struct NativeIconBadge: View {

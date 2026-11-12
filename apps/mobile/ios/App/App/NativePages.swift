@@ -46,9 +46,7 @@ enum NativePickedFile {
     }
 }
 
-/// Native pages described by the page (apps/web/src/lib/native-pages.ts): albums, artists, playlists,
-/// history, wave, downloads, import, sources, settings and diagnostics. The page owns the data and the
-/// actions; this view draws the rows (NativeShellState.swift, `NativePage`) and sends the actions back.
+/// Draws row descriptions from the Swift library snapshots or the remaining web pages.
 struct NativePageView: View {
     var waveSource: Binding<NativeWaveSource>? = nil
     @EnvironmentObject private var store: NativeShellStore
