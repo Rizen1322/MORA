@@ -138,6 +138,10 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
 extension MoraRootViewController {
     @MainActor private func checkNativeUI() async {
         let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        // The empty-library backup fixture must not open the first-run restore alert over later checks.
+        let restoreOffer = UserDefaults.standard.object(forKey: "mora.backup.offered")
+        UserDefaults.standard.set(true, forKey: "mora.backup.offered")
+        defer { UserDefaults.standard.set(restoreOffer, forKey: "mora.backup.offered") }
         func require(_ condition: Bool, _ message: String) throws {
             if !condition { throw NSError(domain: "NativeUI", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
         }
