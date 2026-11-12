@@ -9,7 +9,8 @@ const h = vi.hoisted(() => ({
 }));
 vi.mock('../src/store/app.ts', () => ({
   phone: true,
-  controller: { resume: () => h.resume(), pause: () => h.pause(), nextTrack: () => h.nextTrack(), prevTrack: () => h.prevTrack(), seek: (time: number) => h.seek(time), toggleShuffle: () => h.toggleShuffle(), cycleRepeat: () => h.cycleRepeat(), playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k), refreshYandexWave: () => h.refreshYandexWave(), subscribe: vi.fn(), setOfflineOnly: vi.fn(),
+  controller: { resume: () => h.resume(), pause: () => h.pause(), nextTrack: (...a: any[]) => h.nextTrack(...a), prevTrack: () => h.prevTrack(), seek: (time: number) => h.seek(time), toggleShuffle: () => h.toggleShuffle(), cycleRepeat: () => h.cycleRepeat(), playTracks: (...a: any[]) => h.playTracks(...a), addToQueue: (...a: any[]) => h.addToQueue(...a), toggle: () => h.toggle(), startWave: (k: string) => h.startWave(k), refreshYandexWave: () => h.refreshYandexWave(), subscribe: vi.fn(), setOfflineOnly: vi.fn(),
+    get currentEntry() { return h.queueState.queue[h.queueState.index] ?? null; },
     get state() { return h.queueState; }, move: (...a: any[]) => h.move(...a), removeAt: (i: number) => h.removeAt(i), jumpTo: (i: number) => h.jumpTo(i) },
   trackOf: (id: string) => h.app.tracks.get(id),
   useApp: { getState: () => h.app, setState: vi.fn(), subscribe: (fn: () => void) => h.listeners.push(fn) },
@@ -37,6 +38,25 @@ beforeEach(() => {
   h.app = { patchTrack: h.patchTrack, tracks, order: ['a', 'b'], loaded: true, playlists: [], loadPlaylists: () => h.loadPlaylists(), providers: [], toasts: [], fullPlayer: false, queueOpen: false, panel: null, toast: h.toast,
     player: { status: 'playing', queue: [{ trackId: 'a' }], index: 0, context: { type: 'wave', label: 'Моя волна' }, error: null } };
   vi.stubGlobal('location', { hash: '#/liked?x=1' });
+});
+
+it.each(['wave', 'yandex-wave', 'online-radio'])('guards the post-ACK dislike skip against a changed track or context: %s', async type => {
+  const { commands } = await import('../src/lib/native-ui.ts');
+  const queue = h.queueState as typeof h.queueState & { context?: { type: string } };
+  queue.queue = [{ trackId: 'a' }]; queue.index = 0; queue.context = { type };
+  try {
+    commands.next({ ifTrackId: 'old-track', reason: 'dislike' });
+    expect(h.nextTrack).not.toHaveBeenCalled();
+    // The web store may still have reaction=0 until the SQLite library SSE arrives.
+    expect(h.app.tracks.get('a').reaction).toBe(0);
+    commands.next({ ifTrackId: 'a', reason: 'dislike' });
+    expect(h.nextTrack).toHaveBeenCalledWith('dislike');
+    h.nextTrack.mockClear(); queue.context = { type: 'playlist' };
+    commands.next({ ifTrackId: 'a', reason: 'dislike' });
+    expect(h.nextTrack).not.toHaveBeenCalled();
+    commands.next({});
+    expect(h.nextTrack).toHaveBeenCalledWith();
+  } finally { delete queue.context; }
 });
 
 describe('native shell bridge (page side)', () => {

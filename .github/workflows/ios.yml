@@ -89,6 +89,12 @@ jobs:
           "$RUNNER_TEMP/mora-settings-check"
           swiftc apps/mobile/ios/App/App/NativeShellState.swift apps/mobile/ios/App/App/NativeDownloadsState.swift apps/mobile/test/native-downloads/main.swift -o "$RUNNER_TEMP/mora-downloads-check"
           "$RUNNER_TEMP/mora-downloads-check"
+      - name: Test native library actions and reaction outbox
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeLibraryActions.swift apps/mobile/test/native-library-actions/main.swift -o "$RUNNER_TEMP/mora-library-actions-check"
+          "$RUNNER_TEMP/mora-library-actions-check"
+          swiftc apps/mobile/ios/App/App/NativeShellState.swift apps/mobile/ios/App/App/NativeLibraryReactions.swift apps/mobile/test/native-library-reactions/main.swift -o "$RUNNER_TEMP/mora-library-reactions-check"
+          "$RUNNER_TEMP/mora-library-reactions-check"
       - name: Test native sound and backup files
         run: |
           swiftc apps/mobile/ios/App/App/NativeSoundState.swift apps/mobile/test/native-sound/main.swift -o "$RUNNER_TEMP/mora-sound-check"

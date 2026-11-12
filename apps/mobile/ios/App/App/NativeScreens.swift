@@ -1,6 +1,66 @@
 import SwiftUI
 import UIKit
 
+extension NativeShellStore {
+    /// true means handled, including no-op input; supported errors never retry through WebContent.
+    @MainActor func executeLibraryAction(_ name: String, _ args: [String: Any] = [:]) async throws -> Bool {
+        guard sharedLibrary else { return false }
+        let action = name == "act" ? args["name"] as? String ?? "" : name
+        let values = name == "act" ? args["args"] as? [String: Any] ?? [:] : args
+        if action == "likeAll" {
+            guard let ids = values["ids"] as? [String], !ids.isEmpty else { throw NativeLibraryActions.Failure(message: "Треки не найдены") }
+            likeAll(ids)
+            return true
+        }
+        guard NativeLibraryActions.supports(action) else { return false }
+        let result: NativeLibraryActions.Result
+        do {
+            guard let handled = try await NativeLibraryActions.execute(action, values, request: { method, path, body in
+                try await NativeServerApp.request(method, path, body: body)
+            }) else { return false }
+            result = handled
+        } catch {
+            refreshLibrary()
+            throw error
+        }
+        if result.mutated {
+            do { try await refreshLibraryAfterMutation() }
+            catch {
+                show("Изменения сохранены. Не удалось обновить медиатеку: \(error.localizedDescription)")
+                return true
+            }
+        }
+        if let export = result.export { try await shareLibraryExport(export) }
+        if let go = result.go { self.go(go) }
+        if let message = result.message { show(message) }
+        return true
+    }
+
+    @MainActor private func shareLibraryExport(_ export: NativeLibraryActions.Export) async throws {
+        guard var parent = presenter else { throw NativeLibraryActions.Failure(message: "Не удалось открыть экспорт") }
+        while let presented = parent.presentedViewController { parent = presented }
+        guard parent.view.window != nil, !parent.isBeingDismissed, !parent.isBeingPresented else {
+            throw NativeLibraryActions.Failure(message: "Не удалось открыть экспорт. Повторите после закрытия окна.")
+        }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("MORA-playlist-\(UUID().uuidString)", isDirectory: true)
+        let url = folder.appendingPathComponent(export.name)
+        try await Task.detached(priority: .utility) {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            do { try export.text.write(to: url, atomically: true, encoding: .utf8) }
+            catch { try? FileManager.default.removeItem(at: folder); throw error }
+        }.value
+        guard parent.view.window != nil, parent.presentedViewController == nil, !parent.isBeingDismissed, !parent.isBeingPresented else {
+            try? FileManager.default.removeItem(at: folder)
+            throw NativeLibraryActions.Failure(message: "Не удалось открыть экспорт. Повторите после закрытия окна.")
+        }
+        let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        sheet.completionWithItemsHandler = { _, _, _, _ in try? FileManager.default.removeItem(at: folder) }
+        sheet.popoverPresentationController?.sourceView = parent.view
+        sheet.popoverPresentationController?.sourceRect = CGRect(x: parent.view.bounds.midX, y: parent.view.bounds.midY, width: 1, height: 1)
+        parent.present(sheet, animated: true)
+    }
+}
+
 /// Native screens of the shell (NativeShell.swift). They link to other sections through the page's router;
 /// the page-described ones (albums, playlists, settings…) are drawn by NativePages.swift, the rest stay web.
 

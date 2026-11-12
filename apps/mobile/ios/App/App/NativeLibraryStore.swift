@@ -177,7 +177,7 @@ extension NativeLibraryStore.Snapshot {
         }
         let ids = list.map(\.trackId), ctx: Row = ["type": "playlist", "id": id, "label": playlist.name]
         let play = ctx.merging(["ids": ids]) { _, value in value }
-        let pending = list.contains { byId[$0.trackId]?.liked == false }
+        let pending = list.contains { byId[$0.trackId]?.reaction == 0 }
         let header: [Row] = [
             button("Слушать", "playAll", play, ["symbol": "play.fill", "style": "primary", "disabled": ids.isEmpty]),
             button("Вперемешку", "playAll", play.merging(["shuffle": true]) { _, value in value }, ["symbol": "shuffle", "disabled": ids.isEmpty]),

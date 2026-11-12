@@ -93,6 +93,47 @@ let nativeSettings = try nativeRequest("/api/settings").get()
 assert((nativeSettings["ui"] as? [String: Any])?["motion"] as? String == "full")
 let nativePut = try nativeRequest("/api/settings", method: "PUT", body: ["automix": ["enabled": false]]).get()
 assert((nativePut["automix"] as? [String: Any])?["enabled"] as? Bool == false)
+
+// Native library writes use the real JSC routes and SQLite, including PATCH and duplicate entry IDs.
+var libraryWriter: OpaquePointer?
+assert(sqlite3_open(root.appendingPathComponent("data/automix.sqlite").path, &libraryWriter) == SQLITE_OK)
+assert(sqlite3_exec(libraryWriter, """
+    INSERT INTO tracks(id,content_hash,title,added_at,updated_at,saved) VALUES
+      ('native-one','native-one','Одна',1,1,0),('native-two','native-two','Другая',2,2,1);
+    INSERT INTO plays(track_id,started_at,played_ms,end_reason) VALUES('native-one',1,1000,'skip');
+    """, nil, nil, nil) == SQLITE_OK, String(cString: sqlite3_errmsg(libraryWriter)))
+sqlite3_close(libraryWriter)
+let created = try nativeRequest("/api/playlists", method: "POST", body: ["name": "Нативный", "trackIds": ["native-one", "native-one", "native-two"]]).get()
+let playlistID = created["id"] as! String
+let playlistURL = "/api/playlists/" + playlistID
+_ = try nativeRequest(playlistURL, method: "PATCH", body: ["name": "Переименован"]).get()
+let playlist = try nativeRequest(playlistURL).get()
+assert(playlist["name"] as? String == "Переименован")
+let entries = playlist["entries"] as! [[String: Any]]
+let entryIDs = entries.map { ($0["entryId"] as! NSNumber).intValue }
+assert(entries.map { $0["trackId"] as! String } == ["native-one", "native-one", "native-two"] && Set(entryIDs).count == 3)
+_ = try nativeRequest(playlistURL + "/order", method: "PUT", body: ["entryIds": entryIDs.reversed().map { $0 }]).get()
+if case .success = nativeRequest(playlistURL + "/order", method: "PUT", body: ["entryIds": [entryIDs[0], entryIDs[0], entryIDs[2]]]) { fatalError("duplicate entry order was accepted") }
+_ = try nativeRequest(playlistURL + "/tracks/\(entryIDs[0])", method: "DELETE").get()
+let remaining = try nativeRequest(playlistURL).get()["entries"] as! [[String: Any]]
+assert(remaining.map { ($0["entryId"] as! NSNumber).intValue } == [entryIDs[2], entryIDs[1]], "Removing one occurrence changed another")
+let added = try nativeRequest(playlistURL + "/tracks", method: "POST", body: ["trackIds": ["native-one"]]).get()
+assert((added["added"] as? NSNumber)?.intValue == 1)
+_ = try nativeRequest("/api/tracks/native-one/reaction", method: "POST", body: ["value": 1]).get()
+let savedLibrary = try nativeRequest("/api/library").get()["tracks"] as! [[String: Any]]
+assert(savedLibrary.contains { $0["id"] as? String == "native-one" && ($0["reaction"] as? NSNumber)?.intValue == 1 }, "Like did not save a playback-only track")
+let exported = try nativeRequest("/api/backup/playlists?playlist=" + playlistID).get()
+assert((exported["playlists"] as? [[String: Any]])?.count == 1)
+_ = try nativeRequest("/api/history", method: "DELETE").get()
+let clearedHistory = try nativeRequest("/api/history").get()
+assert((clearedHistory["items"] as? [Any])?.isEmpty == true)
+let afterClear = try nativeRequest("/api/library").get()["tracks"] as! [[String: Any]]
+assert(afterClear.contains { $0["id"] as? String == "native-one" && ($0["reaction"] as? NSNumber)?.intValue == 1 }, "Clearing history removed likes")
+_ = try nativeRequest(playlistURL, method: "DELETE").get()
+if case .success = nativeRequest(playlistURL) { fatalError("Deleted playlist still exists") }
+let survivingLibrary = try nativeRequest("/api/library").get()
+assert((survivingLibrary["tracks"] as? [Any])?.count == 2, "Deleting playlist deleted tracks")
+print("Native library routes: PATCH, duplicate entries, reorder validation, add/remove, reactions, export and history passed")
 if case .success = nativeRequest("/api/not-found") { fatalError("native accepted HTTP 404") }
 lock.lock()
 assert(!messages.contains { (($0["id"] as? NSNumber)?.intValue ?? 0) < 0 }, "native response leaked to the page")

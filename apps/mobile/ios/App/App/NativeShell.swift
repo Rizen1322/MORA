@@ -366,6 +366,60 @@ extension MoraRootViewController {
             try capture("native-import-library")
             report["import"] = "UIKit picker delegate, copied file read, real WAV upload and visible library row passed"
             let restoredTrack = shell.library.first { !before.contains($0.id) && $0.duration > 0 }!
+            _ = try await web.evaluateJavaScript("window.__libraryOriginal=window.moraNativeUi;window.__libraryCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='reactSaved'||n==='addToPlaylist'||n==='act'&&['createPlaylist','renamePlaylist','deletePlaylist','removeFromPlaylist','reorderPlaylist','exportPlaylist','clearHistory','likeAll'].includes(a.name)||n==='page'&&/^#\\/(history|library\\/playlists|playlist\\/)/.test(location.hash)){window.__libraryCalls.push(n);throw Error('Library action depended on page');}return window.__libraryOriginal(n,a);};0")
+            let createdNatively = try await shell.executeLibraryAction("createPlaylist", ["value": "Native actions fixture"])
+            try require(createdNatively, "Native playlist creation fell back to page")
+            guard let playlist = shell.playlists.first(where: { $0.name == "Native actions fixture" }) else { throw NativeShellError.page }
+            _ = try await shell.executeLibraryAction("addToPlaylist", ["playlistId": playlist.id, "ids": [restoredTrack.id, restoredTrack.id]])
+            _ = try await shell.executeLibraryAction("renamePlaylist", ["id": playlist.id, "value": "Native renamed fixture"])
+            try require(shell.playlists.first(where: { $0.id == playlist.id })?.name == "Native renamed fixture", "Renamed playlist snapshot was stale")
+            try await wait { self.shell.ui.path == "/playlist/" + playlist.id }
+            try await Task.sleep(for: .seconds(1))
+            try capture("native-playlist-actions")
+            _ = try await shell.executeLibraryAction("exportPlaylist", ["id": playlist.id])
+            try await wait { self.presentedViewController is UIActivityViewController }
+            try await Task.sleep(for: .seconds(1))
+            try capture("native-playlist-export")
+            presentedViewController?.dismiss(animated: false)
+            try await wait { self.presentedViewController == nil }
+            let contents = try await NativeServerApp.request("GET", "/api/playlists/" + playlist.id)
+            let entries = (contents["entries"] as! [[String: Any]]).map { ($0["entryId"] as! NSNumber).intValue }
+            try require(entries.count == 2 && entries[0] != entries[1], "Duplicate playlist occurrences were lost")
+            _ = try await shell.executeLibraryAction("reorderPlaylist", ["id": playlist.id, "entries": entries, "from": 0, "to": 2])
+            _ = try await shell.executeLibraryAction("removeFromPlaylist", ["id": playlist.id, "entry": entries[0]])
+            let afterRemoval = try await NativeServerApp.request("GET", "/api/playlists/" + playlist.id)
+            let keptEntries = afterRemoval["entries"] as! [[String: Any]]
+            try require(keptEntries.count == 1 && (keptEntries[0]["entryId"] as? NSNumber)?.intValue == entries[1], "Removal deleted another playlist occurrence")
+            func waitForSavedReaction(_ value: Int) async throws {
+                for _ in 0..<40 {
+                    let result = try await NativeServerApp.request("GET", "/api/library")
+                    let tracks = result["tracks"] as? [[String: Any]] ?? []
+                    if tracks.contains(where: { $0["id"] as? String == restoredTrack.id && ($0["reaction"] as? NSNumber)?.intValue == value }) { return }
+                    try await Task.sleep(for: .milliseconds(250))
+                }
+                try require(false, "Native reaction did not reach SQLite")
+            }
+            shell.react(id: restoredTrack.id, value: 1)
+            try await waitForSavedReaction(1)
+            shell.react(id: restoredTrack.id, value: 0)
+            try await waitForSavedReaction(0)
+            _ = try await shell.executeLibraryAction("likeAll", ["ids": [restoredTrack.id, restoredTrack.id]])
+            try await waitForSavedReaction(1)
+            _ = try await NativeServerApp.request("POST", "/api/plays", body: ["trackId": restoredTrack.id, "context": "native-ui-check"])
+            try await shell.refreshLibraryAfterMutation()
+            shell.go("/history")
+            try await wait { self.shell.ui.path == "/history" }
+            try await Task.sleep(for: .seconds(1))
+            try capture("native-history-actions")
+            _ = try await shell.executeLibraryAction("clearHistory")
+            let historyAfterClear = try await NativeServerApp.request("GET", "/api/history")
+            try require((historyAfterClear["items"] as? [Any])?.isEmpty == true && shell.reaction(restoredTrack.id) == 1, "Clearing history changed likes or kept plays")
+            _ = try await shell.executeLibraryAction("deletePlaylist", ["id": playlist.id])
+            try require(!shell.playlists.contains(where: { $0.id == playlist.id }) && shell.byId[restoredTrack.id] != nil, "Deleting playlist deleted its track")
+            let libraryCalls = try await web.evaluateJavaScript("window.__libraryCalls.length") as? Int ?? -1
+            try require(libraryCalls == 0, "Native library actions depended on page")
+            _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__libraryOriginal;0")
+            report["libraryActions"] = "Direct playlist create/add/rename/export/reorder/remove/delete, duplicate occurrence IDs, reactions/bulk likes and clear history passed with page commands forbidden"
             let saved: [String: Any] = ["items": [["entryId": "restored-fixture", "trackId": restoredTrack.id, "origin": "user"]],
                 "index": 0, "position": 0.25, "context": ["type": "library", "label": "Медиатека"], "shuffle": false, "repeat": "off", "volume": 1]
             _ = try await web.callAsyncJavaScript("const r = await fetch('/api/queue',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(saved)}); if(!r.ok)throw Error(r.status); return 0;", arguments: ["saved": saved], in: nil, contentWorld: .page)
@@ -539,18 +593,28 @@ final class NativeShellStore: ObservableObject {
     func refreshLibrary() {
         guard sharedLibrary, !libraryReading else { return }
         libraryReading = true
+        readLibrary(force: false) { [weak self] _ in self?.libraryReading = false }
+    }
+
+    // Queue a fresh read behind any poll already in flight before showing the mutation's result.
+    @MainActor func refreshLibraryAfterMutation() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            readLibrary(force: true) { continuation.resume(with: $0) }
+        }
+    }
+
+    private func readLibrary(force: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
         libraryIO.async { [weak self] in
-            guard let self else { return }
+            guard let self else { completion(.failure(CancellationError())); return }
             let result: Result<NativeLibraryStore.Snapshot?, Error> = Result {
                 if self.libraryReader == nil { self.libraryReader = try NativeLibraryStore(path: NativeServerApp.root.appendingPathComponent("data/automix.sqlite").path) }
-                return try self.libraryReader!.readIfChanged()
+                return try self.libraryReader!.readIfChanged(force: force)
             }
             DispatchQueue.main.async {
-                self.libraryReading = false
                 switch result {
                 case .success(let snapshot):
                     self.libraryFailure = nil
-                    guard let snapshot else { return }
+                    guard let snapshot else { completion(.success(())); return }
                     self.librarySnapshot = snapshot
                     self.library = snapshot.library
                     self.byId = Dictionary(uniqueKeysWithValues: snapshot.tracks.map { ($0.id, $0) })
@@ -560,10 +624,12 @@ final class NativeShellStore: ObservableObject {
                     NativeSpotlight.update(self.library)
                     self.publishWidget()
                     if self.ui.loaded { self.offerBackupRestore() }
+                    completion(.success(()))
                 case .failure(let error):
                     let message = error.localizedDescription
                     if self.libraryFailure != message { self.show("Медиатека: \(message)") }
                     self.libraryFailure = message
+                    completion(.failure(error))
                 }
             }
         }
@@ -680,7 +746,10 @@ final class NativeShellStore: ObservableObject {
         if name == "versions", let id = args["id"] as? String { presentVersions(id: id); return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         Task { @MainActor in
-            do { _ = try await call(name, args, timeout: 60) } catch let error as NativeShellError { show(error.localizedDescription) } catch {}
+            do {
+                if try await executeLibraryAction(name, args) { return }
+                _ = try await call(name, args, timeout: 60)
+            } catch { show(error.localizedDescription) }
         }
     }
 
@@ -738,23 +807,38 @@ final class NativeShellStore: ObservableObject {
     }
     func reaction(_ id: String) -> Int { reactions.pending[id] ?? byId[id]?.reaction ?? 0 }
     func react(id: String, value: Int) {
-        guard !id.isEmpty, [-1, 0, 1].contains(value) else { return }
+        guard !id.isEmpty, id.utf8.count <= 512, [-1, 0, 1].contains(value) else { return }
         reactions.set(id, value)
         byId[id]?.reaction = value
         if let index = library.firstIndex(where: { $0.id == id }) { library[index].reaction = value }
         flushReactions()
     }
+    func likeAll(_ ids: [String]) {
+        let todo = NativeLibraryReactions.toLike(ids) { byId[$0] == nil ? nil : reaction($0) }
+        let kept = Set(ids).filter { byId[$0] != nil && reaction($0) < 0 }.count
+        for id in todo { react(id: id, value: 1) }
+        let summary = todo.isEmpty ? "Новых лайков нет — всё уже в любимом" : "В любимое добавлено: \(todo.count)"
+        show(summary + (kept > 0 ? " · с дизлайком оставлено как есть: \(kept)" : ""))
+    }
     private func flushReactions() {
-        guard !sendingReactions, UIApplication.shared.applicationState == .active, webView != nil, !reactions.pending.isEmpty else { return }
+        guard !sendingReactions, UIApplication.shared.applicationState == .active, sharedLibrary || webView != nil, !reactions.pending.isEmpty else { return }
         sendingReactions = true
         Task { @MainActor in
             defer { sendingReactions = false }
-            for (id, value) in reactions.pending {
-                do {
-                    _ = try await call("reactSaved", ["id": id, "value": value])
-                    reactions.acknowledge(id, value)
-                } catch { show("Реакция сохранена на iPhone. Синхронизация повторится при открытии приложения."); break }
-            }
+            do {
+                try await NativeLibraryReactions.drain(next: {
+                    self.reactions.pending.first.map { ($0.key, $0.value) }
+                }, send: { id, value in
+                    if self.sharedLibrary {
+                        let result = try await NativeServerApp.request("POST", NativeLibraryReactions.path(id), body: ["value": value])
+                        try NativeLibraryReactions.validate(result, value: value)
+                        if value < 0, self.reaction(id) < 0, self.ui.now?.id == id, self.ui.wave.active != nil, self.webView != nil {
+                            self.run("next", ["ifTrackId": id, "reason": "dislike"])
+                        }
+                    } else { _ = try await self.call("reactSaved", ["id": id, "value": value]) }
+                }, acknowledge: { id, value in self.reactions.acknowledge(id, value) })
+                if sharedLibrary { refreshLibrary() }
+            } catch { show("Реакция сохранена на iPhone. Синхронизация повторится при открытии приложения.") }
         }
     }
 

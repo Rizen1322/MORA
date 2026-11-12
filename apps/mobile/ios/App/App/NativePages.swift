@@ -516,7 +516,7 @@ struct NativePageView: View {
         }
     }
 
-    /// Runs a row action in the page, then follows what it asks for and reloads the page.
+    /// Local library actions use the native server; remaining actions use the page.
     private func run(_ act: NativePageAct, _ extra: [String: Any] = [:]) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         let args = act.args.merging(extra) { _, new in new }
@@ -530,6 +530,7 @@ struct NativePageView: View {
         Task { @MainActor in
             defer { running = false; reload &+= 1 }
             do {
+                if try await store.executeLibraryAction(act.name, args) { return }
                 let result = try await store.call("act", ["name": act.name, "args": args], timeout: 120) as? [String: Any]
                 if let share = result?["share"] as? [String: Any], let name = share["name"] as? String, let text = share["text"] as? String { self.share(name, text) }
                 if let path = result?["go"] as? String { store.go(path) }

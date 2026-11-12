@@ -218,7 +218,14 @@ export const commands: Record<string, (a: Args) => unknown> = {
   network: (a) => setNetworkOffline(a.offline === true),
   /** Pushes everything again, e.g. after the shell was switched off or on. */
   resync: () => resend(),
-  next: () => controller.nextTrack(),
+  next: (a) => {
+    const id = str(a.ifTrackId);
+    if (id) {
+      if (controller.currentEntry?.trackId !== id || !['wave', 'yandex-wave', 'online-radio'].includes(controller.state.context?.type ?? '')) return;
+      if (a.reason === 'dislike') return controller.nextTrack('dislike');
+    }
+    return controller.nextTrack();
+  },
   /** The web full player, when native playback is not running (the SwiftUI sheet needs it). */
   player: () => useApp.setState({ fullPlayer: true }),
   cover: async (a) => {

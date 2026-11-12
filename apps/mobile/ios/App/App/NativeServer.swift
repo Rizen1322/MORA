@@ -104,7 +104,7 @@ final class NativeServer {
 
     /// Swift screens use the existing API directly; page reloads cannot abort these requests.
     func request(_ method: String, _ path: String, body: [String: Any]? = nil, timeout: Double = 30) async throws -> [String: Any] {
-        guard ["GET", "POST", "PUT", "DELETE"].contains(method), path.hasPrefix("/api/"), !path.contains("\n") else { throw URLError(.badURL) }
+        guard ["GET", "POST", "PUT", "PATCH", "DELETE"].contains(method), path.hasPrefix("/api/"), !path.contains("\n") else { throw URLError(.badURL) }
         let text = try body.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }
         let cancelled = CancelFlag()
         return try await withTaskCancellationHandler(operation: {
