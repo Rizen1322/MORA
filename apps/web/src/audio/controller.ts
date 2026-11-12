@@ -534,11 +534,16 @@ export class PlayerController {
   private async nativeSyncOnce(): Promise<void> {
     const revision = this.nativeRevision;
     if (this.nativeAt < 0 || (desktop?.nativeMix && this.nativeStarting)) return;
-    if (this.isWave()) await this.topUpWave();
+    if (this.isWave()) {
+      if (desktop?.nativeMix) await this.topUpWave();
+      // Refill reports its own errors; the iPhone must receive the ready tail before WebContent sleeps.
+      else void this.topUpWave();
+    }
     if (revision !== this.nativeRevision) return;
     const at = this.nativeAt, queueRevision = this.nativeQueueEditRevision;
     if (this.nativeMix.prepareQueue) {
-      const key = JSON.stringify([this.queueRevision, this.state.queue.map(e => e.entryId), this.state.repeat, this.state.shuffle, this.loudnessTarget]);
+      const manifestKey = () => JSON.stringify([this.queueRevision, this.state.queue.map(e => e.entryId), this.state.repeat, this.state.shuffle, this.loudnessTarget]);
+      let key = manifestKey();
       if (key === this.nativeManifestKey) return;
       const current = this.state.queue[this.state.index];
       if (!current) return;
@@ -551,7 +556,7 @@ export class PlayerController {
           return { ...e, transitionContext,
             ...(transitionContext && previous ? { fromEntryId: previous.entryId } : {}) };
         };
-        await this.nativeMix.prepareQueue(at + 1, entries.map((e, i) => manifestEntry(e, i ? entries[i - 1] : current)), current.trackId,
+        const handoff = await this.nativeMix.prepareQueue(at + 1, entries.map((e, i) => manifestEntry(e, i ? entries[i - 1] : current)), current.trackId,
           loop.map((e, i) => manifestEntry(e, i ? loop[i - 1] : undefined)), this.nativeAbort.signal, queueRevision !== this.nativeQueueRevision,
           this.state.queue.map((e, i, queue) => manifestEntry(e, i ? queue[i - 1] : undefined)));
         if (desktop?.nativeMix?.setStation) {
@@ -560,6 +565,14 @@ export class PlayerController {
           await desktop.nativeMix.setStation(station && station.kind === this.nativeStation?.kind ? this.nativeStation : station, this.state.context);
         }
         if (revision !== this.nativeRevision) return;
+        const dead = new Set(handoff?.dropped);
+        if (dead.size) {
+          const unchanged = key === manifestKey();
+          const queue = this.state.queue.filter((e, i) => i <= this.state.index || !dead.has(e.entryId));
+          this.set({ queue }); this.scheduleSave();
+          // An edit made during handoff still needs its own sync.
+          if (unchanged) key = manifestKey();
+        }
         this.nativeQueueRevision = queueRevision; this.nativeManifestKey = key; this.set({ nextPending: [], error: null });
         tracePlayback('native.queue.handoff', { outcome: 'accepted' });
       } catch {
@@ -1240,7 +1253,7 @@ export class PlayerController {
     try {
       let entries: QueueEntry[] = [];
       if (kind === 'yandex') {
-        const w = await api.yandexWave(null);
+        const w = await api.yandexWave(null, this.native && !desktop?.nativeMix ? { count: 1 } : undefined);
         await this.refreshLibrary();
         if (revision !== this.previewRevision) return;
         this.yandexSession = { sessionId: w.sessionId, batchId: w.batchId };

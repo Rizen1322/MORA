@@ -33,6 +33,8 @@ export interface NativeMixConfig {
 export type NativeSourceConfig = Omit<NativeMixConfig, 'tracks' | 'index'> & { gainDb?: number };
 export type NativeMixSettings = Pick<NativeMixConfig, 'tone' | 'preDb' | 'playback' | 'volume'> & { gainDb?: number; userVolume?: number; muted?: boolean };
 export interface NativeMixState {
+  /** Entry IDs whose sources were unavailable during this queue handoff. */
+  dropped?: string[];
   queue?: NativeQueueEntry[];
   context?: import('./queue-types.ts').PlayContext | null;
   station?: NativeRadioConfig | null;

@@ -217,6 +217,19 @@ extension MoraRootViewController {
             NativeDownloadManager.shared.removeVisualFixture(downloadFixture)
             _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__nativePagesOriginal;0")
             report["downloads"] = "SwiftUI downloads rendered with an in-memory native progress fixture, without a page description"
+            shell.go("/more")
+            try await wait { self.shell.ui.path == "/more" }
+            shell.setShown(false)
+            var recoveryReady = false
+            for _ in 0..<40 {
+                recoveryReady = try await web.evaluateJavaScript("!document.getElementById('root').inert && [...document.querySelectorAll('button')].some(b=>b.textContent.includes('Включить нативный интерфейс'))") as? Bool == true
+                if recoveryReady { break }
+                try await Task.sleep(for: .milliseconds(250))
+            }
+            try require(recoveryReady, "Web fallback has no native UI recovery action")
+            _ = try await web.evaluateJavaScript("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Включить нативный интерфейс')).click();0")
+            try await wait { self.shell.shown && self.shell.nativeContentVisible }
+            report["nativeRecovery"] = "Switched to web fallback and returned through its real More-page button"
             func waitForQuery(_ query: String) async throws {
                 let encoded = String(data: try JSONSerialization.data(withJSONObject: query, options: .fragmentsAllowed), encoding: .utf8)!
                 for _ in 0..<40 {

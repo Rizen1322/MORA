@@ -8,7 +8,7 @@ import type { NativeMix, NativeMixState } from '../src/lib/native-mix.ts';
 vi.mock('../src/audio/engine.worklet.ts?worker&url', () => ({ default: '/engine.js' }));
 vi.mock('../src/lib/api.ts', async (original) => {
   const actual = await original<typeof import('../src/lib/api.ts')>();
-  return { ...actual, api: { queue: vi.fn(), plan: vi.fn(), prepare: vi.fn(), focus: vi.fn(), saveQueue: vi.fn(), startPlay: vi.fn(), endPlay: vi.fn(), waveNext: vi.fn(), yandexFeedback: vi.fn() } };
+  return { ...actual, api: { queue: vi.fn(), plan: vi.fn(), prepare: vi.fn(), focus: vi.fn(), saveQueue: vi.fn(), startPlay: vi.fn(), endPlay: vi.fn(), waveNext: vi.fn(), yandexWave: vi.fn(), yandexFeedback: vi.fn() } };
 });
 
 const seconds = 20, frames = seconds * 48000;
@@ -205,7 +205,7 @@ it('plays the queue natively: uploads tracks with their blends ahead and follows
   expect(controller.state.status).toBe('paused');
 });
 
-it('hands twelve future radio entries to native before relying on page polling', async () => {
+it('progressively hands twelve future radio entries to native before relying on page polling', async () => {
   let next = 0;
   vi.mocked(api.waveNext).mockImplementation(async () => ({ picks: Array.from({ length: 4 }, () => ({ id: 'wave-' + ++next, reasons: [] })) } as any));
   const mix = { startSource: vi.fn(async (entry: any) => state({ currentTrack: { ...entry, title: entry.trackId, artist: '', totalFrames: frames, gainDb: 0 } })), prepareQueue: vi.fn(async () => state()), upload: vi.fn(), start: vi.fn(), update: vi.fn(),
@@ -217,8 +217,83 @@ it('hands twelve future radio entries to native before relying on page polling',
   await controller.playTracks(['first'], 0, { type: 'wave' });
   await h.nativeSyncing;
   expect(mix.prepareQueue).toHaveBeenCalled();
-  expect(mix.prepareQueue.mock.calls[0][1]).toHaveLength(12);
+  await vi.waitFor(() => expect(mix.prepareQueue.mock.calls.at(-1)![1]).toHaveLength(12));
+  await h.nativeSyncing;
+  expect(mix.prepareQueue.mock.calls[0][1].length).toBeLessThan(12);
   expect(api.waveNext).toHaveBeenCalledTimes(3);
+});
+
+it.each(['empty', 'failed'])('hands the ready iPhone tail off while radio refill is pending (%s)', async outcome => {
+  let finish!: () => void;
+  vi.mocked(api.waveNext).mockImplementationOnce(() => new Promise((resolve, reject) => {
+    finish = () => outcome === 'failed' ? reject(Error('slow provider failed')) : resolve({ picks: [] } as any);
+  }));
+  const prepareQueue = vi.fn<NonNullable<NativeMix['prepareQueue']>>(async () => state());
+  vi.stubGlobal('window', { moraNativePlayback: { mix: { prepareQueue } } });
+  const notify = vi.fn();
+  const controller = new PlayerController(id => ({ id, duration: 180, status: 'ok' } as Track), notify);
+  Object.assign(controller.state, { queue: ['a', 'b', 'c'].map(id => ({ trackId: id, entryId: 'entry-' + id, origin: 'wave' })),
+    index: 0, status: 'playing', context: { type: 'wave' } });
+  const h = controller as any;
+  h.nativeAt = 0;
+  const syncing = h.nativeSync();
+  let refillError: string | null | undefined;
+  try {
+    await vi.waitFor(() => expect(prepareQueue).toHaveBeenCalledOnce());
+    expect(api.waveNext).toHaveBeenCalledOnce();
+    expect(controller.state.waveLoading).toBe(true);
+    expect(prepareQueue.mock.calls[0][1].map((entry: any) => entry.trackId)).toEqual(['b', 'c']);
+  } finally {
+    finish(); await syncing; await h.waveRequest;
+    refillError = controller.state.waveRefillError;
+    h.resetWaveBuffer(); if (h.saveTimer) clearTimeout(h.saveTimer);
+  }
+  if (outcome === 'failed') {
+    expect(refillError).toContain('Продолжение задерживается');
+    expect(notify).toHaveBeenCalledOnce();
+  }
+});
+
+it.each([true, false])('requests only the first Yandex recording for an iPhone native start=%s', async native => {
+  vi.stubGlobal('window', native ? { moraNativePlayback: { mix: {} } } : {});
+  vi.mocked(api.yandexWave).mockResolvedValue({ sessionId: 'session', batchId: 'batch',
+    items: [{ trackId: 'first', yandexId: '1', title: 'First', artist: '' }] });
+  const notify = vi.fn(), refresh = vi.fn(async () => {});
+  const controller = new PlayerController(id => ({ id, duration: 180, status: 'ok' } as Track), notify, refresh);
+  const h = controller as any;
+  h.ensureEngine = vi.fn(async () => {});
+  h.startAt = vi.fn(async () => {});
+  h.topUpWave = vi.fn(async () => {});
+  await controller.startWave('yandex');
+  expect(api.yandexWave).toHaveBeenCalledWith(null, native ? { count: 1 } : undefined);
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(h.startAt).toHaveBeenCalledWith(0, 0);
+  expect(notify).not.toHaveBeenCalled();
+});
+
+it.each([false, true])('removes only dropped future entry IDs, preserving current/repeat and concurrent edits=%s', async edit => {
+  let finish!: (value: NativeMixState) => void;
+  const prepareQueue = vi.fn<NonNullable<NativeMix['prepareQueue']>>().mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
+    .mockResolvedValue(state());
+  vi.stubGlobal('window', { moraNativePlayback: { mix: { prepareQueue } } });
+  const controller = new PlayerController(id => ({ id, duration: 180, status: 'ok' } as Track), vi.fn());
+  const entries = ['past', 'current', 'drop', 'keep', 'c'].map(entryId => ({ entryId, trackId: ['drop', 'keep'].includes(entryId) ? 'b' : entryId, origin: 'user' as const }));
+  Object.assign(controller.state, { queue: entries, index: 1, repeat: 'all', context: { type: 'playlist', id: 'playlist' } });
+  const h = controller as any;
+  h.nativeAt = 1;
+  try {
+    const syncing = h.nativeSync();
+    if (edit) controller.addToQueue(['d']);
+    finish(state({ dropped: ['past', 'current', 'drop'] }));
+    await syncing;
+    expect(controller.state.queue.slice(0, 4).map(entry => entry.entryId)).toEqual(['past', 'current', 'keep', 'c']);
+    expect(controller.state).toMatchObject({ index: 1, repeat: 'all' });
+    expect(controller.state.queue[controller.state.index]).toBe(entries[1]);
+    if (edit) expect(prepareQueue.mock.calls.at(-1)![1].map(entry => entry.trackId)).toEqual(['b', 'c', 'd']);
+    const calls = prepareQueue.mock.calls.length;
+    await h.nativeSync();
+    expect(prepareQueue).toHaveBeenCalledTimes(calls);
+  } finally { if (h.saveTimer) clearTimeout(h.saveTimer); }
 });
 
 it('distinguishes native refreshes from explicit edits, including an edit during handoff', async () => {

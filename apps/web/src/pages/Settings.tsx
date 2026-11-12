@@ -5,7 +5,9 @@ import { HOTKEY_ACTIONS, comboLabel, comboOf, hotkeys, reservedCombo, resetHotke
 import { setSplashEnabled, splashEnabled } from '../lib/splash.ts';
 import { api, type StemGpu, type StemHealth } from '../lib/api.ts';
 import { plural } from '../lib/format.ts';
-import { useApp } from '../store/app.ts';
+import { phone, useApp } from '../store/app.ts';
+import { enableNativeUi } from '../lib/native-ui.ts';
+import { nativePlaybackControls } from '../lib/playback-trace.ts';
 import { ConfirmModal, Switch } from '../components/common.tsx';
 import { TransitionSummary } from '../components/TransitionSummary.tsx';
 import { PlaylistBackup } from '../components/PlaylistBackup.tsx';
@@ -478,6 +480,7 @@ export function MorePage() {
   return (
     <div className="main-inner">
       <h1 className="page-title">Ещё</h1>
+      {phone && nativePlaybackControls()?.uiState && <button className="btn btn-secondary" style={{ marginBottom: 16 }} onClick={enableNativeUi}>Включить нативный интерфейс</button>}
       <div className="more-grid">
         {items.map(({ href, label, hint, Icon }) => (
           <a key={href} href={href} className="more-tile">
