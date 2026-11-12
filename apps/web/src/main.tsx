@@ -11,6 +11,7 @@ import './styles/listening.css';
 import { App } from './App.tsx';
 import { controller, trackOf, useApp } from './store/app.ts';
 import { desktop } from './lib/desktop.ts';
+import { startNativeUi } from './lib/native-ui.ts';
 import { playSplash, splashEnabled } from './lib/splash.ts';
 
 // handle for debugging from the browser console: automix.state
@@ -57,6 +58,8 @@ if ((desktop && splashEnabled()) || new URLSearchParams(location.search).has('sp
     target: () => document.querySelector('.wave-hero-title span'),
   });
 }
+
+startNativeUi();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

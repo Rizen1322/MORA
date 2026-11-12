@@ -57,6 +57,10 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
         tabs.view.frame = tabsOverlay.bounds
         tabs.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         tabsOverlay.isHidden = true
+        #if DEBUG
+        // Start before bridge installation so a broken web bootstrap still produces a failing report.
+        if ProcessInfo.processInfo.arguments.contains("--native-ui-check") { Task { await checkNativeUI() } }
+        #endif
     }
 
     func installShell(host: NativeMixHost, webView: WKWebView?, diagnosticExport: @escaping @MainActor () async throws -> URL) {
@@ -94,9 +98,6 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
         shell.presenter = self
         observer = shell.objectWillChange.sink { [weak self] in DispatchQueue.main.async { self?.layoutShell() } }
         layoutShell()
-        #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--native-ui-check") { Task { await checkNativeUI() } }
-        #endif
     }
 
     private func embed(_ child: UIViewController, into container: UIView? = nil) {
@@ -369,7 +370,12 @@ extension MoraRootViewController {
             restoredPlayer.close("close")
             report["restore"] = "Persisted paused queue, WebContent reload and native player presentation without autoplay passed"
             report["status"] = "passed"
-        } catch { report["status"] = "failed"; report["error"] = error.localizedDescription }
+        } catch {
+            report["status"] = "failed"; report["error"] = error.localizedDescription
+            report["startup"] = ["loaded": shell.ui.loaded, "webViewAttached": shell.webView != nil,
+                                 "shellInstalled": content != nil, "serverBooted": NativeServerApp.booted]
+            report["nativeServerTrace"] = NativeServerApp.shared?.trace ?? []
+        }
         try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: folder.appendingPathComponent("native-ui-check.json"))
     }
 }

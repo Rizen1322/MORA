@@ -241,7 +241,12 @@ jobs:
           cp "$RUNNER_TEMP"/mora-ui-devices.json "$RUNNER_TEMP/mora-ui-diagnostics/" 2>/dev/null || true
           cp "$RUNNER_TEMP"/mora-ui-process.txt "$RUNNER_TEMP"/mora-native-home.png "$RUNNER_TEMP/mora-ui-diagnostics/" 2>/dev/null || true
           if [ -n "$DEVICE" ]; then
-            xcrun simctl spawn "$DEVICE" log show --last 3m --style compact --predicate 'process == "App" OR eventMessage CONTAINS "ru.mora.player"' > "$RUNNER_TEMP/mora-ui-diagnostics/runtime.log" 2>&1 || true
+            CONTAINER=$(xcrun simctl get_app_container "$DEVICE" ru.mora.player data 2>/dev/null || true)
+            if [ -n "$CONTAINER" ]; then
+              cp "$CONTAINER"/Documents/native-*.json "$CONTAINER"/Documents/native-*.png "$RUNNER_TEMP/mora-ui-diagnostics/" 2>/dev/null || true
+            fi
+            xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mora-ui-diagnostics/current.png" 2>/dev/null || true
+            xcrun simctl spawn "$DEVICE" log show --last 15m --style compact --predicate 'process == "App" OR eventMessage CONTAINS "ru.mora.player"' > "$RUNNER_TEMP/mora-ui-diagnostics/runtime.log" 2>&1 || true
           fi
           find "$HOME/Library/Logs/DiagnosticReports" -name 'App*' -exec cp {} "$RUNNER_TEMP/mora-ui-diagnostics/" \; 2>/dev/null || true
       - uses: actions/upload-artifact@v4
