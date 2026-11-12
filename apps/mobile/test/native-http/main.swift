@@ -23,6 +23,36 @@ actor UpgradeCheck {
     func result() -> Double? { gain }
 }
 
+func stage(_ message: String) {
+    // stderr remains visible in CI even when an optimized precondition traps before stdout flushes.
+    FileHandle.standardError.write(Data(("Native HTTP check: \(message)\n").utf8))
+}
+
+func checkSharedFiles(in folder: URL) throws {
+    let root = folder.appendingPathComponent("shared-file-check-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sharedRoot = root.appendingPathComponent("server", isDirectory: true)
+    let sharedData = sharedRoot.appendingPathComponent("data", isDirectory: true)
+    try FileManager.default.createDirectory(at: sharedData, withIntermediateDirectories: true)
+    let sharedAudio = sharedData.appendingPathComponent("song.mp3")
+    try Data([1, 2, 3]).write(to: sharedAudio)
+    let sharedFile = NativeMediaLoader.sharedFile("/data/song.mp3", root: sharedRoot)
+    precondition(sharedFile == sharedAudio.resolvingSymlinksInPath())
+    let sharedBytes = try Data(contentsOf: sharedFile!)
+    precondition(sharedBytes == Data([1, 2, 3]))
+    for path in ["/data/missing.mp3", "/data/../outside.mp3", "/data/./song.mp3", "/data", "/data/", "/elsewhere/song.mp3", "/data/song.mp3\0"] {
+        precondition(NativeMediaLoader.sharedFile(path, root: sharedRoot) == nil)
+    }
+    let outside = root.appendingPathComponent("outside.mp3")
+    try Data([9]).write(to: outside)
+    try FileManager.default.createSymbolicLink(at: sharedData.appendingPathComponent("escape.mp3"), withDestinationURL: outside)
+    precondition(NativeMediaLoader.sharedFile("/data/escape.mp3", root: sharedRoot) == nil)
+    try FileManager.default.createSymbolicLink(at: sharedData.appendingPathComponent("escape"), withDestinationURL: root)
+    precondition(NativeMediaLoader.sharedFile("/data/escape/outside.mp3", root: sharedRoot) == nil)
+    try FileManager.default.createSymbolicLink(at: sharedData.appendingPathComponent("alias.mp3"), withDestinationURL: sharedAudio)
+    precondition(NativeMediaLoader.sharedFile("/data/alias.mp3", root: sharedRoot) == sharedAudio.resolvingSymlinksInPath())
+}
+
 let base = URL(string: CommandLine.arguments[1])!
 let root = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
 let group = DispatchGroup(); group.enter()
@@ -30,26 +60,9 @@ Task.detached {
     let client = NativeMediaHTTP(allowLoopback: true)
     defer { client.invalidate(); group.leave() }
     do {
-        let sharedRoot = root.appendingPathComponent("server", isDirectory: true)
-        let sharedData = sharedRoot.appendingPathComponent("data", isDirectory: true)
-        try FileManager.default.createDirectory(at: sharedData, withIntermediateDirectories: true)
-        let sharedAudio = sharedData.appendingPathComponent("song.mp3")
-        try Data([1, 2, 3]).write(to: sharedAudio)
-        let sharedFile = NativeMediaLoader.sharedFile("/data/song.mp3", root: sharedRoot)
-        precondition(sharedFile == sharedAudio.resolvingSymlinksInPath())
-        let sharedBytes = try Data(contentsOf: sharedFile!)
-        precondition(sharedBytes == Data([1, 2, 3]))
-        for path in ["/data/missing.mp3", "/data/../outside.mp3", "/data/./song.mp3", "/data", "/data/", "/elsewhere/song.mp3", "/data/song.mp3\0"] {
-            precondition(NativeMediaLoader.sharedFile(path, root: sharedRoot) == nil)
-        }
-        let outside = root.appendingPathComponent("outside.mp3")
-        try Data([9]).write(to: outside)
-        try FileManager.default.createSymbolicLink(at: sharedData.appendingPathComponent("escape.mp3"), withDestinationURL: outside)
-        precondition(NativeMediaLoader.sharedFile("/data/escape.mp3", root: sharedRoot) == nil)
-        try FileManager.default.createSymbolicLink(at: sharedData.appendingPathComponent("escape"), withDestinationURL: root)
-        precondition(NativeMediaLoader.sharedFile("/data/escape/outside.mp3", root: sharedRoot) == nil)
-        try FileManager.default.createSymbolicLink(at: sharedData.appendingPathComponent("alias.mp3"), withDestinationURL: sharedAudio)
-        precondition(NativeMediaLoader.sharedFile("/data/alias.mp3", root: sharedRoot) == sharedAudio.resolvingSymlinksInPath())
+        stage("shared file paths")
+        try checkSharedFiles(in: root)
+        stage("HTTP transport")
         let pendingStart = NativeQueuePreparation(index: 0, remaining: 6)
         precondition(pendingStart.hasRemaining) // Before run()/JavaScriptCore is scheduled.
         let pendingRepeat = NativeQueuePreparation(index: 0, loopCount: 1)
@@ -86,6 +99,7 @@ Task.detached {
         do { _ = try await client.data(base.appendingPathComponent("body"), ticket: ticket); fatalError("Cancellation ignored") }
         catch NativeMediaHTTP.Failure.cancelled {}
         let files = try FileManager.default.contentsOfDirectory(atPath: root.path)
+        stage("HTTP temporary file cleanup")
         precondition(Set(files) == Set(["first.bin", "hls.aac"]))
         let folder = root.appendingPathComponent("queue")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

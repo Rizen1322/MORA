@@ -74,16 +74,17 @@ try {
     resolve(root, 'apps/mobile/ios/App/App/NativeQueuePreparation.swift'),
     resolve(root, 'apps/mobile/ios/App/App/NativeMixTimeline.swift'),
     resolve(root, 'apps/mobile/test/native-http/main.swift'), '-o', binary], { stdio: 'inherit' });
-  assert.equal(build.status, 0);
+  assert.equal(build.status, 0, `swiftc failed: exit=${build.status}, signal=${build.signal}, error=${build.error?.stack ?? 'none'}`);
   await new Promise(resolve => server.listen(0, '::', resolve));
   const files = join(folder, 'files'); await mkdir(files);
-  const code = await new Promise((resolve, reject) => {
+  const result = await new Promise((resolve, reject) => {
     const hash = createHash('md5').update('XGRlBW9FXlekgbPrRHuSiAtest/audio.mp3salt123').digest('hex');
     const child = spawn(binary, [`http://127.0.0.1:${server.address().port}`, files,
       `https://edge.storage.yandex.net/get-mp3/${hash}/1a/test/audio.mp3`, String(frames)], { stdio: 'inherit' });
-    child.on('error', reject); child.on('close', resolve);
+    child.on('error', error => reject(new Error('Native HTTP executable could not start', { cause: error })));
+    child.on('close', (code, signal) => resolve({ code, signal }));
   });
-  assert.equal(code, 0);
+  assert.equal(result.code, 0, `Native HTTP executable failed: exit=${result.code}, signal=${result.signal}`);
   assert.equal(coverAccepted, true, 'The artwork regression must accept its audio fixture');
   const actual = JSON.parse(await readFile(join(folder, 'analysis-actual.json'), 'utf8'));
   function compare(a, b, path = 'analysis') {

@@ -117,6 +117,8 @@ jobs:
           node apps/mobile/build.mjs --no-web
           swiftc apps/mobile/ios/App/App/NativeServer.swift apps/mobile/test/native-server/main.swift -lsqlite3 -o "$RUNNER_TEMP/mora-server-check"
           "$RUNNER_TEMP/mora-server-check" apps/mobile/www/server-jsc.js
+      - name: Test native HTTP preparation transport
+        run: node apps/mobile/scripts/check-native-http.mjs --long-analysis
       - name: Build unsigned device IPA
         env:
           MORA_CARPLAY: ${{ inputs.carplay && '1' || '0' }}
@@ -151,8 +153,6 @@ jobs:
           "$RUNNER_TEMP/mora-preparation-check"
       - name: Compare the Swift AutoMix mixer with Node
         run: node apps/mobile/scripts/check-native-dsp.mjs
-      - name: Test native HTTP preparation transport
-        run: node apps/mobile/scripts/check-native-http.mjs --long-analysis
       - name: Test the real native host in a background iOS app
         run: node apps/mobile/scripts/check-native-host.mjs
       - name: Test the native queue on PCM files
