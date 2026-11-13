@@ -87,9 +87,7 @@ fn tls_config() -> Result<rustls::ClientConfig, &'static str> {
     for cert in rustls_native_certs::load_native_certs().certs {
         let _ = roots.add(cert);
     }
-    if roots.is_empty() {
-        return Err("no trusted certificates");
-    }
+    // Empty roots still reject HTTPS certificates; plain HTTP needs no trust anchors.
     let mut config = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
         .with_safe_default_protocol_versions()
         .map_err(|_| "TLS unavailable")?

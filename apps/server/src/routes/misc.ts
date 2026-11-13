@@ -48,7 +48,8 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
     return cuda.status();
   });
 
-  app.get('/api/events', async (req, reply) => {
+  app.get('/api/events', async (_req, reply) => {
+    reply.hijack();
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
@@ -57,7 +58,6 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
     });
     reply.raw.write(': connected\n\n');
     events.add(reply);
-    req.raw.on('close', () => reply.raw.end());
     return reply;
   });
 

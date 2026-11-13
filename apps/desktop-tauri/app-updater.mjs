@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 const FEED = 'https://github.com/Rizen1322/MORA/releases/latest/download/';
 const LIMIT = 400 * 1048576;
@@ -35,26 +37,33 @@ export class GithubNsisUpdater {
 
   async downloadUpdate(token) {
     const { version, file, sha512, size } = this.info;
+    this.ready = null;
     const response = await this.fetcher(`${this.feed}${file}`, { signal: token.signal, headers: { 'User-Agent': 'MORA-updater', Accept: 'application/octet-stream' } }, LIMIT);
-    if (!response.ok || !response.body) throw Error(`Сервер обновлений ответил ${response.status}`);
-    const hash = crypto.createHash('sha512'), chunks = [];
+    if (!response.ok || !response.body) { await response.body?.cancel(); throw Error(`Сервер обновлений ответил ${response.status}`); }
+    const hash = crypto.createHash('sha512');
     let received = 0;
-    const reader = response.body.getReader();
+    let staging;
     try {
-      while (true) {
-        const { done, value } = await reader.read(); if (done) break;
-        received += value.byteLength;
-        if (received > size) throw Error('Размер обновления не совпадает');
-        hash.update(value); chunks.push(Buffer.from(value));
+      fs.mkdirSync(path.dirname(this.directory), { recursive: true });
+      staging = fs.mkdtempSync(`${this.directory}.download-`);
+      const progress = new Transform({ transform: (chunk, _encoding, done) => {
+        received += chunk.length;
+        if (received > size) return done(Error('Размер обновления не совпадает'));
+        hash.update(chunk);
         this.emit('download-progress', { percent: received / size * 100 });
-      }
-    } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
-    if (received !== size || hash.digest('base64') !== sha512) throw Error('sha512 checksum mismatch');
-    fs.rmSync(this.directory, { recursive: true, force: true });
-    fs.mkdirSync(this.directory, { recursive: true });
-    fs.writeFileSync(path.join(this.directory, file), Buffer.concat(chunks));
-    this.ready = { version, file };
-    this.emit('update-downloaded', { version });
+        done(null, chunk);
+      } });
+      await pipeline(Readable.fromWeb(response.body), progress, fs.createWriteStream(path.join(staging, file), { flags: 'wx' }), { signal: token.signal });
+      token.signal.throwIfAborted();
+      if (received !== size || hash.digest('base64') !== sha512) throw Error('sha512 checksum mismatch');
+      fs.rmSync(this.directory, { recursive: true, force: true });
+      fs.renameSync(staging, this.directory);
+      this.ready = { version, file };
+      this.emit('update-downloaded', { version });
+    } finally {
+      await response.body.cancel().catch(() => {});
+      if (staging) fs.rmSync(staging, { recursive: true, force: true });
+    }
   }
 
   /** The shell launches the installer named here; it only accepts a file inside this directory. */

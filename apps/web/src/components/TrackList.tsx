@@ -24,6 +24,8 @@ export interface TrackListProps {
   extraMenu?: (t: Track, index: number) => ReactNode;
   emptyText?: string;
   rowKey?: (t: Track, i: number) => string;
+  playlistId?: string;
+  playlistEntryIds?: number[];
 }
 
 /** `mounted` re-subscribes once the list element exists (an empty list renders no element). */
@@ -47,7 +49,7 @@ function useScrollParent(ref: React.RefObject<HTMLElement | null>, mounted: bool
   }, [ref, mounted]);
 }
 
-export function TrackList({ tracks, onPlay, showAlbum = true, numbered = true, sort, onSort, extraMenu, emptyText = 'Здесь пока пусто', rowKey }: TrackListProps) {
+export function TrackList({ tracks, onPlay, showAlbum = true, numbered = true, sort, onSort, extraMenu, emptyText = 'Здесь пока пусто', rowKey, playlistId, playlistEntryIds }: TrackListProps) {
   const ref = useRef<HTMLDivElement>(null);
   const player = useApp(useShallow((s) => ({ queue: s.player.queue, index: s.player.index, status: s.player.status })));
   const curId = player.queue[player.index]?.trackId;
@@ -99,7 +101,10 @@ export function TrackList({ tracks, onPlay, showAlbum = true, numbered = true, s
       <div style={{ height: a * ROW_H }} />
       {tracks.slice(a, b).map((t, k) => {
         const i = a + k;
-        const isCur = t.id === curId;
+        const current = player.queue[player.index];
+        const isCur = playlistEntryIds
+          ? current?.sourcePlaylistId === playlistId && current?.playlistEntryId === playlistEntryIds[i]
+          : t.id === curId;
         const unavailable = t.status !== 'ok';
         return (
           <div

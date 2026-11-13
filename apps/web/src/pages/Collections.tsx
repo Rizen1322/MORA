@@ -137,6 +137,8 @@ export function PlaylistPage() {
         <TrackList
           tracks={visibleRows.map(r => r.t)}
           rowKey={(_, i) => String(visibleRows[i].e.entryId)}
+          playlistId={pl.id}
+          playlistEntryIds={visibleRows.map(r => r.e.entryId)}
           onPlay={(i) => play(i)}
           extraMenu={(_t, i) => (
             <>

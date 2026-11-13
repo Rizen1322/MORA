@@ -36,7 +36,7 @@ it('exports playlist JSON through the save dialog and propagates backend failure
   });
   expect(await window.automixDesktop.exportPlaylists('a&b')).toBe(true);
   expect(fetcher.mock.calls[0][0]).toBe('/api/backup/playlists?playlist=a%26b');
-  expect(invoke).toHaveBeenCalledWith('desktop_action', { action: 'save-export', value: { name: 'MORA-playlist.json', contents: JSON.stringify(backup, null, 2) } });
+  expect(invoke).toHaveBeenCalledWith('desktop_action', { action: 'save-export', value: { name: 'MORA-playlist.json', contents: JSON.stringify(backup) } });
   fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Export failed' }), { status: 500 }));
   await expect(window.automixDesktop.exportPlaylists()).rejects.toThrow('Export failed');
   expect(invoke).toHaveBeenCalledTimes(1);

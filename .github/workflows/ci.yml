@@ -16,7 +16,12 @@ concurrency:
 jobs:
   check:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
+    env:
+      CC: clang
+      CXX: clang++
+      CMAKE_GENERATOR: MinGW Makefiles
+      RUSTFLAGS: -C linker=rust-lld -C link-self-contained=yes
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -24,6 +29,16 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
+      - name: Prepare native Windows toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal --component rust-docs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable-x86_64-pc-windows-gnu
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/desktop-tauri/fetch-toolchain.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "$env:GITHUB_WORKSPACE/apps/desktop-tauri/toolchain/llvm-mingw-20260908-ucrt-x86_64/bin" >> $env:GITHUB_PATH
       - name: Prepare FFmpeg for audio tests
         shell: pwsh
         run: |
@@ -34,6 +49,31 @@ jobs:
           "$env:GITHUB_WORKSPACE/apps/desktop/vendor/ffmpeg" >> $env:GITHUB_PATH
       - run: npm run demo:tracks
       - run: npm run typecheck
+      - run: node apps/desktop/scripts/fetch-ytdlp.mjs
+      - name: Build desktop resources and native test binaries
+        run: node apps/desktop/scripts/build.mjs
+      - name: Test Rust audio, decoder and network
+        shell: pwsh
+        run: |
+          foreach ($crate in @('audio-rust', 'decoder-rust', 'network-rust')) {
+            # SMTC needs an interactive Windows media session; it is a separate local check.
+            cargo test --release --locked --manifest-path "packages/$crate/Cargo.toml" -- --skip windows_session_metadata_timeline_buttons_artwork_and_cleanup
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          foreach ($binary in @('packages/audio-rust/target/release/mora-audio.exe', 'packages/decoder-rust/target/release/mora-decode.exe', 'packages/network-rust/target/release/mora-network.exe')) {
+            if (!(Test-Path -LiteralPath $binary)) { throw "Missing native test binary: $binary" }
+          }
       # Offline rendering of eight tracks can exceed 60s on shared runners.
       - run: npm test -- --maxWorkers=2 --testTimeout=180000
       - run: npm run build
+      - name: Build Tauri installer
+        run: node apps/desktop-tauri/package.mjs
+      - name: Test Tauri shell
+        run: cargo test --release --locked --manifest-path apps/desktop-tauri/src-tauri/Cargo.toml
+      - name: Verify packaged Tauri application
+        env:
+          MORA_PACKAGED: '1'
+          MORA_BUILD_MODE: release
+        run: node apps/desktop-tauri/shell-smoke.mjs
+      - name: Build installer for the existing update channel
+        run: node apps/desktop-tauri/unified-installer.mjs

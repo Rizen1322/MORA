@@ -51,10 +51,13 @@ try {
     assert.equal(await cdp.evaluate('window.automixDesktop.setCompact(false).then(x => x.on)'), false);
     await cdp.evaluate('window.automixDesktop.restartBackend()');
     assert.equal(await cdp.evaluate('window.automixDesktop.nativeMix.state().then(x => x.active)'), false);
-    const second = spawn(child.spawnfile, [], { windowsHide: true, env, stdio: 'ignore' });
-    const secondExit = await Promise.race([new Promise(resolve => second.once('exit', resolve)), new Promise(resolve => setTimeout(() => resolve(null), 5000))]);
+    const second = spawn(child.spawnfile, [], { windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let secondLog = '';
+    for (const stream of [second.stdout, second.stderr]) stream.on('data', chunk => { secondLog = (secondLog + chunk.toString()).slice(-4000); });
+    // The single-instance plugin allows up to 10 seconds to forward to the existing window.
+    const secondExit = await Promise.race([new Promise(resolve => second.once('exit', resolve)), new Promise(resolve => setTimeout(() => resolve(null), 15000))]);
     if (secondExit === null) second.kill();
-    assert.notEqual(secondExit, null, 'second instance did not exit');
+    assert.notEqual(secondExit, null, `second instance did not exit: ${secondLog}`);
     console.log('Hidden Tauri window: React desktop bridge and inactive playback state passed.');
   } finally { cdp.close(); }
 } catch (error) {

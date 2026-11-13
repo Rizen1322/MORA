@@ -29,6 +29,60 @@ function setup() {
   return { host, requests, fetcher, audio };
 }
 
+it('skips a login-only opening recommendation and excludes it from later refills', async () => {
+  const { host, requests, fetcher } = setup();
+  const original = fetcher.getMockImplementation()!;
+  fetcher.mockImplementation(async (url, init) => {
+    if (String(url).endsWith('/internal/desktop/pcm-source') && JSON.parse(String(init?.body)).trackId === 'radio-1')
+      return Response.json({ error: 'Источник требует вход в аккаунт для этой записи' }, { status: 502 });
+    return original(url, init);
+  });
+  try {
+    await host.startStation({ kind: 'online' }, { position: 0, sampleRate: 48000 });
+    expect(host.state().currentTrack?.trackId).toBe('radio-2');
+    expect(host.state().station?.kind).toBe('online');
+    const refills = requests.filter(r => r.path === '/internal/desktop/station-next');
+    expect(refills.slice(1).every(r => r.body.exclude.includes('radio-1'))).toBe(true);
+  } finally { await host.stop(); }
+});
+
+it('restores station intent from an older checkpoint context and continues beyond its saved queue', async () => {
+  const { host } = setup();
+  try {
+    await host.restoreRecovery({ queue: [{ trackId: 'saved', entryId: 'saved' }], index: 0, position: 3, device: '', settings: {},
+      context: { type: 'online-radio', label: 'Моя волна' } });
+    expect(host.state().station?.kind).toBe('online');
+    for (let i = 0; i < 4; i++) {
+      await vi.waitFor(() => expect(host.state().nextTrack).toBeDefined());
+      await host.command('nexttrack');
+    }
+    expect(host.state().index).toBeGreaterThan(1);
+  } finally { await host.stop(); }
+});
+
+it('retries a station after three unavailable tracks without requesting the same failed recordings', async () => {
+  const { host, requests, fetcher, audio } = setup();
+  const original = fetcher.getMockImplementation()!;
+  let now = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+  fetcher.mockImplementation(async (url, init) => {
+    if (String(url).endsWith('/internal/desktop/pcm-source') && ['radio-2', 'radio-3', 'radio-4'].includes(JSON.parse(String(init?.body)).trackId))
+      return Response.json({ error: 'Источник требует вход в аккаунт для этой записи' }, { status: 502 });
+    return original(url, init);
+  });
+  try {
+    await host.startStation({ kind: 'online' }, { position: 0, sampleRate: 48000 });
+    await vi.waitFor(() => expect(host.state().preparation?.state).toBe('error'));
+    const start = audio.command.mock.calls.map(([value]) => value).find(value => value.cmd === 'start');
+    now += 16000;
+    host.onEvent({ type: 'tick', clock: 0, paused: false, main: start.deck,
+      decks: [0, 1].map(deck => ({ token: deck === start.deck ? start.token : null, playing: deck === start.deck,
+        position: 48000, totalFrames: 960000, starved: false, ratio: 1, bufferedAhead: 960000 })), transition: null, limiterDb: 0, peak: 0 });
+    await vi.waitFor(() => expect(host.state().nextTrack?.trackId).toBe('radio-5'));
+    expect(requests.filter(r => r.path === '/internal/desktop/station-next').at(-1)!.body.exclude).toEqual(expect.arrayContaining(['radio-2', 'radio-3', 'radio-4']));
+  } finally { clock.mockRestore(); await host.stop(); }
+});
+
 it('refills a station through several native skips with no page producer', async () => {
   const { host, requests } = setup();
   try {

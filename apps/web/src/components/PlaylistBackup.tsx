@@ -14,7 +14,7 @@ export function PlaylistBackup() {
     setError(''); setMessage(''); setPending(null);
     if (!file) return;
     try {
-      if (file.size > 16 * 1024 * 1024) throw new Error('Файл больше 16 МБ');
+      if (file.size > 128 * 1024 * 1024) throw new Error('Резервная копия больше 128 МБ');
       const data = JSON.parse(await file.text());
       if (data?.format !== 'mora-playlists' || data.version !== 1 || !Array.isArray(data.playlists)) throw new Error('Выберите резервную копию плейлистов MORA');
       setPending({ data, count: data.playlists.length, name: file.name });

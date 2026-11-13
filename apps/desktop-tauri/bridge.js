@@ -64,7 +64,7 @@
   window.automixDesktop = {
     exportPlaylists: async playlist => {
       const data = await invoke('/api/backup/playlists' + (playlist ? '?playlist=' + encodeURIComponent(playlist) : ''));
-      return shell('save-export', { name: playlist ? 'MORA-playlist.json' : 'MORA-playlists.json', contents: JSON.stringify(data, null, 2) });
+      return shell('save-export', { name: playlist ? 'MORA-playlist.json' : 'MORA-playlists.json', contents: JSON.stringify(data) });
     },
     windowCommand: action => shell(`window-${action}`),
     nativeMix: {

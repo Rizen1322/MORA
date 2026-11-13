@@ -1,6 +1,6 @@
 {
   "productName": "MORA",
-  "version": "0.4.15",
+  "version": "0.4.16",
   "identifier": "ru.mora.desktop.native.preview",
   "build": {
     "frontendDist": "../embedded"

@@ -4,7 +4,7 @@ import { PlayerController } from '../src/audio/controller.ts';
 import { api } from '../src/lib/api.ts';
 
 const bridge = vi.hoisted(() => ({ nativeMix: {
-  startSource: vi.fn(), prepareQueue: vi.fn(), settings: vi.fn(), stop: vi.fn(), state: vi.fn(), command: vi.fn(),
+  startSource: vi.fn(), prepareQueue: vi.fn(), settings: vi.fn(), stop: vi.fn(), state: vi.fn(), command: vi.fn(), setStation: vi.fn(),
 }, getSettings: vi.fn() }));
 vi.mock('../src/lib/desktop.ts', () => ({ desktop: bridge }));
 vi.mock('../src/audio/engine.worklet.ts?worker&url', () => ({ default: '/engine.js' }));
@@ -35,8 +35,20 @@ beforeEach(() => {
   bridge.nativeMix.settings.mockResolvedValue(undefined);
   bridge.nativeMix.stop.mockResolvedValue(undefined);
   bridge.nativeMix.command.mockResolvedValue(state(entry('old')));
+  bridge.nativeMix.setStation.mockResolvedValue(undefined);
   vi.mocked(api.queue).mockResolvedValue({ items: [entry('old')], index: 0, position: 4,
     context: { type: 'library', label: 'Old library' }, repeat: 'off', shuffle: false, volume: .2 });
+});
+
+it('reattaches the saved online station when an older native checkpoint only restored its tracks', async () => {
+  const current = entry('old'), context = { type: 'online-radio' as const, label: 'Онлайн-радио · Моя волна' };
+  vi.mocked(api.queue).mockResolvedValue({ items: [current], index: 0, position: 4, context, repeat: 'off', shuffle: false });
+  bridge.nativeMix.state.mockResolvedValue(state(current, { queue: [current], position: 4, context: null, station: null }));
+  const player = controller();
+  await player.restore();
+  expect(bridge.nativeMix.setStation).toHaveBeenCalledWith({ kind: 'online' }, context);
+  expect(bridge.nativeMix.startSource).not.toHaveBeenCalled();
+  expect(bridge.nativeMix.prepareQueue).not.toHaveBeenCalled();
 });
 afterEach(() => {
   for (const instance of controllers.splice(0)) {

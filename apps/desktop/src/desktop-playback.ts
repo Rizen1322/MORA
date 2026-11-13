@@ -16,6 +16,8 @@ interface Source {
   gainDb?: number;
   track: { trackId: string; title: string; artist: string; duration: number; coverUrl: string; mixingAllowed: boolean; binding?: boolean };
 }
+// Keep an unread block beyond the estimate so Rust requests more until the decoder confirms EOF.
+const sourceFrames = (source: Source) => Math.max(1, source.totalFrames, source.complete ? 0 : source.availableFrames + CHUNK_FRAMES);
 interface Item extends NativeMixTrack, NativeQueueEntry {
   entryId: string; trackId: string; index: number; deck: number; token: string;
   source: Source; abort: AbortController; feeds: Map<number, Promise<void>>; plan?: TransitionPlan; position: number;
@@ -66,6 +68,7 @@ export class DesktopPlayback {
   private stationAbort = new AbortController();
   private stationLoading = false;
   private stationRetryAt = 0;
+  private stationSkipped = new Set<string>();
   private dislikes = new Set<string>();
   private resumeAfterDislike = false;
   private listening: NativeListening;
@@ -83,7 +86,7 @@ export class DesktopPlayback {
     });
     if (!response.ok) {
       const value = await response.json().catch(() => ({})) as { error?: string };
-      throw Error(value.error || `Не удалось подготовить музыку (${response.status})`);
+      throw Object.assign(Error(value.error || `Не удалось подготовить музыку (${response.status})`), { statusCode: response.status });
     }
     return response.json() as Promise<T>;
   }
@@ -103,6 +106,7 @@ export class DesktopPlayback {
   private resetStation(): void {
     this.stationRevision++; this.stationAbort.abort(); this.stationAbort = new AbortController();
     this.station = null; this.stationLoading = false; this.stationRetryAt = 0;
+    this.stationSkipped.clear();
   }
   /** Persisted reactions come from the backend, even while the page is suspended. */
   applyDislikes(trackIds: string[]): Promise<void> {
@@ -156,18 +160,29 @@ export class DesktopPlayback {
   async startStation(station: NativeRadioConfig, config: NativeSourceConfig): Promise<NativeMixState> {
     if (!station || !['own', 'yandex', 'online'].includes(station.kind)) throw Error('Неизвестный источник волны');
     this.resetStation();
-    const revision = this.stationRevision;
-    const result = await this.request<{ entries: NativeQueueEntry[]; context: NativeRecoverySnapshot['context']; yandexSessionId?: string }>(
-      '/internal/desktop/station-next', { ...station, exclude: [], count: 1 }, this.stationAbort.signal);
-    if (revision !== this.stationRevision) throw Error('Запуск отменён');
-    const first = result.entries[0];
-    if (!first) throw Error('Нет доступных рекомендаций');
-    const started = this.startSource(first, config), startedRevision = this.stationRevision;
-    await started;
-    if (startedRevision !== this.stationRevision || this.current?.entryId !== first.entryId) return this.state();
-    this.station = { ...station, ...(result.yandexSessionId ? { yandexSessionId: result.yandexSessionId } : {}) };
-    this.context = result.context;
-    void this.refillStation();
+    let revision = this.stationRevision;
+    const skipped: string[] = [];
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const result = await this.request<{ entries: NativeQueueEntry[]; context: NativeRecoverySnapshot['context']; yandexSessionId?: string }>(
+        '/internal/desktop/station-next', { ...station, exclude: skipped, count: 1 }, this.stationAbort.signal);
+      if (revision !== this.stationRevision) throw Error('Запуск отменён');
+      const first = result.entries[0];
+      if (!first) throw Error('Нет доступных рекомендаций');
+      const started = this.startSource(first, config);
+      revision = this.stationRevision;
+      try { await started; }
+      catch (error) {
+        if (revision !== this.stationRevision || ![404, 409, 410, 502].includes((error as { statusCode?: number }).statusCode ?? 0) || attempt === 5) throw error;
+        skipped.push(first.trackId);
+        continue;
+      }
+      if (revision !== this.stationRevision || this.current?.entryId !== first.entryId) return this.state();
+      this.stationSkipped = new Set(skipped);
+      this.station = { ...station, ...(result.yandexSessionId ? { yandexSessionId: result.yandexSessionId } : {}) };
+      this.context = result.context;
+      void this.refillStation();
+      return this.state();
+    }
     return this.state();
   }
   private async refillStation(): Promise<void> {
@@ -178,13 +193,13 @@ export class DesktopPlayback {
     try {
       const result = await this.request<{ entries: NativeQueueEntry[]; context: NativeRecoverySnapshot['context']; yandexSessionId?: string }>(
         '/internal/desktop/station-next', { ...station, currentId: this.future.at(-1)?.trackId ?? current.trackId,
-          exclude: [...(station.kind === 'own' ? [current] : this.history.slice(-200)), ...this.future].map(e => e.trackId), count: Math.min(3, reserve - this.future.length) }, this.stationAbort.signal);
+          exclude: [...new Set([...(station.kind === 'own' ? [current] : this.history.slice(-200)), ...this.future].map(e => e.trackId).concat([...this.stationSkipped]))], count: Math.min(3, reserve - this.future.length) }, this.stationAbort.signal);
       if (revision !== this.stationRevision || station !== this.station) return;
       const have = new Set([...(station.kind === 'own' ? [this.current!] : this.history.slice(-200)), ...this.future].map(e => e.trackId));
       let added = 0;
       for (const entry of result.entries) {
         this.valid(entry);
-        if (!have.has(entry.trackId) && !this.dislikes.has(entry.trackId)) { this.future.push({ ...entry }); have.add(entry.trackId); added++; }
+        if (!have.has(entry.trackId) && !this.dislikes.has(entry.trackId) && !this.stationSkipped.has(entry.trackId)) { this.future.push({ ...entry }); have.add(entry.trackId); added++; }
       }
       if (result.yandexSessionId) station.yandexSessionId = result.yandexSessionId;
       this.context ??= result.context; this.manifestRevision++;
@@ -215,7 +230,9 @@ export class DesktopPlayback {
     this.manifest = snapshot.queue;
     this.future = snapshot.queue.slice(snapshot.index + 1);
     this.loop = snapshot.loop ?? []; this.context = snapshot.context;
-    await this.setStation(snapshot.station ?? null, snapshot.context);
+    const type = snapshot.context?.type;
+    await this.setStation(snapshot.station ?? (type === 'online-radio' ? { kind: 'online' } : type === 'wave' ? { kind: 'own' }
+      : type === 'yandex-wave' ? { kind: 'yandex', yandexSessionId: snapshot.queue[snapshot.index].yandexSessionId } : null), snapshot.context);
     void this.prepare().catch(e => this.preparationError(e));
   }
 
@@ -307,7 +324,7 @@ export class DesktopPlayback {
     this.slots[deck]?.abort.abort();
     gainDb = source.gainDb ?? gainDb;
     const item: Item = { ...source.track, ...entry, source,
-      index, deck, token: `${entry.entryId}#host-${++this.sequence}`, totalFrames: Math.max(1, source.totalFrames), gainDb,
+      index, deck, token: `${entry.entryId}#host-${++this.sequence}`, totalFrames: sourceFrames(source), gainDb,
       abort: new AbortController(), feeds: new Map(), sentPlans: new Map(), position };
     this.slots[deck] = item;
     this.budget.observe(Date.now() - started);
@@ -327,16 +344,22 @@ export class DesktopPlayback {
       if (item.abort.signal.aborted || this.slots[item.deck] !== item) return;
       const start = chunk * CHUNK_FRAMES;
       if (start >= item.totalFrames) return;
-      const source = await this.source(item, item === this.current ? 'current' : 'next', start, Math.min(CHUNK_FRAMES, item.totalFrames - start),
+      const source = await this.source(item, item === this.current ? 'current' : 'next', start, item.source.complete ? Math.min(CHUNK_FRAMES, item.totalFrames - start) : CHUNK_FRAMES,
         AbortSignal.any([this.abort.signal, item.abort.signal]));
       if (item.abort.signal.aborted || this.slots[item.deck] !== item) return;
-      if (source.complete && source.totalFrames !== item.totalFrames) {
-        item.totalFrames = source.totalFrames;
-        await this.audio.command({ cmd: 'length', deck: item.deck, token: item.token, totalFrames: source.totalFrames });
+      const completed = !item.source.complete && source.complete;
+      if (!item.source.complete || source.complete) {
+        item.source = source;
+        const totalFrames = source.complete ? sourceFrames(source) : Math.max(item.totalFrames, sourceFrames(source));
+        if (totalFrames !== item.totalFrames) {
+          item.totalFrames = totalFrames;
+          await this.audio.command({ cmd: 'length', deck: item.deck, token: item.token, totalFrames });
+        }
       }
+      if (completed && item === this.current && this.incoming?.plan && !this.incoming.manualRequested)
+        void this.arm(item, this.incoming, this.incoming.plan).catch(error => this.preparationError(error));
       const frames = Math.min(CHUNK_FRAMES, item.totalFrames - start);
       if (frames <= 0) return;
-      item.source = source;
       try { await this.audio.feedFile({ cmd: 'feedFile', deck: item.deck, token: item.token, chunk, frames, path: source.path, format: source.format }); }
       catch (error) {
         if (source.path === source.finalPath || item.abort.signal.aborted) throw error;
@@ -410,6 +433,13 @@ export class DesktopPlayback {
     if (item.source.gainDb !== undefined) item.gainDb = item.source.gainDb;
     // Replanning a future transition must never renormalize the audible recording.
     let plan = { ...fallbackWithoutVocalStems(raw), gainA: cur.gainDb, gainB: item.gainDb };
+    // Provider durations may be rounded to seconds; larger changes invalidate metadata-only plans.
+    if (!item.manualRequested && [cur, item].some(track => track.source.complete && Math.abs(track.totalFrames / this.sampleRate - track.source.track.duration) > 1)) {
+      const settings = await this.request<{ automix: typeof DEFAULT_AUTOMIX_SETTINGS }>('/api/settings');
+      if (this.current !== cur || this.incoming !== item || this.tick?.transition?.active) return;
+      plan = { ...planTransition({ id: cur.trackId, duration: cur.totalFrames / this.sampleRate, mixingAllowed: cur.source.track.mixingAllowed, analysis: null },
+        { id: item.trackId, duration: item.totalFrames / this.sampleRate, mixingAllowed: item.source.track.mixingAllowed, analysis: null }, settings.automix), gainA: cur.gainDb, gainB: item.gainDb };
+    }
     const position = this.position(cur);
     if (plan.duration > 0 && plan.aExit <= position + .1) plan = skipPlanFrom(plan, position + .05);
     await this.audio.command({ cmd: 'cue', deck: item.deck, frame: Math.round(plan.bEntry * this.sampleRate) });
@@ -422,6 +452,7 @@ export class DesktopPlayback {
     if (this.current !== cur || this.incoming !== item || this.tick?.transition?.active) return;
     item.plan = plan; item.gainDb = plan.gainB;
     item.transition = planToArmed(plan, 48000, cur.token, item.token);
+    if (!cur.source.complete && !item.manualRequested) return;
     item.sentPlans.set(plan.id, plan);
     await this.audio.command({ cmd: 'arm', transition: armed });
   }
@@ -436,7 +467,7 @@ export class DesktopPlayback {
       // fallback's own exit kept it for any playhead within 4 s of it (v19.2: a seek near the end played a
       // file crossfade instead of the planned style).
       const armedIn = item.plan!.aExit - this.position(cur);
-      if (armedIn > 1 && result.plan.aExit - this.position(cur) > 1) await this.arm(cur, item, result.plan);
+      if (!item.sentPlans.size || armedIn > 1 && result.plan.aExit - this.position(cur) > 1) await this.arm(cur, item, result.plan);
       else if (armedIn > 1 && !result.pending.length && result.plan.duration > 0) {
         // The AutoMix point is already behind the playhead (a seek): the same moves from here, on the
         // next downbeat, rather than a dry skip_fade from arm().
@@ -460,10 +491,16 @@ export class DesktopPlayback {
   private preparationError(error: unknown): void {
     if ((error as Error)?.name === 'AbortError' || this.abort.signal.aborted) return;
     this.error = (error as Error).message;
-    if (++this.failureStreak < 3 && this.future.length) {
-      this.future.shift(); this.error = undefined;
-      queueMicrotask(() => void this.prepare().catch(e => this.preparationError(e)));
-    }
+    const failures = ++this.failureStreak;
+    if (this.station && this.future.length) {
+      this.stationSkipped.add(this.future.shift()!.trackId);
+      if (this.stationSkipped.size > 200) this.stationSkipped.delete(this.stationSkipped.values().next().value!);
+      if (failures >= 3) { this.stationRetryAt = Date.now() + 15000; return; }
+    } else if (failures < 3 && this.future.length) this.future.shift();
+    else return;
+    this.error = undefined;
+    if (this.station) void this.refillStation();
+    queueMicrotask(() => void this.prepare().catch(e => this.preparationError(e)));
   }
   private position(item = this.current): number {
     if (!item) return 0;

@@ -209,11 +209,23 @@ export function PlaylistPicker({ trackIds, onClose }: { trackIds: string[]; onCl
 
 function EditTrack({ track, onClose }: { track: Track; onClose: () => void }) {
   const [v, setV] = useState({ title: track.title, artist: track.artist, album: track.album, genre: track.genre, albumArtist: track.albumArtist, year: String(track.year ?? '') });
+  const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
   const save = async () => {
-    const patch = { ...v, year: v.year.trim() ? Number(v.year) : null };
-    await api.updateTrack(track.id, patch);
-    useApp.getState().patchTrack(track.id, patch);
-    onClose();
+    if (!v.title.trim() || submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    try {
+      const patch = { ...v, year: v.year.trim() ? Number(v.year) : null };
+      await api.updateTrack(track.id, patch);
+      useApp.getState().patchTrack(track.id, patch);
+      onClose();
+    } catch (error) {
+      useApp.getState().toast((error as Error).message, 'error');
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
   };
   return (
     <Modal
@@ -224,7 +236,7 @@ function EditTrack({ track, onClose }: { track: Track; onClose: () => void }) {
           <button className="btn btn-ghost" onClick={onClose}>
             Отмена
           </button>
-          <button className="btn btn-primary" onClick={save} disabled={!v.title.trim()}>
+          <button className="btn btn-primary" onClick={save} disabled={!v.title.trim() || busy}>
             Сохранить
           </button>
         </>
@@ -233,7 +245,7 @@ function EditTrack({ track, onClose }: { track: Track; onClose: () => void }) {
       {(['title', 'artist', 'album', 'albumArtist', 'year', 'genre'] as const).map((k) => (
         <div className="field" key={k}>
           <label htmlFor={`edit-${k}`}>{{ title: 'Название', artist: 'Исполнитель', album: 'Альбом', albumArtist: 'Исполнитель альбома', year: 'Год', genre: 'Жанр' }[k]}</label>
-          <input id={`edit-${k}`} className="input" value={v[k]} onChange={(e) => setV({ ...v, [k]: e.target.value })} />
+          <input id={`edit-${k}`} className="input" value={v[k]} disabled={busy} onChange={(e) => setV({ ...v, [k]: e.target.value })} />
         </div>
       ))}
       <p className="caption dim" style={{ margin: 0 }}>

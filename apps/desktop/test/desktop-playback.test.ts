@@ -1,6 +1,89 @@
-import { DEFAULT_AUTOMIX_SETTINGS, planRequestedTransition, planTransition } from '@automix/core';
+import { CHUNK_FRAMES, DEFAULT_AUTOMIX_SETTINGS, planRequestedTransition, planTransition } from '@automix/core';
 import { expect, it, vi } from 'vitest';
 import { DesktopPlayback } from '../src/desktop-playback.ts';
+
+it.each([0, CHUNK_FRAMES + 123, 9 * CHUNK_FRAMES + 123])('keeps decoding past an estimated length of %i frames until the real end', async (estimate) => {
+  const chunk = Math.max(2, Math.floor(estimate / CHUNK_FRAMES));
+  const total = (chunk + 2) * CHUNK_FRAMES + 123;
+  let host: DesktopPlayback, loaded: any;
+  let complete = false;
+  const audio = { process: {}, start: vi.fn(async () => ({ sampleRate: 48000, queueFrames: 2048 })),
+    feedFile: vi.fn(async (_value: object) => {}), stop: vi.fn(async () => {}),
+    command: vi.fn(async (value: any) => {
+      if (value.cmd === 'load') loaded = value;
+      if (value.cmd === 'start') queueMicrotask(() => host.onEvent({ type: 'tick', clock: 0, paused: false, main: value.deck,
+        decks: [0, 1].map(deck => ({ token: deck === value.deck ? value.token : null, playing: deck === value.deck,
+          position: 0, totalFrames: loaded.totalFrames, starved: false, ratio: 1, bufferedAhead: CHUNK_FRAMES })),
+        transition: null, limiterDb: 0, peak: 0 }));
+    }) };
+  const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    if (new URL(String(url)).pathname !== '/internal/desktop/pcm-source') return Response.json({});
+    const { start, frames } = JSON.parse(String(init?.body));
+    return Response.json({ sourceId: 'a', path: complete ? 'a.f32' : 'a.part', finalPath: 'a.f32', partPath: 'a.part',
+      format: 'f32le', totalFrames: complete ? total : estimate,
+      availableFrames: complete ? total : start + frames, complete,
+      track: { trackId: 'a', title: '', artist: '', duration: estimate / 48000, coverUrl: '', mixingAllowed: true } });
+  });
+  host = new DesktopPlayback(audio, { backend: () => ({ origin: 'http://127.0.0.1', accessToken: '', pcmToken: 'secret' }),
+    ready: vi.fn(), track: vi.fn(), fetch: fetcher as typeof fetch });
+  const need = (chunk: number) => host.onEvent({ type: 'need', deck: loaded.deck, token: loaded.token, chunks: [chunk] });
+  try {
+    await host.startSource({ trackId: 'a', entryId: 'entry-a' }, { sampleRate: 48000, position: 0 });
+    expect(loaded.totalFrames).toBeGreaterThan(CHUNK_FRAMES);
+    need(chunk);
+    await vi.waitFor(() => expect(audio.feedFile).toHaveBeenCalledWith(expect.objectContaining({ chunk, frames: CHUNK_FRAMES })));
+    const request = fetcher.mock.calls.find(([, init]) => init?.body && JSON.parse(String(init.body)).start === chunk * CHUNK_FRAMES);
+    expect(JSON.parse(String(request![1]!.body)).frames).toBe(CHUNK_FRAMES);
+    expect(host.state().duration * 48000).toBeGreaterThan((chunk + 1) * CHUNK_FRAMES);
+    complete = true;
+    need(chunk + 1);
+    await vi.waitFor(() => expect(audio.command).toHaveBeenCalledWith({ cmd: 'length', deck: loaded.deck, token: loaded.token, totalFrames: total }));
+    need(chunk + 2);
+    await vi.waitFor(() => expect(audio.feedFile).toHaveBeenCalledWith(expect.objectContaining({ chunk: chunk + 2, frames: 123, path: 'a.f32' })));
+    expect(host.state().duration * 48000).toBeCloseTo(total);
+  } finally { await host.stop(); }
+});
+
+it.each([false, true])('waits for the decoded end before arming AutoMix, even with a cached metadata plan (%s)', async cached => {
+  const track = (id: string, duration: number) => ({ id, duration, mixingAllowed: true, analysis: null });
+  const early = planTransition(track('a', 20), track('b', 180), DEFAULT_AUTOMIX_SETTINGS);
+  let complete = false, host: DesktopPlayback;
+  const loads: any[] = [], arms: any[] = [];
+  const audio = { process: {}, start: vi.fn(async () => ({ sampleRate: 48000, queueFrames: 2048 })),
+    feedFile: vi.fn(async (_value: object) => {}), stop: vi.fn(async () => {}),
+    command: vi.fn(async (value: any) => {
+      if (value.cmd === 'load') loads.push(value);
+      if (value.cmd === 'arm') arms.push(value.transition);
+      if (value.cmd === 'start') queueMicrotask(() => host.onEvent({ type: 'tick', clock: 0, paused: false, main: value.deck,
+        decks: [0, 1].map(deck => ({ token: deck === value.deck ? value.token : null, playing: deck === value.deck,
+          position: 0, totalFrames: loads[0].totalFrames, starved: false, ratio: 1, bufferedAhead: CHUNK_FRAMES })),
+        transition: null, limiterDb: 0, peak: 0 }));
+    }) };
+  const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/api/settings') return Response.json({ automix: DEFAULT_AUTOMIX_SETTINGS });
+    if (path === '/api/automix/plan') return cached ? Response.json({ plan: early, pending: [] }) : Response.json({}, { status: 503 });
+    if (path !== '/internal/desktop/pcm-source') return Response.json({});
+    const { trackId, start, frames } = JSON.parse(String(init?.body));
+    const done = trackId === 'b' || complete;
+    return Response.json({ path: `${trackId}.f32`, finalPath: `${trackId}.f32`, partPath: '', format: 'f32le',
+      totalFrames: (done ? 180 : 20) * 48000, availableFrames: done ? 180 * 48000 : start + frames, complete: done,
+      track: { trackId, title: '', artist: '', duration: trackId === 'a' ? 20 : 180, coverUrl: '', mixingAllowed: true } });
+  };
+  host = new DesktopPlayback(audio, { backend: () => ({ origin: 'http://127.0.0.1', accessToken: '', pcmToken: 'secret' }),
+    ready: vi.fn(), track: vi.fn(), fetch: fetcher as typeof fetch });
+  try {
+    await host.startSource({ trackId: 'a', entryId: 'entry-a' }, { sampleRate: 48000, position: 0 });
+    await host.prepareQueue(1, [{ trackId: 'b', entryId: 'entry-b' }], 'a');
+    await vi.waitFor(() => expect(host.state().nextTrack?.plan).toBeDefined());
+    expect(arms).toEqual([]);
+    complete = true;
+    host.onEvent({ type: 'need', deck: loads[0].deck, token: loads[0].token, chunks: [6] });
+    await vi.waitFor(() => expect(arms).toHaveLength(1));
+    expect(host.state().nextTrack!.plan!.aExit).toBeGreaterThan(150);
+    expect(arms[0].triggerFrame).toBeGreaterThan(150 * 48000);
+  } finally { await host.stop(); }
+});
 
 it('reuses a slow initial plan after arming the one-second fallback', async () => {
   const track = (id: string) => ({ id, duration: 20, mixingAllowed: true, analysis: null });

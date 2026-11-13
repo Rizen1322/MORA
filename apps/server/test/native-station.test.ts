@@ -3,6 +3,23 @@ import { expect, it, vi } from 'vitest';
 import type { Services } from '../src/app.ts';
 import { registerNativeStationRoutes } from '../src/routes/native-station.ts';
 
+it('replaces a restricted station candidate without discarding playable recommendations', async () => {
+  const app = Fastify();
+  const item = (id: string) => ({ externalId: id, title: id, artist: id, playable: true, audioProvider: 'youtube' });
+  const prepareProgressive = vi.fn(async (_provider: string, id: string) => {
+    if (id === 'locked') throw Error('Источник требует вход в аккаунт для этой записи');
+    return `local-${id}`;
+  });
+  const services = { cfg: { desktopPlaybackToken: 'secret' }, db: { prepare: () => ({ get: () => undefined, all: () => [] }) },
+    lib: { listDTO: () => [], sources: () => [] }, publicMusic: { search: async () => [item('seed')], radio: async () => [item('locked'), item('safe')], prepareProgressive } } as unknown as Services;
+  registerNativeStationRoutes(app, services);
+  try {
+    const response = await app.inject({ method: 'POST', url: '/internal/desktop/station-next', headers: { 'x-mora-desktop-token': 'secret' }, payload: { kind: 'online', seed: { title: 'seed', artist: 'seed' }, exclude: [], count: 3 } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().entries.map((entry: { trackId: string }) => entry.trackId)).toEqual(['local-seed', 'local-safe']);
+  } finally { await app.close(); }
+});
+
 it('carries artist spacing over the native queue refill boundary including collaborations', async () => {
   const app = Fastify();
   const item = (id: string, artist: string) => ({ externalId: id, title: id, artist, playable: true, audioProvider: 'youtube' });

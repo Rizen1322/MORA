@@ -2682,6 +2682,13 @@ export class PlayerController {
         this.nativeManifestKey = JSON.stringify([this.queueRevision, items.map(e => e.entryId), this.state.repeat, this.state.shuffle, this.loudnessTarget]);
         this.onNativeState(active);
         this.nativePoll(active.sampleRate);
+        // Older native checkpoints saved tracks but lost the station that must keep extending them.
+        if (!active.station && desktop?.nativeMix?.setStation && (active.context || saved?.items.some(e => e.entryId === active.entryId))) {
+          const context = this.state.context, type = context?.type;
+          const station: NativeRadioConfig | null = type === 'online-radio' ? { kind: 'online' } : type === 'wave' ? { kind: 'own' }
+            : type === 'yandex-wave' ? { kind: 'yandex', yandexSessionId: items[index]?.yandexSessionId } : null;
+          if (station) await desktop.nativeMix.setStation(station, context);
+        }
       }
     } catch {
       /* first run */

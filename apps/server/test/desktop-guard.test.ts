@@ -50,16 +50,29 @@ describe('shutdown', () => {
   it('closes promptly while a client keeps the event stream open', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automix-close-'));
     const a = await createApp({ dataDir: path.join(dir, 'data'), analysisWorkers: 1, stemsPython: null, port: 0 }, { startWorkers: false });
+    let eventSends = 0;
+    a.app.addHook('onSend', async (request, reply, payload) => {
+      if (request.url === '/api/events') eventSends++;
+      reply.header('Content-Security-Policy', "default-src 'self'");
+      return payload;
+    });
     await a.app.listen({ host: '127.0.0.1', port: 0 });
     const { port } = a.app.server.address() as { port: number };
     const ctl = new AbortController();
     const stream = await fetch(`http://127.0.0.1:${port}/api/events`, { signal: ctl.signal });
-    await stream.body!.getReader().read();
+    const reader = stream.body!.getReader();
+    await reader.read();
+    a.services.events.emit({ type: 'settings' });
+    const event = await reader.read();
+    expect(event.done).toBe(false);
+    expect(new TextDecoder().decode(event.value)).toContain('"type":"settings"');
     const t0 = performance.now();
     const closed = await Promise.race([a.close().then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 3000))]);
     ctl.abort();
     fs.rmSync(dir, { recursive: true, force: true });
     expect(closed).toBe(true);
     expect(performance.now() - t0).toBeLessThan(3000);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(eventSends).toBe(0);
   });
 });

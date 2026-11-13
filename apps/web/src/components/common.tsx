@@ -74,13 +74,18 @@ export function Modal({ title, children, onClose, actions }: { title: string; ch
 export function PromptModal({ title, label, initial = '', confirm, onSubmit, onClose }: { title: string; label: string; initial?: string; confirm: string; onSubmit: (v: string) => void | Promise<void>; onClose: () => void }) {
   const [v, setV] = useState(initial);
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
   const submit = async () => {
-    if (!v.trim()) return;
+    if (!v.trim() || submitting.current) return;
+    submitting.current = true;
     setBusy(true);
     try {
       await onSubmit(v.trim());
       onClose();
+    } catch (error) {
+      useApp.getState().toast((error as Error).message, 'error');
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   };
@@ -101,13 +106,15 @@ export function PromptModal({ title, label, initial = '', confirm, onSubmit, onC
     >
       <div className="field">
         <label htmlFor="prompt-input">{label}</label>
-        <input id="prompt-input" className="input" value={v} maxLength={120} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} />
+        <input id="prompt-input" className="input" value={v} maxLength={120} disabled={busy} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} />
       </div>
     </Modal>
   );
 }
 
 export function ConfirmModal({ title, text, confirm, danger, onConfirm, onClose }: { title: string; text: string; confirm: string; danger?: boolean; onConfirm: () => void | Promise<void>; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
   return (
     <Modal
       title={title}
@@ -119,9 +126,20 @@ export function ConfirmModal({ title, text, confirm, danger, onConfirm, onClose 
           </button>
           <button
             className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`}
+            disabled={busy}
             onClick={async () => {
-              await onConfirm();
-              onClose();
+              if (submitting.current) return;
+              submitting.current = true;
+              setBusy(true);
+              try {
+                await onConfirm();
+                onClose();
+              } catch (error) {
+                useApp.getState().toast((error as Error).message, 'error');
+              } finally {
+                submitting.current = false;
+                setBusy(false);
+              }
             }}
           >
             {confirm}

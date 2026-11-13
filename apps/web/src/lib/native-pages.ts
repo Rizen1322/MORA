@@ -974,8 +974,10 @@ export const actions: Record<string, (a: Args) => unknown> = {
   },
   inspectBackup: (a) => {
     backupMessage = '';
+    backup = null;
+    if (str(a.base64).length > Math.ceil(128 * MB / 3) * 4) throw new Error('Резервная копия больше 128 МБ');
     const bytes = decode(a.base64);
-    if (bytes.length > 16 * MB) throw new Error('Файл больше 16 МБ');
+    if (bytes.length > 128 * MB) throw new Error('Резервная копия больше 128 МБ');
     const data = JSON.parse(new TextDecoder().decode(bytes));
     if (data?.format !== 'mora-playlists' || data.version !== 1 || !Array.isArray(data.playlists)) throw new Error('Выберите резервную копию плейлистов MORA');
     backup = { data, count: data.playlists.length, name: str(a.name) };

@@ -9,11 +9,13 @@ import { backupSettings, validateLibraryBackup, type LibraryBackupData } from '.
 
 interface BackupTrack { key: string; hash: string | null; title: string; artist: string; album: string; duration: number; playCount?: number; skipCount?: number; lastPlayedAt?: number | null; source?: { provider: 'youtube' | 'soundcloud' | 'yandex'; externalId: string } }
 interface Backup { format: 'mora-playlists'; version: 1; origin: string; createdAt: string; tracks: BackupTrack[]; playlists: { key: string; name: string; description: string; tracks: string[] }[]; library?: LibraryBackupData }
+// shortcut: backups are limited to 128 MiB in memory, use streaming if libraries exceed it.
+const BACKUP_BYTES = 128 * 1024 * 1024;
 
 function validate(value: unknown): Backup {
   const b = value as Backup;
   const string = (v: unknown, max = 500) => typeof v === 'string' && v.length <= max;
-  if (!b || b.format !== 'mora-playlists' || b.version !== 1 || !string(b.origin, 80) || !b.origin || !Array.isArray(b.tracks) || b.tracks.length > 10000 || !Array.isArray(b.playlists) || b.playlists.length > 1000) throw new Error('Это не поддерживаемая резервная копия MORA');
+  if (!b || b.format !== 'mora-playlists' || b.version !== 1 || !string(b.origin, 80) || !b.origin || !Array.isArray(b.tracks) || b.tracks.length > 100000 || !Array.isArray(b.playlists) || b.playlists.length > 10000) throw new Error('Это не поддерживаемая резервная копия MORA');
   const keys = new Set<string>();
   for (const t of b.tracks) {
     if (!t || !string(t.key, 100) || !t.key || keys.has(t.key) || !string(t.title) || !string(t.artist) || !string(t.album) || !Number.isFinite(t.duration) || t.duration < 0 || t.duration > 86400 || (t.hash !== null && (typeof t.hash !== 'string' || !/^[a-f0-9]{64}$/.test(t.hash)))) throw new Error('Повреждён список треков');
@@ -23,7 +25,7 @@ function validate(value: unknown): Backup {
   }
   const lists = new Set<string>(); let entries = 0;
   for (const p of b.playlists) {
-    if (!p || !string(p.key, 100) || lists.has(p.key) || !string(p.name, 120) || !p.name.trim() || !string(p.description, 4000) || !Array.isArray(p.tracks) || p.tracks.some((k) => typeof k !== 'string' || !keys.has(k)) || (entries += p.tracks.length) > 50000) throw new Error('Повреждён список плейлистов');
+    if (!p || !string(p.key, 100) || lists.has(p.key) || !string(p.name, 120) || !p.name.trim() || !string(p.description, 4000) || !Array.isArray(p.tracks) || p.tracks.some((k) => typeof k !== 'string' || !keys.has(k)) || (entries += p.tracks.length) > 1000000) throw new Error('Повреждён список плейлистов');
     lists.add(p.key);
   }
   if (b.library) validateLibraryBackup(b.library, keys);
@@ -64,12 +66,14 @@ export function registerBackupRoutes(app: FastifyInstance, { db, lib, events }: 
         reactions: q(db, 'SELECT track_id AS trackId, value, updated_at AS updatedAt FROM reactions').all() as unknown as LibraryBackupData['reactions'],
         history: q(db, 'SELECT id AS key, track_id AS trackId, started_at AS startedAt, ended_at AS endedAt, played_ms AS playedMs, duration_ms AS durationMs, end_reason AS endReason FROM plays ORDER BY id').all() as unknown as LibraryBackupData['history'],
       };
-      validate(backup);
     }
-    return reply.header('Content-Disposition', 'attachment; filename="MORA-playlists.json"').header('Cache-Control', 'no-store').send(backup);
+    validate(backup);
+    const json = JSON.stringify(backup);
+    if (Buffer.byteLength(json) > BACKUP_BYTES) return reply.code(413).send({ error: 'Резервная копия больше 128 МБ' });
+    return reply.header('Content-Disposition', 'attachment; filename="MORA-playlists.json"').header('Cache-Control', 'no-store').type('application/json').send(json);
   });
 
-  app.post<{ Body: unknown }>('/api/backup/playlists/restore', { bodyLimit: 16 * 1024 * 1024 }, async (req, reply) => {
+  app.post<{ Body: unknown }>('/api/backup/playlists/restore', { bodyLimit: BACKUP_BYTES }, async (req, reply) => {
     let b: Backup;
     try { b = validate(req.body); } catch (e) { return reply.code(400).send({ error: (e as Error).message }); }
     let missingFiles = 0;

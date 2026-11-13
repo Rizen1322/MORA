@@ -54,9 +54,11 @@ export function VersionTags({ labels, explicit }: { labels: { tag: string; origi
 export function SearchPage() {
   const preparation = usePublicPlayback();
   const route = useRoute();
-  const [query, setQuery] = useState(route.query.get('q') ?? '');
+  const routeQuery = route.query.get('q') ?? '';
   const initial = route.query.get('src') as Filter;
-  const [filter, setFilter] = useState<Filter>(FILTERS.some(([f]) => f === initial) ? initial : 'all');
+  const routeFilter = FILTERS.some(([f]) => f === initial) ? initial : 'all';
+  const [query, setQuery] = useState(routeQuery);
+  const [filter, setFilter] = useState<Filter>(routeFilter);
   const [settled, setSettled] = useState(query.trim());
   const [slots, setSlots] = useState<Partial<Record<PublicSource, Slot>>>({});
   const [recent, setRecent] = useState(readRecent);
@@ -68,6 +70,7 @@ export function SearchPage() {
   const tracks = useApp((s) => s.tracks), order = useApp((s) => s.order);
 
   useEffect(() => { input.current?.focus(); }, []);
+  useEffect(() => { setQuery(routeQuery); setSettled(routeQuery.trim()); setFilter(routeFilter); }, [route.query]);
   useEffect(() => { const t = setTimeout(() => setSettled(query.trim()), 300); return () => clearTimeout(t); }, [query]);
 
   const run = (src: PublicSource, q: string) => {
@@ -85,9 +88,9 @@ export function SearchPage() {
     controllers.current.clear();
     setSlots({});
     setSelected(null);
+    history.replaceState(null, '', `#/search?${new URLSearchParams({ q: settled, src: filter })}`);
     if (!settled) return;
     for (const src of filter === 'all' ? REMOTE : REMOTE.includes(filter as PublicSource) ? [filter as PublicSource] : []) run(src, settled);
-    history.replaceState(null, '', `#/search?${new URLSearchParams({ q: settled, src: filter })}`);
   }, [settled, filter]);
   useEffect(() => () => { for (const c of controllers.current.values()) c.abort(); }, []);
 
@@ -121,6 +124,7 @@ export function SearchPage() {
     else playPublic(src as PublicSource, slots[src as PublicSource]!.items.findIndex((t) => t.externalId === id));
   };
   const onKey = (e: KeyboardEvent) => {
+    if (query.trim() !== settled || e.nativeEvent.isComposing) return;
     if (!keys.length || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter')) return;
     if (e.key === 'Enter') { e.preventDefault(); activate(selected && keys.includes(selected) ? selected : keys[0]); return; }
     e.preventDefault();
@@ -130,12 +134,12 @@ export function SearchPage() {
     document.getElementById(`sr-${next}`)?.scrollIntoView({ block: 'nearest' });
   };
 
-  return <div className="main-inner search-page" onKeyDown={onKey}>
+  return <div className="main-inner search-page">
     <h1 className="page-title">Поиск</h1>
     <form className="search-bar" role="search" onSubmit={(e) => { e.preventDefault(); setSettled(query.trim()); }}>
       <MagnifyingGlass size={22} aria-hidden="true" />
       <input ref={input} type="search" maxLength={200} placeholder="Исполнитель, трек или ссылка" aria-label="Поиск музыки" value={query}
-        onChange={(e) => setQuery(e.target.value)} aria-controls="search-results" aria-activedescendant={selected ? `sr-${selected}` : undefined} />
+        onChange={(e) => setQuery(e.target.value)} onKeyDown={onKey} aria-controls="search-results" aria-activedescendant={selected ? `sr-${selected}` : undefined} />
       {query && <button type="button" className="icon-btn" aria-label="Очистить" onClick={() => { setQuery(''); input.current?.focus(); }}><X size={18} /></button>}
     </form>
     {preparation.phase === 'starting' && <div role="status" className="setting"><span>Подготавливаем «{preparation.title}»…</span><button className="btn btn-ghost btn-sm" onClick={() => publicPlayer.cancel()}>Отмена</button></div>}

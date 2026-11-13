@@ -72,9 +72,9 @@ export function LyricsPanel({ embedded = false, onClose }: { embedded?: boolean;
         <button className="icon-btn" aria-label={embedded ? 'Вернуться к обложке' : 'Закрыть'} onClick={() => onClose ? onClose() : setPanel(null)}><X size={20} /></button>
       </div>
       {current?.data?.status === 'synced' && <div className="lyrics-tools">
-        <button className="icon-btn" aria-label="Текст раньше на 0,25 с" onClick={() => shift(-0.25)}><Minus size={16} /></button>
+        <button className="icon-btn" aria-label="Текст раньше на 0,25 с" onClick={() => shift(0.25)}><Minus size={16} /></button>
         <span className="small tnum" title="Сдвиг сохраняется для этой записи">сдвиг {offset > 0 ? '+' : ''}{offset.toFixed(2).replace('.', ',')} с</span>
-        <button className="icon-btn" aria-label="Текст позже на 0,25 с" onClick={() => shift(0.25)}><Plus size={16} /></button>
+        <button className="icon-btn" aria-label="Текст позже на 0,25 с" onClick={() => shift(-0.25)}><Plus size={16} /></button>
       </div>}
       {!follow && lines.length > 0 && <button className="btn btn-ghost btn-sm lyrics-follow" onClick={() => setFollow(true)}><Crosshair size={15} /> К текущей строке</button>}
       <div className="queue-scroll lyrics-scroll" ref={box}

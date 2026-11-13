@@ -2,22 +2,15 @@
 
 Музыкальный плеер для своих файлов с DJ-переходами (AutoMix) и персональной «Моей волной». Интерфейс на русском.
 
-## Приложение MORA для Windows
+## Приложение MORA для Windows (Tauri)
 
-С 0.3.14 доступно обновление через GitHub Releases: автоматическая проверка, загрузка по кнопке и установка после подтверждения перезапуска. С 0.3.13 первый переход выполняется вручную. [Поведение и выпуск обновлений](docs/desktop-auto-update.md).
+Текущий десктоп использует Tauri 2 и WebView2, отдельный Node-сервер и Rust-аудиодвижок. Автообновление работает через GitHub Releases: проверка, загрузка по кнопке и установка после подтверждения перезапуска. [Поведение и выпуск обновлений](docs/desktop-auto-update.md).
 
-Отдельное приложение без терминала, системных Node/Python/FFmpeg: установщик `apps/desktop/dist/MORA-Setup-0.3.8.exe` или папка `apps/desktop/dist/win-unpacked` (запуск `MORA.exe`). С 0.3.17 вокальной модели в установщике нет: переходы строятся по полному миксу. Сборка:
-
-```bash
-npm install
-node apps/desktop/scripts/fetch-ffmpeg.mjs
-node apps/desktop/scripts/fetch-ytdlp.mjs
-npm run desktop:package
-```
+Приложение поставляет Node, декодеры и FFmpeg; для запуска нужен системный WebView2. Установщик текущей версии — `apps/desktop-tauri/dist-unified/MORA-Setup-<версия>.exe`. Версия задана в `apps/desktop-tauri/src-tauri/tauri.conf.json`. Вокальной модели в установщике нет: переходы строятся по полному миксу. Для сборки нужны Rust GNU, CMake и Node; [полная инструкция](apps/desktop-tauri/README.md).
 
 Без аккаунтов: поиск и прослушивание публичных записей YouTube Music, YouTube и SoundCloud, импорт плейлистов Spotify/Apple Music/YouTube/файлов, загрузки для офлайна, тексты, 10-полосный эквалайзер, онлайн-радио. Подробно: [docs/public-sources.md](docs/public-sources.md).
 
-Текущая 0.3.8: быстрый поиск SoundCloud, резервный поиск YouTube Music, публичные страницы артистов/альбомов и выбор AutoMix-плана с защитой первых слов. [Проверка поиска и каталога](docs/pc-release-0.3.7.md), [изменения AutoMix](docs/pc-release-0.3.8.md).
+Исторические проверки: [поиск и каталог 0.3.7](docs/pc-release-0.3.7.md), [AutoMix 0.3.8](docs/pc-release-0.3.8.md). Каталог `apps/desktop` также содержит общие ресурсы и код воспроизведения, используемые Tauri; его прежняя Electron-оболочка больше не является текущим приложением. Корневые команды `desktop:dev` и `desktop:package` относятся к этой старой оболочке; для Tauri используйте [инструкцию сборки](apps/desktop-tauri/README.md).
 
 В 0.3.0: независимые скорость и высота тона, автономный вокальный компонент и проверки реальных переходов. [Отчёт](docs/mora-audit-0.3.0.md).
 

@@ -59,6 +59,25 @@ test('persistent client reuses connections and preserves streamed range bytes', 
   expect(connections - before).toBe(1);
 });
 
+test('plain HTTP works when an explicit certificate store is empty', async () => {
+  const emptyFile = path.join(dir, 'empty-roots.pem'), emptyDirectory = path.join(dir, 'empty-roots');
+  await fs.writeFile(emptyFile, ''); await fs.mkdir(emptyDirectory);
+  const previousFile = process.env.SSL_CERT_FILE, previousDirectory = process.env.SSL_CERT_DIR;
+  let isolated: RustNetwork | undefined;
+  try {
+    process.env.SSL_CERT_FILE = emptyFile; process.env.SSL_CERT_DIR = emptyDirectory;
+    isolated = await createRustNetwork(executable, { default: '' });
+  } finally {
+    if (previousFile === undefined) delete process.env.SSL_CERT_FILE; else process.env.SSL_CERT_FILE = previousFile;
+    if (previousDirectory === undefined) delete process.env.SSL_CERT_DIR; else process.env.SSL_CERT_DIR = previousDirectory;
+  }
+  try {
+    const response = await isolated.fetch(`${origin}/audio`);
+    expect(response.status).toBe(200);
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+  } finally { await isolated.close(); }
+});
+
 test('a per-call response cap reaches the helper without changing its default metadata cap', async () => {
   await expect(network.fetch(`${origin}/audio`, {}, 100)).rejects.toThrow('size limit');
   const allowed = await network.fetch(`${origin}/audio`, {}, bytes.length);

@@ -32,14 +32,14 @@ export function validateLibraryBackup(value: LibraryBackupData, ids: Set<string>
   if (!value || !value.settings || ['automix', 'sound', 'wave', 'ui', 'yandex', 'downloads', 'analysis'].some(key => {
     const group = (value.settings as unknown as Record<string, unknown>)[key]; return !group || typeof group !== 'object' || Array.isArray(group);
   })
-    || !Array.isArray(value.reactions) || value.reactions.length > 10000 || !Array.isArray(value.history) || value.history.length > 50000
+    || !Array.isArray(value.reactions) || value.reactions.length > 100000 || !Array.isArray(value.history) || value.history.length > 1000000
     || value.reactions.some(row => !row || !ids.has(row.trackId) || ![-1, 0, 1].includes(row.value) || !integer(row.updatedAt))
     || value.history.some(row => !row || !ids.has(row.trackId) || !integer(row.key) || !integer(row.startedAt) || !integer(row.playedMs)
       || (row.endedAt !== null && !integer(row.endedAt)) || (row.durationMs !== null && !integer(row.durationMs))
       || (row.endReason !== null && !['finished', 'transition', 'skip', 'stop', 'error'].includes(row.endReason)))) throw Error('Повреждена копия медиатеки');
   backupSettings(value.settings);
   if (value.smartPlaylists !== undefined) {
-    if (!Array.isArray(value.smartPlaylists) || value.smartPlaylists.length > 1000 || value.smartPlaylists.some(p => !p || typeof p.id !== 'string' || p.id.length > 100 || typeof p.name !== 'string' || !p.name.trim() || p.name.length > 120 || !integer(p.createdAt))) throw Error('Повреждены умные плейлисты');
+    if (!Array.isArray(value.smartPlaylists) || value.smartPlaylists.length > 10000 || value.smartPlaylists.some(p => !p || typeof p.id !== 'string' || p.id.length > 100 || typeof p.name !== 'string' || !p.name.trim() || p.name.length > 120 || !integer(p.createdAt))) throw Error('Повреждены умные плейлисты');
     for (const playlist of value.smartPlaylists) validateSmartRules(playlist.rules);
   }
 }

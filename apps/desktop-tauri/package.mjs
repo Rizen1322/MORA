@@ -28,7 +28,10 @@ try {
   const toolchain = spawnSync(process.execPath, [`${app}/fetch-toolchain.mjs`], { cwd: app, stdio: 'inherit', windowsHide: true });
   if (toolchain.status !== 0 || !fs.existsSync(`${compiler}/clang.exe`)) throw Error('Unable to prepare LLVM-MinGW toolchain');
   const cargoBin = path.join(os.homedir(), '.cargo/bin');
-  const env = { ...process.env, CARGO_BUILD_JOBS: '1', PATH: `${compiler};${cargoBin};${process.env.PATH}`, CARGO_TARGET_DIR: `${app}/src-tauri/target`,
+  // windres also needs a writable ASCII temporary path when the checkout is mapped from Cyrillic.
+  const temp = `${drive}:/tools/.cache/tmp`;
+  fs.mkdirSync(temp, { recursive: true });
+  const env = { ...process.env, TEMP: temp, TMP: temp, TMPDIR: temp, CARGO_BUILD_JOBS: '1', PATH: `${compiler};${cargoBin};${process.env.PATH}`, CARGO_TARGET_DIR: `${app}/src-tauri/target`,
     RUSTFLAGS: process.env.RUSTFLAGS || '-C linker=rust-lld -C link-self-contained=yes' };
   const run = args => {
     const result = spawnSync(process.execPath, args, { cwd: app, env, stdio: 'inherit', windowsHide: true });

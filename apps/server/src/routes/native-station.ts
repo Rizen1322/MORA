@@ -75,7 +75,19 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
         picks = rankRadio(pool, library, seen, recentArtists, settings, primary);
       }
       if (!picks.length) throw new Error('Пока нет свежих рекомендаций');
-      const entries = await Promise.all(picks.slice(0, count).map(async t => ({ trackId: await s.publicMusic.prepareProgressive(t.audioProvider, t.externalId), entryId: randomUUID(), origin: 'wave' })));
+      const entries: { trackId: string; entryId: string; origin: 'wave' }[] = [];
+      let failure: unknown;
+      for (let at = 0; at < Math.min(picks.length, count + 3) && entries.length < count;) {
+        const batch = picks.slice(at, Math.min(count + 3, at + count - entries.length));
+        at += batch.length;
+        const prepared = await Promise.allSettled(batch.map(async t => ({ trackId: await s.publicMusic.prepareProgressive(t.audioProvider, t.externalId), entryId: randomUUID(), origin: 'wave' as const })));
+        abort.signal.throwIfAborted();
+        for (const result of prepared) {
+          if (result.status === 'fulfilled') entries.push(result.value);
+          else failure = result.reason;
+        }
+      }
+      if (!entries.length) throw failure ?? new Error('Нет доступных записей для онлайн-волны');
       abort.signal.throwIfAborted();
       return { entries, context: { type: 'online-radio', label: 'Онлайн-радио · Моя волна' } };
     } catch (e) {

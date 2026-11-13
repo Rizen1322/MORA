@@ -1025,7 +1025,7 @@ input[type='range'].range:focus-visible,
 }
 
 .track-row {
-  height: 58px;
+  height: 56px;
   border-radius: 12px;
   color: var(--text-2);
   user-select: none;

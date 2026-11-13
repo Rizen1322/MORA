@@ -101,6 +101,15 @@ fn stop_child(child: &mut Child, preserve: bool) {
     while Instant::now() < deadline { if matches!(child.try_wait(), Ok(Some(_))) { return; } std::thread::sleep(Duration::from_millis(50)); }
     let _ = child.kill(); let _ = child.wait();
 }
+fn launch_update(child: &mut Child, installer: &Path, recover: impl FnOnce(&mut Child) -> Result<(), String>) -> Result<(), String> {
+    stop_child(child, true);
+    if let Err(error) = Command::new(installer).args(["--updated", "/S", "--force-run"]).spawn() {
+        let message = format!("Не удалось запустить установщик: {error}");
+        recover(child).map_err(|error| format!("{message}. Не удалось восстановить сервис: {error}"))?;
+        return Err(message);
+    }
+    Ok(())
+}
 fn restart_child(state: &Session, stop: bool) -> Result<(), String> {
     let mut child = state.child.lock().unwrap();
     if state.maintenance.load(Ordering::Acquire) { return Err("Дождитесь окончания переноса медиатеки".into()); }
@@ -123,14 +132,17 @@ fn offer_recovery(child: &mut Child, recovery: bool) {
         }
     }
 }
+fn validate_export(contents: &str) -> Result<(), String> {
+    if contents.len() > 128 * 1024 * 1024 { return Err("Экспорт превышает 128 МБ".into()); }
+    serde_json::from_str::<Value>(contents).map(|_| ()).map_err(|_| "Некорректный JSON экспорта".into())
+}
 #[tauri::command]
 async fn desktop_action(window: tauri::WebviewWindow, state: tauri::State<'_, Session>, action: String, value: Option<Value>) -> Result<Value, String> {
     match action.as_str() {
         "save-export" => {
             let data = value.ok_or("Нет данных экспорта")?;
             let contents = data["contents"].as_str().ok_or("Некорректный экспорт")?;
-            if contents.len() > 16 * 1024 * 1024 { return Err("Экспорт превышает 16 МБ".into()); }
-            let _: Value = serde_json::from_str(contents).map_err(|_| "Некорректный JSON экспорта")?;
+            validate_export(contents)?;
             let name = match data["name"].as_str() { Some("MORA-playlist.json") => "MORA-playlist.json", _ => "MORA-playlists.json" };
             let selected = window.app_handle().dialog().file().set_title("Сохранить плейлисты").set_file_name(name).add_filter("JSON", &["json"]).blocking_save_file();
             let Some(file) = selected else { return Ok(json!(false)); };
@@ -167,9 +179,14 @@ async fn desktop_action(window: tauri::WebviewWindow, state: tauri::State<'_, Se
             let name = pending["file"].as_str().filter(|n| n.len() > 15 && n.starts_with("MORA-Setup-") && n.ends_with(".exe") && n[11..n.len() - 4].chars().all(|c| c.is_ascii_digit() || c == '.')).ok_or("Некорректное обновление")?;
             let installer = directory.join(name);
             if !installer.is_file() { return Err("Обновление не скачано".into()); }
+            if state.maintenance.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() { return Err("Дождитесь окончания переноса медиатеки".into()); }
+            let _guard = Maintenance(&state.maintenance);
+            launch_update(&mut state.child.lock().unwrap(), &installer, |child| {
+                let (mut replacement, _, recovery) = spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port)?;
+                if recovery { if let Some(stdin) = replacement.stdin.as_mut() { let _ = writeln!(stdin, "{}", json!({"type":"recovery", "restore":true})); } }
+                *child = replacement; Ok(())
+            })?;
             state.quitting.store(true, Ordering::Release);
-            stop_child(&mut state.child.lock().unwrap(), false);
-            Command::new(&installer).args(["--updated", "/S", "--force-run"]).spawn().map_err(|e| format!("Не удалось запустить установщик: {e}"))?;
             window.app_handle().exit(0); Ok(Value::Null)
         }
         "restart-backend" => { restart_child(&state, true)?; Ok(Value::Null) }
@@ -240,6 +257,30 @@ async fn desktop_action(window: tauri::WebviewWindow, state: tauri::State<'_, Se
         _ => Err("Недоступная команда".into()),
     }
 }
+#[cfg(test)]
+mod tests {
+    use std::os::windows::process::CommandExt;
+    #[test]
+    fn export_allows_more_than_16_mib_and_rejects_more_than_128_mib() {
+        let valid = format!("\"{}\"", "x".repeat(16 * 1024 * 1024));
+        assert!(super::validate_export(&valid).is_ok());
+        assert_eq!(super::validate_export(&" ".repeat(128 * 1024 * 1024 + 1)).unwrap_err(), "Экспорт превышает 128 МБ");
+        assert_eq!(super::validate_export("{").unwrap_err(), "Некорректный JSON экспорта");
+    }
+    #[test]
+    fn installer_launch_failure_recovers_backend() {
+        let mut child = std::process::Command::new("cmd.exe").args(["/C", "exit", "0"])
+            .stdin(std::process::Stdio::piped()).creation_flags(0x08000000).spawn().unwrap();
+        let missing = std::env::temp_dir().join(format!("mora-missing-installer-{}.exe", super::random_hex().unwrap()));
+        let mut recovered = false;
+        let error = super::launch_update(&mut child, &missing, |stopped| {
+            assert!(stopped.try_wait().unwrap().is_some());
+            recovered = true; Ok(())
+        }).unwrap_err();
+        assert!(error.starts_with("Не удалось запустить установщик:"));
+        assert!(recovered);
+    }
+}
 fn set_webview_visible(window: &tauri::WebviewWindow, visible: bool) {
     let _ = window.with_webview(move |webview| unsafe { let _ = webview.controller().SetIsVisible(visible); });
 }
@@ -250,6 +291,14 @@ fn show_window(window: &tauri::WebviewWindow) {
 fn main() {
     let profile = env::var_os("AUTOMIX_PROFILE_DIR").map(PathBuf::from).unwrap_or_else(|| profile::choose(&PathBuf::from(env::var_os("LOCALAPPDATA").unwrap_or_default())).expect("existing profile unavailable"));
     fs::create_dir_all(&profile).expect("profile unavailable");
+    let mut context = tauri::generate_context!();
+    if env::var_os("AUTOMIX_TEST").is_some() {
+        use std::hash::{Hash, Hasher};
+        let mut key = std::collections::hash_map::DefaultHasher::new();
+        profile.hash(&mut key);
+        // Disposable smoke profiles must not share the installed application's instance mutex.
+        context.config_mut().identifier.push_str(&format!(".test.{:x}", key.finish()));
+    }
     let resources = env::var_os("AUTOMIX_RESOURCES_DIR").map(PathBuf::from).unwrap_or_else(|| env::current_exe().unwrap().parent().unwrap().join("resources"));
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -352,7 +401,7 @@ fn main() {
                 }
             });
             println!("MORA_TAURI_READY {port}"); Ok(())
-        }).build(tauri::generate_context!()).expect("Tauri startup failed");
+        }).build(context).expect("Tauri startup failed");
     app.run(|handle, event| if let tauri::RunEvent::ExitRequested { .. } = event {
         if let Some(state) = handle.try_state::<Session>() { state.quitting.store(true, Ordering::Relaxed); }
     } else if let tauri::RunEvent::Exit = event {
