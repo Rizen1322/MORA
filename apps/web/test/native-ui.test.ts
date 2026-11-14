@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   app: {} as any, listeners: [] as (() => void)[], radio: { active: false, loading: false, error: null as string | null },
-  resume: vi.fn(), pause: vi.fn(), nextTrack: vi.fn(), prevTrack: vi.fn(), seek: vi.fn(),
+  resume: vi.fn(), pause: vi.fn(), nextTrack: vi.fn(), prevTrack: vi.fn(), seek: vi.fn(), startArtistRadio: vi.fn(),
   toggleShuffle: vi.fn(), cycleRepeat: vi.fn(), playTracks: vi.fn(), addToQueue: vi.fn(), toggle: vi.fn(), startWave: vi.fn(), startRadio: vi.fn(), toast: vi.fn(),
   importFiles: vi.fn(), imports: vi.fn(), openVersionPanel: vi.fn(), yandexWaveSettings: vi.fn(), refreshYandexWave: vi.fn(), react: vi.fn(), patchTrack: vi.fn(),
   addToPlaylist: vi.fn(), createPlaylist: vi.fn(), loadPlaylists: vi.fn(), downloads: vi.fn(),
@@ -16,7 +16,7 @@ vi.mock('../src/store/app.ts', () => ({
   useApp: { getState: () => h.app, setState: vi.fn(), subscribe: (fn: () => void) => h.listeners.push(fn) },
 }));
 vi.mock('../src/lib/importer.ts', () => ({ importFiles: (...a: any[]) => h.importFiles(...a) }));
-vi.mock('../src/lib/radio.ts', () => ({ startRadio: () => h.startRadio(), useRadio: { getState: () => h.radio, subscribe: vi.fn() } }));
+vi.mock('../src/lib/radio.ts', () => ({ startRadio: () => h.startRadio(), startArtistRadio: (artist: string) => h.startArtistRadio(artist), useRadio: { getState: () => h.radio, subscribe: vi.fn() } }));
 vi.mock('../src/store/catalog.ts', () => ({ catalogPlayer: {}, publicPlayer: {}, useCatalogPlayback: { getState: () => ({ phase: 'idle', title: '' }), subscribe: vi.fn() }, usePublicPlayback: { getState: () => ({ phase: 'idle', title: '' }), subscribe: vi.fn() } }));
 vi.mock('../src/pages/Search.tsx', () => ({ asCatalog: (t: any) => t, SOURCE_LABEL: {} }));
 vi.mock('../src/components/TrackList.tsx', () => ({ react: vi.fn() }));
@@ -60,6 +60,23 @@ it.each(['wave', 'yandex-wave', 'online-radio'])('guards the post-ACK dislike sk
 });
 
 describe('native shell bridge (page side)', () => {
+  it('keeps a linked Yandex source through connection errors and removes it after unlinking', async () => {
+    const { uiState } = await import('../src/lib/native-ui.ts');
+    h.app.providers = [{ id: 'yandex', status: 'connected', hasSecret: true }];
+    expect(uiState().wave.yandex).toBe(true);
+    h.app.providers[0].status = 'error';
+    expect(uiState().wave.yandex).toBe(true);
+    h.app.providers[0] = { id: 'yandex', status: 'needs_credentials', hasSecret: false };
+    expect(uiState().wave.yandex).toBe(false);
+  });
+  it('starts an artist station from a native card and validates the artist', async () => {
+    const { commands, uiTrack } = await import('../src/lib/native-ui.ts');
+    await commands.artistRadio({ artist: '  Zeta  ' });
+    expect(h.startArtistRadio).toHaveBeenCalledWith('Zeta');
+    expect(() => commands.artistRadio({ artist: '' })).toThrow('исполнитель');
+    expect(() => commands.artistRadio({ artist: 'x'.repeat(201) })).toThrow('исполнитель');
+    expect(uiTrack({ ...track('a'), playCount: 12, lastPlayedAt: 345 } as any)).toMatchObject({ playCount: 12, lastPlayedAt: 345 });
+  });
   it('shares at most fifty station entries without provider credentials or audio URLs', async () => {
     const { uiState } = await import('../src/lib/native-ui.ts');
     h.app.settings = { wave: { mood: 'calm', diversity: 'discover', mode: 'mix' }, automix: { enabled: true }, token: 'secret' };

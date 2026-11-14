@@ -1,6 +1,6 @@
 type Track = { id: string; title: string; artist: string; status: string; reaction: number; playCount: number; addedAt: number; likedAt?: number; lastPlayedAt: number | null; analysis?: { bpm?: number | null; camelot?: string | null; energy?: number } };
 type PublicTrack = { title: string; artist: string; audioProvider: string; externalId: string; playable: boolean; libraryTrackId?: string | null };
-export type RadioTuning = { mood: string; diversity: string; mode?: string };
+export type RadioTuning = { mood: string; diversity: string; mode?: string; artist?: string };
 type Song = Pick<Track, 'title' | 'artist'>;
 export const normalizeMusic = (s: string) => s.toLowerCase().replace(/ё/g, 'е').replace(/\b(feat|ft)\.?/g, ' ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 export const radioIdentity = (t: Song) => `${normalizeMusic(t.artist)}|${normalizeMusic(t.title)}`;
@@ -35,24 +35,29 @@ export function rankRadio<T extends PublicTrack>(items: T[], library: Track[], s
     ?? byTitle.get(normalizeMusic(t.title))?.find(x => artistsOf(x.artist).some(a => artistsOf(t.artist).includes(a)));
   let previous = anchor ? known(anchor) : undefined;
   const blocked = (t: PublicTrack) => (t.libraryTrackId && (byId.get(t.libraryTrackId)?.reaction ?? 0) < 0) || byTitle.get(normalizeMusic(t.title))?.some(x => x.reaction < 0 && artistsOf(x.artist).some(a => artistsOf(t.artist).includes(a)));
+  const playedRecently = (t: PublicTrack) => byTitle.get(normalizeMusic(t.title))?.some(x => x.lastPlayedAt && now - x.lastPlayedAt < 2 * 3600000 && artistsOf(x.artist).some(a => artistsOf(t.artist).includes(a)));
   const unique = new Set<string>();
   const pool = items.filter(t => {
     const key = radioIdentity(t), id = `${t.audioProvider}:${t.externalId}`;
-    if (!t.playable || seen.has(key) || seen.has(id) || unique.has(key) || blocked(t)) return false;
+    if (!t.playable || seen.has(key) || seen.has(id) || unique.has(key) || blocked(t) || playedRecently(t)) return false;
     unique.add(key); return true;
   });
   const out: T[] = [], recent = recentArtists.map(artistsOf);
   while (pool.length && out.length < 18) {
+    const focus = tuning.artist ? normalizeMusic(tuning.artist) : null;
+    const isFocus = (t: Song) => focus !== null && artistsOf(t.artist).includes(focus);
+    // Artist stations play two songs by the artist, then one related song when both are available.
+    const wantFocus = focus !== null && !(recent.length >= 2 && recent.slice(-2).every(a => a.includes(focus)));
+    const hasPreferred = focus !== null && pool.some(t => isFocus(t) === wantFocus);
     const familiarOpening = out.filter(t => { const k = known(t); return k && (k.reaction > 0 || k.playCount > 0); }).length;
     let best = -1, bestScore = -Infinity, bestSpacing = -1;
     for (let i = 0; i < pool.length; i++) {
       const t = pool[i], k = known(t), artists = artistsOf(t.artist);
+      if (hasPreferred && isFocus(t) !== wantFocus) continue;
       const overlaps = (previous: string[]) => artists.some(a => previous.includes(a));
-      if (recent.length >= 2 && artists.some(a => recent.slice(-2).every(previous => previous.includes(a)))) continue;
+      if (!focus && recent.length >= 2 && artists.some(a => recent.slice(-2).every(previous => previous.includes(a)))) continue;
       const last = recent.slice(-4).reverse().findIndex(overlaps);
       const spacing = last < 0 ? 4 : last;
-      // A recent repeat never wins merely because it is liked. Backfill older items when possible.
-      if (byTitle.get(normalizeMusic(t.title))?.some(x => x.lastPlayedAt && now - x.lastPlayedAt < 2 * 3600000 && artistsOf(x.artist).some(a => artists.includes(a)))) continue;
       const familiarity = Math.min(1, Math.max(0, ...artists.map(a => (affinity.get(a) ?? 0) / 8)));
       let score = 1 - i / Math.max(1, items.length) * .25;
       score += familiarity * (tuning.diversity === 'discover' ? .35 : 1.5);

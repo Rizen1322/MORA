@@ -45,7 +45,7 @@ export function WavePage() {
     if (p.context?.type === 'online-radio') setSource('online');
     else if (p.context?.type === 'wave' || p.context?.type === 'yandex-wave') setSource(p.context.type === 'yandex-wave' ? 'yandex' : 'own');
   }, [p.context?.type]);
-  const yandexConnected = providers.some((x) => x.id === 'yandex' && x.status === 'connected');
+  const yandexConnected = providers.some((x) => x.id === 'yandex' && (x.status === 'connected' || x.hasSecret && x.status === 'error'));
   const activeSource = p.context?.type === 'online-radio' ? 'online' : p.context?.type === 'yandex-wave' ? 'yandex' : p.context?.type === 'wave' ? 'own' : null;
   const waveOn = activeSource !== null;
   const selectedActive = waveOn && activeSource === source;

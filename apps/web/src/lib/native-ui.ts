@@ -1,6 +1,6 @@
 import { api, type Track } from './api.ts';
 import { nativePlaybackControls } from './playback-trace.ts';
-import { startRadio, useRadio } from './radio.ts';
+import { startArtistRadio, startRadio, useRadio } from './radio.ts';
 import { heldStation, offlineNow, setNetworkOffline, startOffline, watchNetwork } from './offline-wave.ts';
 import { trackAlbumHref, trackArtistHref, trackArtistLinks } from './router.ts';
 import { controller, phone, trackOf, useApp } from '../store/app.ts';
@@ -22,11 +22,11 @@ import { waveDownloadIds } from './native-downloads.ts';
  * which is the only time native screens can be touched; native keeps the last snapshot meanwhile.
  */
 
-export interface NativeUiTrack { id: string; title: string; artist: string; album: string; duration: number; reaction: number; likedAt?: number; addedAt?: number; cover: string | null; ok: boolean; binding?: string; offline?: boolean }
+export interface NativeUiTrack { id: string; title: string; artist: string; album: string; duration: number; playCount?: number; lastPlayedAt?: number | null; reaction: number; likedAt?: number; addedAt?: number; cover: string | null; ok: boolean; binding?: string; offline?: boolean }
 type Wave = 'own' | 'yandex' | 'online';
 
 export const uiTrack = (t: Track): NativeUiTrack => ({
-  id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration, reaction: t.reaction, likedAt: t.likedAt, addedAt: t.addedAt, cover: t.coverUrl, ok: t.status === 'ok', binding: t.binding?.assetId,
+  id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration, playCount: t.playCount, lastPlayedAt: t.lastPlayedAt, reaction: t.reaction, likedAt: t.likedAt, addedAt: t.addedAt, cover: t.coverUrl, ok: t.status === 'ok', binding: t.binding?.assetId,
   // Plays without the internet: a downloaded online track or a file of the library (CarPlay «Загрузки»).
   offline: t.status === 'ok' && (!!t.pinned || t.sourceKind !== 'remote' || [...useDownloads.getState().jobs.values()].some(job => job.trackId === t.id && job.state === 'done')),
 });
@@ -59,7 +59,7 @@ export function uiState(s = useApp.getState(), radio = useRadio.getState(), prep
     splash: splashing,
     wave: {
       own: s.order.length > 0,
-      yandex: s.providers.some((v) => v.id === 'yandex' && v.status === 'connected'),
+      yandex: s.providers.some((v) => v.id === 'yandex' && (v.status === 'connected' || v.hasSecret && v.status === 'error')),
       active: (radio.active || ctx === 'online-radio' ? 'online' : ctx === 'yandex-wave' ? 'yandex' : ctx === 'wave' ? 'own' : null) as Wave | null,
       playing,
       loading: !!p.waveLoading || radio.loading,
@@ -130,6 +130,12 @@ export const commands: Record<string, (a: Args) => unknown> = {
     return [...new Set(items.map(item => item.trackId))].flatMap(id => { const t = trackOf(id); return t ? [uiTrack(t)] : []; });
   },
   waveSettings: (a) => describeWaveSettings(a.source),
+  artistRadio: (a) => {
+    const artist = str(a.artist).trim();
+    if (!artist || artist.length > 200) throw Error('Некорректный исполнитель');
+    if (offlineNow()) throw Error('Для станции нужен интернет');
+    return startArtistRadio(artist);
+  },
   /** A row action of a native page. Its errors become toasts, as on the web page. */
   act: async (a): Promise<ActResult | null> => {
     const fn = actions[str(a.name)];

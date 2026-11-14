@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Services } from '../app.ts';
 
 export function registerYandexLikesImportRoutes(app: FastifyInstance, { yandexLikesImport: job }: Services) {
-  app.get('/api/providers/yandex/likes/import', () => job.status());
+  // Native screens consume an object; keep the nullable response for existing clients.
+  app.get<{ Querystring: { envelope?: string } }>('/api/providers/yandex/likes/import', (req) => req.query.envelope === '1' ? { job: job.status() } : job.status());
   app.post('/api/providers/yandex/likes/import', (_req, reply) => {
     try { return job.start(); } catch (e) { return reply.code(409).send({ error: (e as Error).message }); }
   });

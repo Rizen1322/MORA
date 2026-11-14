@@ -62,19 +62,27 @@ struct NativePageView: View {
     @State private var promptText = ""
     @State private var documentPicker: NativeDocumentPicker?
     @State private var importingFile: String?
+    @State private var importPick: NativeImportPick?
 
     var body: some View {
         NavigationStack { dialogs(pageList) }
+            .sheet(item: $importPick, onDismiss: { reload &+= 1 }) { target in
+                NativeImportPicker(target: target) { choice in
+                    if let act = NativePageAct(["name": "resolveImport", "args": ["job": target.job, "position": target.position, "choice": choice]]) { run(act) }
+                }.environmentObject(store)
+            }
     }
 
     // Split out of body: as one expression it exceeds the Swift type checker's time limit.
     private var catalog: Bool { page?.style == "catalog" }
+    private var nativeImport: Bool { waveSource == nil && store.sharedLibrary && NativeImportState.handles(store.path) }
 
     private var pageList: some View {
         styled(withSearch(List {
             if let name = importingFile { ProgressView("Добавляем «" + name + "»…").frame(maxWidth: .infinity).listRowBackground(Color.clear) }
             if let waveSource { waveHeader(waveSource) }
             if let page {
+                if let failure { Text(failure).foregroundStyle(.red) }
                 ForEach(Array(page.sections.enumerated()), id: \.offset) { _, section in sectionView(section) }
             } else if let failure {
                 ContentUnavailableView("Не удалось открыть", systemImage: "exclamationmark.triangle", description: Text(failure))
@@ -140,7 +148,7 @@ struct NativePageView: View {
                 if ["/catalog/", "/public/", "/soundcloud/"].contains(where: { store.path.hasPrefix($0) }) { _ = try? await store.call("catalogRefresh") }
                 await load()
             }
-            .task(id: "\(store.path)|\(store.revision)|\(reload)|\(waveSource?.wrappedValue.rawValue ?? "")") { await load() }
+            .task(id: "\(store.path)|\(nativeImport ? 0 : store.revision)|\(reload)|\(waveSource?.wrappedValue.rawValue ?? "")") { await load() }
             .task(id: page?.refresh) {
                 guard let seconds = page?.refresh else { return }
                 while !Task.isCancelled {
@@ -503,7 +511,10 @@ struct NativePageView: View {
     @MainActor private func load() async {
         do {
             let value: Any?
-            if waveSource == nil, let local = try store.libraryPage() { value = local }
+            if waveSource == nil, store.sharedLibrary, NativeImportState.handles(store.path) {
+                value = try await store.imports.page(store.path, request: { try await NativeServerApp.request($0, $1, body: $2) })
+            }
+            else if waveSource == nil, let local = try store.libraryPage() { value = local }
             else { value = try await store.call(waveSource == nil ? "page" : "waveSettings", waveSource.map { ["source": $0.wrappedValue.rawValue] } ?? [:]) }
             guard !Task.isCancelled else { return }
             page = NativePage(value)
@@ -516,8 +527,14 @@ struct NativePageView: View {
 
     /// Local library actions use the native server; remaining actions use the page.
     private func run(_ act: NativePageAct, _ extra: [String: Any] = [:]) {
+        guard !running else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         let args = act.args.merging(extra) { _, new in new }
+        if store.sharedLibrary, NativeImportState.handles(store.path), act.name == "pickImport" {
+            do { importPick = try store.imports.pick(args["position"] as? Int ?? -1) }
+            catch { store.show(error.localizedDescription) }
+            return
+        }
         if act.name == "playlistSort", let id = args["id"] as? String, let value = args["value"] as? String,
            (try? store.libraryPage()) != nil {
             store.playlistSort[id] = value
@@ -528,6 +545,16 @@ struct NativePageView: View {
         Task { @MainActor in
             defer { running = false; reload &+= 1 }
             do {
+                if store.sharedLibrary, NativeImportState.handles(store.path), NativeImportState.supports(act.name) {
+                    let result = try await store.imports.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2, timeout: 120) })
+                    if result.mutated {
+                        do { try await store.refreshLibraryAfterMutation() }
+                        catch { store.show("Импорт сохранён. Не удалось обновить медиатеку: \(error.localizedDescription)"); return }
+                    }
+                    if let message = result.message { store.show(message) }
+                    if let path = result.path { store.go(path) }
+                    return
+                }
                 if try await store.executeLibraryAction(act.name, args) { return }
                 let result = try await store.call("act", ["name": act.name, "args": args], timeout: 120) as? [String: Any]
                 if let share = result?["share"] as? [String: Any], let name = share["name"] as? String, let text = share["text"] as? String { self.share(name, text) }
@@ -539,9 +566,7 @@ struct NativePageView: View {
         }
     }
 
-    /// Picked files go to the page one by one as base64.
-    /// shortcut: a whole file is read into memory and copied across the bridge; fine for songs, upgrade to a
-    /// streamed upload if multi-hundred-megabyte files must be imported.
+    /// Shared-library imports use private file copies; OPFS and remaining file actions keep the old bridge.
     private func chooseFiles(types: [UTType], multiple: Bool, act: NativePageAct) {
         guard documentPicker == nil, let root = store.presenter else { return }
         var parent = root
@@ -563,16 +588,34 @@ struct NativePageView: View {
         running = true
         Task { @MainActor in
             defer { running = false; importingFile = nil; reload &+= 1 }
+            var added = 0, duplicates = 0
+            var errors: [String] = []
             for url in urls {
                 defer { NativePickedFile.discardTemporaryCopy(url) }
                 importingFile = url.lastPathComponent
                 do {
+                    if store.sharedLibrary && act.name == "importAudio" {
+                        let staged = try await Task.detached(priority: .userInitiated) { try NativeImportFiles.stage(url, root: NativeServerApp.root) }.value
+                        let result = try await NativeServerApp.request("POST", "/api/mobile/import-file", body: ["file": staged.file, "name": staged.name], timeout: 300)
+                        if result["duplicate"] as? Bool == true { duplicates += 1 } else { added += 1 }
+                        store.refreshLibrary()
+                        continue
+                    }
+                    if store.sharedLibrary && act.name == "importFile" {
+                        let body = try await Task.detached(priority: .userInitiated) { try NativeImportFiles.playlist(url) }.value
+                        try await store.imports.start(body, request: { try await NativeServerApp.request($0, $1, body: $2) })
+                        continue
+                    }
                     let base64 = try await NativePickedFile.base64(url)
                     let args = act.args.merging(["name": url.lastPathComponent, "base64": base64]) { _, new in new }
                     _ = try await store.call("act", ["name": act.name, "args": args], timeout: 300)
                 } catch {
+                    errors.append(url.lastPathComponent + ": " + Self.message(error))
                     store.show("\(url.lastPathComponent): \(Self.message(error))")
                 }
+            }
+            if store.sharedLibrary && act.name == "importAudio" {
+                store.show("Добавлено: \(added) · уже были: \(duplicates) · ошибок: \(errors.count)" + (errors.first.map { "\n" + $0 } ?? ""))
             }
         }
     }

@@ -17,9 +17,9 @@ enum NativeServerApp {
     static var booted: Bool { FileManager.default.fileExists(atPath: bootedMarker.path) }
     private(set) static var shared: NativeServer?
 
-    static func request(_ method: String, _ path: String, body: [String: Any]? = nil) async throws -> [String: Any] {
+    static func request(_ method: String, _ path: String, body: [String: Any]? = nil, timeout: Double = 30) async throws -> [String: Any] {
         guard let shared else { throw NativeServer.RequestFailure(message: "Медиатека ещё загружается") }
-        return try await shared.request(method, path, body: body)
+        return try await shared.request(method, path, body: body, timeout: timeout)
     }
 
     static func start(onMessage: @escaping ([String: Any]) -> Void) throws {
@@ -29,6 +29,8 @@ enum NativeServerApp {
         }
         if let shared { shared.attach(handler); return }
         guard ready else { throw CocoaError(.fileNoSuchFile) }
+        do { try NativeImportFiles.cleanStaging(root: root) }
+        catch { NSLog("MORA import cleanup failed: %@", error.localizedDescription) }
         guard let url = Bundle.main.url(forResource: "server-jsc", withExtension: "js", subdirectory: "public") else { throw CocoaError(.fileReadNoSuchFile) }
         let server = NativeServer(root: root, script: try String(contentsOf: url, encoding: .utf8), services: services)
         server.attach(handler)

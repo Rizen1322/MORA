@@ -89,6 +89,12 @@ jobs:
           "$RUNNER_TEMP/mora-settings-check"
           swiftc apps/mobile/ios/App/App/NativeShellState.swift apps/mobile/ios/App/App/NativeDownloadsState.swift apps/mobile/test/native-downloads/main.swift -o "$RUNNER_TEMP/mora-downloads-check"
           "$RUNNER_TEMP/mora-downloads-check"
+      - name: Test native account forms and imports
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeSourcesState.swift apps/mobile/test/native-sources/main.swift -o "$RUNNER_TEMP/mora-sources-check"
+          "$RUNNER_TEMP/mora-sources-check"
+          swiftc apps/mobile/ios/App/App/NativeShellState.swift apps/mobile/ios/App/App/NativeImportFiles.swift apps/mobile/ios/App/App/NativeImportState.swift apps/mobile/test/native-import/main.swift -o "$RUNNER_TEMP/mora-import-check"
+          "$RUNNER_TEMP/mora-import-check"
       - name: Test native library actions and reaction outbox
         run: |
           swiftc apps/mobile/ios/App/App/NativeLibraryActions.swift apps/mobile/test/native-library-actions/main.swift -o "$RUNNER_TEMP/mora-library-actions-check"

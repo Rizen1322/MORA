@@ -57,7 +57,7 @@ export function WaveHero() {
   const p = useApp(useShallow((s) => ({ context: s.player.context, status: s.player.status, waveLoading: s.player.waveLoading, error: s.player.error })));
   const tracks = useApp((s) => s.order.length);
   const providers = useApp((s) => s.providers);
-  const connected = providers.some((v) => v.id === 'yandex' && v.status === 'connected');
+  const connected = providers.some((v) => v.id === 'yandex' && (v.status === 'connected' || v.hasSecret && v.status === 'error'));
   const [source, setSource] = useState<'own' | 'yandex' | 'online'>(radio.active || p.context?.type === 'online-radio' ? 'online' : p.context?.type === 'yandex-wave' ? 'yandex' : tracks ? 'own' : 'online');
   const [tuning, setTuning] = useState(false);
   useEffect(() => {

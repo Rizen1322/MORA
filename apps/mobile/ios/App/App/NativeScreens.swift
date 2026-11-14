@@ -90,6 +90,7 @@ struct NativeHomeView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     header
                     NativeWaveHero(wave: store.ui.wave)
+                    stations
                     tiles
                     if store.ui.loaded && store.library.isEmpty {
                         VStack(alignment: .leading, spacing: 10) {
@@ -126,6 +127,39 @@ struct NativeHomeView: View {
                 Image(systemName: "person.crop.circle").font(.title2).frame(width: 44, height: 44)
             }
             .accessibilityLabel("Профиль и настройки")
+        }
+    }
+
+    @ViewBuilder private var stations: some View {
+        let items = NativeArtistStation.build(Array(store.byId.values))
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Станции для вас").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(alignment: .top, spacing: 14) {
+                        ForEach(items) { station in
+                            Button { store.run("artistRadio", ["artist": station.artist]) } label: {
+                                VStack(alignment: .leading, spacing: 7) {
+                                    ZStack(alignment: .bottomLeading) {
+                                        RoundedRectangle(cornerRadius: 18).fill(Color.indigo.gradient)
+                                        NativeCover(url: station.cover, size: 128, radius: 64).padding(22)
+                                        Image(systemName: "waveform").font(.title2.bold()).padding(12)
+                                    }
+                                    .frame(width: 172, height: 172)
+                                    Text(station.artist + " и похожие").font(.subheadline.weight(.semibold)).lineLimit(2)
+                                    Text("Радиостанция").font(.caption).foregroundStyle(.white.opacity(0.6))
+                                }
+                                .frame(width: 172, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(store.offline || store.ui.wave.loading)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityHint(store.offline ? "Для станции нужен интернет" : "Слушать артиста и похожую музыку")
+                        }
+                    }
+                }
+                .scrollClipDisabled()
+            }
         }
     }
 
@@ -591,7 +625,6 @@ struct NativePlaylistPicker: View {
 struct NativeSearchView: View {
     private static let publicSources = ["ytmusic", "youtube", "soundcloud"]
     @EnvironmentObject private var store: NativeShellStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var results: [String: NativeSearchResults] = [:]
     @State private var errors: [String: String] = [:]
     @State private var searching: Set<String> = []
@@ -635,8 +668,6 @@ struct NativeSearchView: View {
             .onSubmit(of: .search) { remember() }
             .navigationTitle(source == "yandex" ? "Яндекс Музыка" : "Поиск")
             .task(id: key) { await search() }
-            .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: source)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: scope)
             .onChange(of: store.searchSource) { _, value in if value != "yandex" { store.searchScope = "all" } }
             .onChange(of: store.searchQuery) { _, value in if value.count > 200 { store.searchQuery = String(value.prefix(200)) } }
             .alert("Не удалось выполнить", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(failure ?? "") }
@@ -914,8 +945,6 @@ struct NativeLibraryView: View {
             }
             .listStyle(.plain).scrollContentBackground(.hidden)
             .background(Color.moraBackground).navigationTitle("Медиатека")
-            .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.3), value: store.library.prefix(8).map(\.id))
-            .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.3), value: likedArtists.map(\.id))
         }
     }
     private func destination(_ title: String, _ symbol: String, _ path: String) -> some View {

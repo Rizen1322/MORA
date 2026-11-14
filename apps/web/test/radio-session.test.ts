@@ -13,6 +13,19 @@ beforeEach(()=>{
   h.play.mockImplementation(async(items)=>{h.owner=1;h.items=items;h.context={type:'online-radio'}});h.extend.mockReturnValue(true);
 });
 describe('personal radio session ownership',()=>{
+  it('keeps an artist station anchored to that artist when the queue refills', async () => {
+    h.tracks.set('unrelated', { id: 'unrelated', title: 'unrelated', artist: 'Other', reaction: 1, status: 'ok', playCount: 20, addedAt: 2 });
+    let batch = 0;
+    h.related.mockImplementation(async () => ({ items: [candidate(`main-${batch++}`, 'favourite'), candidate(`main-${batch++}`, 'favourite'), candidate(`related-${batch++}`, 'Related')] }));
+    const { startArtistRadio } = await import('../src/lib/radio.ts');
+    await startArtistRadio('favourite');
+    expect(h.play.mock.calls[0][2]).toEqual({ type: 'online-radio', label: 'Радио: favourite' });
+    h.left = 2;
+    h.callbacks.forEach(fn => fn());
+    await vi.waitFor(() => expect(h.extend).toHaveBeenCalledOnce());
+    expect(h.search.mock.calls.every(call => call[1] === 'favourite liked')).toBe(true);
+    expect(h.extend.mock.calls[0][0].slice(0, 3).map((t: any) => t.artist)).toEqual(['favourite', 'favourite', 'Related']);
+  });
   it('uses fresh server history and never forces resolved liked seeds into a personal opening',async()=>{
     h.tracks.set('recent',{id:'recent',title:'recent',artist:'recent artist',reaction:1,status:'ok',playCount:0});
     h.history=[{id:9,trackId:'recent',startedAt:Date.now()}];

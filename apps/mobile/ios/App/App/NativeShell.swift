@@ -176,7 +176,7 @@ extension MoraRootViewController {
             _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__waveOriginal;0")
             report["waveLink"] = "mora://wave?source=yandex reached the wave command"
             try await wait { self.shell.sharedLibrary }
-            _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='backup'||n==='page'&&/^#\\/(settings|downloads|sound|backups)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(n+':'+location.hash);throw Error('Native screen requested the page');}return window.__nativePagesOriginal(n,a);};0")
+            _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='backup'||n==='page'&&/^#\\/(settings|downloads|sound|backups|sources|import|yandex-playlists)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(n+':'+location.hash);throw Error('Native screen requested the page');}return window.__nativePagesOriginal(n,a);};0")
             let originalSettings = try await NativeServerApp.request("GET", "/api/settings")
             let originalAutomix = (originalSettings["automix"] as? [String: Any])?["enabled"] as? Bool ?? true
             do {
@@ -204,6 +204,15 @@ extension MoraRootViewController {
             try await Task.sleep(for: .seconds(2))
             try capture("native-sound")
             report["sound"] = "SwiftUI EQ and preset controls rendered without a page description"
+            shell.go("/sources")
+            try await wait { self.shell.ui.path == "/sources" && self.shell.nativeContentVisible }
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-sources")
+            report["sources"] = "SwiftUI account forms rendered against the JSC API without page descriptions or account changes"
+            shell.go("/import")
+            try await wait { self.shell.ui.path == "/import" && self.shell.nativeContentVisible }
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-import")
             var backupTask: Task<Bool, Never>?
             try await wait {
                 if backupTask == nil { backupTask = self.shell.captureBackup() }
@@ -355,8 +364,9 @@ extension MoraRootViewController {
             try NativeProbeWave.make(track: 0, seconds: 1).write(to: temporary)
             NativePickedFile.discardTemporaryCopy(temporary)
             try require(!FileManager.default.fileExists(atPath: temporary.path), "Temporary document copy was not removed")
-            let encoded = try await NativePickedFile.base64(selected[0])
-            _ = try await shell.call("act", ["name": "importAudio", "args": ["name": file.lastPathComponent, "base64": encoded]], timeout: 45)
+            let selectedFile = selected[0]
+            let staged = try await Task.detached { try NativeImportFiles.stage(selectedFile, root: NativeServerApp.root) }.value
+            _ = try await NativeServerApp.request("POST", "/api/mobile/import-file", body: ["file": staged.file, "name": staged.name], timeout: 45)
             try await Task.sleep(for: .seconds(1))
             report["importMessage"] = shell.banner
             try await wait { self.shell.library.contains { !before.contains($0.id) && $0.duration > 0 } }
@@ -364,7 +374,7 @@ extension MoraRootViewController {
             try await wait { self.shell.ui.path == "/library/tracks" }
             try await Task.sleep(for: .seconds(1))
             try capture("native-import-library")
-            report["import"] = "UIKit picker delegate, copied file read, real WAV upload and visible library row passed"
+            report["import"] = "UIKit picker delegate, private file copy, direct JSC WAV import and visible library row passed without base64 or page actions"
             let restoredTrack = shell.library.first { !before.contains($0.id) && $0.duration > 0 }!
             _ = try await web.evaluateJavaScript("window.__libraryOriginal=window.moraNativeUi;window.__libraryCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='reactSaved'||n==='addToPlaylist'||n==='act'&&['createPlaylist','renamePlaylist','deletePlaylist','removeFromPlaylist','reorderPlaylist','exportPlaylist','clearHistory','likeAll'].includes(a.name)||n==='page'&&/^#\\/(history|library\\/playlists|playlist\\/)/.test(location.hash)){window.__libraryCalls.push(n);throw Error('Library action depended on page');}return window.__libraryOriginal(n,a);};0")
             let createdNatively = try await shell.executeLibraryAction("createPlaylist", ["value": "Native actions fixture"])
@@ -462,6 +472,7 @@ final class NativeShellStore: ObservableObject {
     static weak var shared: NativeShellStore?
     @Published private(set) var library: [NativeTrack] = []
     private(set) var byId: [String: NativeTrack] = [:]
+    let imports = NativeImportState()
     /// Bumped on every snapshot: native pages reload their description from the page.
     @Published private(set) var revision = 0
     private(set) var queue: [NativeQueuedTrack] = []
@@ -663,7 +674,7 @@ final class NativeShellStore: ObservableObject {
             DispatchQueue.main.async {
                 guard let self, (path.status != .satisfied) != self.offline else { return }
                 self.offline.toggle()
-                self.show(self.offline ? "Нет сети — волна продолжится скачанными треками" : "Сеть снова доступна")
+                if !self.offline { self.show("Сеть снова доступна") }
                 self.sendNetwork()
             }
         }
@@ -674,6 +685,11 @@ final class NativeShellStore: ObservableObject {
     // Kept out of line: inlined into receive(), Swift 6.2's CopyPropagation pass crashes on these optional chains (Release).
     @inline(never) private static func trackChanged(_ old: NativeNow?, _ new: NativeNow?) -> Bool {
         old?.id != new?.id || old?.playing != new?.playing
+    }
+
+    func updateYandexConnection(_ linked: Bool) {
+        ui.wave.yandex = linked
+        if !linked && waveSource == .yandex { waveSource = nil }
     }
 
     func receive(_ value: [String: Any]) -> Bool {
@@ -1024,43 +1040,41 @@ struct NativeShellContent: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Color.moraBackground.ignoresSafeArea()
-                .sheet(isPresented: Binding(get: { !store.playlistTarget.isEmpty }, set: { if !$0 { store.playlistTarget = [] } })) {
-                    NativePlaylistPicker(tracks: store.playlistTarget).environmentObject(store)
-                }
-            screen.id(store.path)
-                .transition(.opacity.combined(with: .offset(x: reduceMotion ? 0 : 18)))
-            if store.path != NativeRoute.root(store.tab) {
-                // Pages are route switches, not NavigationStack pushes, so iOS gives them no back swipe: this edge does.
-                Color.clear.frame(width: 18).frame(maxHeight: .infinity).contentShape(Rectangle())
-                    .gesture(DragGesture(minimumDistance: 12).onEnded { g in
-                        if g.translation.width > 70 && abs(g.translation.height) < g.translation.width { store.back() }
-                    })
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityHidden(true)
-            }
-            if let text = store.banner {
-                Text(text).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
-                    .padding(.horizontal, 16).padding(.vertical, 10)
-                    .moraGlass(Capsule())
-                    .padding(.horizontal, 24).padding(.top, 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .accessibilityHidden(true) // announced when it appears
-            }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
+        VStack(spacing: 0) {
             if store.offline {
-                Label("Нет сети — играет то, что на iPhone", systemImage: "wifi.slash")
+                Text("Не в сети")
                     .font(.footnote.weight(.medium)).foregroundStyle(Color.moraGold)
                     .frame(maxWidth: .infinity).padding(.vertical, 6)
                     .background(Color.moraGold.opacity(0.12))
-                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            ZStack(alignment: .top) {
+                screen.id(store.path)
+                    .transition(.opacity)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: store.path)
+                if store.path != NativeRoute.root(store.tab) {
+                    // Pages are route switches, not NavigationStack pushes, so iOS gives them no back swipe: this edge does.
+                    Color.clear.frame(width: 18).frame(maxHeight: .infinity).contentShape(Rectangle())
+                        .gesture(DragGesture(minimumDistance: 12).onEnded { g in
+                            if g.translation.width > 70 && abs(g.translation.height) < g.translation.width { store.back() }
+                        })
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityHidden(true)
+                }
+                if let text = store.banner {
+                    Text(text).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
+                        .padding(.horizontal, 16).padding(.vertical, 10)
+                        .moraGlass(Capsule())
+                        .padding(.horizontal, 24).padding(.top, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .accessibilityHidden(true) // announced when it appears
+                }
             }
         }
-        .animation(.easeOut(duration: 0.25), value: store.offline)
+        .background(Color.moraBackground.ignoresSafeArea())
+        .sheet(isPresented: Binding(get: { !store.playlistTarget.isEmpty }, set: { if !$0 { store.playlistTarget = [] } })) {
+            NativePlaylistPicker(tracks: store.playlistTarget).environmentObject(store)
+        }
         .animation(.easeOut(duration: 0.25), value: store.banner)
-        .animation(reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.32), value: store.path)
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
         .foregroundStyle(.white)
         .tint(.moraMint)
@@ -1085,6 +1099,7 @@ struct NativeShellContent: View {
             case .search: NativeSearchView()
             case .page:
                 if store.sharedLibrary && store.path == "/settings" { NativeSettingsView() }
+                else if store.sharedLibrary && store.path == "/sources" { NativeSourcesView() }
                 else if store.sharedLibrary && store.path == "/downloads" { NavigationStack { NativeDownloadsView() } }
                 else if store.sharedLibrary && store.path == "/sound" { NativeSoundView() }
                 else if store.sharedLibrary && store.path == "/backups" { NativeBackupsView() }

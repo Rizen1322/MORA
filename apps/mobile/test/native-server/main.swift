@@ -90,6 +90,8 @@ func nativeRequest(_ path: String, method: String = "GET", body: [String: Any]? 
     return result
 }
 let nativeSettings = try nativeRequest("/api/settings").get()
+let nativeLikes = try nativeRequest("/api/providers/yandex/likes/import?envelope=1").get()
+precondition(nativeLikes["job"] is NSNull, "An absent likes import must cross the native JSON-object API without a decode error")
 assert((nativeSettings["ui"] as? [String: Any])?["motion"] as? String == "full")
 let nativePut = try nativeRequest("/api/settings", method: "PUT", body: ["automix": ["enabled": false]]).get()
 assert((nativePut["automix"] as? [String: Any])?["enabled"] as? Bool == false)

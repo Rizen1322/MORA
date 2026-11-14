@@ -6,6 +6,8 @@ struct NativeTrack: Equatable, Identifiable {
     let id: String
     let title: String, artist: String, album: String
     let duration: Double
+    let playCount: Int
+    let lastPlayedAt: Double
     var reaction: Int
     let likedAt: Double
     let cover: String?
@@ -25,6 +27,8 @@ struct NativeTrack: Equatable, Identifiable {
         artist = value["artist"] as? String ?? ""
         album = value["album"] as? String ?? ""
         duration = max(0, value["duration"] as? Double ?? 0)
+        playCount = max(0, (value["playCount"] as? NSNumber)?.intValue ?? (value["play_count"] as? NSNumber)?.intValue ?? 0)
+        lastPlayedAt = (value["lastPlayedAt"] as? NSNumber)?.doubleValue ?? (value["last_played_at"] as? NSNumber)?.doubleValue ?? 0
         reaction = value["reaction"] as? Int ?? 0
         likedAt = (value["likedAt"] as? NSNumber)?.doubleValue ?? (value["addedAt"] as? NSNumber)?.doubleValue ?? 0
         cover = value["cover"] as? String
@@ -40,6 +44,30 @@ struct NativeTrack: Equatable, Identifiable {
 
     static func favorites(_ tracks: [NativeTrack]) -> [NativeTrack] {
         tracks.filter(\.liked).sorted { $0.likedAt == $1.likedAt ? $0.id < $1.id : $0.likedAt > $1.likedAt }
+    }
+}
+
+struct NativeArtistStation: Identifiable {
+    var id: String { NativeSearchText.normalize(artist) }
+    let artist: String, cover: String?
+    let score: Int, lastPlayedAt: Double
+
+    static func build(_ tracks: [NativeTrack]) -> [NativeArtistStation] {
+        var stations: [String: NativeArtistStation] = [:]
+        for track in tracks.sorted(by: { $0.lastPlayedAt == $1.lastPlayedAt ? $0.id < $1.id : $0.lastPlayedAt > $1.lastPlayedAt }) where track.ok && track.reaction >= 0 && (track.playCount > 0 || track.liked) {
+            let artist = track.artist.replacingOccurrences(of: #",|&| feat\.? | ft\.? | featuring "#, with: "\n", options: [.regularExpression, .caseInsensitive])
+                .components(separatedBy: "\n")[0].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !artist.isEmpty else { continue }
+            let key = NativeSearchText.normalize(artist), previous = stations[key]
+            stations[key] = NativeArtistStation(artist: previous?.artist ?? artist, cover: previous?.cover ?? track.cover,
+                score: (previous?.score ?? 0) + track.playCount + (track.liked ? 3 : 0),
+                lastPlayedAt: max(previous?.lastPlayedAt ?? 0, track.lastPlayedAt))
+        }
+        return Array(stations.values.sorted {
+            if $0.score != $1.score { return $0.score > $1.score }
+            if $0.lastPlayedAt != $1.lastPlayedAt { return $0.lastPlayedAt > $1.lastPlayedAt }
+            return $0.id < $1.id
+        }.prefix(8))
     }
 }
 

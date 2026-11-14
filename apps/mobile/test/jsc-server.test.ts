@@ -152,4 +152,30 @@ describe('server in JavaScriptCore (server-jsc.js)', () => {
   it('logs no uncaught errors while booting', () => {
     expect(server.logs.filter((l) => l.startsWith('error:'))).toEqual([]);
   });
+  it('imports playlist metadata directly and keeps repeated positions in the report', async () => {
+    const response = await server.request('POST', '/api/imports', JSON.stringify({ file: { name: 'Native.csv', text: 'Track Name,Artist Name(s)\nSong,Artist\nSong,Artist\n' } }), { 'content-type': 'application/json' });
+    expect(response.status).toBe(200);
+    const job = JSON.parse(response.text);
+    const report = JSON.parse((await server.request('GET', '/api/imports/' + job.id)).text);
+    expect(report.rows.map((row: { position: number; title: string }) => [row.position, row.title])).toEqual([[0, 'Song'], [1, 'Song']]);
+  });
+  it('consumes staged file names inside JSC and cleans a rejected audio copy', async () => {
+    const file = '00000000-0000-4000-8000-000000000000.wav';
+    const folder = join(root, 'data/incoming/native'); nodeFs.mkdirSync(folder, { recursive: true });
+    const staged = join(folder, file); nodeFs.writeFileSync(staged, 'fixture');
+    const result = await server.request('POST', '/api/mobile/import-file', JSON.stringify({ file, name: 'unsupported.txt' }), { 'content-type': 'application/json' });
+    expect(result.status).toBe(422);
+    expect(nodeFs.existsSync(staged)).toBe(false);
+    const invalid = await server.request('POST', '/api/mobile/import-file', JSON.stringify({ file: '../automix.sqlite', name: 'x.wav' }), { 'content-type': 'application/json' });
+    expect(invalid.status).toBe(422);
+    expect(nodeFs.existsSync(join(root, 'data/automix.sqlite'))).toBe(true);
+  });
+  it('returns an object for native account imports even when no import exists', async () => {
+    const sources = await server.request('GET', '/api/providers');
+    expect(sources.status).toBe(200);
+    expect(JSON.parse(sources.text).providers).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'yandex', hasSecret: false })]));
+    const status = await server.request('GET', '/api/providers/yandex/likes/import?envelope=1');
+    expect(status.status).toBe(200);
+    expect(JSON.parse(status.text)).toEqual({ job: null });
+  });
 });

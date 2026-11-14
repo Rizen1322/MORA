@@ -261,10 +261,10 @@ export async function describeWaveSettings(source: unknown): Promise<Screen> {
 
 async function wave(): Promise<Screen> {
   const s = st(), p = s.player, radio = useRadio.getState();
-  const yandex = s.providers.some((x) => x.id === 'yandex' && x.status === 'connected');
+  const yandex = s.providers.some((x) => x.id === 'yandex' && (x.status === 'connected' || x.hasSecret && x.status === 'error'));
   const waveOn = radio.active || p.context?.type === 'wave' || p.context?.type === 'yandex-wave';
   const active = radio.active ? 'online' : p.context?.type === 'yandex-wave' ? 'yandex' : 'own';
-  const source = waveSource ?? (radio.active || p.context?.type === 'online-radio' ? 'online' : p.context?.type === 'yandex-wave' ? 'yandex' : 'own');
+  const source = (waveSource === 'yandex' && !yandex ? null : waveSource) ?? (radio.active || p.context?.type === 'online-radio' ? 'online' : p.context?.type === 'wave' ? 'own' : p.context?.type === 'yandex-wave' || yandex ? 'yandex' : 'own');
   const selected = waveOn && active === source;
   const playing = selected && (p.status === 'playing' || p.status === 'buffering');
   const unavailable = source === 'own' ? !s.order.length : source === 'yandex' ? !yandex : false;

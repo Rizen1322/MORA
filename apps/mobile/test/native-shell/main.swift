@@ -12,6 +12,21 @@ precondition(NativeSearchText.filter(tracks, "  ").count == 2 && NativeSearchTex
 precondition(NativeSearchText.filter(tracks, "kavinsky звери").isEmpty)
 print("Native shell: tracks and search-as-you-type")
 
+let stationTracks = [
+    NativeTrack(["id": "frequent", "artist": "Zeta", "play_count": 12, "last_played_at": 200])!,
+    NativeTrack(["id": "collab", "artist": "zeta FEAT. Alpha", "playCount": 2])!,
+    NativeTrack(["id": "liked", "artist": "Beta", "reaction": 1])!,
+    NativeTrack(["id": "disliked", "artist": "No", "playCount": 100, "reaction": -1])!,
+    NativeTrack(["id": "missing", "artist": "Missing", "playCount": 100, "ok": false])!,
+    NativeTrack(["id": "unheard", "artist": "Unheard"] )!,
+    NativeTrack(["id": "blank", "artist": " ", "playCount": 99])!,
+]
+let stations = NativeArtistStation.build(stationTracks)
+precondition(stations.map(\.artist) == ["Zeta", "Beta"] && stations[0].score == 14)
+precondition(NativeArtistStation.build(Array(stationTracks.reversed())).map(\.artist) == stations.map(\.artist))
+precondition(NativeArtistStation.build([]).isEmpty)
+print("Native shell: artist stations use listening counts and likes, exclude dislikes, and group collaborations")
+
 let favoriteRows: [[String: Any]] = [
     ["id": "old", "reaction": 1, "likedAt": 100, "addedAt": 900],
     ["id": "new", "reaction": 1, "likedAt": 300, "addedAt": 700],

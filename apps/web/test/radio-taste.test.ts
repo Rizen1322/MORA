@@ -5,6 +5,20 @@ const tune = { mood: 'normal', diversity: 'balanced', mode: 'normal' } as const;
 const track = (title: string, artist: string, patch: Partial<Track> = {}) => ({ id: title, title, artist, reaction: 0, status: 'ok', addedAt: 1, playCount: 0, skipCount: 0, analysis: {}, ...patch }) as Track;
 const candidate = (title: string, artist: string, patch: Partial<PublicTrack> = {}) => ({ externalId: title, title, artist, playable: true, audioProvider: 'youtube', ...patch }) as PublicTrack;
 describe('personal online radio ranking', () => {
+  it('keeps artist stations mostly on the artist, including across refills', () => {
+    const items = [candidate('other1', 'Other'), candidate('other2', 'Another'), ...Array.from({ length: 6 }, (_, i) => candidate(`main${i}`, 'Zeta'))];
+    const ranked = rankRadio(items, [], new Set(), [], { ...tune, artist: 'Zeta' });
+    expect(ranked.slice(0, 6).map(t => t.artist === 'Zeta')).toEqual([true, true, false, true, true, false]);
+    const refill = rankRadio(items, [], new Set(), ['Zeta', 'Zeta'], { ...tune, artist: 'Zeta' });
+    expect(refill[0].artist).not.toBe('Zeta');
+    expect(refill.slice(1, 3).every(t => t.artist === 'Zeta')).toBe(true);
+    expect(new Set(ranked.map(radioIdentity)).size).toBe(ranked.length);
+  });
+  it('does not stall an artist station when its preferred candidates are recent or disliked', () => {
+    const library = [track('recent', 'Zeta', { lastPlayedAt: Date.now() }), track('blocked', 'Zeta', { reaction: -1 })];
+    const ranked = rankRadio([candidate('recent', 'Zeta'), candidate('blocked', 'Zeta'), candidate('fresh', 'Related')], library, new Set(), [], { ...tune, artist: 'Zeta' });
+    expect(ranked.map(t => t.title)).toEqual(['fresh']);
+  });
   it('spaces all credited artists across batches even when one artist dominates likes', () => {
     const lib = Array.from({ length: 12 }, (_, i) => track(`liked-${i}`, 'PHARAOH', { reaction: 1, playCount: 20 }));
     const items = Array.from({ length: 3 }, (_, round) => ['PHARAOH', 'Boulevard Depo, PHARAOH', 'OG Buda', 'SABU', 'ROCKET', 'Heronwater'].map((artist, i) => candidate(`${round}-${i}`, artist))).flat();

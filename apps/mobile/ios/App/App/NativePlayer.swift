@@ -398,7 +398,6 @@ struct NativePlayerView: View {
         }
         .animation(.easeOut(duration: 0.25), value: model.banner)
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.48, dampingFraction: 0.86), value: queueOpen)
-        .animation(.easeInOut(duration: 0.3), value: s.entryId)
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
         .alert("Не удалось выполнить действие", isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(model.actionError ?? "") }
         .onAppear {
@@ -452,6 +451,7 @@ struct NativePlayerView: View {
                 .foregroundStyle(model.reaction < 0 ? Color.moraGold : .white.opacity(0.7))
                 .accessibilityValue(model.reaction < 0 ? "Включено" : "Выключено")
         }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: model.state.entryId)
     }
 
     private var artistText: AttributedString {
@@ -488,6 +488,7 @@ struct NativePlayerView: View {
                     .id(model.state.entryId).transition(.opacity)
             }
         }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: model.state.entryId)
     }
 
     private func cover(playing: Bool) -> some View {
@@ -512,11 +513,12 @@ struct NativePlayerView: View {
                     }
                 .id(showLyrics ? "lyrics" : model.state.entryId)
                 .transition(.opacity)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: model.state.entryId)
             }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(0.6), radius: playing ? 30 : 14, y: playing ? 20 : 10)
-            .scaleEffect(showLyrics || playing || reduceMotion ? 1 : 0.84)
-            .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.75), value: playing)
+            .scaleEffect(showLyrics || playing || reduceMotion ? 1 : 0.94)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: playing)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: showLyrics)
             .layoutPriority(-1)
     }

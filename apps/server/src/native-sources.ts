@@ -114,6 +114,10 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
 
 /** Mobile worker only. These private handoff routes are never registered by the desktop server. */
 export function registerNativeSources(app: FastifyInstance, services: Services) {
+  app.post('/api/mobile/import-file', async (req: any, reply: any) => {
+    try { return await importNativeFile(services, req.body); }
+    catch (error) { return reply.code(422).send({ error: (error as Error).message }); }
+  });
   app.post('/api/mobile/native-sources', async (req: any, reply: any) => {
     try { return await nativeSources(services, req.body?.entries, req.body?.previousId, req.body?.nativeFiles); }
     catch { return reply.code(409).send({ error: 'Не удалось передать источники очереди. Откройте приложение и повторите.' }); }
@@ -130,4 +134,20 @@ export function registerNativeSources(app: FastifyInstance, services: Services) 
       return reply.send(bytes.subarray(0, result.bytesRead));
     } finally { await handle.close(); }
   });
+}
+
+/** Swift stages a private copy, never an arbitrary path or a provider's original document. */
+export async function importNativeFile(s: Services, body: unknown) {
+  const { file, name } = (body ?? {}) as { file?: unknown; name?: unknown };
+  if (typeof file !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.[a-z0-9]{1,8}$/i.test(file)
+    || typeof name !== 'string' || !name || name.length > 200 || path.basename(name) !== name || /[\x00-\x1f]/.test(name)) throw Error('Некорректный файл импорта');
+  const root = path.resolve(s.cfg.dataDir, 'incoming', 'native'), staged = path.join(root, file);
+  const realRoot = await fs.realpath(root), realFile = await fs.realpath(staged);
+  if (realRoot !== path.join(await fs.realpath(s.cfg.dataDir), 'incoming', 'native') || realFile !== path.join(realRoot, file)) throw Error('Файл находится вне папки импорта');
+  try {
+    const stat = await fs.stat(staged);
+    if (!stat.isFile() || !stat.size || stat.size > 2 * 1024 * 1024 * 1024) throw Error('Выберите непустой аудиофайл размером до 2 ГБ');
+    const result = await s.lib.importFile(staged, name, 'managed');
+    return { trackId: result.track.id, duplicate: result.duplicate, title: result.track.title };
+  } finally { await fs.rm(staged, { force: true }); }
 }

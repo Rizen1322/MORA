@@ -8,7 +8,7 @@ import { radioIdentity, rankRadio, tasteSeeds } from './radio-taste.ts';
 import { artistSeeds, continuationFilter, continuationLabel, continuationSeeds, wantsContinuation } from './continue-radio.ts';
 
 export const useRadio = create(() => ({ active: false, loading: false, error: null as string | null }));
-let session: { seen: Set<string>; loading: boolean; retryAt: number; owner: number; cursor: number; abort: AbortController } | null = null;
+let session: { seen: Set<string>; loading: boolean; retryAt: number; owner: number; cursor: number; abort: AbortController; artist?: string } | null = null;
 let startRequest = 0, seedCursor = 0;
 const SEEN_LIMIT = 2000;
 let startAbort: AbortController | null = null, startIntent = 0;
@@ -97,11 +97,11 @@ controller.subscribe(() => {
   if (!last) return;
   s.loading = true;
   void (async () => {
-    const seeds = tasteSeeds(library(), s.cursor++);
+    const seeds = s.artist ? artistSeeds(s.artist, library()) : tasteSeeds(library(), s.cursor++);
     const extra = seeds[0] ? await resolveSeed(seeds[0], s.abort.signal).catch(() => undefined) : undefined;
     const pool = await candidates([last.externalId, ...(extra ? [extra.externalId] : [])], s.abort.signal);
     if (session !== s || publicPlayer.sessionVersion !== s.owner) return;
-    const more = rankRadio(pool, library(), s.seen, items.slice(-5).map(t => t.artist), tuning(), last);
+    const more = rankRadio(pool, library(), s.seen, items.slice(-5).map(t => t.artist), { ...tuning(), artist: s.artist }, last);
     // Repeats are blocked over recent history only; a Set iterates oldest first.
     for (const old of s.seen) { if (s.seen.size <= SEEN_LIMIT) break; s.seen.delete(old); }
     if (!more.length) s.retryAt = Date.now() + 30_000;
@@ -116,7 +116,7 @@ const libraryTrack = (id: string) => useApp.getState().tracks.get(id);
 /** One recommendation engine for the queue end, the way back online and the "similar"/"artist" stations:
  * songs related to up to two seeds, minus this session's songs and turned-down artists. Metadata only;
  * null when the listener moved on meanwhile. */
-async function station(seeds: Seed[], queue: QueueEntry[], anchor: Seed, signal: AbortSignal, relevant: () => boolean): Promise<Station | null> {
+async function station(seeds: Seed[], queue: QueueEntry[], anchor: Seed, signal: AbortSignal, relevant: () => boolean, artist?: string): Promise<Station | null> {
   const { seen, allow } = continuationFilter(queue, libraryTrack, library());
   for (const seed of seeds) seen.add(radioIdentity(seed));
   const resolved = await Promise.allSettled(seeds.slice(0, 2).map((seed) => resolveSeed(seed, signal)));
@@ -127,7 +127,7 @@ async function station(seeds: Seed[], queue: QueueEntry[], anchor: Seed, signal:
   if (!relevant()) return null;
   const recent = queue.slice(-5).map((e) => libraryTrack(e.trackId)?.artist ?? '');
   // 'mix' scores tempo and key against the anchor wherever a candidate is already analysed.
-  return { ranked: rankRadio(pool.filter(allow), library(), seen, recent, { ...tuning(), mode: 'mix' }, anchor), seen };
+  return { ranked: rankRadio(pool.filter(allow), library(), seen, recent, { ...tuning(), mode: 'mix', artist }, anchor), seen };
 }
 
 function followStation(found: Station, items: PublicTrack[], abort: AbortController): void {
@@ -270,13 +270,13 @@ export function startArtistRadio(artist: string, songs: Seed[] = []): Promise<vo
     const intent = controller.intentVersion;
     const relevant = () => request === buttonRequest && controller.intentVersion === intent;
     const seeds = artistSeeds(artist, library(), songs);
-    const found = await station(seeds, [], seeds[0], abort.signal, relevant);
+    const found = await station(seeds, [], seeds[0], abort.signal, relevant, artist);
     if (!found) return abort.abort();
     if (!found.ranked.length) throw new Error(`Не нашли музыку для радио «${artist}». Попробуйте позже.`);
     await publicPlayer.play(found.ranked.map(asCatalog), 0, { type: 'online-radio', label: `Радио: ${artist}` });
     if (request !== buttonRequest || publicPlayer.sessionVersion === null) return abort.abort();
     session?.abort.abort();
-    session = { seen: found.seen, loading: false, retryAt: 0, owner: publicPlayer.sessionVersion, cursor: 0, abort };
+    session = { seen: found.seen, loading: false, retryAt: 0, owner: publicPlayer.sessionVersion, cursor: 0, abort, artist };
     useRadio.setState({ active: true });
   });
 }

@@ -37,10 +37,14 @@ write("""
     INSERT INTO playlists VALUES('p','Любимые',20);
     INSERT INTO playlist_tracks VALUES(12,'p','one',1),(11,'p','one',0),(13,'p','asset',2);
     INSERT INTO plays VALUES(1,'one',1000,5000,'skip'),(2,'asset',2000,10000,'transition');
+    ALTER TABLE tracks ADD COLUMN play_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE tracks ADD COLUMN last_played_at INTEGER;
+    UPDATE tracks SET play_count=12,last_played_at=3000 WHERE id='one';
     """)
 let reader = try NativeLibraryStore(path: path)
 let first = try reader.readIfChanged()!
 require(first.tracks.count == 3 && first.library.map(\.id) == ["two", "one"], "Saved library excludes playback-only tracks")
+require(first.tracks.first { $0.id == "one" }?.playCount == 12 && first.tracks.first { $0.id == "one" }?.lastPlayedAt == 3000, "Artist stations receive real listening statistics from SQLite")
 require(first.tracks.first { $0.id == "one" }?.duration == 240, "Duration follows the bound recording")
 require(first.tracks.first { $0.id == "one" }?.binding == "asset", "Binding preserved")
 require(first.tracks.first { $0.id == "one" }?.offline == false, "Offline availability follows the bound remote asset")
