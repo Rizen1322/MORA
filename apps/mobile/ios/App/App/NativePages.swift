@@ -514,6 +514,9 @@ struct NativePageView: View {
             if waveSource == nil, store.sharedLibrary, NativeImportState.handles(store.path) {
                 value = try await store.imports.page(store.path, request: { try await NativeServerApp.request($0, $1, body: $2) })
             }
+            else if waveSource == nil, store.sharedLibrary, NativeShellStore.ownScreens.contains(store.path) {
+                return // the shell already replaced this view with its own screen for that route
+            }
             else if waveSource == nil, let local = try store.libraryPage() { value = local }
             else { value = try await store.call(waveSource == nil ? "page" : "waveSettings", waveSource.map { ["source": $0.wrappedValue.rawValue] } ?? [:]) }
             guard !Task.isCancelled else { return }

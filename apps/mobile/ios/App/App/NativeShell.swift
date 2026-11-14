@@ -176,7 +176,7 @@ extension MoraRootViewController {
             _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__waveOriginal;0")
             report["waveLink"] = "mora://wave?source=yandex reached the wave command"
             try await wait { self.shell.sharedLibrary }
-            _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='backup'||n==='page'&&/^#\\/(settings|downloads|sound|backups|sources|import|yandex-playlists)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(n+':'+location.hash);throw Error('Native screen requested the page');}return window.__nativePagesOriginal(n,a);};0")
+            _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='backup'||n==='page'&&/^#\\/(settings|downloads|sound|backups|sources|import|yandex-playlists)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(n+':'+location.hash+':'+JSON.stringify(a||{}));throw Error('Native screen requested the page');}return window.__nativePagesOriginal(n,a);};0")
             let originalSettings = try await NativeServerApp.request("GET", "/api/settings")
             let originalAutomix = (originalSettings["automix"] as? [String: Any])?["enabled"] as? Bool ?? true
             do {
@@ -225,8 +225,8 @@ extension MoraRootViewController {
             try await Task.sleep(for: .seconds(2))
             try capture("native-backups")
             report["backups"] = "Automatic backup captured through the native server; SwiftUI backups rendered without page calls"
-            let pageCalls = try await web.evaluateJavaScript("window.__nativePageCalls.length") as? Int ?? -1
-            try require(pageCalls == 0, "Native screens/backups depended on the page")
+            let pageCalls = try await web.evaluateJavaScript("window.__nativePageCalls") as? [Any] ?? []
+            try require(pageCalls.isEmpty, "Native screens/backups depended on the page: " + pageCalls.map { "\($0)" }.joined(separator: " | "))
             NativeDownloadManager.shared.removeVisualFixture(downloadFixture)
             _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__nativePagesOriginal;0")
             report["downloads"] = "SwiftUI downloads rendered with an in-memory native progress fixture, without a page description"
@@ -470,6 +470,8 @@ enum NativeShellError: LocalizedError {
 /// Swift reads library data from the server's SQLite; the page still owns routing and commands.
 final class NativeShellStore: ObservableObject {
     static weak var shared: NativeShellStore?
+    /// Screens drawn in Swift: a page view left over from a route change must not ask WebContent for them.
+    static let ownScreens: Set<String> = ["/settings", "/sources", "/downloads", "/sound", "/backups"]
     @Published private(set) var library: [NativeTrack] = []
     private(set) var byId: [String: NativeTrack] = [:]
     let imports = NativeImportState()
@@ -1098,12 +1100,13 @@ struct NativeShellContent: View {
                 else { NativeTrackListView(title: "Песни", type: "library", tracks: store.library) }
             case .search: NativeSearchView()
             case .page:
-                if store.sharedLibrary && store.path == "/settings" { NativeSettingsView() }
-                else if store.sharedLibrary && store.path == "/sources" { NativeSourcesView() }
-                else if store.sharedLibrary && store.path == "/downloads" { NavigationStack { NativeDownloadsView() } }
-                else if store.sharedLibrary && store.path == "/sound" { NativeSoundView() }
-                else if store.sharedLibrary && store.path == "/backups" { NativeBackupsView() }
-                else { NativePageView() }
+                if store.sharedLibrary && NativeShellStore.ownScreens.contains(store.path) {
+                    if store.path == "/settings" { NativeSettingsView() }
+                    else if store.path == "/sources" { NativeSourcesView() }
+                    else if store.path == "/downloads" { NavigationStack { NativeDownloadsView() } }
+                    else if store.path == "/sound" { NativeSoundView() }
+                    else { NativeBackupsView() }
+                } else { NativePageView() }
             case .web: Color.clear
             }
     }
