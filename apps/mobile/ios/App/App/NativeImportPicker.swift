@@ -59,7 +59,7 @@ struct NativeImportPicker: View {
     private var remoteResults: some View {
         Section("Найденные записи") {
             if loading { ProgressView("Ищем записи…") }
-            ForEach(results.indices, id: \.self) { index in remoteRow(results[index]) }
+            ForEach(Array(results.enumerated()), id: \.offset) { item in remoteRow(item.element) }
             ForEach(errors, id: \.self) { Text($0).foregroundStyle(.secondary) }
             if !loading && results.isEmpty && errors.isEmpty { Text("Записи не найдены").foregroundStyle(.secondary) }
         }
