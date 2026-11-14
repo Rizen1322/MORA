@@ -22,51 +22,61 @@ struct NativeImportPicker: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    Text(target.title).font(.headline)
-                    Text(target.artist).foregroundStyle(.secondary)
-                    Picker("Источник", selection: $source) {
-                        Text("Все").tag("all"); Text("Медиатека").tag("local"); Text("YouTube Music").tag("ytmusic")
-                        Text("YouTube").tag("youtube"); Text("SoundCloud").tag("soundcloud")
-                    }
-                }
-                if !local.isEmpty {
-                    Section("Медиатека") {
-                        ForEach(local) { track in
-                            Button { choose(["trackId": track.id]); dismiss() } label: {
-                                HStack(spacing: 12) {
-                                    NativeCover(url: track.cover, size: 44)
-                                    VStack(alignment: .leading) { Text(track.title); Text(track.artist).font(.caption).foregroundStyle(.secondary) }
-                                }.frame(minHeight: 44)
-                            }
-                        }
-                    }
-                }
-                Section("Найденные записи") {
-                    if loading { ProgressView("Ищем записи…") }
-                    ForEach(Array(results.enumerated()), id: \.offset) { _, row in
-                        Button {
-                            do { choose(try NativeImportState.candidate(row)); dismiss() }
-                            catch { errors = [error.localizedDescription] }
-                        } label: {
-                            HStack(spacing: 12) {
-                                NativeCover(url: row["coverUrl"] as? String, size: 44)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(row["title"] as? String ?? "")
-                                    Text((row["artist"] as? String ?? "") + " · " + (row["audioProvider"] as? String ?? "")).font(.caption).foregroundStyle(.secondary)
-                                }
-                            }.frame(minHeight: 44)
-                        }
-                    }
-                    ForEach(errors, id: \.self) { Text($0).foregroundStyle(.secondary) }
-                    if !loading && results.isEmpty && errors.isEmpty { Text("Записи не найдены").foregroundStyle(.secondary) }
-                }
+                header
+                localResults
+                remoteResults
             }
             .scrollContentBackground(.hidden).background(Color.moraBackground)
             .navigationTitle("Выбрать запись")
             .searchable(text: $query, prompt: "Название и исполнитель")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } } }
             .task(id: source + "|" + query) { await search() }
+        }
+    }
+    private var header: some View {
+        Section {
+            Text(target.title).font(.headline)
+            Text(target.artist).foregroundStyle(.secondary)
+            Picker("Источник", selection: $source) {
+                Text("Все").tag("all"); Text("Медиатека").tag("local"); Text("YouTube Music").tag("ytmusic")
+                Text("YouTube").tag("youtube"); Text("SoundCloud").tag("soundcloud")
+            }
+        }
+    }
+    @ViewBuilder private var localResults: some View {
+        if !local.isEmpty {
+            Section("Медиатека") { ForEach(local) { track in localRow(track) } }
+        }
+    }
+    private func localRow(_ track: NativeTrack) -> some View {
+        Button { choose(["trackId": track.id]); dismiss() } label: {
+            HStack(spacing: 12) {
+                NativeCover(url: track.cover, size: 44)
+                VStack(alignment: .leading) { Text(track.title); Text(track.artist).font(.caption).foregroundStyle(.secondary) }
+            }.frame(minHeight: 44)
+        }
+    }
+    private var remoteResults: some View {
+        Section("Найденные записи") {
+            if loading { ProgressView("Ищем записи…") }
+            ForEach(results.indices, id: \.self) { index in remoteRow(results[index]) }
+            ForEach(errors, id: \.self) { Text($0).foregroundStyle(.secondary) }
+            if !loading && results.isEmpty && errors.isEmpty { Text("Записи не найдены").foregroundStyle(.secondary) }
+        }
+    }
+    private func remoteRow(_ row: [String: Any]) -> some View {
+        let title = row["title"] as? String ?? "", artist = row["artist"] as? String ?? "", provider = row["audioProvider"] as? String ?? ""
+        return Button {
+            do { choose(try NativeImportState.candidate(row)); dismiss() }
+            catch { errors = [error.localizedDescription] }
+        } label: {
+            HStack(spacing: 12) {
+                NativeCover(url: row["coverUrl"] as? String, size: 44)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                    Text(artist + " · " + provider).font(.caption).foregroundStyle(.secondary)
+                }
+            }.frame(minHeight: 44)
         }
     }
     @MainActor private func search() async {
