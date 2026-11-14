@@ -79,6 +79,8 @@ export class Reply {
     this.raw.headersSent = true;
     this.post({ t: 'head', id: this.id, status: this.statusCode, headers: this.headers });
   }
+  /** The route owns the response (server-sent events): the router must not send anything after it returns. */
+  hijack(): void { this.sent = true; }
   chunk(c: string | Uint8Array): void {
     if (this.ended) return;
     if (typeof c === 'string') { this.post({ t: 'chunk', id: this.id, data: c }); return; }

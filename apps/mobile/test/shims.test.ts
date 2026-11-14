@@ -49,7 +49,9 @@ describe('in-worker Fastify replacement', () => {
       for await (const c of req.body) n += c.byteLength;
       return { n };
     });
-    app.get('/api/events', async (_req: unknown, reply: { raw: { writeHead(s: number, h: Record<string, string>): void; write(s: string): void; end(): void } }) => {
+    // Mirrors the real route in apps/server/src/routes/misc.ts: hijack, then the raw SSE stream.
+    app.get('/api/events', async (_req: unknown, reply: { hijack(): void; raw: { writeHead(s: number, h: Record<string, string>): void; write(s: string): void; end(): void } }) => {
+      reply.hijack();
       reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream' });
       reply.raw.write('data: 1\n\n');
       reply.raw.end();
