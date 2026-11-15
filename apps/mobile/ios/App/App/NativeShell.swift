@@ -727,7 +727,9 @@ final class NativeShellStore: ObservableObject {
 
     func libraryPage() throws -> [String: Any]? {
         let parts = path.split(separator: "/")
-        let local = path == "/history" || path == "/library/playlists" || (parts.count == 2 && parts[0] == "playlist")
+        let local = path == "/history" || path == "/library/playlists" || path == "/library/albums" || path == "/library/artists"
+            || (parts.count == 2 && (parts[0] == "playlist" || parts[0] == "artist" || parts[0] == "track-edit"))
+            || (parts.count == 3 && parts[0] == "album")
         guard sharedLibrary, local else { return nil }
         guard let snapshot = librarySnapshot else { throw NativeLibraryStore.Failure(message: libraryFailure ?? "Медиатека загружается") }
         let current = NativeLibraryStore.Snapshot(tracks: Array(byId.values), library: library, playlists: playlists, entries: snapshot.entries, history: snapshot.history)
