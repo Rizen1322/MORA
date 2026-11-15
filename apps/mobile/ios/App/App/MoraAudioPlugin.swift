@@ -592,12 +592,12 @@ enum MoraPlaybackJournal {
         queue.async {
             events.append(safe)
             if events.count > 1200 { events.removeFirst(events.count - 1200) }
-            // Rewriting the whole journal (up to ~0.5 MB, encrypted) is costly: at most every 10 s,
-            // plus a flush when the app leaves the foreground.
+            // Rewriting the whole journal (up to ~0.5 MB, encrypted) is costly: MetricKit reported over a
+            // gigabyte of writes a day at 10 s intervals. Two minutes still leaves the last ~20 minutes.
             if write == nil {
                 let job = DispatchWorkItem { persist(); write = nil }
                 write = job
-                queue.asyncAfter(deadline: .now() + 10, execute: job)
+                queue.asyncAfter(deadline: .now() + 120, execute: job)
             }
         }
     }

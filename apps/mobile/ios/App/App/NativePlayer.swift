@@ -160,7 +160,7 @@ final class NativePlayerModel: ObservableObject {
         Task { @MainActor in
             defer { changingMode = false }
             do { modes = NativePlaybackModes(try await store.call("playbackMode", ["mode": mode]) as? [String: Any] ?? [:]) }
-            catch { actionError = error.localizedDescription }
+            catch { if !NativeShellStore.isCancelled(error) { actionError = error.localizedDescription } }
         }
     }
 
@@ -193,7 +193,10 @@ final class NativePlayerModel: ObservableObject {
                 let links = (value?["artists"] as? [[String: Any]] ?? []).compactMap(NativeCatalogLink.init)
                 guard let path = destination == "album" ? value?["album"] as? String : links.first?.path else { throw NativeShellError.page }
                 navigate(path)
-            } catch { actionError = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription }
+            } catch {
+                if NativeShellStore.isCancelled(error) { return }
+                actionError = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription
+            }
         }
     }
 
@@ -209,7 +212,10 @@ final class NativePlayerModel: ObservableObject {
         if let after { args["after"] = after }
         Task { @MainActor in
             do { _ = try await store.call("queueEdit", args) }
-            catch { actionError = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription }
+            catch {
+                if NativeShellStore.isCancelled(error) { refresh(); return }
+                actionError = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription
+            }
             refresh()
         }
     }

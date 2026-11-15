@@ -795,14 +795,19 @@ final class NativeShellStore: ObservableObject {
         let message: String
         var errorDescription: String? { message }
     }
+    /// A page command cancelled by a newer one (fast skipping, another station) is not a failure to show.
+    struct PageCancelled: LocalizedError { var errorDescription: String? { "Отменено" } }
     private static func pageFailure(_ error: Error) -> Error {
+        if error is CancellationError { return PageCancelled() }
         let userInfo = (error as NSError).userInfo
         if let text = userInfo["WKJavaScriptExceptionMessage"] as? String, !text.isEmpty {
+            if text.lowercased().contains("abort") { return PageCancelled() }
             return PageFailure(message: text == "page" ? "Интерфейс ещё загружается — попробуйте ещё раз" : text)
         }
         if (error as NSError).domain == "WKErrorDomain" { return PageFailure(message: "Интерфейс не ответил — попробуйте ещё раз") }
         return error
     }
+    static func isCancelled(_ error: Error) -> Bool { error is PageCancelled }
 
     /// A command: its own errors reach the listener as the page's toasts.
     func run(_ name: String, _ args: [String: Any] = [:]) {
@@ -813,6 +818,7 @@ final class NativeShellStore: ObservableObject {
                 if try await executeLibraryAction(name, args) { return }
                 _ = try await call(name, args, timeout: 60)
             } catch {
+                if Self.isCancelled(error) { return }
                 MoraPlaybackJournal.record("native.page.failure", ["command": name])
                 show(error.localizedDescription)
             }
