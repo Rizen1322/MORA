@@ -101,7 +101,7 @@ let savedMeta = try api.execute("saveTrackMetadata", [
     "defaults": ["title": "Старое", "artist": "Артист", "album": "Альбом", "albumArtist": "Артист", "genre": "Rock", "year": "1999"],
     "form": ["title": "  Новое  ", "year": "2001"],
 ])!
-require(savedMeta.mutated && savedMeta.message?.contains("Сохранены") == true, "Metadata save is a native mutation")
+require(savedMeta.mutated && savedMeta.message?.contains("сохранены") == true, "Metadata save is a native mutation")
 require(api.calls.count == 1 && api.calls[0].method == "PATCH" && api.calls[0].path == "/api/tracks/track-1", "Metadata patch endpoint")
 let meta = api.calls[0].body ?? [:]
 require(meta["title"] as? String == "Новое", "Edited title wins")
