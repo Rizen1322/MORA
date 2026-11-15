@@ -99,6 +99,10 @@ jobs:
         run: |
           swiftc apps/mobile/ios/App/App/NativeSmartState.swift apps/mobile/test/native-smart/main.swift -o "$RUNNER_TEMP/mora-smart-check"
           "$RUNNER_TEMP/mora-smart-check"
+      - name: Test native AutoMix diagnostics
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeDiagnosticsState.swift apps/mobile/test/native-diagnostics/main.swift -o "$RUNNER_TEMP/mora-automix-diagnostics-check"
+          "$RUNNER_TEMP/mora-automix-diagnostics-check"
       - name: Test native library actions and reaction outbox
         run: |
           swiftc apps/mobile/ios/App/App/NativeLibraryActions.swift apps/mobile/test/native-library-actions/main.swift -o "$RUNNER_TEMP/mora-library-actions-check"

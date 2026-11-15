@@ -207,7 +207,7 @@ extension MoraRootViewController {
             _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__waveOriginal;0")
             report["waveLink"] = "mora://wave?source=yandex reached the wave command"
             try await wait { self.shell.sharedLibrary }
-            _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='backup'||n==='page'&&/^#\\/(settings|downloads|sound|backups|sources|import|yandex-playlists|smart-playlists|smart-playlist|duplicates|statistics)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(n+':'+location.hash+':'+JSON.stringify(a||{}));throw Error('Native screen requested the page');}return window.__nativePagesOriginal(n,a);};0")
+            _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='backup'||n==='page'&&/^#\\/(settings|downloads|sound|backups|sources|import|yandex-playlists|smart-playlists|smart-playlist|duplicates|statistics|diagnostics)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(n+':'+location.hash+':'+JSON.stringify(a||{}));throw Error('Native screen requested the page');}return window.__nativePagesOriginal(n,a);};0")
             let originalSettings = try await NativeServerApp.request("GET", "/api/settings")
             let originalAutomix = (originalSettings["automix"] as? [String: Any])?["enabled"] as? Bool ?? true
             do {
@@ -264,6 +264,11 @@ extension MoraRootViewController {
             try await Task.sleep(for: .seconds(2))
             try capture("native-statistics")
             report["statistics"] = "SwiftUI listening statistics rendered without a page description"
+            shell.go("/diagnostics")
+            try await wait { self.shell.ui.path == "/diagnostics" && self.shell.nativeContentVisible }
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-diagnostics")
+            report["diagnostics"] = "SwiftUI AutoMix diagnostics rendered against the JSC API without a page description"
             var backupTask: Task<Bool, Never>?
             try await wait {
                 if backupTask == nil { backupTask = self.shell.captureBackup() }
@@ -527,6 +532,7 @@ final class NativeShellStore: ObservableObject {
     private(set) var byId: [String: NativeTrack] = [:]
     let imports = NativeImportState()
     let smart = NativeSmartState()
+    let diagnostics = NativeDiagnosticsState()
     /// Bumped on every snapshot: native pages reload their description from the page.
     @Published private(set) var revision = 0
     private(set) var queue: [NativeQueuedTrack] = []

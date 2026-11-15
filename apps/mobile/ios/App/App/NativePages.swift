@@ -78,6 +78,8 @@ struct NativePageView: View {
     private var nativeImport: Bool { waveSource == nil && store.sharedLibrary && NativeImportState.handles(store.path) }
     /// Smart playlists, duplicates and statistics are native data screens: a shell snapshot must not reload them.
     private var nativeSmart: Bool { waveSource == nil && store.sharedLibrary && NativeSmartState.handles(store.path) }
+    /// AutoMix diagnostics reads the JSC API directly: a shell snapshot must not reload and reset its selection.
+    private var nativeDiagnostics: Bool { waveSource == nil && store.sharedLibrary && NativeDiagnosticsState.handles(store.path) }
 
     private var pageList: some View {
         styled(withSearch(List {
@@ -150,7 +152,7 @@ struct NativePageView: View {
                 if ["/catalog/", "/public/", "/soundcloud/"].contains(where: { store.path.hasPrefix($0) }) { _ = try? await store.call("catalogRefresh") }
                 await load()
             }
-            .task(id: "\(store.path)|\(nativeImport || nativeSmart ? 0 : store.revision)|\(reload)|\(waveSource?.wrappedValue.rawValue ?? "")") { await load() }
+            .task(id: "\(store.path)|\(nativeImport || nativeSmart || nativeDiagnostics ? 0 : store.revision)|\(reload)|\(waveSource?.wrappedValue.rawValue ?? "")") { await load() }
             .task(id: page?.refresh) {
                 guard let seconds = page?.refresh else { return }
                 while !Task.isCancelled {
@@ -519,6 +521,10 @@ struct NativePageView: View {
             else if waveSource == nil, store.sharedLibrary, NativeSmartState.handles(store.path) {
                 value = try await store.smart.page(store.path, request: { try await NativeServerApp.request($0, $1, body: $2) })
             }
+            else if waveSource == nil, store.sharedLibrary, NativeDiagnosticsState.handles(store.path) {
+                value = try await store.diagnostics.page(store.path, name: { store.byId[$0]?.title }, automix: store.ui.playback.automix,
+                                                         request: { try await NativeServerApp.request($0, $1, body: $2) })
+            }
             else if waveSource == nil, store.sharedLibrary, NativeShellStore.ownScreens.contains(store.path) {
                 return // the shell already replaced this view with its own screen for that route
             }
@@ -571,6 +577,10 @@ struct NativePageView: View {
                     }
                     if let message = result.message { store.show(message) }
                     if let path = result.path { store.go(path) }
+                    return
+                }
+                if store.sharedLibrary, NativeDiagnosticsState.handles(store.path), NativeDiagnosticsState.supports(act.name) {
+                    _ = try await store.diagnostics.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2) })
                     return
                 }
                 if try await store.executeLibraryAction(act.name, args) { return }

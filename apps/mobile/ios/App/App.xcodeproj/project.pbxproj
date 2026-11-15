@@ -13,6 +13,7 @@
 		FBF0C0DE2FF0000100000052 /* NativeSourcesState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000053 /* NativeSourcesState.swift */; };
 		FBF0C0DE2FF0000100000054 /* NativeSourcesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000055 /* NativeSourcesView.swift */; };
 		FBF0C0DE2FF0000100000063 /* NativeSmartState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000062 /* NativeSmartState.swift */; };
+		FBF0C0DE2FF0000100000065 /* NativeDiagnosticsState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000064 /* NativeDiagnosticsState.swift */; };
 		FBF0C0DE2FF0000100000048 /* NativeLibraryActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000049 /* NativeLibraryActions.swift */; };
 		FBF0C0DE2FF0000100000050 /* NativeLibraryReactions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000051 /* NativeLibraryReactions.swift */; };
 		FBF0C0DE2FF0000100000046 /* NativeBackupsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF0C0DE2FF0000100000047 /* NativeBackupsView.swift */; };
@@ -83,6 +84,7 @@
 		FBF0C0DE2FF0000100000053 /* NativeSourcesState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSourcesState.swift; sourceTree = "<group>"; };
 		FBF0C0DE2FF0000100000055 /* NativeSourcesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSourcesView.swift; sourceTree = "<group>"; };
 		FBF0C0DE2FF0000100000062 /* NativeSmartState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSmartState.swift; sourceTree = "<group>"; };
+		FBF0C0DE2FF0000100000064 /* NativeDiagnosticsState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDiagnosticsState.swift; sourceTree = "<group>"; };
 		FBF0C0DE2FF0000100000049 /* NativeLibraryActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLibraryActions.swift; sourceTree = "<group>"; };
 		FBF0C0DE2FF0000100000051 /* NativeLibraryReactions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLibraryReactions.swift; sourceTree = "<group>"; };
 		FBF0C0DE2FF0000100000047 /* NativeBackupsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBackupsView.swift; sourceTree = "<group>"; };
@@ -355,6 +357,7 @@
 				FBF0C0DE2FF0000100000061 /* NativeImportPicker.swift */,
 				FBF0C0DE2FF0000100000055 /* NativeSourcesView.swift */,
 				FBF0C0DE2FF0000100000062 /* NativeSmartState.swift */,
+				FBF0C0DE2FF0000100000064 /* NativeDiagnosticsState.swift */,
 				FBF0C0DE2FF0000100000051 /* NativeLibraryReactions.swift */,
 				FBF0C0DE2FF0000100000047 /* NativeBackupsView.swift */,
 				FBF0C0DE2FF0000100000045 /* NativeBackupFiles.swift */,
@@ -511,6 +514,7 @@
 				FBF0C0DE2FF0000100000060 /* NativeImportPicker.swift in Sources */,
 				FBF0C0DE2FF0000100000054 /* NativeSourcesView.swift in Sources */,
 				FBF0C0DE2FF0000100000063 /* NativeSmartState.swift in Sources */,
+				FBF0C0DE2FF0000100000065 /* NativeDiagnosticsState.swift in Sources */,
 				FBF0C0DE2FF0000100000050 /* NativeLibraryReactions.swift in Sources */,
 				FBF0C0DE2FF0000100000046 /* NativeBackupsView.swift in Sources */,
 				FBF0C0DE2FF0000100000044 /* NativeBackupFiles.swift in Sources */,
