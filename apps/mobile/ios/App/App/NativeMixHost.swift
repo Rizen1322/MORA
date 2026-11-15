@@ -1027,6 +1027,9 @@ final class NativeMixHost {
     }
     func routeChange(_ notification: Notification) {
         let reason = (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue
+        // The mix host owns audio while it is active, so the plugin's own route log stays silent: record it here.
+        let output = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType.rawValue ?? "none"
+        MoraPlaybackJournal.record("native.routeChange", ["reason": String(reason ?? 0), "route": output])
         if active && reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { command("pause", source: "route") { _ in } }
         else {
             work.async {

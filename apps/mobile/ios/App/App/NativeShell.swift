@@ -28,6 +28,19 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
     private var content: UIViewController?
     private var bar: UIViewController?
     private var observer: AnyCancellable?
+    /// The web layer may be the only thing on screen (web mode, or a route the page owns): native must keep a way back.
+    private lazy var webExit: UIButton = {
+        let button = UIButton(type: .system)
+        button.setImage(UIImage(systemName: "chevron.backward"), for: .normal)
+        button.tintColor = .white
+        button.accessibilityLabel = "Вернуть нативный интерфейс"
+        button.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        button.layer.cornerRadius = 14
+        button.layer.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
+        button.layer.masksToBounds = true
+        button.addTarget(self, action: #selector(leaveWeb), for: .touchUpInside)
+        return button
+    }()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -54,6 +67,8 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
         tabsOverlay.bar = tabs.tabBar
         view.addSubview(tabsOverlay)
         embed(tabs, into: tabsOverlay)
+        view.addSubview(webExit)
+        webExit.isHidden = true
         tabs.view.frame = tabsOverlay.bounds
         tabs.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         tabsOverlay.isHidden = true
@@ -111,14 +126,30 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
         content.view.isHidden = !shell.nativeContentVisible
         tabsOverlay.isHidden = !visible
         bar.view.isHidden = !visible || shell.miniTitle == nil
+        // While native owns the screen the page hides its own navigation: a web-only layer needs a native way back.
+        let webOnly = !shell.shown || shell.screen == .web
+        webExit.isHidden = !webOnly
+        if webOnly { positionWebExit() }
         if let index = NativeTab.allCases.firstIndex(of: shell.tab), tabs.selectedIndex != index { tabs.selectedIndex = index }
         view.bringSubviewToFront(tabsOverlay)
         view.bringSubviewToFront(bar.view)
+        view.bringSubviewToFront(webExit)
         view.setNeedsLayout()
+    }
+    private func positionWebExit() {
+        let height: CGFloat = 72, width: CGFloat = 30
+        webExit.frame = CGRect(x: view.bounds.width - width, y: (view.bounds.height - height) / 2, width: width, height: height)
+    }
+    /// The page may be broken or reloading: this must never depend on a page command.
+    @objc private func leaveWeb() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if !shell.shown { shell.setShown(true, resync: false) }
+        if shell.screen == .web { shell.go("/") }
     }
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         guard let content, let bar else { return }
+        if !webExit.isHidden { positionWebExit() }
         tabs.view.layoutIfNeeded()
         let top = tabs.tabBar.convert(tabs.tabBar.bounds, to: view).minY
         let inset = tabsOverlay.isHidden ? 0 : max(0, view.safeAreaLayoutGuide.layoutFrame.maxY - top) + (bar.view.isHidden ? 0 : bar.view.frame.height + 8)
@@ -749,7 +780,7 @@ final class NativeShellStore: ObservableObject {
             let finish: (Result<Any?, Error>) -> Void = { result in
                 guard !done else { return }
                 done = true
-                continuation.resume(with: result)
+                continuation.resume(with: result.mapError(Self.pageFailure))
             }
             webView.callAsyncJavaScript("if (!window.moraNativeUi) throw new Error('page'); return await window.moraNativeUi(name, args)",
                                         arguments: ["name": name, "args": args], in: nil, in: .page) { result in
@@ -757,6 +788,20 @@ final class NativeShellStore: ObservableObject {
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { finish(.failure(NativeShellError.timeout)) }
         }
+    }
+
+    /// WebKit's own text for a JS exception is generic; the page's message names the actual problem.
+    private struct PageFailure: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+    private static func pageFailure(_ error: Error) -> Error {
+        let userInfo = (error as NSError).userInfo
+        if let text = userInfo["WKJavaScriptExceptionMessage"] as? String, !text.isEmpty {
+            return PageFailure(message: text == "page" ? "Интерфейс ещё загружается — попробуйте ещё раз" : text)
+        }
+        if (error as NSError).domain == "WKErrorDomain" { return PageFailure(message: "Интерфейс не ответил — попробуйте ещё раз") }
+        return error
     }
 
     /// A command: its own errors reach the listener as the page's toasts.
@@ -767,7 +812,10 @@ final class NativeShellStore: ObservableObject {
             do {
                 if try await executeLibraryAction(name, args) { return }
                 _ = try await call(name, args, timeout: 60)
-            } catch { show(error.localizedDescription) }
+            } catch {
+                MoraPlaybackJournal.record("native.page.failure", ["command": name])
+                show(error.localizedDescription)
+            }
         }
     }
 

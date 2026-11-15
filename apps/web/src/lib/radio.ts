@@ -88,7 +88,7 @@ export async function startRadio(seed?: { title: string; artist: string }): Prom
 controller.subscribe(() => {
   const s = session;
   if (!s && useRadio.getState().loading && controller.intentVersion !== startIntent) startAbort?.abort();
-  if (!s) return;
+  if (!s) { restoreStation(); return; }
   if (controller.state.context?.type !== 'online-radio' || publicPlayer.sessionVersion !== s.owner || publicPlayer.remaining < 0) {
     s.abort.abort(); session = null; useRadio.setState({ active: false }); return;
   }
@@ -130,11 +130,40 @@ async function station(seeds: Seed[], queue: QueueEntry[], anchor: Seed, signal:
   return { ranked: rankRadio(pool.filter(allow), library(), seen, recent, { ...tuning(), mode: 'mix', artist }, anchor), seen };
 }
 
-function followStation(found: Station, items: PublicTrack[], abort: AbortController): void {
+function followStation(found: Station, items: PublicTrack[], abort: AbortController, artist?: string): void {
   if (controller.autonomousRadio) { void controller.configureDesktopStation({ kind: 'online' }); return; }
   session?.abort.abort();
-  session = { seen: found.seen, loading: false, retryAt: 0, owner: publicPlayer.follow(items.map(asCatalog)), cursor: 0, abort };
+  session = { seen: found.seen, loading: false, retryAt: 0, owner: publicPlayer.follow(items.map(asCatalog)), cursor: 0, abort, artist };
   useRadio.setState({ active: true, error: null });
+}
+
+/**
+ * Stations continue themselves through the page's session, and a reload drops that session while the queue
+ * is restored: the restored tail then plays out and stops. Rebuild the session from the queue near its end,
+ * so an artist station keeps feeding the queue after the app was reopened.
+ */
+let restoring = false, restoreRetryAt = 0;
+function restoreStation(): void {
+  if (session || restoring || useRadio.getState().loading || Date.now() < restoreRetryAt) return;
+  const state = controller.state;
+  if (state.context?.type !== 'online-radio' || state.index < 0 || state.queue.length - state.index - 1 > 4) return;
+  const current = libraryTrack(state.queue[state.index]?.trackId ?? '');
+  if (!current) return;
+  const label = state.context.label ?? '';
+  const artist = label.startsWith('Радио: ') ? label.slice('Радио: '.length).trim() : current.artist;
+  const songs = state.queue.slice(Math.max(0, state.index - 4), state.index + 1).flatMap((entry) => {
+    const t = libraryTrack(entry.trackId);
+    return t ? [{ title: t.title, artist: t.artist }] : [];
+  });
+  const intent = controller.intentVersion;
+  const abort = new AbortController();
+  const relevant = () => controller.intentVersion === intent && controller.state.context?.type === 'online-radio' && !session;
+  restoring = true;
+  void (async () => {
+    const found = await station(artistSeeds(artist, library(), songs), state.queue, { title: current.title, artist: current.artist }, abort.signal, relevant, artist);
+    if (!found?.ranked.length || !relevant()) return;
+    followStation(found, found.ranked, abort, artist);
+  })().catch(() => { restoreRetryAt = Date.now() + 30_000; }).finally(() => { restoring = false; });
 }
 
 /** The station takes over from the next song, its first song already prepared: the playing one is not cut
