@@ -97,7 +97,7 @@ check(edited["title"] as? String == "Правила плейлиста", "edit t
 let editedFields = ((edited["sections"] as? [[String: Any]])?.first?["rows"] as? [[String: Any]]) ?? []
 check(editedFields.first?["value"] as? String == "Любимый рок", "name is prefilled")
 check(editedFields.first(where: { $0["key"] as? String == "genre" })?["value"] as? String == "rock", "genre is prefilled")
-check(editedFields.first(where: { $0["key"] as? String == "liked" })?["value"] as? String == "нет", "unknown liked stays empty")
+check(editedFields.first(where: { $0["key"] as? String == "liked" })?["value"] as? String == "", "unknown liked stays empty")
 let editedActions = ((edited["sections"] as? [[String: Any]])?.last?["rows"] as? [[String: Any]]) ?? []
 check(editedActions.count == 2, "edit has save and delete")
 check((editedActions.last?["act"] as? [String: Any])?["name"] as? String == "deleteSmartPlaylist", "delete action")
