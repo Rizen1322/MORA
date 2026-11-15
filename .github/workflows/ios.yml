@@ -240,7 +240,11 @@ jobs:
             sleep 1
           done
           cp "$CONTAINER/Documents/native-ui-check.json" "$RUNNER_TEMP/mora-ui-check.json"
-          kill -INT "$VIDEO_PID"; wait "$VIDEO_PID" || true
+          # recordVideo may ignore SIGINT on a wedged simulator: never wait for it forever.
+          kill -INT "$VIDEO_PID" 2>/dev/null || true
+          for _ in $(seq 1 15); do kill -0 "$VIDEO_PID" 2>/dev/null || break; sleep 1; done
+          kill -KILL "$VIDEO_PID" 2>/dev/null || true
+          wait "$VIDEO_PID" 2>/dev/null || true
           for image in "$CONTAINER"/Documents/native-*.png; do cp "$image" "$RUNNER_TEMP/mora-ui-$(basename "$image")"; done
           xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mora-ui-wave.png"
           python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r); assert r["status"]=="passed", r' "$RUNNER_TEMP/mora-ui-check.json"
