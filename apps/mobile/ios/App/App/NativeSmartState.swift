@@ -70,7 +70,7 @@ final class NativeSmartState {
             let editorId: String? = creating ? nil : id
             return editor(id: editorId, name: name, rules: rules)
         }
-        guard let encoded = try Self.component(id) else { throw Failure(message: "Плейлист не найден") }
+        let encoded = try Self.component(id)
         let ids = (value["tracks"] as? [String] ?? []).filter { !$0.isEmpty }
         let play: Row = ["type": "playlist", "id": id, "label": name]
         let playArgs: Row = ["ids": ids, "type": "playlist", "id": id, "label": name]
