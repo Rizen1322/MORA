@@ -634,7 +634,7 @@ struct NativePageView: View {
                             throw NativeLibraryActions.Failure(message: "Трек не найден")
                         }
                         let base64 = try await NativePickedFile.base64(url)
-                        _ = try await NativeServerApp.request("POST", "/api/tracks/\(id)/artwork", ["base64": base64], timeout: 90)
+                        _ = try await NativeServerApp.request("POST", "/api/tracks/\(id)/artwork", body: ["base64": base64], timeout: 90)
                         store.refreshLibrary()
                         continue
                     }
