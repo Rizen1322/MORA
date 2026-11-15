@@ -629,6 +629,15 @@ struct NativePageView: View {
                         store.refreshLibrary()
                         continue
                     }
+                    if store.sharedLibrary && act.name == "setTrackArtwork" {
+                        guard let id = act.args["id"] as? String, id.range(of: "^[A-Za-z0-9._-]{1,100}$", options: .regularExpression) != nil else {
+                            throw NativeLibraryActions.Failure(message: "Трек не найден")
+                        }
+                        let base64 = try await NativePickedFile.base64(url)
+                        _ = try await NativeServerApp.request("POST", "/api/tracks/\(id)/artwork", ["base64": base64], timeout: 90)
+                        store.refreshLibrary()
+                        continue
+                    }
                     if store.sharedLibrary && act.name == "importFile" {
                         let body = try await Task.detached(priority: .userInitiated) { try NativeImportFiles.playlist(url) }.value
                         try await store.imports.start(body, request: { try await NativeServerApp.request($0, $1, body: $2) })

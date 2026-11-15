@@ -137,6 +137,21 @@ extension NativeLibraryStore.Snapshot {
         func link(_ title: String, _ path: String, _ symbol: String) -> Row { ["kind": "link", "title": title, "path": path, "symbol": symbol] }
         func text(_ title: String) -> Row { ["kind": "text", "title": title] }
         func time(_ seconds: Double) -> String { let value = max(0, Int(seconds)); return String(format: "%d:%02d", value / 60, value % 60) }
+        func encode(_ value: String) -> String {
+            value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? value
+        }
+        func decode(_ value: String) -> String { value.removingPercentEncoding ?? value }
+        /// Same credits as the web (`trackArtists`): structured credits are unavailable here, so separators split.
+        func splitArtists(_ raw: String) -> [String] {
+            let source = raw.isEmpty ? "Неизвестный исполнитель" : raw
+            let separated = source.replacingOccurrences(of: "\\s*[,;]\\s*|\\s+(?:feat\\.?|ft\\.?)\\s+", with: "\u{1}", options: .regularExpression)
+            var seen = Set<String>(), names: [String] = []
+            for name in separated.split(separator: "\u{1}").map({ $0.trimmingCharacters(in: .whitespaces) }) where !name.isEmpty {
+                if seen.insert(name.lowercased()).inserted { names.append(name) }
+            }
+            return names.isEmpty ? ["Неизвестный исполнитель"] : names
+        }
+        func total(_ list: [NativeTrack]) -> String { time(list.reduce(0) { $0 + $1.duration }) }
         if path == "/library/playlists" {
             let rows: [Row] = playlists.map { p in
                 var row: Row = ["kind": "item", "title": p.name, "subtitle": NativeText.tracks(p.count), "path": "/playlist/\(p.id)"]
@@ -146,6 +161,38 @@ extension NativeLibraryStore.Snapshot {
             return ["title": "Плейлисты", "sections": [
                 ["rows": [button("Создать плейлист", "createPlaylist", [:], ["symbol": "plus", "style": "primary", "prompt": ["title": "Новый плейлист", "placeholder": "Название"]]), link("Умные плейлисты", "/smart-playlists", "sparkles")]],
                 ["title": "Собрано вами", "footer": rows.isEmpty ? "Добавляйте музыку в плейлист через меню трека." : "", "rows": rows]]]
+        }
+        if path == "/library/albums" {
+            struct AlbumKey: Hashable { let artist: String, album: String }
+            var groups: [AlbumKey: [NativeTrack]] = [:]
+            for track in library where !track.album.isEmpty {
+                groups[AlbumKey(artist: track.albumArtist.isEmpty ? track.artist : track.albumArtist, album: track.album), default: []].append(track)
+            }
+            let rows: [Row] = groups.keys.sorted { $0.album.localizedStandardCompare($1.album) == .orderedAscending }.map { key in
+                let list = groups[key] ?? []
+                let first = list.first { $0.cover != nil } ?? list[0]
+                let subtitle = (first.year.map { "\($0) · " } ?? "") + key.artist
+                var row: Row = ["kind": "item", "title": key.album, "subtitle": subtitle,
+                                "path": "/album/\(encode(key.artist))/\(encode(key.album))"]
+                row["cover"] = first.cover.map { $0 as Any } ?? NSNull()
+                return row
+            }
+            return ["title": "Альбомы", "search": "Альбом или исполнитель",
+                    "sections": [["rows": rows.isEmpty ? [text("У треков нет сведений об альбоме.")] : rows]]]
+        }
+        if path == "/library/artists" {
+            var groups: [String: [NativeTrack]] = [:]
+            for track in library {
+                for name in splitArtists(track.artist) { groups[name, default: []].append(track) }
+            }
+            let rows: [Row] = groups.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.map { name in
+                let list = groups[name] ?? []
+                let first = list.first { $0.cover != nil } ?? list[0]
+                var row: Row = ["kind": "item", "title": name, "subtitle": NativeText.tracks(list.count), "path": "/artist/\(encode(name))"]
+                row["cover"] = first.cover.map { $0 as Any } ?? NSNull()
+                return row
+            }
+            return ["title": "Исполнители", "search": "Исполнитель", "sections": [["rows": rows]]]
         }
         let byId = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
         if path == "/history" {
@@ -162,9 +209,76 @@ extension NativeLibraryStore.Snapshot {
             let controls = rows.isEmpty ? [text("История пуста.")] : [button("Очистить историю", "clearHistory", [:], ["style": "destructive", "confirm": ["title": "Очистить историю?", "text": "Записи о прослушиваниях будут удалены. «Моя волна» начнёт учиться заново, лайки сохранятся.", "button": "Очистить"]])]
             return ["title": "История", "sections": [["rows": controls], ["rows": rows]]]
         }
-        let parts = path.split(separator: "/")
-        guard parts.count == 2, parts[0] == "playlist" else { return nil }
-        let id = String(parts[1]).removingPercentEncoding ?? String(parts[1])
+        let parts = path.split(separator: "/").map(String.init)
+        if parts.first == "album", parts.count == 3 {
+            let artist = decode(parts[1]), album = decode(parts[2])
+            let all = library.filter { track in
+                guard track.album == album else { return false }
+                let credit = track.albumArtist.isEmpty ? track.artist : track.albumArtist
+                return credit == artist || artist == "—"
+            }
+            guard !all.isEmpty else { throw NativeLibraryStore.Failure(message: "Альбом не найден") }
+            let list = all.sorted { a, b in
+                let left = a.trackNo ?? Int.max, right = b.trackNo ?? Int.max
+                return left == right ? a.title.localizedStandardCompare(b.title) == .orderedAscending : left < right
+            }
+            let ids = list.map(\.id), ctx: Row = ["type": "album", "id": album, "label": album]
+            let play = ctx.merging(["ids": ids]) { _, value in value }
+            let pending = list.contains { $0.reaction == 0 }
+            let year = list.first?.year.map { " · \($0)" } ?? ""
+            let header: [Row] = [
+                button("Слушать", "playAll", play, ["symbol": "play.fill", "style": "primary", "disabled": ids.isEmpty]),
+                button("Вперемешку", "playAll", play.merging(["shuffle": true]) { _, value in value }, ["symbol": "shuffle", "disabled": ids.isEmpty]),
+                button(pending ? "Лайкнуть все" : "Всё в любимом", "likeAll", ["ids": ids], ["symbol": "heart", "disabled": !pending]),
+            ]
+            return ["title": album, "search": "Найти в альбоме", "sections": [
+                ["footer": "\(artist)\(year) · \(NativeText.tracks(ids.count)) · \(total(list))", "rows": header],
+                ["play": ctx, "rows": list.map { track -> Row in ["kind": "track", "id": track.id] }]]]
+        }
+        if parts.first == "artist", parts.count == 2 {
+            let name = decode(parts[1])
+            let all = library.filter { $0.artist == name || splitArtists($0.artist).contains(name) }
+            guard !all.isEmpty else { throw NativeLibraryStore.Failure(message: "Исполнитель не найден") }
+            let list = all.sorted { a, b in
+                if a.album != b.album { return a.album.localizedStandardCompare(b.album) == .orderedAscending }
+                return (a.trackNo ?? Int.max) < (b.trackNo ?? Int.max)
+            }
+            let ids = list.map(\.id), ctx: Row = ["type": "artist", "id": name, "label": name]
+            let play = ctx.merging(["ids": ids]) { _, value in value }
+            let pending = list.contains { $0.reaction == 0 }
+            let header: [Row] = [
+                button("Слушать", "playAll", play, ["symbol": "play.fill", "style": "primary", "disabled": ids.isEmpty]),
+                button("Вперемешку", "playAll", play.merging(["shuffle": true]) { _, value in value }, ["symbol": "shuffle", "disabled": ids.isEmpty]),
+                button(pending ? "Лайкнуть все" : "Всё в любимом", "likeAll", ["ids": ids], ["symbol": "heart", "disabled": !pending]),
+                button("Радио по исполнителю", "artistRadio", ["artist": name], ["symbol": "dot.radiowaves.left.and.right"]),
+            ]
+            return ["title": name, "search": "Найти у исполнителя", "sections": [
+                ["footer": "\(NativeText.tracks(ids.count)) · \(total(list))", "rows": header],
+                ["rows": [link("Найти в каталоге Яндекса", "/search?q=\(encode(name))&type=artist", "magnifyingglass")]],
+                ["play": ctx, "rows": list.map { track -> Row in ["kind": "track", "id": track.id] }]]]
+        }
+        if parts.first == "track-edit", parts.count == 2 {
+            let id = decode(parts[1])
+            guard let track = tracks.first(where: { $0.id == id }) else { throw NativeLibraryStore.Failure(message: "Трек не найден") }
+            let values: [(key: String, title: String, value: String)] = [
+                ("title", "Название", track.title), ("artist", "Исполнитель", track.artist),
+                ("album", "Альбом", track.album), ("albumArtist", "Исполнитель альбома", track.albumArtist),
+                ("genre", "Жанр", track.genre), ("year", "Год", track.year.map { String($0) } ?? ""),
+            ]
+            var defaults: [String: String] = [:]
+            for value in values { defaults[value.key] = value.value }
+            var actions: [Row] = [button("Сохранить сведения", "saveTrackMetadata", ["id": id, "defaults": defaults], ["style": "primary"])]
+            if track.provider == "local" {
+                actions.append(["kind": "file", "title": "Выбрать обложку", "symbol": "photo", "types": ["png", "jpeg", "webp"],
+                                "act": act("setTrackArtwork", ["id": id])])
+            }
+            let fields: [Row] = values.map { value -> Row in ["kind": "field", "key": value.key, "title": value.title, "value": value.value] }
+            return ["title": "Сведения о треке", "sections": [
+                ["footer": "Изменения сохраняются в медиатеке. Теги исходного файла не переписываются.", "rows": fields],
+                ["rows": actions]]]
+        }
+        guard parts.count == 2, parts.first == "playlist" else { return nil }
+        let id = decode(parts[1])
         guard let playlist = playlists.first(where: { $0.id == id }) else { throw NativeLibraryStore.Failure(message: "Плейлист не найден") }
         var list = (entries[id] ?? []).filter { byId[$0.trackId] != nil }
         if ["title", "artist", "duration"].contains(sort) {

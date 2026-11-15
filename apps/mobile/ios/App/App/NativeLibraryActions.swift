@@ -15,7 +15,7 @@ enum NativeLibraryActions {
         var errorDescription: String? { message }
     }
     static func supports(_ name: String) -> Bool {
-        ["createPlaylist", "renamePlaylist", "deletePlaylist", "addToPlaylist", "removeFromPlaylist", "reorderPlaylist", "exportPlaylist", "clearHistory"].contains(name)
+        ["createPlaylist", "renamePlaylist", "deletePlaylist", "addToPlaylist", "removeFromPlaylist", "reorderPlaylist", "exportPlaylist", "clearHistory", "saveTrackMetadata"].contains(name)
     }
     private static func component(_ value: Any?) throws -> String {
         guard let value = value as? String, !value.isEmpty,
@@ -94,6 +94,25 @@ enum NativeLibraryActions {
             guard !name.isEmpty else { throw Failure(message: "Введите название плейлиста") }
             _ = try await request("POST", "/api/playlists", ["name": name, "trackIds": ids])
             return Result(mutated: true, message: "Создан плейлист «\(name)»")
+        case "saveTrackMetadata":
+            let id = try component(args["id"])
+            // Only the edited fields arrive in `form`: start from the values the editor opened with.
+            var fields = args["defaults"] as? [String: String] ?? [:]
+            for (key, value) in args["form"] as? [String: String] ?? [:] { fields[key] = value }
+            func text(_ key: String) -> String { (fields[key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+            let title = text("title")
+            guard !title.isEmpty else { throw Failure(message: "Введите название") }
+            let yearText = text("year")
+            let year: Any
+            if yearText.isEmpty { year = NSNull() }
+            else {
+                guard let value = Int(yearText), (1...3000).contains(value) else { throw Failure(message: "Год должен быть от 1 до 3000") }
+                year = value
+            }
+            let body: [String: Any] = ["title": title, "artist": text("artist"), "album": text("album"),
+                                       "albumArtist": text("albumArtist"), "genre": text("genre"), "year": year]
+            _ = try await request("PATCH", "/api/tracks/\(id)", body)
+            return Result(mutated: true, message: "Сведения сохранены")
         default: return nil
         }
     }

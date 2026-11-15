@@ -5,6 +5,9 @@ import Foundation
 struct NativeTrack: Equatable, Identifiable {
     let id: String
     let title: String, artist: String, album: String
+    /// Album and track credits; empty/nil for recordings without embedded tags.
+    let albumArtist: String, genre: String
+    let trackNo: Int?, year: Int?
     let duration: Double
     let playCount: Int
     let lastPlayedAt: Double
@@ -26,6 +29,10 @@ struct NativeTrack: Equatable, Identifiable {
         title = value["title"] as? String ?? ""
         artist = value["artist"] as? String ?? ""
         album = value["album"] as? String ?? ""
+        albumArtist = value["albumArtist"] as? String ?? value["album_artist"] as? String ?? ""
+        genre = value["genre"] as? String ?? ""
+        trackNo = (value["trackNo"] as? NSNumber)?.intValue ?? (value["track_no"] as? NSNumber)?.intValue
+        year = (value["year"] as? NSNumber)?.intValue
         duration = max(0, value["duration"] as? Double ?? 0)
         playCount = max(0, (value["playCount"] as? NSNumber)?.intValue ?? (value["play_count"] as? NSNumber)?.intValue ?? 0)
         lastPlayedAt = (value["lastPlayedAt"] as? NSNumber)?.doubleValue ?? (value["last_played_at"] as? NSNumber)?.doubleValue ?? 0

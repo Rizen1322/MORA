@@ -94,4 +94,24 @@ require(try api.execute("renamePlaylist", ["id": "p", "value": ""])?.mutated == 
 rejects("Empty selection accepted") { _ = try api.execute("addToPlaylist", ["playlistId": "p", "ids": []]) }
 rejects("Missing playlist accepted") { _ = try api.execute("deletePlaylist", [:]) }
 require(api.calls.isEmpty, "Unsupported and invalid input never reaches the server")
-print("Native library actions: endpoints, errors, duplicate entries, reorder validation, export and unsupported fallback passed")
+api.calls = []
+api.response = { _ in ["ok": true] }
+let savedMeta = try api.execute("saveTrackMetadata", [
+    "id": "track-1",
+    "defaults": ["title": "Старое", "artist": "Артист", "album": "Альбом", "albumArtist": "Артист", "genre": "Rock", "year": "1999"],
+    "form": ["title": "  Новое  ", "year": "2001"],
+])!
+require(savedMeta.mutated && savedMeta.message?.contains("Сохранены") == true, "Metadata save is a native mutation")
+require(api.calls.count == 1 && api.calls[0].method == "PATCH" && api.calls[0].path == "/api/tracks/track-1", "Metadata patch endpoint")
+let meta = api.calls[0].body ?? [:]
+require(meta["title"] as? String == "Новое", "Edited title wins")
+require(meta["artist"] as? String == "Артист" && meta["album"] as? String == "Альбом" && meta["albumArtist"] as? String == "Артист", "Unchanged fields keep the editor defaults")
+require(meta["year"] as? Int == 2001, "Edited year")
+require(meta["genre"] as? String == "Rock", "Genre from the editor defaults")
+api.calls = []
+_ = try api.execute("saveTrackMetadata", ["id": "track-1", "defaults": ["title": "T", "year": ""], "form": [:]])
+require(api.calls[0].body?["year"] is NSNull, "An empty year clears the tag")
+rejects("Empty title accepted") { _ = try api.execute("saveTrackMetadata", ["id": "track-1", "defaults": ["title": "   "]]) }
+rejects("Invalid year accepted") { _ = try api.execute("saveTrackMetadata", ["id": "track-1", "defaults": ["title": "T", "year": "3001"]]) }
+rejects("Missing track id accepted") { _ = try api.execute("saveTrackMetadata", ["defaults": ["title": "T"]]) }
+print("Native library actions: endpoints, errors, duplicate entries, reorder validation, metadata, export and unsupported fallback passed")

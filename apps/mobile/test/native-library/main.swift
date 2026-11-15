@@ -37,6 +37,11 @@ write("""
     INSERT INTO playlists VALUES('p','Любимые',20);
     INSERT INTO playlist_tracks VALUES(12,'p','one',1),(11,'p','one',0),(13,'p','asset',2);
     INSERT INTO plays VALUES(1,'one',1000,5000,'skip'),(2,'asset',2000,10000,'transition');
+    ALTER TABLE tracks ADD COLUMN album_artist TEXT NOT NULL DEFAULT '';
+    ALTER TABLE tracks ADD COLUMN track_no INTEGER;
+    ALTER TABLE tracks ADD COLUMN year INTEGER;
+    ALTER TABLE tracks ADD COLUMN genre TEXT NOT NULL DEFAULT '';
+    UPDATE tracks SET album_artist='Артист', track_no=3, year=1999, genre='Rock' WHERE id='one';
     ALTER TABLE tracks ADD COLUMN play_count INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE tracks ADD COLUMN last_played_at INTEGER;
     UPDATE tracks SET play_count=12,last_played_at=3000 WHERE id='one';
@@ -56,6 +61,34 @@ require(first.entries["p"]?.map(\.id) == [11, 12, 13], "Playlist order and dupli
 require(first.playlists.first?.count == 3 && first.history.map(\.id) == [2, 1], "Playlist count and history order")
 require(try reader.readIfChanged() == nil, "No new snapshot for an unchanged database")
 
+func encoded(_ value: String) -> String {
+    value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? value
+}
+let albumsPage = NativePage(try first.page("/library/albums"))!
+let albumRow = albumsPage.sections.first?.rows.first
+require(albumsPage.title == "Альбомы", "Native albums title")
+if case .item(let title, let subtitle, _, _, _, let path, _, _, _) = albumRow! {
+    require(title == "Альбом" && (subtitle ?? "").contains("Артист"), "Album row shows the album artist")
+    require(path == "/album/\(encoded("Артист"))/\(encoded("Альбом"))", "Album row links to its native page")
+} else { fatalError("Album row is not an item") }
+let artistsPage = NativePage(try first.page("/library/artists"))!
+require(artistsPage.sections.first?.rows.count == 2, "Artists group saved tracks, unknown artist included")
+let albumPage = NativePage(try first.page("/album/\(encoded("Артист"))/\(encoded("Альбом"))"))!
+require(albumPage.title == "Альбом" && albumPage.sections.last?.rows.count == 1, "Album page lists its saved track")
+require((albumPage.sections.first?.footer ?? "").contains("Артист · 1999 · 1 трек"), "Album footer shows artist, year and duration")
+let artistPage = NativePage(try first.page("/artist/\(encoded("Артист"))"))!
+require(artistPage.title == "Артист" && artistPage.sections.last?.rows.count == 1, "Artist page lists the artist's saved tracks")
+require(artistPage.sections.count == 3, "Artist page has player controls, catalog link and tracks")
+let editor = NativePage(try first.page("/track-edit/one"))!
+let editorFields = editor.sections.first?.rows.count
+require(editor.title == "Сведения о треке" && editorFields == 6, "Track editor shows six metadata fields")
+let saveRow = editor.sections.last?.rows.first
+if case .button(_, _, let act, _, _, _, _) = saveRow! {
+    require(act.name == "saveTrackMetadata" && (act.args["defaults"] as? [String: String])?["title"] == "Песня ё", "Track editor saves the prefilled metadata")
+} else { fatalError("Track editor has no save button") }
+if let artwork = editor.sections.last?.rows.last, case .file(_, _, let types, _, let act) = artwork {
+    require(types == ["png", "jpeg", "webp"] && act.name == "setTrackArtwork", "Local track offers a native artwork picker")
+} else { fatalError("Track editor has no artwork row") }
 let page = try first.page("/playlist/p")!
 let nativePage = NativePage(page)!
 require(nativePage.sections.last?.rows.count == 3, "Native playlist renders repeated entries and unsaved assets")

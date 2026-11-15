@@ -486,6 +486,25 @@ extension MoraRootViewController {
             try require(libraryCalls == 0, "Native library actions depended on page")
             _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__libraryOriginal;0")
             report["libraryActions"] = "Direct playlist create/add/rename/export/reorder/remove/delete, duplicate occurrence IDs, reactions/bulk likes and clear history passed with page commands forbidden"
+            _ = try await shell.executeLibraryAction("saveTrackMetadata", [
+                "id": restoredTrack.id,
+                "defaults": ["title": "MORA Native Song", "artist": "MORA Artist", "album": "MORA Album",
+                             "albumArtist": "MORA Artist", "genre": "Test", "year": "2026"]])
+            try require(shell.byId[restoredTrack.id]?.album == "MORA Album", "Native metadata save was not applied")
+            _ = try await web.evaluateJavaScript("window.__musicOriginal=window.moraNativeUi;window.__musicPageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='page'){window.__musicPageCalls.push(location.hash);throw Error('Music page depended on the page');}return window.__musicOriginal(n,a);};0")
+            let musicScreens: [(String, String)] = [("/library/albums", "native-albums"), ("/library/artists", "native-artists"),
+                ("/album/MORA%20Artist/MORA%20Album", "native-album"), ("/artist/MORA%20Artist", "native-artist"),
+                ("/track-edit/\(restoredTrack.id)", "native-track-editor")]
+            for (path, shot) in musicScreens {
+                shell.go(path)
+                try await wait { self.shell.path == path && self.shell.nativeContentVisible }
+                try await Task.sleep(for: .seconds(1))
+                try capture(shot)
+            }
+            let musicCalls = try await web.evaluateJavaScript("window.__musicPageCalls") as? [Any] ?? []
+            try require(musicCalls.isEmpty, "Music pages depended on the page: " + musicCalls.map { "\($0)" }.joined(separator: " | "))
+            _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__musicOriginal;0")
+            report["musicPages"] = "Native album and artist lists, album and artist pages and the track editor rendered without page descriptions"
             let saved: [String: Any] = ["items": [["entryId": "restored-fixture", "trackId": restoredTrack.id, "origin": "user"]],
                 "index": 0, "position": 0.25, "context": ["type": "library", "label": "Медиатека"], "shuffle": false, "repeat": "off", "volume": 1]
             _ = try await web.callAsyncJavaScript("const r = await fetch('/api/queue',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(saved)}); if(!r.ok)throw Error(r.status); return 0;", arguments: ["saved": saved], in: nil, contentWorld: .page)
