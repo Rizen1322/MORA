@@ -95,6 +95,10 @@ jobs:
           "$RUNNER_TEMP/mora-sources-check"
           swiftc apps/mobile/ios/App/App/NativeShellState.swift apps/mobile/ios/App/App/NativeImportFiles.swift apps/mobile/ios/App/App/NativeImportState.swift apps/mobile/test/native-import/main.swift -o "$RUNNER_TEMP/mora-import-check"
           "$RUNNER_TEMP/mora-import-check"
+      - name: Test native smart playlists and library pages
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeSmartState.swift apps/mobile/test/native-smart/main.swift -o "$RUNNER_TEMP/mora-smart-check"
+          "$RUNNER_TEMP/mora-smart-check"
       - name: Test native library actions and reaction outbox
         run: |
           swiftc apps/mobile/ios/App/App/NativeLibraryActions.swift apps/mobile/test/native-library-actions/main.swift -o "$RUNNER_TEMP/mora-library-actions-check"

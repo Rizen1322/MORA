@@ -207,7 +207,7 @@ extension MoraRootViewController {
             _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__waveOriginal;0")
             report["waveLink"] = "mora://wave?source=yandex reached the wave command"
             try await wait { self.shell.sharedLibrary }
-            _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='backup'||n==='page'&&/^#\\/(settings|downloads|sound|backups|sources|import|yandex-playlists)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(n+':'+location.hash+':'+JSON.stringify(a||{}));throw Error('Native screen requested the page');}return window.__nativePagesOriginal(n,a);};0")
+            _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='backup'||n==='page'&&/^#\\/(settings|downloads|sound|backups|sources|import|yandex-playlists|smart-playlists|smart-playlist|duplicates|statistics)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(n+':'+location.hash+':'+JSON.stringify(a||{}));throw Error('Native screen requested the page');}return window.__nativePagesOriginal(n,a);};0")
             let originalSettings = try await NativeServerApp.request("GET", "/api/settings")
             let originalAutomix = (originalSettings["automix"] as? [String: Any])?["enabled"] as? Bool ?? true
             do {
@@ -244,6 +244,26 @@ extension MoraRootViewController {
             try await wait { self.shell.ui.path == "/import" && self.shell.nativeContentVisible }
             try await Task.sleep(for: .seconds(2))
             try capture("native-import")
+            shell.go("/smart-playlists")
+            try await wait { self.shell.ui.path == "/smart-playlists" && self.shell.nativeContentVisible }
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-smart-playlists")
+            report["smartPlaylists"] = "SwiftUI smart playlist list rendered against the JSC API without a page description"
+            shell.go("/smart-playlist/new")
+            try await wait { self.shell.ui.path == "/smart-playlist/new" && self.shell.nativeContentVisible }
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-smart-editor")
+            report["smartEditor"] = "SwiftUI rule editor rendered without a page description"
+            shell.go("/duplicates")
+            try await wait { self.shell.ui.path == "/duplicates" && self.shell.nativeContentVisible }
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-duplicates")
+            report["duplicates"] = "SwiftUI duplicate groups rendered without a page description"
+            shell.go("/statistics")
+            try await wait { self.shell.ui.path == "/statistics" && self.shell.nativeContentVisible }
+            try await Task.sleep(for: .seconds(2))
+            try capture("native-statistics")
+            report["statistics"] = "SwiftUI listening statistics rendered without a page description"
             var backupTask: Task<Bool, Never>?
             try await wait {
                 if backupTask == nil { backupTask = self.shell.captureBackup() }
@@ -506,6 +526,7 @@ final class NativeShellStore: ObservableObject {
     @Published private(set) var library: [NativeTrack] = []
     private(set) var byId: [String: NativeTrack] = [:]
     let imports = NativeImportState()
+    let smart = NativeSmartState()
     /// Bumped on every snapshot: native pages reload their description from the page.
     @Published private(set) var revision = 0
     private(set) var queue: [NativeQueuedTrack] = []

@@ -76,6 +76,8 @@ struct NativePageView: View {
     // Split out of body: as one expression it exceeds the Swift type checker's time limit.
     private var catalog: Bool { page?.style == "catalog" }
     private var nativeImport: Bool { waveSource == nil && store.sharedLibrary && NativeImportState.handles(store.path) }
+    /// Smart playlists, duplicates and statistics are native data screens: a shell snapshot must not reload them.
+    private var nativeSmart: Bool { waveSource == nil && store.sharedLibrary && NativeSmartState.handles(store.path) }
 
     private var pageList: some View {
         styled(withSearch(List {
@@ -148,7 +150,7 @@ struct NativePageView: View {
                 if ["/catalog/", "/public/", "/soundcloud/"].contains(where: { store.path.hasPrefix($0) }) { _ = try? await store.call("catalogRefresh") }
                 await load()
             }
-            .task(id: "\(store.path)|\(nativeImport ? 0 : store.revision)|\(reload)|\(waveSource?.wrappedValue.rawValue ?? "")") { await load() }
+            .task(id: "\(store.path)|\(nativeImport || nativeSmart ? 0 : store.revision)|\(reload)|\(waveSource?.wrappedValue.rawValue ?? "")") { await load() }
             .task(id: page?.refresh) {
                 guard let seconds = page?.refresh else { return }
                 while !Task.isCancelled {
@@ -514,6 +516,9 @@ struct NativePageView: View {
             if waveSource == nil, store.sharedLibrary, NativeImportState.handles(store.path) {
                 value = try await store.imports.page(store.path, request: { try await NativeServerApp.request($0, $1, body: $2) })
             }
+            else if waveSource == nil, store.sharedLibrary, NativeSmartState.handles(store.path) {
+                value = try await store.smart.page(store.path, request: { try await NativeServerApp.request($0, $1, body: $2) })
+            }
             else if waveSource == nil, store.sharedLibrary, NativeShellStore.ownScreens.contains(store.path) {
                 return // the shell already replaced this view with its own screen for that route
             }
@@ -553,6 +558,16 @@ struct NativePageView: View {
                     if result.mutated {
                         do { try await store.refreshLibraryAfterMutation() }
                         catch { store.show("Импорт сохранён. Не удалось обновить медиатеку: \(error.localizedDescription)"); return }
+                    }
+                    if let message = result.message { store.show(message) }
+                    if let path = result.path { store.go(path) }
+                    return
+                }
+                if store.sharedLibrary, NativeSmartState.handles(store.path), NativeSmartState.supports(act.name) {
+                    let result = try await store.smart.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2, timeout: 120) })
+                    if result.mutated {
+                        do { try await store.refreshLibraryAfterMutation() }
+                        catch { store.show("Сохранено. Не удалось обновить медиатеку: \(error.localizedDescription)"); return }
                     }
                     if let message = result.message { store.show(message) }
                     if let path = result.path { store.go(path) }
