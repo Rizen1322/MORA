@@ -1074,7 +1074,7 @@ final class NativeShellStore: ObservableObject {
         }
         host.playerState { [weak self] result in
             guard let self, case .success(let value) = result else { return }
-            NativeQueueController.shared.syncFromHost(value)
+            Task { @MainActor in NativeQueueController.shared.syncFromHost(value) }
             let next = NativePlayerState(value)
             if next.title != self.player.title || next.artist != self.player.artist || next.playing != self.player.playing || next.active != self.player.active {
                 self.player = next

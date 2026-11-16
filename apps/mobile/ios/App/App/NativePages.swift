@@ -466,7 +466,7 @@ struct NativePageView: View {
                         let isArtist = path?.hasPrefix("/artist/") == true || path?.hasPrefix("/catalog/artist/") == true || path?.hasPrefix("/public/artist/") == true || path?.hasPrefix("/soundcloud/artist/") == true
                         if let number { Text("\(number)").font(.body.monospacedDigit()).foregroundStyle(.secondary).frame(width: 26) }
                         else if cover != nil || isArtist {
-                            NativeCover(url: cover, size: isArtist ? 52 : 48, radius: isArtist ? 26 : 8)
+                            NativeCover(url: cover ?? nil, size: isArtist ? 52 : 48, radius: isArtist ? 26 : 8)
                                 .overlay(Group { if isArtist { Circle().stroke(Color.white.opacity(0.16), lineWidth: 1) } })
                                 .shadow(color: .black.opacity(isArtist ? 0.3 : 0), radius: 5, y: 2)
                         }

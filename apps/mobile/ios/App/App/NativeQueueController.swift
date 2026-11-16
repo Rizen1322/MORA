@@ -175,11 +175,11 @@ import Foundation
             onStateChange?()
             scheduleSync()
         case "automix":
-            let settings = try await NativeServerApp.request("GET", "/api/settings", nil)
+            let settings = try await NativeServerApp.request("GET", "/api/settings", body: nil)
             var automix = settings["automix"] as? [String: Any] ?? [:]
             let enabled = !(automix["enabled"] as? Bool ?? true)
             automix["enabled"] = enabled
-            _ = try await NativeServerApp.request("PUT", "/api/settings", ["automix": automix])
+            _ = try await NativeServerApp.request("PUT", "/api/settings", body: ["automix": automix])
             if NativeMixHost.shared.active {
                 _ = try? await hostReply { NativeMixHost.shared.settings(["automix": automix], completion: $0) }
             }
@@ -416,7 +416,7 @@ import Foundation
     }
 
     private func downloadedIds(for trackIds: [String]) -> [String] {
-        let done = Set(NativeDownloadManager.shared.listSnapshot().filter { $0.state == .done }.map(\.trackId))
+        let done = Set(NativeDownloadManager.shared.jobs.filter { $0.state == .done }.map(\.trackId))
         return trackIds.filter { done.contains($0) }
     }
 
