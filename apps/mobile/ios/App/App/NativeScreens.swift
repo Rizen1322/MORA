@@ -842,6 +842,7 @@ struct NativeSearchView: View {
                 if let id = value?["versions"] as? String { store.presentVersions(id: id) }
                 if ["like", "dislike", "save", "playlist"].contains(kind) { await load(source, key: key) }
             } catch {
+                guard key == requested, store.path == origin else { return }
                 if isPlay, (generation != playGeneration || NativeShellStore.isCancelled(error)) { return }
                 failure = Self.message(error)
             }
@@ -855,6 +856,7 @@ struct NativeSearchView: View {
     private func retry(_ source: String, more: Bool = false) { Task { @MainActor in await load(source, key: key, more: more) } }
     @MainActor private func search() async {
         results = [:]; errors = [:]; searching = []
+        guard !store.offline else { return }
         guard !query.isEmpty || source == "yandex", source != "local", source != "yandex" || store.ui.wave.yandex else { return }
         do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
         let requested = key

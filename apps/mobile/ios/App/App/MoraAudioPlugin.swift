@@ -155,7 +155,10 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
                 if action == "seekto", time == nil || time?.isFinite != true { return .commandFailed }
                 let id = UUID().uuidString
                 MoraPlaybackJournal.record("native.remote.callback", ["id": id, "action": action, "seekTime": time ?? -1])
-                DispatchQueue.main.async { [weak self] in self?.send(action, seekTime: time, id: id, source: "remote", routeEpoch: epoch) }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.send(action, seekTime: time, id: id, source: "remote", routeEpoch: self.navigationEpoch)
+                }
                 return .success
             }
             remoteCommands.append((command, target))
@@ -462,6 +465,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
               mapping.allSatisfy({ !$0.key.isEmpty && !$0.value.isEmpty && $0.key.utf8.count <= 512 && $0.value.utf8.count <= 512 }) else { call.reject("Неверное слияние треков"); return }
         DispatchQueue.main.async {
             NativeShellStore.shared?.remapReactions(mapping)
+            NativeQueueController.shared.remapTracks(mapping)
             NativeDownloadManager.shared.remapTracks(mapping)
         }
         nativeMix.remapTracks(mapping) { result in

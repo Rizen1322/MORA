@@ -634,16 +634,39 @@ struct NativePageView: View {
                     _ = try await store.diagnostics.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2) })
                     return
                 }
-                if store.sharedLibrary, (waveSource != nil || NativeWaveState.handles(store.path)), NativeWaveState.supports(act.name) {
-                    if let message = try await store.wave.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2) }) {
-                        store.show(message)
+                if store.sharedLibrary, (waveSource != nil || NativeWaveState.handles(store.path)) {
+                    if NativeWaveState.supports(act.name) {
+                        if let message = try await store.wave.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2) }) {
+                            store.show(message)
+                        }
+                        return
                     }
-                    return
+                    if act.name == "waveSource", let value = args["value"] as? String, let src = NativeWaveSource(rawValue: value) {
+                        store.waveSource = src
+                        return
+                    }
+                    if act.name == "waveLaunch" {
+                        let src = args["source"] as? String ?? store.waveSource?.rawValue ?? "own"
+                        try await NativeQueueController.shared.startWave(source: src, offline: store.offline)
+                        return
+                    }
+                    if act.name == "queue" {
+                        store.openPlayer()
+                        return
+                    }
+                    if act.name == "jump", let idx = (args["index"] as? NSNumber)?.intValue {
+                        let entries = NativeQueueController.shared.entries
+                        if entries.indices.contains(idx) {
+                            try await NativeQueueController.shared.editQueue(action: "jump", entryId: entries[idx].entryId)
+                            return
+                        }
+                    }
                 }
                 if store.sharedLibrary, NativeCatalogState.handles(store.path), NativeCatalogState.supports(act.name) {
                     try await store.catalog.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2) })
                     return
                 }
+                if store.sharedLibrary, try await store.executeNativePlaybackCommand(act.name, args) { return }
                 if try await store.executeLibraryAction(act.name, args) { return }
                 let result = try await store.call("act", ["name": act.name, "args": args], timeout: 120) as? [String: Any]
                 if let share = result?["share"] as? [String: Any], let name = share["name"] as? String, let text = share["text"] as? String { self.share(name, text) }

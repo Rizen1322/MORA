@@ -21,12 +21,15 @@ import Foundation
     private(set) var context = Context(type: "library", id: nil, label: "Медиатека")
     private(set) var shuffle = false
     private(set) var repeatMode = "off" // off | all | one
+    private(set) var automixEnabled = true
     private(set) var waveSource: String? // own | yandex | online | nil
     private(set) var waveLoading = false
     private(set) var waveError: String?
 
     private var sessionId: String?
     private var revision = 0
+    private var hostIndex = 0
+    private var waveOffline = false
     private var activePlayId: Int?
     private var playStartedAt = Date()
     private var yandexSessionId: String?
@@ -102,7 +105,7 @@ import Foundation
                 entries.remove(at: from)
                 if from < index { index = max(0, index - 1) }
                 onStateChange?()
-                scheduleSync()
+                scheduleSync(replaceFuture: true)
             }
         case "jump":
             index = from
@@ -114,7 +117,7 @@ import Foundation
                 let item = entries.remove(at: from)
                 entries.insert(item, at: target)
                 onStateChange?()
-                scheduleSync()
+                scheduleSync(replaceFuture: true)
             }
         case "move":
             guard let after, let afterIdx = entries.firstIndex(where: { $0.entryId == after }) else {
@@ -128,7 +131,7 @@ import Foundation
                 else if from < index && insertAt >= index { index = max(0, index - 1) }
                 else if from > index && insertAt <= index { index = min(entries.count - 1, index + 1) }
                 onStateChange?()
-                scheduleSync()
+                scheduleSync(replaceFuture: true)
             }
         default:
             throw NSError(domain: "NativeQueue", code: 3, userInfo: [NSLocalizedDescriptionKey: "Неизвестное действие с очередью"])
@@ -171,16 +174,17 @@ import Foundation
                 originalEntries = nil
             }
             onStateChange?()
-            scheduleSync()
+            scheduleSync(replaceFuture: true)
         case "repeat":
             repeatMode = repeatMode == "off" ? "all" : repeatMode == "all" ? "one" : "off"
             onStateChange?()
-            scheduleSync()
+            scheduleSync(replaceFuture: true)
         case "automix":
             let settings = try await NativeServerApp.request("GET", "/api/settings", body: nil)
             var automix = settings["automix"] as? [String: Any] ?? [:]
             let enabled = !(automix["enabled"] as? Bool ?? true)
             automix["enabled"] = enabled
+            automixEnabled = enabled
             _ = try await NativeServerApp.request("PUT", "/api/settings", body: ["automix": automix])
             if NativeMixHost.shared.active {
                 _ = try? await hostReply { NativeMixHost.shared.settings(["automix": automix], completion: $0) }
@@ -198,6 +202,7 @@ import Foundation
         }
         waveLoading = true
         waveError = nil
+        waveOffline = offline
         onStateChange?()
         defer { waveLoading = false; onStateChange?() }
 
@@ -253,8 +258,15 @@ import Foundation
         try await play(trackIds: ids, at: 0, context: Context(type: "wave", id: artist, label: "\(artist) и похожие"), keepWave: true)
     }
 
+    func remapTracks(_ mapping: [String: String]) {
+        entries = entries.map { Entry(entryId: $0.entryId, trackId: mapping[$0.trackId] ?? $0.trackId) }
+        originalEntries = originalEntries?.map { Entry(entryId: $0.entryId, trackId: mapping[$0.trackId] ?? $0.trackId) }
+        onStateChange?()
+    }
+
     func syncFromHost(_ snapshot: [String: Any]) {
         guard snapshot["active"] as? Bool == true else { return }
+        if let idx = snapshot["index"] as? Int { hostIndex = idx }
         if let eid = snapshot["entryId"] as? String, let found = entries.firstIndex(where: { $0.entryId == eid }), found != index {
             finishPlay(reason: found == index + 1 ? "transition" : "skip")
             index = found
@@ -299,8 +311,9 @@ import Foundation
             throw NSError(domain: "NativeQueue", code: 5, userInfo: [NSLocalizedDescriptionKey: "Файл трека недоступен"])
         }
         let config: [String: Any] = ["sampleRate": 48000.0, "position": 0.0, "paused": paused, "gainDb": 0.0]
-        _ = try await hostReply { host.prepareStart(id: sid, item: preparedItem, config: config, completion: $0) }
+        let state = try await hostReply { host.prepareStart(id: sid, item: preparedItem, config: config, completion: $0) }
         guard rev == revision else { return }
+        hostIndex = state["index"] as? Int ?? 0
 
         beginPlay(entry)
         saveQueueState()
@@ -309,43 +322,56 @@ import Foundation
         if isWave { Task { @MainActor in await topUpWaveIfNeeded() } }
     }
 
-    private func scheduleSync() {
+    private func scheduleSync(replaceFuture: Bool = false) {
         syncTask?.cancel()
         syncTask = Task { @MainActor in
-            await syncQueue()
+            await syncQueue(replaceFuture: replaceFuture)
         }
     }
 
-    private func syncQueue() async {
+    private func syncQueue(replaceFuture: Bool = false) async {
         guard let sid = sessionId, NativeMixHost.shared.active, let current = currentEntry else { return }
         let rev = revision
         let upcoming = repeatMode == "one" ? [] : Array(entries.dropFirst(index + 1))
         let loopEntries: [Entry] = repeatMode == "one" ? [current] : (repeatMode == "all" ? entries : [])
-        guard !upcoming.isEmpty || !loopEntries.isEmpty else { return }
+        guard replaceFuture || !upcoming.isEmpty || !loopEntries.isEmpty else { return }
 
         let all = upcoming + loopEntries
-        let nativeFiles = downloadedIds(for: all.map(\.trackId))
-        let bodyEntries = all.enumerated().map { idx, e -> [String: Any] in
-            ["entryId": e.entryId, "trackId": e.trackId, "file": idx]
-        }
-        guard let manifest = try? await NativeServerApp.request("POST", "/api/mobile/native-sources", body: [
-            "entries": bodyEntries,
-            "previousId": current.trackId,
-            "nativeFiles": nativeFiles,
-        ]), rev == revision else { return }
+        var futureItems: [[String: Any]] = []
+        var loopItems: [[String: Any]] = []
+        var previousMeta: [String: Any] = ["trackId": current.trackId, "duration": 0.0, "mixingAllowed": false]
+        var settingsMeta: [String: Any] = ["enabled": automixEnabled]
 
-        let rawItems = manifest["items"] as? [[String: Any]] ?? []
-        let items = (try? await resolveUploadSources(rawItems, sessionId: sid)) ?? rawItems
-        guard rev == revision else { return }
-        let upcomingIds = Set(upcoming.map(\.entryId))
-        let futureItems = items.filter { upcomingIds.contains($0["entryId"] as? String ?? "") }
-        let loopItems = items.filter { !upcomingIds.contains($0["entryId"] as? String ?? "") }
+        if !all.isEmpty {
+            let nativeFiles = downloadedIds(for: all.map(\.trackId))
+            let bodyEntries = all.enumerated().map { idx, e -> [String: Any] in
+                ["entryId": e.entryId, "trackId": e.trackId, "file": idx]
+            }
+            guard let manifest = try? await NativeServerApp.request("POST", "/api/mobile/native-sources", body: [
+                "entries": bodyEntries,
+                "previousId": current.trackId,
+                "nativeFiles": nativeFiles,
+            ]), rev == revision else { return }
+
+            let rawItems = manifest["items"] as? [[String: Any]] ?? []
+            let items = (try? await resolveUploadSources(rawItems, sessionId: sid)) ?? rawItems
+            guard rev == revision else { return }
+            let upcomingIds = Set(upcoming.map(\.entryId))
+            futureItems = items.filter { upcomingIds.contains($0["entryId"] as? String ?? "") }
+            loopItems = items.filter { !upcomingIds.contains($0["entryId"] as? String ?? "") }
+            if let prev = manifest["previous"] as? [String: Any] { previousMeta = prev }
+            if let st = manifest["settings"] as? [String: Any] {
+                settingsMeta = st
+                if let enabled = st["enabled"] as? Bool { automixEnabled = enabled }
+            }
+        }
         let hostManifest: [String: Any] = [
-            "from": index + 1,
+            "from": hostIndex + 1,
             "items": futureItems,
             "loopItems": loopItems,
-            "previous": manifest["previous"] ?? ["trackId": current.trackId, "duration": 0.0, "mixingAllowed": false],
-            "settings": manifest["settings"] ?? ["enabled": true],
+            "replaceFuture": replaceFuture,
+            "previous": previousMeta,
+            "settings": settingsMeta,
             "retainedSources": [],
         ]
         _ = try? await hostReply { NativeMixHost.shared.prepareQueue(id: sid, manifest: hostManifest, completion: $0) }
@@ -386,6 +412,7 @@ import Foundation
             "session": Array(entries.suffix(12).map(\.trackId)),
             "count": 3,
             "exclude": Array(existing.prefix(60)),
+            "offline": waveOffline,
         ]
         if let currentId = currentEntry?.trackId { nextBody["currentId"] = currentId }
         guard let res = try? await NativeServerApp.request("POST", "/api/wave/next", body: nextBody) else { return }
@@ -452,8 +479,8 @@ import Foundation
             let tid = source["trackId"] as? String ?? (out[i]["trackId"] as? String ?? "")
             let url: URL? = (source["serverPath"] as? String).flatMap { NativeMediaLoader.sharedFile($0, root: NativeServerApp.root) }
                 ?? NativeDownloadManager.shared.localFile(tid)
-            guard let url else { continue }
-            let reply = try await hostReply { NativeMixHost.shared.sourceFromDownload(id: sid, key: key, file: url, completion: $0) }
+            guard let url,
+                  let reply = try? await hostReply({ NativeMixHost.shared.sourceFromDownload(id: sid, key: key, file: url, completion: $0) }) else { continue }
             if reply["found"] as? Bool == true {
                 out[i]["source"] = ["kind": "local", "file": key]
                 out[i]["file"] = key

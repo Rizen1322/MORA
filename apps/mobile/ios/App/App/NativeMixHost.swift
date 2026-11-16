@@ -312,6 +312,14 @@ final class NativeMixHost {
             let pcm = folder.appendingPathComponent("\(key).f32le")
             let allowedHost = source["allowHTTP"] as? Bool == true ? (source["url"] as? String).flatMap { URL(string: $0)?.host } : nil
             let hosts = Set([allowedHost].compactMap { $0 })
+            let replyOnce: Reply = {
+                let lock = NSLock()
+                var sent = false
+                return { result in
+                    lock.lock(); let first = !sent; sent = true; lock.unlock()
+                    if first { completion(result) }
+                }
+            }()
             Task.detached(priority: .userInitiated) { [weak self] in
                 let http = NativeMediaHTTP(allowedHTTPHosts: hosts)
                 defer { http.invalidate(); try? FileManager.default.removeItem(at: downloaded) }
@@ -325,7 +333,7 @@ final class NativeMixHost {
                         if early { return false } // the finished file decides
                         try? FileManager.default.removeItem(at: pcm)
                         if self.initialTicket === ticket { self.initialTicket = nil; self.initialConfig = [:] }
-                        self.reply(completion, .failure(Failure.invalid)); return false
+                        self.reply(replyOnce, .failure(Failure.invalid)); return false
                     }
                     var next = self.initialConfig
                     if next["paused"] as? Bool != true {
@@ -344,7 +352,7 @@ final class NativeMixHost {
                     next["tracks"] = (previous.map { [$0] } ?? []) + [track]; next["index"] = previous == nil ? 0 : 1
                     self.initialTicket = nil; self.initialConfig = [:]
                     if early { self.growing[key] = ticket }
-                    self.startOnQueue(id: id, config: next, completion: completion)
+                    self.startOnQueue(id: id, config: next, completion: replyOnce)
                     if !self.failed, self.tracks.indices.contains(self.index), Self.key(self.tracks[self.index], self.index) == key {
                         if previous != nil { self.artworks[0] = oldArtwork }
                         var artworkTrack = track
@@ -375,7 +383,7 @@ final class NativeMixHost {
                     self?.work.async { [weak self] in
                         guard let self else { return }
                         if self.initialTicket === ticket { self.initialTicket = nil; self.initialConfig = [:] }
-                        self.reply(completion, .failure(error))
+                        self.reply(replyOnce, .failure(error))
                     }
                 }
             }

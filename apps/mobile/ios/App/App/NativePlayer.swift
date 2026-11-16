@@ -441,6 +441,11 @@ struct NativePlayerView: View {
         .sheet(isPresented: Binding(get: { !model.playlistTarget.isEmpty }, set: { if !$0 { model.playlistTarget = [] } })) {
             if let store = NativeShellStore.shared {
                 NativePlaylistPicker(tracks: model.playlistTarget).environmentObject(store)
+            } else {
+                NavigationStack {
+                    Text("Медиатека недоступна").foregroundStyle(.secondary)
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { model.playlistTarget = [] } } }
+                }
             }
         }
         .onAppear {

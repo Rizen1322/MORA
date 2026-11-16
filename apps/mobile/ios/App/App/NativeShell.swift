@@ -772,6 +772,36 @@ final class NativeShellStore: ObservableObject {
             }
         }
         network.start(queue: DispatchQueue(label: "ru.mora.network"))
+        NativeQueueController.shared.onStateChange = { [weak self] in
+            self?.syncQueueControllerState()
+        }
+    }
+
+    private func syncQueueControllerState() {
+        let qc = NativeQueueController.shared
+        self.queue = qc.entries.compactMap { NativeQueuedTrack(["entryId": $0.entryId, "trackId": $0.trackId]) }
+        self.ui.playback.shuffle = qc.shuffle
+        self.ui.playback.repeatMode = qc.repeatMode
+        self.ui.playback.automix = qc.automixEnabled
+        self.ui.playback.canShuffle = qc.entries.count > 1
+        self.ui.wave.loading = qc.waveLoading
+        self.ui.wave.error = qc.waveError
+        self.ui.wave.active = qc.waveSource.flatMap(NativeWaveSource.init(rawValue:))
+        self.ui.wave.playing = qc.isWave && (player.playing || host?.active == true)
+        if let cur = qc.currentEntry, let track = byId[cur.trackId] {
+            var nowDict: [String: Any] = [
+                "id": track.id,
+                "entryId": cur.entryId,
+                "title": track.title,
+                "artist": track.artist,
+                "duration": track.duration,
+                "position": player.position,
+                "playing": player.playing,
+                "label": qc.context.label,
+            ]
+            if let cover = track.cover { nowDict["cover"] = cover }
+            self.ui.now = NativeNow(nowDict)
+        }
     }
 
     /// A snapshot from the page (main thread). Returns whether the shell is on screen.
@@ -886,7 +916,7 @@ final class NativeShellStore: ObservableObject {
         }
     }
 
-    @MainActor private func executeNativePlaybackCommand(_ name: String, _ args: [String: Any]) async throws -> Bool {
+    @MainActor func executeNativePlaybackCommand(_ name: String, _ args: [String: Any]) async throws -> Bool {
         let qc = NativeQueueController.shared
         switch name {
         case "wave":
@@ -898,10 +928,19 @@ final class NativeShellStore: ObservableObject {
             guard !artist.isEmpty else { return true }
             try await qc.startArtistRadio(artist: artist, tracks: Array(byId.values))
             return true
+        case "queue":
+            let ids = (args["ids"] as? [String] ?? []).filter { !$0.isEmpty }
+            guard !ids.isEmpty else { return true }
+            try await qc.enqueue(trackIds: ids, next: args["next"] as? Bool == true)
+            show(args["next"] as? Bool == true ? "Сыграет следующим" : "Добавлено в очередь")
+            return true
         case "toggle":
             try await qc.command("toggle")
             return true
         case "next":
+            if let ifId = args["ifTrackId"] as? String, !ifId.isEmpty {
+                guard qc.isWave, qc.currentEntry?.trackId == ifId else { return true }
+            }
             try await qc.command("nexttrack")
             return true
         case "playerCommand":
@@ -1092,6 +1131,7 @@ final class NativeShellStore: ObservableObject {
     }
 
     @MainActor func nativePlaybackChanged(_ state: [String: Any], ended: Bool) {
+        NativeQueueController.shared.syncFromHost(state)
         guard UIApplication.shared.applicationState != .active else { return }
         var next = NativePlayerState(state)
         if ended { next.playing = false }

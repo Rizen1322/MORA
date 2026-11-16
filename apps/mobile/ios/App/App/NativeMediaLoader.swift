@@ -125,7 +125,8 @@ final class NativeMediaLoader {
             var requestHeaders = headers
             var expected: Int?
             if let range {
-                let parts = range.split(separator: "@"), count = Int(parts[0]) ?? 0
+                let parts = range.split(separator: "@")
+                guard let first = parts.first, let count = Int(first) else { throw Failure.playlist }
                 if parts.count > 1 { byteOffset = Int(parts[1]) ?? -1 }
                 guard count > 0, byteOffset >= 0, count <= 128 * 1024 * 1024 else { throw Failure.playlist }
                 requestHeaders["Range"] = "bytes=\(byteOffset)-\(byteOffset + count - 1)"; expected = count; byteOffset += count
