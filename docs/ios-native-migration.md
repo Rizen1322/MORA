@@ -178,3 +178,6 @@ macOS: workflow `.github/workflows/ios.yml` компилирует отдель�
 - `/wave` и шторка `waveSettings` собираются `NativeWaveState` из `GET /api/settings` и `GET /api/providers/yandex/wave/settings`; запись параметров идёт `PUT /api/settings` (`set`, `yandexSeed`).
 - Срез очереди и позиция станции (`queue`, `station.index/count`) добавлены в состояние оболочки: «На подходе» и `jump` используют абсолютные индексы.
 - Идентификаторы каталога кодируются строгим unreserved-набором, чтобы данные провайдера не добавляли сегменты пути.
+- `/wave` в оболочке открывает шторку настроек, поэтому построитель страницы волны проверяется прямым вызовом в UI-прогоне.
+
+Проверки `4e9e147`: self-checks `native-catalog` и `native-wave-settings` прошли; [полный прогон 43906182234](https://github.com/Rizen1322/MORA/actions/runs/43906182234) **прошёл** целиком (Release IPA, `verify-ipa.cjs`, Swift/JSC self-checks, Rust MIR, DSP, подготовка медиа, фоновый host и запуск в симуляторе); [UI-прогон 43917836831](https://github.com/Rizen1322/MORA/actions/runs/43917836831) **прошёл** (`status: passed`): каталог отрисован без описаний страницы, шторка волны и построитель страницы волны работают. Проверенная [IPA `4e9e147`](../builds/ios-1.0.42-4e9e147/MORA-unsigned.ipa) сохранена локально. SHA-256: `246c92af15da5d3f99b4d9ff60abd97467fa07f920923cdc189d00d38fb98f22`.
