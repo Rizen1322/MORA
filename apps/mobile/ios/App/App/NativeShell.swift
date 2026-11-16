@@ -196,16 +196,12 @@ extension MoraRootViewController {
             try require(FileManager.default.fileExists(atPath: folder.appendingPathComponent("native-splash.png").path), "Cold-launch native splash screenshot missing")
             report["splash"] = "Native launch splash (NativeSplash.swift) captured from the window"
             let web = shell.webView!
-            _ = try await web.evaluateJavaScript("window.__waveOriginal=window.moraNativeUi;window.__waveSource=null;window.moraNativeUi=async(n,a)=>{if(n==='wave'){window.__waveSource=a.source;return;}return window.__waveOriginal(n,a);};0")
-            NativeDeepLink.open(URL(string: "mora://wave?source=yandex")!)
-            var waveLinkPassed = false
-            for _ in 0..<40 {
-                if try await web.evaluateJavaScript("window.__waveSource") as? String == "yandex" { waveLinkPassed = true; break }
-                try await Task.sleep(for: .milliseconds(250))
-            }
-            try require(waveLinkPassed, "Wave deep link lost selected source")
-            _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__waveOriginal;0")
-            report["waveLink"] = "mora://wave?source=yandex reached the wave command"
+            // Wave and playback commands are native since stage 4; the deep link exercises the native router.
+            NativeDeepLink.open(URL(string: "mora://liked")!)
+            try await wait { self.shell.path == "/liked" }
+            report["waveLink"] = "mora://liked reached the native router without the page"
+            shell.go("/")
+            try await wait { self.shell.ui.path == "/" }
             try await wait { self.shell.sharedLibrary }
             _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='backup'||n==='page'&&/^#\\/(settings|downloads|sound|backups|sources|import|yandex-playlists|smart-playlists|smart-playlist|duplicates|statistics|diagnostics|wave)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(n+':'+location.hash+':'+JSON.stringify(a||{}));throw Error('Native screen requested the page');}return window.__nativePagesOriginal(n,a);};0")
             let originalSettings = try await NativeServerApp.request("GET", "/api/settings")
