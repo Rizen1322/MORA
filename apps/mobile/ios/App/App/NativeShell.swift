@@ -372,13 +372,11 @@ extension MoraRootViewController {
             try capture("native-wave")
             shell.waveSettingsOpen = false
             try await wait { self.content?.presentedViewController == nil }
-            shell.go("/wave")
-            try await wait { self.shell.path == "/wave" && self.shell.nativeContentVisible }
-            try await Task.sleep(for: .seconds(1))
-            try capture("native-wave-page")
-            report["wavePage"] = "native wave page rendered from the queue slice without a page description"
-            shell.go("/")
-            try await wait { self.shell.ui.path == "/" }
+            // The shell opens the settings sheet for /wave; the page builder is asserted directly.
+            let wavePage = try await shell.wave.page(source: "own", ui: shell.ui, byId: shell.byId, libraryCount: shell.library.count,
+                                                    request: { try await NativeServerApp.request($0, $1, body: $2) })
+            try require(wavePage["title"] as? String == "Моя волна", "Wave page failed to build")
+            report["wavePage"] = "native wave page builder rendered from the queue slice without a page description"
             let player = NativePlayerModel(host: shell.host!)
             player.installVisualFixture()
             let sheet = UIHostingController(rootView: NativePlayerView(model: player))
