@@ -147,8 +147,8 @@ final class NativeQueuePreparation: @unchecked Sendable {
                 let pcm = folder.appendingPathComponent("\(fileKey).f32le")
                 var committed = false, created = false
                 let itemTicket = NativePreparationTicket()
-                lock.lock(); item = itemTicket; lock.unlock()
-                defer { lock.lock(); if item === itemTicket { item = nil }; lock.unlock() }
+                lock.lock(); self.item = itemTicket; lock.unlock()
+                defer { lock.lock(); if self.item === itemTicket { self.item = nil }; lock.unlock() }
                 do {
                     defer {
                         try? FileManager.default.removeItem(at: downloaded)
