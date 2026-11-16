@@ -73,7 +73,12 @@ final class NativeQueuePreparation: @unchecked Sendable {
         if !keepAnalysis { analysis.cancel() }
     }
     /// The host started the song still downloading: its download no longer stops with this job.
-    func detach() -> NativePreparationTicket { lock.lock(); defer { item = nil; lock.unlock() }; return item ?? NativePreparationTicket() }
+    func detach() -> NativePreparationTicket {
+        lock.lock(); defer { lock.unlock() }
+        let current = item ?? NativePreparationTicket()
+        item = nil
+        return current
+    }
     /// Downloads and decodes one song. A progressive source offers itself through early() once
     /// 4 s are decoded; when the host takes it (owned) it receives grow() up to the final length.
     static func produce(_ source: [String: Any], loader: NativeMediaLoader, folder: URL, downloaded: URL, pcm: URL,
