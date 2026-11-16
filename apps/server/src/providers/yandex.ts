@@ -339,7 +339,7 @@ export class YandexProvider implements Provider {
       const seen = new Set<string>();
       const items = sequence.slice(0, 100).map((s) => this.item(s.track, m)).filter((item) => {
         const id = item.yandexId.split(':')[0];
-        if (seen.has(id) || excluded.has(id) || this.localReactionFor?.(item.yandexId) === -1) return false;
+        if (seen.has(id) || excluded.has(id) || this.localReactionFor?.(item.yandexId) === -1 || this.localReactionFor?.(id) === -1) return false;
         seen.add(id);
         return true;
       });

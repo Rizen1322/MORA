@@ -134,7 +134,10 @@ final class NativeQueuePreparation: @unchecked Sendable {
         let loop = manifest["loopItems"] as? [[String: Any]] ?? []
         configure(remaining: raw.count, loopCount: loop.count)
         var before = previous, previousPCM = seed
-        if let frames = seed["totalFrames"] as? Int { before["duration"] = Double(frames) / 48000 }
+        if let frames = seed["totalFrames"] as? Int {
+            let est = seed["growing"] as? Bool == true ? (seed["estimatedFrames"] as? Int ?? frames) : frames
+            before["duration"] = Double(max(frames, est)) / 48000
+        }
         do {
             while !ticket.cancelled {
                 if cursor >= batch.count {
@@ -185,7 +188,8 @@ final class NativeQueuePreparation: @unchecked Sendable {
                     var next = item
                     next["id"] = item["trackId"]; next["duration"] = Double(frames) / 48000
                     var track = describe(frames)
-                    if let reserve = NativeMixTimeline.reserve(before: before, next: next, frames: frames, settings: settings) {
+                    if !(previousPCM["growing"] as? Bool == true && (before["duration"] as? Double ?? 0) < 15),
+                       let reserve = NativeMixTimeline.reserve(before: before, next: next, frames: frames, settings: settings) {
                         track.merge(reserve) { _, new in new }
                     }
                     if !owned { committed = await accept(at, track) }

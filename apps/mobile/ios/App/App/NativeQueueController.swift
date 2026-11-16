@@ -30,6 +30,7 @@ import Foundation
     private var activePlayId: Int?
     private var playStartedAt = Date()
     private var yandexSessionId: String?
+    private var yandexQueueIds: [String] = []
     private var toppingUpWave = false
     private var syncTask: Task<Void, Never>?
 
@@ -43,6 +44,7 @@ import Foundation
         if !keepWave {
             waveSource = nil
             yandexSessionId = nil
+            yandexQueueIds = []
             waveError = nil
         }
         var queue = trackIds.map { Entry(entryId: UUID().uuidString, trackId: $0) }
@@ -200,15 +202,20 @@ import Foundation
         defer { waveLoading = false; onStateChange?() }
 
         if source == "yandex" && !offline {
-            let res = try await NativeServerApp.request("POST", "/api/providers/yandex/wave", body: ["count": 2])
-            yandexSessionId = res["session"] as? String
+            let res = try await NativeServerApp.request("POST", "/api/providers/yandex/wave", body: ["count": 2, "queue": Array(yandexQueueIds.suffix(100))])
+            yandexSessionId = (res["sessionId"] as? String) ?? (res["session"] as? String)
             let items = res["items"] as? [[String: Any]] ?? []
             var ids: [String] = []
             for item in items {
-                if let tid = item["trackId"] as? String, !tid.isEmpty { ids.append(tid) }
+                if let yid = item["yandexId"] as? String, !yid.isEmpty, !yandexQueueIds.contains(yid) { yandexQueueIds.append(yid) }
+                let tid: String?
+                if let existing = item["trackId"] as? String, !existing.isEmpty { tid = existing }
                 else if let track = item["track"] as? [String: Any] {
                     let imp = try? await NativeServerApp.request("POST", "/api/providers/yandex/import", body: ["track": track])
-                    if let tid = imp?["trackId"] as? String { ids.append(tid) }
+                    tid = imp?["trackId"] as? String
+                } else { tid = nil }
+                if let tid, (NativeShellStore.shared?.reaction(tid) ?? 0) >= 0, !ids.contains(tid) {
+                    ids.append(tid)
                 }
             }
             guard !ids.isEmpty else {
@@ -287,8 +294,12 @@ import Foundation
             sessionId = begun["id"] as? String
         }
         guard let sid = sessionId, rev == revision else { return }
+        let resolved = try await resolveUploadSources([item], sessionId: sid)
+        guard let preparedItem = resolved.first, rev == revision else {
+            throw NSError(domain: "NativeQueue", code: 5, userInfo: [NSLocalizedDescriptionKey: "Файл трека недоступен"])
+        }
         let config: [String: Any] = ["sampleRate": 48000.0, "position": 0.0, "paused": paused, "gainDb": 0.0]
-        _ = try await hostReply { host.prepareStart(id: sid, item: item, config: config, completion: $0) }
+        _ = try await hostReply { host.prepareStart(id: sid, item: preparedItem, config: config, completion: $0) }
         guard rev == revision else { return }
 
         beginPlay(entry)
@@ -323,7 +334,9 @@ import Foundation
             "nativeFiles": nativeFiles,
         ]), rev == revision else { return }
 
-        let items = manifest["items"] as? [[String: Any]] ?? []
+        let rawItems = manifest["items"] as? [[String: Any]] ?? []
+        let items = (try? await resolveUploadSources(rawItems, sessionId: sid)) ?? rawItems
+        guard rev == revision else { return }
         let upcomingIds = Set(upcoming.map(\.entryId))
         let futureItems = items.filter { upcomingIds.contains($0["entryId"] as? String ?? "") }
         let loopItems = items.filter { !upcomingIds.contains($0["entryId"] as? String ?? "") }
@@ -344,17 +357,21 @@ import Foundation
         defer { toppingUpWave = false }
         let existing = Set(entries.map(\.trackId))
         if waveSource == "yandex" {
-            var yBody: [String: Any] = ["count": 2]
+            var yBody: [String: Any] = ["count": 2, "queue": Array(yandexQueueIds.suffix(100))]
             if let yandexSessionId { yBody["session"] = yandexSessionId }
             guard let res = try? await NativeServerApp.request("POST", "/api/providers/yandex/wave", body: yBody) else { return }
-            if let s = res["session"] as? String { yandexSessionId = s }
+            if let s = (res["sessionId"] as? String) ?? (res["session"] as? String) { yandexSessionId = s }
             let items = res["items"] as? [[String: Any]] ?? []
             var newIds: [String] = []
             for item in items {
-                if let tid = item["trackId"] as? String, !existing.contains(tid) { newIds.append(tid) }
+                if let yid = item["yandexId"] as? String, !yid.isEmpty, !yandexQueueIds.contains(yid) { yandexQueueIds.append(yid) }
+                let tid: String?
+                if let existingId = item["trackId"] as? String, !existingId.isEmpty { tid = existingId }
                 else if let track = item["track"] as? [String: Any],
-                        let imp = try? await NativeServerApp.request("POST", "/api/providers/yandex/import", body: ["track": track]),
-                        let tid = imp["trackId"] as? String, !existing.contains(tid) {
+                        let imp = try? await NativeServerApp.request("POST", "/api/providers/yandex/import", body: ["track": track]) {
+                    tid = imp["trackId"] as? String
+                } else { tid = nil }
+                if let tid, !existing.contains(tid), !newIds.contains(tid), (NativeShellStore.shared?.reaction(tid) ?? 0) >= 0 {
                     newIds.append(tid)
                 }
             }
@@ -413,6 +430,36 @@ import Foundation
         if let cid = context.id { ctx["id"] = cid }
         let body: [String: Any] = ["queue": q, "index": index, "context": ctx]
         Task { _ = try? await NativeServerApp.request("PUT", "/api/queue", body: body) }
+    }
+
+    private func resolveUploadSources(_ items: [[String: Any]], sessionId sid: String) async throws -> [[String: Any]] {
+        let uploadIndices = items.indices.filter { ($0 >= 0) && ((items[$0]["source"] as? [String: Any])?["kind"] as? String == "upload") }
+        var keys: [Int] = []
+        if !uploadIndices.isEmpty {
+            let reserved = try await hostReply { NativeMixHost.shared.reserveSources(id: sid, count: uploadIndices.count, completion: $0) }
+            keys = reserved["keys"] as? [Int] ?? []
+        }
+        var out = items
+        var keyCursor = 0
+        for i in out.indices {
+            if let tid = out[i]["trackId"] as? String, ((out[i]["duration"] as? NSNumber)?.doubleValue ?? 0) <= 0,
+               let d = NativeShellStore.shared?.byId[tid]?.duration, d > 0 {
+                out[i]["duration"] = d
+            }
+            guard let source = out[i]["source"] as? [String: Any], source["kind"] as? String == "upload" else { continue }
+            guard keyCursor < keys.count else { continue }
+            let key = keys[keyCursor]; keyCursor += 1
+            let tid = source["trackId"] as? String ?? (out[i]["trackId"] as? String ?? "")
+            let url: URL? = (source["serverPath"] as? String).flatMap { NativeMediaLoader.sharedFile($0, root: NativeServerApp.root) }
+                ?? NativeDownloadManager.shared.localFile(tid)
+            guard let url else { continue }
+            let reply = try await hostReply { NativeMixHost.shared.sourceFromDownload(id: sid, key: key, file: url, completion: $0) }
+            if reply["found"] as? Bool == true {
+                out[i]["source"] = ["kind": "local", "file": key]
+                out[i]["file"] = key
+            }
+        }
+        return out.filter { ($0["source"] as? [String: Any])?["kind"] as? String != "upload" }
     }
 
     private func downloadedIds(for trackIds: [String]) -> [String] {
