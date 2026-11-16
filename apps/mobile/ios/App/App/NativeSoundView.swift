@@ -5,8 +5,11 @@ struct NativeSoundView: View {
     @EnvironmentObject private var store: NativeShellStore
     @State private var sound: NativeSoundState?
     @State private var draft: [Int: Double] = [:]
+    @State private var pendingEnabled: Bool?
+    @State private var pendingPreset: Int?
     @State private var editing = false
     @State private var busy = false
+    @State private var loading = false
     @State private var failure: String?
 
     var body: some View {
@@ -39,18 +42,20 @@ struct NativeSoundView: View {
                 await load()
                 while !Task.isCancelled {
                     do { try await Task.sleep(for: .seconds(10)) } catch { return }
-                    await load()
+                    await load(silent: true)
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in Task { await load() } }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in Task { await load(silent: true) } }
         }
     }
     private func controls(_ sound: NativeSoundState) -> some View {
         Section {
-            Toggle("Эквалайзер", isOn: Binding(get: { sound.enabled }, set: { save(.enabled($0)) }))
+            Toggle("Эквалайзер", isOn: Binding(get: { pendingEnabled ?? sound.enabled }, set: { save(.enabled($0)) }))
                 .accessibilityIdentifier("native-sound-enabled")
-            Picker("Пресет", selection: Binding(get: { sound.selectedPreset ?? -1 }, set: { index in
+            Picker("Пресет", selection: Binding(get: { pendingPreset ?? sound.selectedPreset ?? -1 }, set: { index in
                 guard sound.presets.indices.contains(index) else { return }
+                pendingPreset = index
+                pendingEnabled = true
                 save(.preset(sound.presets[index]))
             })) {
                 if sound.selectedPreset == nil { Text("Свой").tag(-1) }
@@ -75,10 +80,10 @@ struct NativeSoundView: View {
             .accessibilityIdentifier("native-sound-band-\(index)")
         }.disabled(busy)
     }
-    @MainActor private func load() async {
-        guard !busy, !editing else { return }
-        busy = true
-        defer { busy = false }
+    @MainActor private func load(silent: Bool = false) async {
+        guard !busy, !loading, !editing else { return }
+        if silent { loading = true } else { busy = true }
+        defer { if silent { loading = false } else { busy = false } }
         do {
             let response = try await NativeServerApp.request("GET", "/api/settings")
             guard !Task.isCancelled else { return }
@@ -90,9 +95,10 @@ struct NativeSoundView: View {
     }
     private func save(_ edit: NativeSoundState.Edit) {
         guard !busy, sound != nil else { return }
+        if case .enabled(let enabled) = edit { pendingEnabled = enabled }
         busy = true; failure = nil
         Task { @MainActor in
-            defer { busy = false; draft = [:] }
+            defer { busy = false; draft = [:]; pendingEnabled = nil; pendingPreset = nil }
             do {
                 let latest = try await NativeServerApp.request("GET", "/api/settings")
                 let state = try NativeSoundState(latest)

@@ -36,6 +36,7 @@ final class NativePlayerModel: ObservableObject {
     @Published var actionError: String?
     @Published private(set) var banner: String?
     @Published private(set) var offline = false
+    @Published var playlistTarget: [NativeTrack] = []
     /// When `state.position` was read: the scrubber runs the clock on from there between polls.
     private(set) var receivedAt = Date()
     weak var controller: UIViewController?
@@ -204,6 +205,13 @@ final class NativePlayerModel: ObservableObject {
         NativeShellStore.shared?.presentVersions(id: state.trackId, from: controller)
     }
 
+    func addToPlaylist() {
+        guard !state.trackId.isEmpty else { return }
+        let track = NativeShellStore.shared?.byId[state.trackId]
+            ?? NativeTrack(["id": state.trackId, "title": state.title, "artist": state.artist, "duration": state.duration])
+        if let track { playlistTarget = [track] }
+    }
+
     /// The page owns the queue (lib/native-ui.ts `queueEdit`); its next snapshot redraws the list.
     func editQueue(_ action: String, _ entry: String, after: String? = nil) {
         guard let store = NativeShellStore.shared else { return }
@@ -346,6 +354,7 @@ struct NativePlayerView: View {
                     .accessibilityHidden(true)
                 Spacer()
                 Menu {
+                    Button("Добавить в плейлист", systemImage: "text.badge.plus") { model.addToPlaylist() }.disabled(s.trackId.isEmpty)
                     Button("Другая версия", systemImage: "arrow.triangle.swap") { model.versions() }
                     Button("Перейти к исполнителю", systemImage: "music.mic") { model.open("artist") }
                     Button("Перейти к альбому", systemImage: "square.stack") { model.open("album") }.disabled(model.albumPath == nil)
@@ -370,7 +379,7 @@ struct NativePlayerView: View {
                 metadata.matchedGeometryEffect(id: "metadata", in: playerLayout)
             }
             NativeScrubber(state: s, receivedAt: model.receivedAt, pending: model.scrub) { model.seek(to: $0) }
-                .id(s.entryId).padding(.top, 18)
+                .padding(.top, 18)
             transport(playing: s.playing).padding(.vertical, 12)
             Spacer(minLength: 8)
             NativeSystemVolume().frame(height: 32).padding(.top, 12)
@@ -406,6 +415,11 @@ struct NativePlayerView: View {
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.48, dampingFraction: 0.86), value: queueOpen)
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
         .alert("Не удалось выполнить действие", isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(model.actionError ?? "") }
+        .sheet(isPresented: Binding(get: { !model.playlistTarget.isEmpty }, set: { if !$0 { model.playlistTarget = [] } })) {
+            if let store = NativeShellStore.shared {
+                NativePlaylistPicker(tracks: model.playlistTarget).environmentObject(store)
+            }
+        }
         .onAppear {
             model.start()
             #if DEBUG
@@ -491,10 +505,10 @@ struct NativePlayerView: View {
             LinearGradient(colors: [Color(red: 0.10, green: 0.24, blue: 0.17), .moraBackground], startPoint: .top, endPoint: .bottom)
             if let image = model.artwork {
                 Image(uiImage: image).resizable().scaledToFill().blur(radius: 60).opacity(0.35)
-                    .id(model.state.entryId).transition(.opacity)
+                    .transition(.opacity)
             }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: model.state.entryId)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: model.artwork.map(ObjectIdentifier.init))
     }
 
     private func cover(playing: Bool) -> some View {
@@ -517,9 +531,8 @@ struct NativePlayerView: View {
                             .accessibilityHidden(true)
                         }
                     }
-                .id(showLyrics ? "lyrics" : model.state.entryId)
                 .transition(.opacity)
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: model.state.entryId)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: model.artwork.map(ObjectIdentifier.init))
             }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(0.6), radius: playing ? 30 : 14, y: playing ? 20 : 10)
@@ -710,7 +723,6 @@ private struct NativeQueueContent: View {
                 }
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-                .transition(.opacity.combined(with: .offset(y: 10)))
             }
             // Drag to reorder: the moved entry goes after the row above its new place (or after the current track).
             .onMove { from, to in
@@ -723,13 +735,13 @@ private struct NativeQueueContent: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 0)
-        .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.3), value: upcoming.map(\.id))
     }
 }
 
 
 private struct NativeQueueModes: View {
     @ObservedObject var model: NativePlayerModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         HStack(spacing: 10) {
             mode("shuffle", symbol: "shuffle", label: "Перемешать", on: model.modes.shuffle, disabled: !model.modes.canShuffle)
@@ -737,7 +749,7 @@ private struct NativeQueueModes: View {
             mode("automix", symbol: "waveform", label: "AutoMix", on: model.modes.automix)
         }
         .disabled(model.changingMode)
-        .animation(.easeInOut(duration: 0.2), value: model.modes)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.modes)
     }
     private func mode(_ mode: String, symbol: String, label: String, on: Bool, disabled: Bool = false) -> some View {
         Button { model.playbackMode(mode) } label: {
@@ -790,12 +802,35 @@ private struct NativeScrubber: View {
             VStack(spacing: 6) {
                 GeometryReader { geo in
                     let width = geo.size.width
+                    let barHeight: CGFloat = drag == nil ? 6 : 10
                     let x = width * min(1, max(0, shown / duration))
+                    let mixX = state.mixStart.map { width * min(1, max(0, $0 / duration)) }
+                    let mixW = state.mixStart.map { start -> CGFloat in
+                        let end = state.mixLength > 0 ? min(duration, start + state.mixLength) : duration
+                        return max(2, width * min(1, max(0, (end - start) / duration)))
+                    }
                     ZStack(alignment: .leading) {
-                        Capsule().fill(.white.opacity(0.18)).frame(height: drag == nil ? 6 : 10)
-                        Capsule().fill(.white.opacity(state.blending ? 0.95 : 0.65))
-                            .frame(width: x, height: drag == nil ? 6 : 10)
-                            .shadow(color: .white.opacity(state.blending ? 0.65 : 0), radius: 5)
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(.white.opacity(0.18)).frame(height: barHeight)
+                            if let mixX, let mixW {
+                                Rectangle()
+                                    .fill(Color.moraMint.opacity(state.blending ? 0.75 : 0.35))
+                                    .frame(width: mixW, height: barHeight)
+                                    .offset(x: mixX)
+                            }
+                            Capsule().fill(.white.opacity(state.blending ? 0.95 : 0.65))
+                                .frame(width: x, height: barHeight)
+                                .shadow(color: .white.opacity(state.blending ? 0.65 : 0), radius: 5)
+                        }
+                        .frame(width: width, height: barHeight)
+                        .clipShape(Capsule())
+                        if let mixX {
+                            Capsule()
+                                .fill(Color.moraMint)
+                                .frame(width: 2.5, height: drag == nil ? 11 : 15)
+                                .offset(x: min(max(0, mixX - 1.25), max(0, width - 2.5)))
+                                .shadow(color: Color.moraMint.opacity(0.5), radius: 3)
+                        }
                         if drag != nil {
                             Circle().fill(.white).frame(width: 20, height: 20).offset(x: x - 10)
                         }

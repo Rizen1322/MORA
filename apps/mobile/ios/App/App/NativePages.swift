@@ -51,9 +51,12 @@ struct NativePageView: View {
     var waveSource: Binding<NativeWaveSource>? = nil
     @EnvironmentObject private var store: NativeShellStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page: NativePage?
     @State private var failure: String?
     @State private var form: [String: String] = [:]
+    @State private var pendingToggles: [String: Bool] = [:]
+    @State private var pendingChoices: [String: String] = [:]
     @State private var query = ""
     @State private var running = false
     @State private var reload = 0
@@ -169,8 +172,8 @@ struct NativePageView: View {
                 Button("Готово") { run(p.act, ["value": promptText]) }
                 Button("Отмена", role: .cancel) {}
             }
-            .onChange(of: store.path) { page = nil; failure = nil; form = [:]; query = "" }
-            .onChange(of: waveSource?.wrappedValue) { page = nil; failure = nil }
+            .onChange(of: store.path) { page = nil; failure = nil; form = [:]; pendingToggles = [:]; pendingChoices = [:]; query = "" }
+            .onChange(of: waveSource?.wrappedValue) { failure = nil; pendingToggles = [:]; pendingChoices = [:] }
             .safeAreaInset(edge: .bottom) {
                 if waveSource != nil, let text = store.banner {
                     Text(text).font(.footnote).padding().frame(maxWidth: .infinity)
@@ -259,17 +262,26 @@ struct NativePageView: View {
             .accessibilityElement(children: .combine)
 
         case .toggle(let title, let detail, let on, let act, let disabled):
-            Toggle(isOn: Binding(get: { on }, set: { run(act, ["value": $0]) })) { labelled(title, detail) }
+            let key = "\(act.name)|\(act.args["key"] as? String ?? title)"
+            Toggle(isOn: Binding(get: { pendingToggles[key] ?? on }, set: { newValue in
+                pendingToggles[key] = newValue
+                run(act, ["value": newValue])
+            })) { labelled(title, detail) }
                 .disabled(disabled || running)
 
         case .choice(let title, let detail, let value, let options, let act, let disabled):
+            let choiceKey = "\(act.name)|\(act.args["key"] as? String ?? title)"
+            let current = pendingChoices[choiceKey] ?? value
             if waveSource != nil {
                 VStack(alignment: .leading, spacing: 12) {
                     labelled(title, detail)
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], spacing: 8) {
                         ForEach(options.indices, id: \.self) { index in
-                            let selected = options[index].value == value
-                            Button { run(act, ["value": options[index].value]) } label: {
+                            let selected = options[index].value == current
+                            Button {
+                                pendingChoices[choiceKey] = options[index].value
+                                run(act, ["value": options[index].value])
+                            } label: {
                                 Text(options[index].label).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
                                     .frame(maxWidth: .infinity, minHeight: 44).padding(.horizontal, 6).padding(.vertical, 4)
                                     .foregroundStyle(selected ? Color.moraMint : Color.white.opacity(0.8))
@@ -279,9 +291,12 @@ struct NativePageView: View {
                         }
                     }.disabled(disabled || running)
                 }.padding(.vertical, 6)
-                    .animation(UIAccessibility.isReduceMotionEnabled ? nil : .easeInOut(duration: 0.2), value: value)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: current)
             } else {
-                Picker(selection: Binding(get: { value }, set: { run(act, ["value": $0]) })) {
+                Picker(selection: Binding(get: { current }, set: { newValue in
+                    pendingChoices[choiceKey] = newValue
+                    run(act, ["value": newValue])
+                })) {
                     ForEach(options.indices, id: \.self) { i in Text(options[i].label).tag(options[i].value) }
                 } label: { labelled(title, detail) }
                     .pickerStyle(.menu)
@@ -525,6 +540,16 @@ struct NativePageView: View {
                 value = try await store.diagnostics.page(store.path, name: { store.byId[$0]?.title }, automix: store.ui.playback.automix,
                                                          request: { try await NativeServerApp.request($0, $1, body: $2) })
             }
+            else if let waveSource, store.sharedLibrary {
+                value = try await store.wave.settingsPage(waveSource.wrappedValue.rawValue, request: { try await NativeServerApp.request($0, $1, body: $2) })
+            }
+            else if waveSource == nil, store.sharedLibrary, NativeWaveState.handles(store.path) {
+                value = try await store.wave.page(source: store.waveSource?.rawValue, ui: store.ui, byId: store.byId, libraryCount: store.library.count,
+                                                  request: { try await NativeServerApp.request($0, $1, body: $2) })
+            }
+            else if waveSource == nil, store.sharedLibrary, NativeCatalogState.handles(store.path) {
+                value = try await store.catalog.page(store.path, request: { try await NativeServerApp.request($0, $1, body: $2) })
+            }
             else if waveSource == nil, store.sharedLibrary, NativeShellStore.ownScreens.contains(store.path) {
                 return // the shell already replaced this view with its own screen for that route
             }
@@ -532,6 +557,8 @@ struct NativePageView: View {
             else { value = try await store.call(waveSource == nil ? "page" : "waveSettings", waveSource.map { ["source": $0.wrappedValue.rawValue] } ?? [:]) }
             guard !Task.isCancelled else { return }
             page = NativePage(value)
+            pendingToggles.removeAll()
+            pendingChoices.removeAll()
             failure = nil
         } catch {
             guard !Task.isCancelled else { return }
@@ -581,6 +608,16 @@ struct NativePageView: View {
                 }
                 if store.sharedLibrary, NativeDiagnosticsState.handles(store.path), NativeDiagnosticsState.supports(act.name) {
                     _ = try await store.diagnostics.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2) })
+                    return
+                }
+                if store.sharedLibrary, (waveSource != nil || NativeWaveState.handles(store.path)), NativeWaveState.supports(act.name) {
+                    if let message = try await store.wave.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2) }) {
+                        store.show(message)
+                    }
+                    return
+                }
+                if store.sharedLibrary, NativeCatalogState.handles(store.path), NativeCatalogState.supports(act.name) {
+                    try await store.catalog.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2) })
                     return
                 }
                 if try await store.executeLibraryAction(act.name, args) { return }

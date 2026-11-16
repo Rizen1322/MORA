@@ -47,7 +47,7 @@ export function uiState(s = useApp.getState(), radio = useRadio.getState(), prep
     loaded: s.loaded,
     station: {
       context: ctx ?? 'library', source: ctx === 'yandex-wave' ? 'yandex' : ctx === 'online-radio' ? 'online' : ctx === 'wave' ? 'own' : null,
-      index: 0, position: p.position, contextId: p.context?.id ?? null,
+      index: p.index, count: p.queue.length, position: p.position, contextId: p.context?.id ?? null,
       settings: { mood: s.settings?.wave?.mood ?? 'normal', diversity: s.settings?.wave?.diversity ?? 'balanced', mode: s.settings?.wave?.mode ?? 'normal' },
       tracks: p.queue.slice(p.index, p.index + 50).flatMap(entry => {
         const t = trackOf(entry.trackId);
@@ -67,6 +67,7 @@ export function uiState(s = useApp.getState(), radio = useRadio.getState(), prep
     },
     playback: { shuffle: p.shuffle, repeat: p.repeat, automix: s.settings?.automix.enabled ?? true, canShuffle: !radio.active && !['wave', 'yandex-wave', 'online-radio'].includes(ctx ?? '') },
     now: current ? { id: current.id, entryId: p.queue[p.index]?.entryId, position: p.position, duration: current.duration, title: current.title, artist: current.artist, cover: current.coverUrl, playing, label: p.context?.label ?? '' } : null,
+    queue: p.queue.slice(p.index, p.index + 50).map(({ entryId, trackId }) => ({ entryId, trackId })),
     toast: toast ? { id: toast.id, text: toast.text, kind: toast.kind } : null,
     preparing: catalogPreparation.phase === 'starting' ? catalogPreparation.title : preparing.phase === 'starting' ? preparing.title : null,
   };
@@ -307,7 +308,6 @@ export function startNativeUi(): void {
     if (libraryChanged) state.library = s.order.map((id) => s.tracks.get(id)).filter((t): t is Track => !!t).map(uiTrack);
     if (playlistsChanged) state.playlists = s.playlists.map((p) => ({ id: p.id, name: p.name, count: p.count, cover: p.coverUrl }));
     if (enable) state.enable = true;
-    if (s.player.queue !== queue) state.queue = s.player.queue.map(({ entryId, trackId }) => ({ entryId, trackId }));
     tracks = s.tracks; order = s.order; playlists = s.playlists; queue = s.player.queue; last = key;
     push(state).then(({ shown, nativeContent, launchSplash, libraryInSwift: nativeLibrary }) => {
       if (libraryInSwift !== (nativeLibrary === true)) {

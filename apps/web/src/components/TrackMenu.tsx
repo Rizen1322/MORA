@@ -56,6 +56,9 @@ export function TrackMenu({ track, x, y, onClose, onPlay, extra }: { track: Trac
           >
             <MusicNotesPlus size={18} /> Добавить в плейлист
           </button>
+          <button role="menuitem" onClick={() => { onClose(); openVersionPanel({ trackId: track.id, title: track.title, artist: track.artist, duration: track.duration }); }}>
+            <Swap size={18} /> Заменить трек
+          </button>
           <hr />
           <button role="menuitem" onClick={(e) => { e.stopPropagation(); setSection('discover'); }}><Radio size={18} /> Найти похожее <CaretRight size={16} style={{ marginLeft: 'auto' }} /></button>
           <button role="menuitem" onClick={(e) => { e.stopPropagation(); setSection('info'); }}><VinylRecord size={18} /> Сведения о треке <CaretRight size={16} style={{ marginLeft: 'auto' }} /></button>
@@ -67,9 +70,6 @@ export function TrackMenu({ track, x, y, onClose, onPlay, extra }: { track: Trac
           </button>
           <button role="menuitem" onClick={() => { onClose(); void startArtistRadio(trackArtistLinks(track)[0]?.name ?? track.artist); }}>
             <Radio size={18} /> Радио по исполнителю
-          </button>
-          <button role="menuitem" onClick={() => { onClose(); openVersionPanel({ trackId: track.id, title: track.title, artist: track.artist, duration: track.duration }); }}>
-            <Swap size={18} /> Найти другую версию
           </button>
           </>}
           {!section && <>

@@ -204,8 +204,16 @@ struct NativeSourcesView: View {
         }
     }
     private func save(_ key: String, _ value: Bool) {
+        guard !busy else { return }
+        let previous = settings
+        settings = try? settings?.replacing("yandex", key, with: value)
         perform {
-            settings = try NativeSettingsState(await request("PUT", "/api/settings", NativeSettingsState.patch("yandex", key, value)))
+            do {
+                settings = try NativeSettingsState(await request("PUT", "/api/settings", NativeSettingsState.patch("yandex", key, value)))
+            } catch {
+                settings = previous
+                throw error
+            }
         }
     }
     private func changeLikes(_ action: String) {

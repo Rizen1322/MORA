@@ -459,7 +459,6 @@ struct NativeTrackRow: View {
     var remove: (title: String, symbol: String, run: () -> Void)? = nil
     /// Set while the list is choosing tracks: a tap toggles this row.
     var selected: Bool? = nil
-    @EnvironmentObject private var store: NativeShellStore
 
     var body: some View {
         Button(action: play) {
@@ -493,13 +492,13 @@ struct NativeTrackRow: View {
         .accessibilityHint(selected != nil ? "Выбрать" : track.ok ? "Играть" : "Файл недоступен")
         .accessibilityAddTraits(selected == true ? .isSelected : [])
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
-            Button { store.queue(track, next: true) } label: { Label("Следующим", systemImage: "text.line.first.and.arrowtriangle.forward") }
+            Button { NativeShellStore.shared?.queue(track, next: true) } label: { Label("Следующим", systemImage: "text.line.first.and.arrowtriangle.forward") }
                 .tint(.moraMint)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button { store.queue(track, next: false) } label: { Label("В очередь", systemImage: "text.append") }
+            Button { NativeShellStore.shared?.queue(track, next: false) } label: { Label("В очередь", systemImage: "text.append") }
                 .tint(.indigo)
-            Button { store.react(track, track.liked ? 0 : 1) } label: {
+            Button { NativeShellStore.shared?.react(track, track.liked ? 0 : 1) } label: {
                 Label(track.liked ? "Убрать" : "Нравится", systemImage: track.liked ? "heart.slash" : "heart")
             }
             .tint(.moraGold)
@@ -511,38 +510,37 @@ struct NativeTrackRow: View {
                 Button(role: .destructive, action: remove.run) { Label(remove.title, systemImage: remove.symbol) }
             }
         }
-        .accessibilityAction(named: "Играть следующим") { store.queue(track, next: true) }
-        .accessibilityAction(named: "Добавить в очередь") { store.queue(track, next: false) }
-        .accessibilityAction(named: track.liked ? "Убрать из любимого" : "Нравится") { store.react(track, track.liked ? 0 : 1) }
+        .accessibilityAction(named: "Играть следующим") { NativeShellStore.shared?.queue(track, next: true) }
+        .accessibilityAction(named: "Добавить в очередь") { NativeShellStore.shared?.queue(track, next: false) }
+        .accessibilityAction(named: track.liked ? "Убрать из любимого" : "Нравится") { NativeShellStore.shared?.react(track, track.liked ? 0 : 1) }
     }
 }
 
 struct NativeTrackActions: View {
     let track: NativeTrack
     let play: () -> Void
-    @EnvironmentObject private var store: NativeShellStore
 
     var body: some View {
         Button(action: play) { Label("Играть", systemImage: "play") }.disabled(!track.ok)
-        Button { store.queue(track, next: true) } label: { Label("Играть следующим", systemImage: "text.line.first.and.arrowtriangle.forward") }.disabled(!track.ok)
-        Button { store.queue(track, next: false) } label: { Label("Добавить в очередь", systemImage: "text.append") }.disabled(!track.ok)
-        Button { store.playlistTarget = [track] } label: { Label("Добавить в плейлист", systemImage: "text.badge.plus") }
+        Button { NativeShellStore.shared?.queue(track, next: true) } label: { Label("Играть следующим", systemImage: "text.line.first.and.arrowtriangle.forward") }.disabled(!track.ok)
+        Button { NativeShellStore.shared?.queue(track, next: false) } label: { Label("Добавить в очередь", systemImage: "text.append") }.disabled(!track.ok)
+        Button { NativeShellStore.shared?.playlistTarget = [track] } label: { Label("Добавить в плейлист", systemImage: "text.badge.plus") }
         Divider()
-        Button { store.react(track, track.liked ? 0 : 1) } label: {
+        Button { NativeShellStore.shared?.react(track, track.liked ? 0 : 1) } label: {
             Label(track.liked ? "Убрать из любимого" : "Нравится", systemImage: track.liked ? "heart.slash" : "heart")
         }
-        Button { store.react(track, track.reaction < 0 ? 0 : -1) } label: {
+        Button { NativeShellStore.shared?.react(track, track.reaction < 0 ? 0 : -1) } label: {
             Label(track.reaction < 0 ? "Убрать «Не нравится»" : "Не нравится", systemImage: "hand.thumbsdown")
         }
         Divider()
         if let url = URL(string: "mora://track/" + track.id) { ShareLink(item: url) { Label("Поделиться треком", systemImage: "square.and.arrow.up") } }
         // The page's version picker takes over the screen (lib/native-ui.ts `versions`); the shell steps aside.
-        Button { store.run("versions", ["id": track.id]) } label: { Label("Заменить трек", systemImage: "arrow.triangle.swap") }
-        Button { store.go("/track-edit/\(track.id)") } label: { Label("Сведения о треке", systemImage: "pencil") }
+        Button { NativeShellStore.shared?.run("versions", ["id": track.id]) } label: { Label("Заменить трек", systemImage: "arrow.triangle.swap") }
+        Button { NativeShellStore.shared?.go("/track-edit/\(track.id)") } label: { Label("Сведения о треке", systemImage: "pencil") }
         if !track.album.isEmpty {
-            Button { store.run("open", ["id": track.id, "to": "album"]) } label: { Label("Перейти к альбому", systemImage: "square.stack") }
+            Button { NativeShellStore.shared?.run("open", ["id": track.id, "to": "album"]) } label: { Label("Перейти к альбому", systemImage: "square.stack") }
         }
-        Button { store.run("open", ["id": track.id, "to": "artist"]) } label: { Label("Перейти к исполнителю", systemImage: "music.mic") }
+        Button { NativeShellStore.shared?.run("open", ["id": track.id, "to": "artist"]) } label: { Label("Перейти к исполнителю", systemImage: "music.mic") }
     }
 }
 
@@ -630,6 +628,7 @@ struct NativeSearchView: View {
     @State private var searching: Set<String> = []
     @State private var recent = UserDefaults.standard.stringArray(forKey: "mora.nativeSearchRecent") ?? []
     @State private var busy = false
+    @State private var playGeneration = 0
     @State private var failure: String?
     private var query: String { store.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var source: String { store.searchSource }
@@ -766,7 +765,7 @@ struct NativeSearchView: View {
                 Text(NativePlayerTime.text(track.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }.frame(minHeight: 56).contentShape(Rectangle()).opacity(track.ok ? 1 : 0.45)
         }
-        .buttonStyle(.plain).disabled(!track.ok || busy).listRowBackground(Color.clear)
+        .buttonStyle(.plain).disabled(!track.ok).listRowBackground(Color.clear)
         .contextMenu {
             actionButton("Играть следующим", "text.line.first.and.arrowtriangle.forward", "next", track, source, session)
             actionButton("В очередь", "text.append", "queue", track, source, session)
@@ -792,20 +791,28 @@ struct NativeSearchView: View {
         Button { act(kind, track: track, source: source, session: session) } label: { Label(title, systemImage: symbol) }
     }
     private func act(_ kind: String, track: NativeTrack, source: String, session: String, playlist: String? = nil) {
-        guard !busy else { return }
-        remember(); busy = true
+        let isPlay = kind == "play"
+        if !isPlay, busy { return }
+        remember()
+        if isPlay { playGeneration &+= 1; UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+        else { busy = true }
+        let generation = playGeneration
         let requested = key, origin = store.path
         Task { @MainActor in
-            defer { busy = false }
+            defer { if !isPlay { busy = false } }
             do {
                 var args: [String: Any] = ["kind": kind, "id": track.id, "session": session]
                 if let playlist { args["playlist"] = playlist }
                 let value = try await store.call("searchAction", args, timeout: 180) as? [String: Any]
+                if isPlay, generation != playGeneration { return }
                 guard key == requested, store.path == origin else { return }
                 if let path = value?["go"] as? String { store.go(path) }
                 if let id = value?["versions"] as? String { store.presentVersions(id: id) }
                 if ["like", "dislike", "save", "playlist"].contains(kind) { await load(source, key: key) }
-            } catch { failure = Self.message(error) }
+            } catch {
+                if isPlay, (generation != playGeneration || NativeShellStore.isCancelled(error)) { return }
+                failure = Self.message(error)
+            }
         }
     }
     private func remember() {

@@ -763,6 +763,46 @@ export const actions: Record<string, (a: Args) => unknown> = {
   setTrackArtwork: async (a) => { await api.updateArtwork(str(a.id), str(a.base64)); await st().loadLibrary(); },
   searchItem: (a) => nativeCatalogCommands.searchAction(a),
   catalogMore: (a) => nativeCatalogCommands.catalogMore(a),
+  catalogPlay: async (a) => {
+    type CatalogTrack = Parameters<typeof api.providerImport>[1] & { provider?: string; reaction?: number };
+    const raw = Array.isArray(a.tracks) ? a.tracks as CatalogTrack[] : [];
+    const ctx = a.context && typeof a.context === 'object' ? a.context as { type?: string; id?: string; label?: string } : {};
+    const context = { type: (ctx.type === 'artist' ? 'artist' : 'album') as 'artist' | 'album', id: str(ctx.id) || undefined, label: str(ctx.label) || 'Каталог' };
+    if (!raw.length) return;
+    const shuffle = a.shuffle === true;
+    const index = shuffle ? Math.floor(Math.random() * raw.length) : Math.max(0, Math.min(raw.length - 1, Number(a.index) || 0));
+    const imported = await Promise.all(raw.map(async (t) => {
+      if (t.libraryTrackId) return t.libraryTrackId;
+      const r = await api.providerImport(t.provider ?? 'yandex', t);
+      return r.trackId;
+    }));
+    await st().loadLibrary();
+    if (shuffle !== controller.state.shuffle) controller.toggleShuffle();
+    return controller.playTracks(imported, index, context);
+  },
+  catalogTrack: async (a) => {
+    type CatalogTrack = Parameters<typeof api.providerImport>[1] & { provider?: string; reaction?: number };
+    const t = a.track as CatalogTrack | undefined;
+    if (!t) throw Error('Трек не найден');
+    const kind = str(a.kind);
+    const trackId = t.libraryTrackId ?? (await api.providerImport(t.provider ?? 'yandex', t)).trackId;
+    if (kind === 'next' || kind === 'queue') {
+      await st().loadLibrary();
+      controller.addToQueue([trackId], kind === 'next');
+      st().toast(kind === 'next' ? 'Сыграет следующим' : 'Добавлено в очередь');
+    } else if (kind === 'like') {
+      const next = (t.reaction ?? 0) > 0 ? 0 : 1;
+      const res = await api.react(trackId, next);
+      st().patchTrack(trackId, { reaction: res.value, reactionSync: res.sync });
+    } else if (kind === 'save') {
+      await api.saveTrack(trackId);
+      await st().loadLibrary();
+      st().toast('Сохранено в медиатеку', 'success');
+    } else if (kind === 'download') {
+      await api.download({ trackId });
+      st().toast('Добавлено в загрузки');
+    }
+  },
   playAll: (a) => {
     const list = ids(a.ids).filter((id) => trackOf(id)?.status === 'ok');
     if (!list.length) return;

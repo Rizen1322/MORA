@@ -159,6 +159,9 @@ struct NativeUiState: Equatable {
     var wave = NativeWave()
     var playback = NativePlaybackModes()
     var now: NativeNow?
+    /// The page sends the queue slice from the current entry, so `stationIndex` gives absolute positions.
+    var queue: [NativeQueuedTrack] = []
+    var stationIndex = 0, stationCount = 0
     var toast: NativeToast?
     var preparing: String?
     var searchQuery: String?, searchSource: String?, searchScope: String?
@@ -178,6 +181,10 @@ struct NativeUiState: Equatable {
         if let toast = value["toast"] as? [String: Any], let id = toast["id"] as? Int, let text = toast["text"] as? String {
             self.toast = NativeToast(id: id, text: text, error: toast["kind"] as? String == "error")
         }
+        queue = (value["queue"] as? [[String: Any]] ?? []).compactMap(NativeQueuedTrack.init)
+        let station = value["station"] as? [String: Any] ?? [:]
+        stationIndex = max(0, (station["index"] as? NSNumber)?.intValue ?? 0)
+        stationCount = max(stationIndex, (station["count"] as? NSNumber)?.intValue ?? stationIndex)
         preparing = value["preparing"] as? String
         let search = value["search"] as? [String: Any] ?? [:]
         if let query = search["q"] as? String { searchQuery = String(query.prefix(200)) }

@@ -183,7 +183,12 @@ import UIKit
             // native screens lay out under the night first, then fade in
             NativeDeepLink.finishSplash()
             NativeShellStore.shared?.objectWillChange.send()
-            UIView.animate(withDuration: 0.3, delay: 0.05, options: [.curveEaseOut]) { self.alpha = 0 } completion: { _ in self.removeFromSuperview() }
+            if UIAccessibility.isReduceMotionEnabled {
+                self.alpha = 0
+                self.removeFromSuperview()
+            } else {
+                UIView.animate(withDuration: 0.3, delay: 0.05, options: [.curveEaseOut]) { self.alpha = 0 } completion: { _ in self.removeFromSuperview() }
+            }
         }
     }
 }

@@ -290,3 +290,43 @@ it('keeps earlier uploads alive during queue edits and bounds metadata over all 
   expect(handoff.mock.calls.at(-1)![0].manifest.retainedSources).toEqual([]);
   expect(handoff.mock.calls.at(-1)![0].manifest.items.map(item => item.entryId)).toEqual(entries.map(e => e.entryId).reverse());
 });
+
+it('does not tear down the native session when a newer startSource supersedes an aborted one', async () => {
+  let releaseFirst!: () => void;
+  const firstPending = new Promise<void>(r => { releaseFirst = r; });
+  const stop = vi.fn(async () => {});
+  const restore = vi.fn();
+  const prepareStart = vi.fn(async ({ item }: { item: { entryId: string; trackId: string } }) => ({
+    ...state,
+    currentTrack: { title: item.trackId, artist: '', file: 0, entryId: item.entryId, trackId: item.trackId, gainDb: 0, totalFrames: 48000 },
+  }));
+  const mix = createNativeMix({
+    ...port(),
+    nativeMixStop: stop,
+    nativeSourceReserve: async ({ count }) => ({ keys: Array.from({ length: count }, (_, i) => i) }),
+    nativeSourceAppend: vi.fn(),
+    nativePrepareStart: prepareStart,
+  }, {
+    prepare: async () => {},
+    restore,
+    sources: async entries => {
+      if (entries[0].entryId === 'e1') await firstPending;
+      return {
+        items: entries.map(e => ({ ...e, title: e.trackId, artist: '', duration: 180, mixingAllowed: true, source: { kind: 'direct' as const, url: 'https://audio.test/song.mp3' } })),
+        previous: { trackId: 'seed', duration: 180, mixingAllowed: true },
+        settings: DEFAULT_AUTOMIX_SETTINGS,
+      };
+    },
+  });
+  const ac1 = new AbortController();
+  const p1 = mix.startSource!({ entryId: 'e1', trackId: 't1' }, { sampleRate: 48000, position: 0, paused: false, gainDb: 0 }, ac1.signal);
+  await vi.waitFor(() => expect(restore).not.toHaveBeenCalled());
+  const p2 = mix.startSource!({ entryId: 'e2', trackId: 't2' }, { sampleRate: 48000, position: 0, paused: false, gainDb: 0 });
+  ac1.abort();
+  releaseFirst();
+  await expect(p1).rejects.toThrow();
+  const s2 = await p2;
+  expect(s2.currentTrack?.entryId).toBe('e2');
+  expect(stop).not.toHaveBeenCalled();
+  expect(restore).not.toHaveBeenCalled();
+});

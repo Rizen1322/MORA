@@ -8,6 +8,7 @@ struct NativeSettingsView: View {
     @State private var settings: NativeSettingsState?
     @State private var confirmed: NativeSettingsState?
     @State private var busy = false
+    @State private var loading = false
     @State private var editingSlider = false
     @State private var failure: String?
     @State private var message: String?
@@ -56,10 +57,10 @@ struct NativeSettingsView: View {
                 await load()
                 while !Task.isCancelled {
                     do { try await Task.sleep(for: .seconds(10)) } catch { return }
-                    await load() // The player and backup restore can change settings while this screen remains open.
+                    await load(silent: true) // The player and backup restore can change settings while this screen remains open.
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in Task { await load() } }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in Task { await load(silent: true) } }
             .task(id: advanced) {
                 guard advanced else { return }
                 while !Task.isCancelled {
@@ -199,10 +200,10 @@ struct NativeSettingsView: View {
     private func integer(_ value: Any?) -> Int { (value as? NSNumber)?.intValue ?? 0 }
     private func megabytes(_ value: Any?) -> String { String(format: "%.0f МБ", ((value as? NSNumber)?.doubleValue ?? 0) / (1024 * 1024)) }
 
-    @MainActor private func load() async {
-        guard !busy, !editingSlider else { return }
-        busy = true
-        defer { busy = false }
+    @MainActor private func load(silent: Bool = false) async {
+        guard !busy, !loading, !editingSlider else { return }
+        if silent { loading = true } else { busy = true }
+        defer { if silent { loading = false } else { busy = false } }
         do {
             let raw = try await NativeServerApp.request("GET", "/api/settings")
             let value = try NativeSettingsState(raw)

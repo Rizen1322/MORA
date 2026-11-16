@@ -31,7 +31,8 @@ final class NativeMediaLoader {
         if kind != "yandex" { for (key, value) in source["headers"] as? [String: String] ?? [:] { request.setValue(value, forHTTPHeaderField: key) } }
         return request
     }
-    func load(_ source: [String: Any], to destination: URL, folder: URL, ticket: NativePreparationTicket) async throws -> URL {
+    func load(_ source: [String: Any], to destination: URL, folder: URL, ticket: NativePreparationTicket,
+              sink: ((Data) -> Void)? = nil) async throws -> URL {
         if ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
         let kind = source["kind"] as? String ?? ""
         if kind == "station" {
@@ -47,8 +48,8 @@ final class NativeMediaLoader {
         let url: URL
         if kind == "yandex" { url = try await yandex(source, ticket: ticket) }
         else { guard let value = source["url"] as? String, let parsed = URL(string: value) else { throw Failure.source }; url = parsed }
-        if kind == "hls" { try await hls(url, headers: headers, to: destination, ticket: ticket, depth: 0) }
-        else { try await http.download(url, to: destination, headers: kind == "yandex" ? [:] : headers, ticket: ticket) }
+        if kind == "hls" { try await hls(url, headers: headers, to: destination, ticket: ticket, depth: 0, sink: sink) }
+        else { try await http.download(url, to: destination, headers: kind == "yandex" ? [:] : headers, ticket: ticket, sink: sink) }
         return destination
     }
     private func yandex(_ source: [String: Any], ticket: NativePreparationTicket) async throws -> URL {
@@ -96,7 +97,8 @@ final class NativeMediaLoader {
         guard let url = URL(string: "\(scheme)://\(host)/get-mp3/\(digest)/\(ts)\(path)"), mediaURL(url, base: base) else { throw Failure.source }
         return url
     }
-    private func hls(_ url: URL, headers: [String: String], to destination: URL, ticket: NativePreparationTicket, depth: Int) async throws {
+    private func hls(_ url: URL, headers: [String: String], to destination: URL, ticket: NativePreparationTicket, depth: Int,
+                     sink: ((Data) -> Void)?) async throws {
         guard depth < 4 else { throw Failure.playlist }
         let bytes = try await http.data(url, headers: headers, limit: 2 * 1024 * 1024, ticket: ticket)
         guard let text = String(data: bytes, encoding: .utf8), text.contains("#EXTM3U") else { throw Failure.playlist }
@@ -106,7 +108,7 @@ final class NativeMediaLoader {
         if !text.contains("#EXTINF:") {
             let media = lines.first { $0.hasPrefix("#EXT-X-MEDIA:") && $0.contains("TYPE=AUDIO") }.flatMap { attributes($0)["URI"] }
             guard let first = media ?? segments.first, let next = URL(string: first, relativeTo: url)?.absoluteURL else { throw Failure.playlist }
-            try await hls(next, headers: headers, to: destination, ticket: ticket, depth: depth + 1); return
+            try await hls(next, headers: headers, to: destination, ticket: ticket, depth: depth + 1, sink: sink); return
         }
         guard text.contains("#EXT-X-ENDLIST"), !segments.isEmpty, segments.count <= 10000 else { throw Failure.playlist }
         let partial = destination.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).hls")
@@ -154,7 +156,7 @@ final class NativeMediaLoader {
                     if let expected = p.expected, data.count != expected { throw Failure.playlist }
                     let audio = p.packed ? try Self.packedAudio(data) : data
                     total += audio.count; guard total <= 128 * 1024 * 1024 else { throw NativeMediaHTTP.Failure.tooLarge }
-                    try file.write(contentsOf: audio)
+                    try file.write(contentsOf: audio); sink?(audio)
                     written += 1
                 }
                 if launched < parts.count {

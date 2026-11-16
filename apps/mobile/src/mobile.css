@@ -672,9 +672,6 @@ html.mora-mobile img { -webkit-user-drag: none; }
   /* Rows answer a press with a slight dip, and a released swipe springs back into place. */
   html.mora-mobile .track-row { transition: background 0.15s, transform 0.45s var(--ios); }
   html.mora-mobile .track-row:active:not(.swiping) { transform: scale(0.985); transition-duration: 0.15s, 80ms; }
-  html.mora-mobile .icon-btn.liked svg { animation: mora-pop 360ms cubic-bezier(0.34, 1.56, 0.64, 1); }
-  /* play/pause icons are swapped elements: each new one pops in */
-  html.mora-mobile :is(.play-circle, .mini-player .icon-btn) svg { animation: mora-icon 200ms ease-out; }
 }
 @keyframes mora-rise { from { opacity: 0; transform: translateY(24px); } }
 @keyframes mora-sink { to { opacity: 0; transform: translateY(48px); } }
@@ -720,6 +717,11 @@ html.mora-native .import-actions > button:not(:first-child) { display: none; }
 html.mora-mobile :is(main, .queue-panel, .lyrics-panel, .fp-body) { -webkit-overflow-scrolling: touch; }
 
 @media (prefers-reduced-motion: reduce) {
+  html.mora-mobile *, html.mora-mobile *::before, html.mora-mobile *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
   html.mora-mobile :is(.icon-btn, .play-circle, .btn, .home-tiles a, .card):active { transform: none; }
 }
 

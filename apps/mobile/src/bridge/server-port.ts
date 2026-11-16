@@ -38,27 +38,75 @@ const b64 = (bytes: Uint8Array): string => {
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(s);
 };
-async function encode(v: unknown): Promise<unknown> {
-  if (v instanceof ArrayBuffer) return { $b64: b64(new Uint8Array(v)) };
-  if (ArrayBuffer.isView(v)) return { $b64: b64(new Uint8Array(v.buffer, v.byteOffset, v.byteLength)) };
-  if (v instanceof Blob) return { $b64: b64(new Uint8Array(await v.arrayBuffer())) };
-  if (Array.isArray(v)) return Promise.all(v.map(encode));
-  if (v && typeof v === 'object') return Object.fromEntries(await Promise.all(Object.entries(v).map(async ([k, x]) => [k, await encode(x)])));
-  return v;
-}
-function decode(v: unknown): unknown {
-  if (Array.isArray(v)) return v.map(decode);
-  if (v && typeof v === 'object') {
-    const o = v as Record<string, unknown>;
-    if (typeof o.$b64 === 'string' && Object.keys(o).length === 1) {
-      const s = atob(o.$b64);
-      const out = new Uint8Array(s.length);
-      for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
-      return out.buffer;
+async function encode(root: unknown): Promise<unknown> {
+  const leaf = async (v: unknown): Promise<{ done: true; value: unknown } | { done: false }> => {
+    if (v instanceof ArrayBuffer) return { done: true, value: { $b64: b64(new Uint8Array(v)) } };
+    if (ArrayBuffer.isView(v)) return { done: true, value: { $b64: b64(new Uint8Array(v.buffer, v.byteOffset, v.byteLength)) } };
+    if (v instanceof Blob) return { done: true, value: { $b64: b64(new Uint8Array(await v.arrayBuffer())) } };
+    if (!v || typeof v !== 'object') return { done: true, value: v };
+    return { done: false };
+  };
+  const first = await leaf(root);
+  if (first.done) return first.value;
+  const result: unknown = Array.isArray(root) ? [] : {};
+  const stack: Array<{ src: unknown; dst: Record<string, unknown> | unknown[] }> = [{ src: root, dst: result as Record<string, unknown> | unknown[] }];
+  while (stack.length) {
+    const { src, dst } = stack.pop()!;
+    if (Array.isArray(src)) {
+      const out = dst as unknown[];
+      for (let i = 0; i < src.length; i++) {
+        const res = await leaf(src[i]);
+        if (res.done) out[i] = res.value;
+        else { const child: unknown = Array.isArray(src[i]) ? [] : {}; out[i] = child; stack.push({ src: src[i], dst: child as Record<string, unknown> | unknown[] }); }
+      }
+    } else {
+      const out = dst as Record<string, unknown>;
+      for (const [k, x] of Object.entries(src as Record<string, unknown>)) {
+        const res = await leaf(x);
+        if (res.done) out[k] = res.value;
+        else { const child: unknown = Array.isArray(x) ? [] : {}; out[k] = child; stack.push({ src: x, dst: child as Record<string, unknown> | unknown[] }); }
+      }
     }
-    return Object.fromEntries(Object.entries(o).map(([k, x]) => [k, decode(x)]));
   }
-  return v;
+  return result;
+}
+function decode(root: unknown): unknown {
+  const leaf = (v: unknown): { done: true; value: unknown } | { done: false } => {
+    if (!v || typeof v !== 'object') return { done: true, value: v };
+    if (!Array.isArray(v)) {
+      const o = v as Record<string, unknown>;
+      if (typeof o.$b64 === 'string' && Object.keys(o).length === 1) {
+        const s = atob(o.$b64);
+        const out = new Uint8Array(s.length);
+        for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+        return { done: true, value: out.buffer };
+      }
+    }
+    return { done: false };
+  };
+  const first = leaf(root);
+  if (first.done) return first.value;
+  const result: unknown = Array.isArray(root) ? [] : {};
+  const stack: Array<{ src: unknown; dst: Record<string, unknown> | unknown[] }> = [{ src: root, dst: result as Record<string, unknown> | unknown[] }];
+  while (stack.length) {
+    const { src, dst } = stack.pop()!;
+    if (Array.isArray(src)) {
+      const out = dst as unknown[];
+      for (let i = 0; i < src.length; i++) {
+        const res = leaf(src[i]);
+        if (res.done) out[i] = res.value;
+        else { const child: unknown = Array.isArray(src[i]) ? [] : {}; out[i] = child; stack.push({ src: src[i], dst: child as Record<string, unknown> | unknown[] }); }
+      }
+    } else {
+      const out = dst as Record<string, unknown>;
+      for (const [k, x] of Object.entries(src as Record<string, unknown>)) {
+        const res = leaf(x);
+        if (res.done) out[k] = res.value;
+        else { const child: unknown = Array.isArray(x) ? [] : {}; out[k] = child; stack.push({ src: x, dst: child as Record<string, unknown> | unknown[] }); }
+      }
+    }
+  }
+  return result;
 }
 
 /**

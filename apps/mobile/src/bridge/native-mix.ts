@@ -43,6 +43,7 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
   };
   let id: string | null = null, playing = false;
   let pendingStart: NativeSourceConfig | undefined;
+  let startEpoch = 0;
   const assets = new Map<string, number>();
   const release = async () => { id = null; playing = false; assets.clear(); await port.nativeMixStop(); hooks.restore(); };
   const session = async () => {
@@ -129,15 +130,18 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
     ...(port.nativePrepareStart && hooks.sources && port.nativeSourceReserve && port.nativeSourceAppend ? {
       startSource: (entry: NativeQueueEntry, config: NativeSourceConfig, signal?: AbortSignal) => {
         const intent = { ...config }; pendingStart = intent;
+        const epoch = ++startEpoch;
         return serialize(async () => {
-          const cancel = () => { if (id) void port.nativeMixStop().catch(() => {}); };
+          const cancel = () => { if (id && epoch === startEpoch) void port.nativeMixStop().catch(() => {}); };
           let acquired = false;
           try {
             signal?.throwIfAborted();
+            if (epoch !== startEpoch) throw new DOMException('Aborted', 'AbortError');
             signal?.addEventListener('abort', cancel, { once: true });
             const current = await session();
             acquired = true;
             signal?.throwIfAborted();
+            if (epoch !== startEpoch) throw new DOMException('Aborted', 'AbortError');
             const manifest = await sourceManifest([entry], entry.trackId, signal);
             const item = manifest.items[0];
             if (!item || item.entryId !== entry.entryId || item.trackId !== entry.trackId) throw Error('Изменилась запись для воспроизведения');
@@ -146,7 +150,7 @@ export function createNativeMix(port: NativeMixPort, hooks: { prepare(): Promise
             assets.clear(); playing = true;
             return state;
           } catch (error) {
-            if (acquired && (!playing || signal?.aborted)) await release();
+            if (acquired && epoch === startEpoch && (!playing || signal?.aborted)) await release();
             throw error;
           } finally {
             signal?.removeEventListener('abort', cancel);

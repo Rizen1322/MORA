@@ -207,7 +207,7 @@ extension MoraRootViewController {
             _ = try await web.evaluateJavaScript("window.moraNativeUi=window.__waveOriginal;0")
             report["waveLink"] = "mora://wave?source=yandex reached the wave command"
             try await wait { self.shell.sharedLibrary }
-            _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='backup'||n==='page'&&/^#\\/(settings|downloads|sound|backups|sources|import|yandex-playlists|smart-playlists|smart-playlist|duplicates|statistics|diagnostics)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(n+':'+location.hash+':'+JSON.stringify(a||{}));throw Error('Native screen requested the page');}return window.__nativePagesOriginal(n,a);};0")
+            _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='backup'||n==='page'&&/^#\\/(settings|downloads|sound|backups|sources|import|yandex-playlists|smart-playlists|smart-playlist|duplicates|statistics|diagnostics|wave)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(n+':'+location.hash+':'+JSON.stringify(a||{}));throw Error('Native screen requested the page');}return window.__nativePagesOriginal(n,a);};0")
             let originalSettings = try await NativeServerApp.request("GET", "/api/settings")
             let originalAutomix = (originalSettings["automix"] as? [String: Any])?["enabled"] as? Bool ?? true
             do {
@@ -308,7 +308,7 @@ extension MoraRootViewController {
                 let seen = try await web.evaluateJavaScript("JSON.stringify(window.__uiQueries)") as? String ?? "unknown"
                 try require(false, "Search query missing; native=" + shell.searchQuery + "; bridge=" + seen)
             }
-            _ = try await web.evaluateJavaScript("window.__uiQueries=[]; window.__uiOriginal=window.moraNativeUi; window.moraNativeUi=async(n,a)=>{if(n==='search'){window.__uiQueries.push(a.q);return {session:'fixture-'+a.source,tracks:[{id:'fixture',title:'Native Song',artist:'Native Artist',album:'Native Album',duration:180,explicit:true,ok:true}],artists:a.source==='yandex'?[{id:'77',title:'Native Artist',detail:'Исполнитель',path:'/catalog/artist/77'}]:[],albums:a.source==='yandex'?[{id:'88',title:'Native Album',detail:'2026',path:'/catalog/album/88'}]:[],more:false};}if(n==='page'&&location.hash.includes('/catalog/'))return{title:location.hash.includes('/artist/')?'Native Artist':'Native Album',sections:[{title:'Треки',rows:[{kind:'item',title:'Native Song',subtitle:'Native Artist',tag:'3:00'}]}]};if(n==='versionTarget')return{id:'fixture',title:'Native Song',artist:'Native Artist',album:'Native Album',duration:180,ok:true};if(n==='versionSearch')return{session:'versions-fixture',rows:[{key:'yandex:1',id:'ya-1',title:'Native Song Live',artist:'Native Artist',duration:180,ok:true,source:'Яндекс Музыка',tags:'live'}],errors:[]};return window.__uiOriginal(n,a);};0")
+            _ = try await web.evaluateJavaScript("window.__uiQueries=[]; window.__uiOriginal=window.moraNativeUi; window.moraNativeUi=async(n,a)=>{if(n==='search'){window.__uiQueries.push(a.q);return {session:'fixture-'+a.source,tracks:[{id:'fixture',title:'Native Song',artist:'Native Artist',album:'Native Album',duration:180,explicit:true,ok:true}],artists:a.source==='yandex'?[{id:'77',title:'Native Artist',detail:'Исполнитель',path:'/catalog/artist/77'}]:[],albums:a.source==='yandex'?[{id:'88',title:'Native Album',detail:'2026',path:'/catalog/album/88'}]:[],more:false};}if(n==='page'&&/^#\\/catalog\\//.test(location.hash)){window.__catalogPageCalls=(window.__catalogPageCalls||0)+1;throw Error('Catalog depended on the page');}if(n==='versionTarget')return{id:'fixture',title:'Native Song',artist:'Native Artist',album:'Native Album',duration:180,ok:true};if(n==='versionSearch')return{session:'versions-fixture',rows:[{key:'yandex:1',id:'ya-1',title:'Native Song Live',artist:'Native Artist',duration:180,ok:true,source:'Яндекс Музыка',tags:'live'}],errors:[]};return window.__uiOriginal(n,a);};0")
             shell.go("/search")
             try await wait { self.shell.ui.path == "/search" && descendants(self.content!.view).contains { $0 is UISearchTextField } }
             try await Task.sleep(for: .seconds(2))
@@ -331,6 +331,12 @@ extension MoraRootViewController {
             try await waitForQuery("Каталог")
             try await Task.sleep(for: .seconds(1))
             try capture("native-search-yandex")
+            shell.catalog.installFixture("/catalog/artist/77", ["title": "Native Artist", "sections": [
+                ["title": "Популярные треки", "rows": [["kind": "item", "title": "Native Song · 3:00", "subtitle": "Native Artist"]]],
+                ["title": "Альбомы", "rows": [["kind": "shelf", "items": [["id": "88", "title": "Native Album", "path": "/catalog/album/88"]]]]]]])
+            shell.catalog.installFixture("/catalog/album/88", ["title": "Native Album", "sections": [
+                ["rows": [["kind": "hero", "style": "album", "title": "Native Album", "subtitle": "Native Artist"]]],
+                ["rows": [["kind": "item", "title": "Native Song · 3:00", "subtitle": "Native Artist"]]]]])
             shell.go("/catalog/artist/77")
             try await wait { self.shell.ui.path == "/catalog/artist/77" }
             try await Task.sleep(for: .seconds(1))
@@ -340,6 +346,9 @@ extension MoraRootViewController {
             try await wait { self.shell.ui.path == "/catalog/album/88" }
             try await Task.sleep(for: .seconds(1))
             try capture("native-catalog-album")
+            let catalogPageCalls = try await web.evaluateJavaScript("window.__catalogPageCalls || 0") as? Int ?? -1
+            try require(catalogPageCalls == 0, "Catalog pages depended on the page description")
+            shell.catalog.removeFixtures()
             _ = shell.receive(["path": "/catalog/album/88", "loaded": true, "wave": ["yandex": true]])
             shell.presentVersions(id: "fixture")
             try await wait { self.presentedViewController != nil }
@@ -355,14 +364,21 @@ extension MoraRootViewController {
             try await wait { self.content?.presentedViewController != nil }
             try await Task.sleep(for: .seconds(2))
             try require(shell.path == "/" && shell.ui.path == "/", "Wave settings navigated away from Home")
-            let page = try await shell.call("waveSettings", ["source": "own"]) as? [String: Any]
-            try require(page?["title"] as? String == "Настроить волну", "Wave settings failed to load")
+            let page = try await shell.wave.settingsPage("own", request: { try await NativeServerApp.request($0, $1, body: $2) })
+            try require(page["title"] as? String == "Настроить волну", "Wave settings failed to load")
             // The sheet's play action is a SwiftUI accessibility element, not a UIView, so it cannot be
             // asserted through the UIKit tree; simctl's screenshot of the sheet is the visual evidence.
             report["wave"] = "native sheet presented; Home route preserved; settings loaded"
             try capture("native-wave")
             shell.waveSettingsOpen = false
             try await wait { self.content?.presentedViewController == nil }
+            shell.go("/wave")
+            try await wait { self.shell.path == "/wave" && self.shell.nativeContentVisible }
+            try await Task.sleep(for: .seconds(1))
+            try capture("native-wave-page")
+            report["wavePage"] = "native wave page rendered from the queue slice without a page description"
+            shell.go("/")
+            try await wait { self.shell.ui.path == "/" }
             let player = NativePlayerModel(host: shell.host!)
             player.installVisualFixture()
             let sheet = UIHostingController(rootView: NativePlayerView(model: player))
@@ -551,6 +567,8 @@ final class NativeShellStore: ObservableObject {
     private(set) var byId: [String: NativeTrack] = [:]
     let imports = NativeImportState()
     let smart = NativeSmartState()
+    let wave = NativeWaveState()
+    let catalog = NativeCatalogState()
     let diagnostics = NativeDiagnosticsState()
     /// Bumped on every snapshot: native pages reload their description from the page.
     @Published private(set) var revision = 0
@@ -1070,6 +1088,11 @@ enum NativeCovers {
     private static let cache: NSCache<NSString, UIImage> = { let c = NSCache<NSString, UIImage>(); c.countLimit = 400; return c }()
     @MainActor private static var loading: [String: Task<UIImage?, Never>] = [:]
 
+    static func cached(_ url: String?) -> UIImage? {
+        guard let url else { return nil }
+        return cache.object(forKey: url as NSString)
+    }
+
     /// The page loads /api covers; the player sheet uses this without the shell's environment.
     @MainActor static func image(_ url: String) async -> UIImage? {
         if let image = cache.object(forKey: url as NSString) { return image }
@@ -1105,7 +1128,7 @@ struct NativeCover: View {
 
     var body: some View {
         ZStack {
-            if let shown = image ?? loaded {
+            if let shown = image ?? loaded ?? NativeCovers.cached(url) {
                 Image(uiImage: shown).resizable().scaledToFill()
             } else {
                 Color.moraMint.opacity(0.1)
@@ -1116,12 +1139,14 @@ struct NativeCover: View {
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .accessibilityHidden(true)
         .task(id: embedded ?? url) {
-            loaded = nil
             guard image == nil else { return }
-            if let embedded, let decoded = NativeArtworkImage.decode(embedded) {
-                loaded = UIImage(cgImage: decoded)
+            if let embedded {
+                loaded = NativeArtworkImage.decode(embedded).map { UIImage(cgImage: $0) }
             } else if let url {
+                if let hit = NativeCovers.cached(url) { loaded = hit; return }
                 loaded = await NativeCovers.image(url)
+            } else {
+                loaded = nil
             }
         }
     }
@@ -1236,7 +1261,7 @@ struct NativeShellBar: View {
         .padding(.bottom, 4)
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge) // the bar keeps its height; screens scale fully
         .foregroundStyle(.white)
-        .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.3), value: store.miniTitle)
+        .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.25), value: store.miniTitle != nil)
         .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.2), value: store.miniPlaying)
     }
 

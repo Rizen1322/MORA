@@ -211,6 +211,7 @@ final class NativeServer {
             guard let self else { return }
             let text = "\(value?.toString() ?? "?")\n\(value?.forProperty("stack")?.toString() ?? "")"
             self.log("error", "uncaught: \(text)")
+            self.note("js uncaught \(String((value?.toString() ?? "?").prefix(160)))")
             // a throw while the script loads is a failed boot; the worker's boot().catch covers the async part
             if self.loading { self.failBoot(text) }
         }
