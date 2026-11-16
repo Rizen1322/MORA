@@ -139,13 +139,36 @@ struct NativeHomeView: View {
                     LazyHStack(alignment: .top, spacing: 14) {
                         ForEach(items) { station in
                             Button { store.run("artistRadio", ["artist": station.artist]) } label: {
-                                VStack(alignment: .leading, spacing: 7) {
-                                    ZStack(alignment: .bottomLeading) {
-                                        RoundedRectangle(cornerRadius: 18).fill(Color.indigo.gradient)
-                                        NativeCover(url: station.cover, size: 128, radius: 64).padding(22)
-                                        Image(systemName: "waveform").font(.title2.bold()).padding(12)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                            .fill(LinearGradient(colors: [Color.moraMint.opacity(0.18), Color.indigo.opacity(0.35), Color.moraBackground], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                        NativeCover(url: station.cover, size: 172, radius: 18)
+                                            .blur(radius: 22)
+                                            .opacity(0.45)
+                                        LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom)
+                                        NativeCover(url: station.cover, size: 108, radius: 54)
+                                            .overlay(Circle().stroke(Color.moraMint.opacity(0.55), lineWidth: 1.5))
+                                            .shadow(color: .black.opacity(0.45), radius: 10, y: 5)
+                                            .offset(y: -6)
+                                        VStack {
+                                            Spacer()
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "waveform").font(.caption2.bold())
+                                                Text("РАДИО").font(.caption2.weight(.bold)).tracking(0.6)
+                                            }
+                                            .foregroundStyle(.white)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(.ultraThinMaterial, in: Capsule())
+                                            .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.75))
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(10)
                                     }
                                     .frame(width: 172, height: 172)
+                                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.white.opacity(0.14), lineWidth: 1))
                                     Text(station.artist + " и похожие").font(.subheadline.weight(.semibold)).lineLimit(2)
                                     Text("Радиостанция").font(.caption).foregroundStyle(.white.opacity(0.6))
                                 }
@@ -740,13 +763,22 @@ struct NativeSearchView: View {
         }
     }
     private func linkRow(_ item: NativeCatalogLink, symbol: String) -> some View {
-        Button { remember(); store.go(item.path) } label: {
+        let isArtist = symbol == "music.mic"
+        return Button { remember(); store.go(item.path) } label: {
             HStack(spacing: 12) {
-                NativeCover(url: item.cover, size: 48, radius: symbol == "music.mic" ? 24 : 8)
-                VStack(alignment: .leading, spacing: 3) { Text(item.title).fontWeight(.medium); Text(item.detail).font(.caption).foregroundStyle(.secondary) }
+                NativeCover(url: item.cover, size: isArtist ? 52 : 48, radius: isArtist ? 26 : 8)
+                    .overlay(Group {
+                        if isArtist { Circle().stroke(Color.white.opacity(0.16), lineWidth: 1) }
+                    })
+                    .shadow(color: .black.opacity(isArtist ? 0.3 : 0), radius: 5, y: 2)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.title).fontWeight(.semibold).lineLimit(1)
+                    Text(item.detail.isEmpty && isArtist ? "Исполнитель" : item.detail)
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
                 Spacer()
                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-            }.frame(minHeight: 56)
+            }.frame(minHeight: 58)
         }.buttonStyle(.plain).listRowBackground(Color.clear)
     }
     private func hitRow(_ hit: NativeSearchHit, source: String, session: String) -> some View {

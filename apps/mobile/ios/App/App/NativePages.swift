@@ -407,12 +407,13 @@ struct NativePageView: View {
                 let width = UIScreen.main.bounds.width
                 ZStack(alignment: .bottom) {
                     NativeCover(url: cover, size: width, radius: 0).frame(width: width, height: width * 0.95).clipped()
-                    LinearGradient(colors: [.clear, Color.moraBackground.opacity(0.55), Color.moraBackground], startPoint: .center, endPoint: .bottom)
-                    VStack(spacing: 12) {
-                        Text(title).font(.system(size: 40, weight: .heavy)).multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.6).shadow(radius: 8)
-                        if let subtitle, !subtitle.isEmpty { Text(subtitle).font(.subheadline).foregroundStyle(.white.opacity(0.7)).lineLimit(1) }
-                        heroButtons(play: play, shuffle: shuffle, capsule: false)
-                    }.padding(.horizontal, 20).padding(.bottom, 16)
+                    LinearGradient(colors: [.clear, Color.moraBackground.opacity(0.35), Color.moraBackground.opacity(0.85), Color.moraBackground], startPoint: .top, endPoint: .bottom)
+                    VStack(spacing: 10) {
+                        Text("ИСПОЛНИТЕЛЬ").font(.caption2.weight(.bold)).tracking(1.2).foregroundStyle(Color.moraMint)
+                        Text(title).font(.system(size: 38, weight: .heavy)).multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.6).shadow(radius: 8)
+                        if let subtitle, !subtitle.isEmpty { Text(subtitle).font(.subheadline).foregroundStyle(.white.opacity(0.75)).lineLimit(1) }
+                        heroButtons(play: play, shuffle: shuffle, capsule: false).padding(.top, 2)
+                    }.padding(.horizontal, 20).padding(.bottom, 18)
                 }
                 .listRowInsets(EdgeInsets()).listRowSeparator(.hidden)
             } else {
@@ -433,10 +434,22 @@ struct NativePageView: View {
                 LazyHStack(alignment: .top, spacing: 14) {
                     ForEach(items) { item in
                         Button { store.go(item.path) } label: {
-                            VStack(alignment: item.round ? .center : .leading, spacing: 4) {
-                                NativeCover(url: item.cover, size: 150, radius: item.round ? 75 : 10)
-                                Text(item.title).font(.subheadline.weight(.medium)).lineLimit(1)
-                                if let detail = item.subtitle, !detail.isEmpty { Text(detail).font(.footnote).foregroundStyle(.secondary).lineLimit(1) }
+                            VStack(alignment: item.round ? .center : .leading, spacing: 6) {
+                                NativeCover(url: item.cover, size: 150, radius: item.round ? 75 : 12)
+                                    .overlay(Group {
+                                        if item.round {
+                                            Circle().stroke(Color.white.opacity(0.16), lineWidth: 1)
+                                        } else {
+                                            RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                        }
+                                    })
+                                    .shadow(color: .black.opacity(0.45), radius: item.round ? 10 : 6, y: 5)
+                                Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                                if let detail = item.subtitle, !detail.isEmpty {
+                                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                } else if item.round {
+                                    Text("Исполнитель").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
                             }.frame(width: 150, alignment: item.round ? .center : .leading)
                         }.buttonStyle(.plain)
                     }
@@ -450,8 +463,13 @@ struct NativePageView: View {
                     if let path { store.go(path) } else if let act { run(act) }
                 } label: {
                     HStack(spacing: 12) {
+                        let isArtist = path?.hasPrefix("/artist/") == true || path?.hasPrefix("/catalog/artist/") == true || path?.hasPrefix("/public/artist/") == true || path?.hasPrefix("/soundcloud/artist/") == true
                         if let number { Text("\(number)").font(.body.monospacedDigit()).foregroundStyle(.secondary).frame(width: 26) }
-                        else if let cover { NativeCover(url: cover, size: 48) }
+                        else if cover != nil || isArtist {
+                            NativeCover(url: cover, size: isArtist ? 52 : 48, radius: isArtist ? 26 : 8)
+                                .overlay(Group { if isArtist { Circle().stroke(Color.white.opacity(0.16), lineWidth: 1) } })
+                                .shadow(color: .black.opacity(isArtist ? 0.3 : 0), radius: 5, y: 2)
+                        }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(title).font(.body.weight(.medium)).lineLimit(2)
                             if let subtitle { Text(subtitle).font(.subheadline).foregroundStyle(color(tone) ?? .white.opacity(0.6)).lineLimit(3) }

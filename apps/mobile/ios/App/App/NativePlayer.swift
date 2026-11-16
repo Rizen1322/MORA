@@ -129,9 +129,13 @@ final class NativePlayerModel: ObservableObject {
         if !host.active, let store = NativeShellStore.shared {
             Task { @MainActor in
                 do {
-                    var args: [String: Any] = ["action": action]
-                    if let time { args["time"] = time }
-                    _ = try await store.call("playerCommand", args)
+                    if store.sharedLibrary {
+                        try await NativeQueueController.shared.command(action, seekTime: time)
+                    } else {
+                        var args: [String: Any] = ["action": action]
+                        if let time { args["time"] = time }
+                        _ = try await store.call("playerCommand", args)
+                    }
                 } catch { self.actionError = error.localizedDescription }
                 self.refresh(then: then)
             }
@@ -160,7 +164,20 @@ final class NativePlayerModel: ObservableObject {
         UISelectionFeedbackGenerator().selectionChanged()
         Task { @MainActor in
             defer { changingMode = false }
-            do { modes = NativePlaybackModes(try await store.call("playbackMode", ["mode": mode]) as? [String: Any] ?? [:]) }
+            do {
+                if store.sharedLibrary {
+                    try await NativeQueueController.shared.setMode(mode)
+                    let qc = NativeQueueController.shared
+                    modes = NativePlaybackModes([
+                        "shuffle": qc.shuffle,
+                        "repeat": qc.repeatMode,
+                        "automix": mode == "automix" ? !modes.automix : modes.automix,
+                        "canShuffle": qc.entries.count > 1,
+                    ])
+                } else {
+                    modes = NativePlaybackModes(try await store.call("playbackMode", ["mode": mode]) as? [String: Any] ?? [:])
+                }
+            }
             catch { if !NativeShellStore.isCancelled(error) { actionError = error.localizedDescription } }
         }
     }
@@ -219,7 +236,13 @@ final class NativePlayerModel: ObservableObject {
         var args: [String: Any] = ["action": action, "entry": entry]
         if let after { args["after"] = after }
         Task { @MainActor in
-            do { _ = try await store.call("queueEdit", args) }
+            do {
+                if store.sharedLibrary {
+                    try await NativeQueueController.shared.editQueue(action: action, entryId: entry, after: after)
+                } else {
+                    _ = try await store.call("queueEdit", args)
+                }
+            }
             catch {
                 if NativeShellStore.isCancelled(error) { refresh(); return }
                 actionError = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription

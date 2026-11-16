@@ -225,14 +225,21 @@ final class NativeWaveState {
             ? "Близкие BPM и тональности получают приоритет, когда есть анализ."
             : (mode == "mix" ? "Больше совместимых по ритму треков" : "Подбор прежде всего по вашему вкусу")
 
+        var diversityRow: [String: Any] = [
+            "kind": "choice",
+            "title": online ? "Знакомое и новое" : "Характер",
+            "value": diversity,
+            "options": [["familiar", online ? "Ближе к любимому" : "Любимое"], ["balanced", "Вперемешку"], ["discover", "Открытия"]],
+            "act": ["name": "set", "args": ["group": "wave", "key": "diversity"]],
+            "disabled": wave.isEmpty,
+        ]
+        if let diversityDetail { diversityRow["detail"] = diversityDetail }
+
         rows = [
             ["kind": "choice", "title": "Энергия", "detail": moodDetail, "value": mood,
              "options": [["calm", "Спокойнее"], ["normal", "В моём ритме"], ["energetic", "Бодрее"]],
              "act": ["name": "set", "args": ["group": "wave", "key": "mood"]], "disabled": wave.isEmpty],
-            ["kind": "choice", "title": online ? "Знакомое и новое" : "Характер", "value": diversity,
-             "options": [["familiar", online ? "Ближе к любимому" : "Любимое"], ["balanced", "Вперемешку"], ["discover", "Открытия"]],
-             "act": ["name": "set", "args": ["group": "wave", "key": "diversity"]], "disabled": wave.isEmpty]
-                .merging(diversityDetail.map { ["detail": $0] } ?? [:]) { a, _ in a },
+            diversityRow,
             ["kind": "toggle", "title": "Для микса", "detail": mixDetail, "on": mode == "mix",
              "act": ["name": "set", "args": ["group": "wave", "key": "mode", "map": ["true": "mix", "false": "normal"]]], "disabled": wave.isEmpty],
         ]

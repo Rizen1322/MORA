@@ -880,12 +880,49 @@ final class NativeShellStore: ObservableObject {
         Task { @MainActor in
             do {
                 if try await executeLibraryAction(name, args) { return }
+                if sharedLibrary, try await executeNativePlaybackCommand(name, args) { return }
                 _ = try await call(name, args, timeout: 60)
             } catch {
                 if Self.isCancelled(error) { return }
                 MoraPlaybackJournal.record("native.page.failure", ["command": name])
                 show(error.localizedDescription)
             }
+        }
+    }
+
+    @MainActor private func executeNativePlaybackCommand(_ name: String, _ args: [String: Any]) async throws -> Bool {
+        let qc = NativeQueueController.shared
+        switch name {
+        case "wave":
+            let source = args["source"] as? String ?? "own"
+            try await qc.startWave(source: source, offline: offline)
+            return true
+        case "artistRadio":
+            let artist = (args["artist"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !artist.isEmpty else { return true }
+            try await qc.startArtistRadio(artist: artist, tracks: Array(byId.values))
+            return true
+        case "toggle":
+            try await qc.command("toggle")
+            return true
+        case "next":
+            try await qc.command("nexttrack")
+            return true
+        case "playerCommand":
+            let action = args["action"] as? String ?? ""
+            try await qc.command(action, seekTime: (args["time"] as? NSNumber)?.doubleValue)
+            return true
+        case "queueEdit":
+            let action = args["action"] as? String ?? ""
+            let entry = args["entry"] as? String ?? ""
+            try await qc.editQueue(action: action, entryId: entry, after: args["after"] as? String)
+            return true
+        case "playbackMode":
+            let mode = args["mode"] as? String ?? ""
+            try await qc.setMode(mode)
+            return true
+        default:
+            return false
         }
     }
 
@@ -928,6 +965,21 @@ final class NativeShellStore: ObservableObject {
 
     func play(_ list: [NativeTrack], at index: Int, type: String, label: String, id: String? = nil) {
         guard list.indices.contains(index), list[index].ok else { return }
+        if sharedLibrary {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Task { @MainActor in
+                do {
+                    try await NativeQueueController.shared.play(
+                        trackIds: list.map(\.id),
+                        at: index,
+                        context: .init(type: type, id: id, label: label)
+                    )
+                } catch {
+                    show(error.localizedDescription)
+                }
+            }
+            return
+        }
         var args: [String: Any] = ["ids": list.map(\.id), "index": index, "type": type, "label": label]
         if let id { args["id"] = id }
         run("play", args)
@@ -937,7 +989,21 @@ final class NativeShellStore: ObservableObject {
         pending = nil
         run("back")
     }
-    func queue(_ track: NativeTrack, next: Bool) { run("queue", ["ids": [track.id], "next": next]) }
+    func queue(_ track: NativeTrack, next: Bool) {
+        if sharedLibrary {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Task { @MainActor in
+                do {
+                    try await NativeQueueController.shared.enqueue(trackIds: [track.id], next: next)
+                    show(next ? "Сыграет следующим" : "Добавлено в очередь")
+                } catch {
+                    show(error.localizedDescription)
+                }
+            }
+            return
+        }
+        run("queue", ["ids": [track.id], "next": next])
+    }
     func react(_ track: NativeTrack, _ value: Int) {
         react(id: track.id, value: value)
     }
@@ -1008,6 +1074,7 @@ final class NativeShellStore: ObservableObject {
         }
         host.playerState { [weak self] result in
             guard let self, case .success(let value) = result else { return }
+            NativeQueueController.shared.syncFromHost(value)
             let next = NativePlayerState(value)
             if next.title != self.player.title || next.artist != self.player.artist || next.playing != self.player.playing || next.active != self.player.active {
                 self.player = next
