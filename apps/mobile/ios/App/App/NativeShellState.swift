@@ -89,7 +89,7 @@ struct NativePlaylist: Equatable, Identifiable {
     }
 }
 
-struct NativeQueuedTrack {
+struct NativeQueuedTrack: Equatable {
     let entryId: String, trackId: String
     init?(_ value: [String: Any]) {
         guard let entry = value["entryId"] as? String, let track = value["trackId"] as? String else { return nil }
