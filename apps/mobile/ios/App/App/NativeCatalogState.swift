@@ -68,7 +68,7 @@ final class NativeCatalogState {
                 let tracks = data["tracks"] as? [[String: Any]] ?? []
                 let artists = album["artists"] as? [[String: Any]] ?? []
                 let subtitle = artists.compactMap { $0["name"] as? String }.joined(separator: ", ")
-                let year = (album["year"] as? NSNumber)?.intValue.map(String.init)
+                let year = (album["year"] as? NSNumber).map { String($0.intValue) }
                 let detail = [year, Self.tracksWord(tracks.count)].compactMap { $0 }.joined(separator: " · ")
                 return [
                     "title": title,
@@ -170,7 +170,6 @@ final class NativeCatalogState {
 
     private static func trackRows(_ items: [[String: Any]], numbered: Bool, source: String, context: [String: Any]) -> [[String: Any]] {
         items.enumerated().map { index, track in
-            let tid = track["id"] as? String ?? track["externalId"] as? String ?? "\(index)"
             let title = track["title"] as? String ?? ""
             let artist = track["artist"] as? String ?? ""
             let duration = (track["duration"] as? NSNumber)?.doubleValue ?? 0
