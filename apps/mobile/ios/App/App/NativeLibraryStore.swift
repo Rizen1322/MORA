@@ -246,15 +246,20 @@ extension NativeLibraryStore.Snapshot {
             let ids = list.map(\.id), ctx: Row = ["type": "artist", "id": name, "label": name]
             let play = ctx.merging(["ids": ids]) { _, value in value }
             let pending = list.contains { $0.reaction == 0 }
-            let header: [Row] = [
-                button("Слушать", "playAll", play, ["symbol": "play.fill", "style": "primary", "disabled": ids.isEmpty]),
-                button("Вперемешку", "playAll", play.merging(["shuffle": true]) { _, value in value }, ["symbol": "shuffle", "disabled": ids.isEmpty]),
+            let cover = (list.first { $0.cover != nil } ?? list[0]).cover
+            var hero: Row = ["kind": "hero", "style": "artist", "title": name,
+                             "subtitle": "\(NativeText.tracks(ids.count)) · \(total(list))",
+                             "play": act("playAll", play),
+                             "shuffle": act("playAll", play.merging(["shuffle": true]) { _, value in value })]
+            if let cover { hero["cover"] = cover }
+            let controls: [Row] = [
                 button(pending ? "Лайкнуть все" : "Всё в любимом", "likeAll", ["ids": ids], ["symbol": "heart", "disabled": !pending]),
                 button("Радио по исполнителю", "artistRadio", ["artist": name], ["symbol": "dot.radiowaves.left.and.right"]),
+                link("Найти в каталоге Яндекса", "/search?q=\(encode(name))&type=artist", "magnifyingglass"),
             ]
             return ["title": name, "search": "Найти у исполнителя", "sections": [
-                ["footer": "\(NativeText.tracks(ids.count)) · \(total(list))", "rows": header],
-                ["rows": [link("Найти в каталоге Яндекса", "/search?q=\(encode(name))&type=artist", "magnifyingglass")]],
+                ["rows": [hero]],
+                ["rows": controls],
                 ["play": ctx, "rows": list.map { track -> Row in ["kind": "track", "id": track.id] }]]]
         }
         if parts.first == "track-edit", parts.count == 2 {

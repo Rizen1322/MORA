@@ -78,7 +78,16 @@ require(albumPage.title == "Альбом" && albumPage.sections.last?.rows.count
 require((albumPage.sections.first?.footer ?? "").contains("Артист · 1999 · 1 трек"), "Album footer shows artist, year and duration")
 let artistPage = NativePage(try first.page("/artist/\(encoded("Артист"))"))!
 require(artistPage.title == "Артист" && artistPage.sections.last?.rows.count == 1, "Artist page lists the artist's saved tracks")
-require(artistPage.sections.count == 3, "Artist page has player controls, catalog link and tracks")
+require(artistPage.sections.count == 3, "Artist page has a hero, controls and tracks")
+if let first = artistPage.sections.first?.rows.first, case .hero(let style, let title, let subtitle, _, _, let play, let shuffle) = first {
+    require(style == "artist" && title == "Артист", "Artist hero carries the name")
+    require((subtitle ?? "").contains("1 трек"), "Artist hero shows the track count")
+    require(play?.name == "playAll" && shuffle?.name == "playAll", "Artist hero plays and shuffles")
+} else { fatalError("Artist hero row missing") }
+let artistControls = artistPage.sections.dropFirst().first?.rows.compactMap { row -> String? in
+    if case .button(_, _, let act, _, _, _, _) = row { return act.name } else { return nil }
+} ?? []
+require(artistControls.contains("artistRadio") && artistControls.contains("likeAll"), "Artist controls keep radio and like-all")
 let editor = NativePage(try first.page("/track-edit/one"))!
 let editorFields = editor.sections.first?.rows.count
 require(editor.title == "Сведения о треке" && editorFields == 6, "Track editor shows six metadata fields")

@@ -406,12 +406,18 @@ struct NativePageView: View {
             if style == "artist" {
                 let width = UIScreen.main.bounds.width
                 ZStack(alignment: .bottom) {
-                    NativeCover(url: cover, size: width, radius: 0).frame(width: width, height: width * 0.95).clipped()
-                    LinearGradient(colors: [.clear, Color.moraBackground.opacity(0.35), Color.moraBackground.opacity(0.85), Color.moraBackground], startPoint: .top, endPoint: .bottom)
+                    NativeCover(url: cover, size: width, radius: 0).frame(width: width, height: width * 0.8).clipped()
+                        .blur(radius: 30).opacity(0.55)
+                    LinearGradient(colors: [Color.moraBackground.opacity(0.15), Color.moraBackground.opacity(0.6), Color.moraBackground],
+                                   startPoint: .top, endPoint: .bottom)
                     VStack(spacing: 10) {
+                        NativeCover(url: cover, size: 148, radius: 74)
+                            .overlay(Circle().stroke(Color.moraMint.opacity(0.35), lineWidth: 2))
+                            .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1).padding(2))
+                            .shadow(color: .black.opacity(0.5), radius: 20, y: 8)
                         Text("ИСПОЛНИТЕЛЬ").font(.caption2.weight(.bold)).tracking(1.2).foregroundStyle(Color.moraMint)
-                        Text(title).font(.system(size: 38, weight: .heavy)).multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.6).shadow(radius: 8)
-                        if let subtitle, !subtitle.isEmpty { Text(subtitle).font(.subheadline).foregroundStyle(.white.opacity(0.75)).lineLimit(1) }
+                        Text(title).font(.system(size: 36, weight: .heavy)).multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.6).shadow(radius: 8)
+                        if let subtitle, !subtitle.isEmpty { Text(subtitle).font(.subheadline).foregroundStyle(.white.opacity(0.75)).lineLimit(2) }
                         heroButtons(play: play, shuffle: shuffle, capsule: false).padding(.top, 2)
                     }.padding(.horizontal, 20).padding(.bottom, 18)
                 }
