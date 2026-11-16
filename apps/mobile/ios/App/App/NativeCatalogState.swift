@@ -218,7 +218,7 @@ final class NativeCatalogState {
     private static func albumLink(_ raw: [String: Any]) -> [String: Any] {
         let id = raw["id"] as? String ?? ""
         let title = raw["title"] as? String ?? ""
-        let year = (raw["year"] as? NSNumber)?.intValue.map(String.init) ?? ""
+        let year = (raw["year"] as? NSNumber).map { String($0.intValue) } ?? ""
         var card: [String: Any] = [
             "id": id,
             "title": title,
