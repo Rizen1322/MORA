@@ -1146,11 +1146,12 @@ final class NativeShellStore: ObservableObject {
 
     @MainActor func nativePlaybackChanged(_ state: [String: Any], ended: Bool) {
         NativeQueueController.shared.syncFromHost(state)
-        guard UIApplication.shared.applicationState != .active else { return }
+        // The mini player and the lock-screen widget read `player`: keep them current in the foreground too.
         var next = NativePlayerState(state)
         if ended { next.playing = false }
-        guard next.trackId != player.trackId || next.playing != player.playing else { return }
+        guard next.trackId != player.trackId || next.playing != player.playing || next.title != player.title else { return }
         player = next; publishWidget()
+        if next.trackId != ui.now?.id { syncQueueControllerState() }
     }
 
     /// Home-screen widgets: the playing (or last) track and the newest likes; redrawn only when they change.

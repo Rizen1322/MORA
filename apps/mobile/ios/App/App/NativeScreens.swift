@@ -689,7 +689,13 @@ struct NativeSearchView: View {
             .autocorrectionDisabled().textInputAutocapitalization(.never).submitLabel(.search)
             .onSubmit(of: .search) { remember() }
             .navigationTitle(source == "yandex" ? "Яндекс Музыка" : "Поиск")
-            .task(id: key) { await search() }
+            .task(id: key) {
+                // Typing must not hit the provider on every keystroke.
+                if !query.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
+                guard !Task.isCancelled else { return }
+                await search()
+            }
+            .refreshable { await search() }
             .onChange(of: store.searchSource) { _, value in if value != "yandex" { store.searchScope = "all" } }
             .onChange(of: store.searchQuery) { _, value in if value.count > 200 { store.searchQuery = String(value.prefix(200)) } }
             .alert("Не удалось выполнить", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(failure ?? "") }
@@ -721,7 +727,11 @@ struct NativeSearchView: View {
         if recent.isEmpty && source != "yandex" {
             ContentUnavailableView("Найдите свою музыку", systemImage: "magnifyingglass", description: Text("Поиск по медиатеке, YouTube Music, YouTube, SoundCloud и Яндексу. Можно вставить ссылку на трек."))
                 .listRowBackground(Color.clear)
-        } else if !recent.isEmpty {
+        } else if recent.isEmpty {
+            ContentUnavailableView("Поиск в Яндекс Музыке", systemImage: "music.note",
+                                   description: Text("Треки, артисты и альбомы каталога. Выберите, что искать, и введите запрос."))
+                .listRowBackground(Color.clear)
+        } else {
             Section {
                 ForEach(recent, id: \.self) { text in
                     Button { store.searchQuery = text } label: { Label(text, systemImage: "clock").frame(minHeight: 36) }

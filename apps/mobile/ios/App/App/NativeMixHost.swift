@@ -596,6 +596,11 @@ final class NativeMixHost {
             tracks += added; config["tracks"] = tracks; artworks.append(artwork(track))
             requestArtwork(track, at: at)
             appended = true
+            // First handoff after a growing start often plans before both analyses exist; record why.
+            if let plan = added.first?["plan"] as? [String: Any] {
+                MoraPlaybackJournal.record("native.preparation.plan", ["seq": at, "method": plan["method"] as? String ?? "",
+                    "fallback": plan["fallbackReason"] as? String ?? "", "early": early])
+            }
             if early { growing[key] = job.detach() }
             if wanted { try select(index: at, position: 0, playing: wantsPlaying || continueWhenPrepared) }
             else { publish("prepared") }
