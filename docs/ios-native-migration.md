@@ -218,3 +218,5 @@ macOS: workflow `.github/workflows/ios.yml` компилирует отдель�
 - Разбор треков сохраняет прежние правила: только открытые транскодинги (без `encrypted`), не приватные, `policy` не BLOCK/SNIP, длительность 30 с – 3 ч, дедупликация по id, артист из `publisher_metadata`.
 - `NativeCatalogState` для `/soundcloud/artist/<id>` сначала использует Swift-провайдер, а JS-маршрут остаётся запасным (и единственным для остальных источников).
 - Ещё не перенесено: разрешение аудиопотока SoundCloud/YouTube (yt-dlp), каталог и поиск Яндекса, тексты песен — это следующие части этапа 3.
+
+Проверки `89598aa`: self-check `native-soundcloud` (client_id, профиль, поиск, DRM/размеры/хосты) прошёл; [прогон 44141349624](https://github.com/Rizen1322/MORA/actions/runs/44141349624) собрал и проверил IPA; [UI-прогон 44140499832](https://github.com/Rizen1322/MORA/actions/runs/44140499832) **прошёл**. Проверенная [IPA `89598aa`](../builds/ios-1.0.42-89598aa/MORA-unsigned.ipa). SHA-256: `99f83f514d77c9d4ff41913c42d7fc89e391c52dc9dc0b88dec593dfc4e00a8b`.
