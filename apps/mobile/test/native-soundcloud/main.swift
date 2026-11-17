@@ -75,7 +75,8 @@ check(calls.contains { $0.hasPrefix("https://a-v2.sndcdn.com/assets/2-deadbeef.j
 
 calls.removeAll()
 let found = try await cloud.search("  song  ", limit: 5)
-check(found.count == 1 && found[0]["id"] as? String == "1001", "search keeps one valid track")
+let ids = Set(found.compactMap { $0["id"] as? String })
+check(ids == ["1001", "1005"], "search keeps valid tracks from any artist and drops the rest")
 check(calls.contains { $0.contains("/search/tracks") && $0.contains("client_id=\(clientId)") }, "search uses the cached client id")
 check(!calls.contains("https://soundcloud.com/"), "search reuses the client id")
 
