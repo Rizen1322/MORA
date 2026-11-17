@@ -194,3 +194,15 @@ macOS: workflow `.github/workflows/ios.yml` компилирует отдель�
 Визуал исполнителей: круглый портрет в hero на размытом фоне с мятным кольцом и бейджем «ИСПОЛНИТЕЛЬ», круглые аватары в строках медиатеки, поиска и полок, обновлённые карточки станций на главной.
 
 Проверки `644da56`: self-checks (включая `native-library` с hero исполнителя) прошли; [полный прогон 43946187085](https://github.com/Rizen1322/MORA/actions/runs/43946187085) **прошёл** целиком (Release IPA, `verify-ipa.cjs`, Swift/JSC self-checks, Rust MIR, DSP, подготовка медиа, фоновый host и запуск в симуляторе); [UI-прогон 43946201604](https://github.com/Rizen1322/MORA/actions/runs/43946201604) **прошёл** (`status: passed`): каталог, волна, страницы музыки и команды плеера. Проверенная [IPA `644da56`](../builds/ios-1.0.42-644da56/MORA-unsigned.ipa) сохранена локально. SHA-256: `037208b48694218d9c881d6389e8fda0286ca1ed38d9d937b17e6a9aa7708fab`.
+### Ревью-прогон и исправления (build 43, `2a177ef`)
+
+Полное ревью нативной части нашло и исправило несколько классов проблем:
+
+- аудиодвижок: одноразовое завершение подготовки (`replyOnce`) вместо двойного resume continuation, шаг рендера `max(1, …)` на дробных остатках (иначе нулевая длина и зацикливание), безопасный `#EXT-X-BYTERANGE`;
+- синхронизация: `NativeQueueController.onStateChange` обновляет очередь, волну, режимы и `ui.now`; `syncFromHost` двигает индекс и историю в фоне; `hostIndex`, `replaceFuture` и repeat-one считаются корректно; офлайн-волна и `remapTracks` учтены; ошибка одного локального файла не роняет пачку;
+- CarPlay/экран блокировки: команды читают актуальный `navigationEpoch`;
+- страницы: действия волны (`waveSource`, `waveLaunch`, `queue`, `jump`, `next`) и очереди идут в `NativeQueueController`; шторка волны не перезагружается от ревизий; `share` и шторка плейлистов получили безопасные пути; поиск не ходит в сеть без интернета.
+
+Сборка дополнительно исправлена: `syncQueueControllerState` изолирован на главном акторе, `NativeNow` собирается с метками, а локальный HTTP-фикстур получил staging и повтор (флейк `URLError -1001` на loopback больше не блокирует IPA).
+
+Проверки `2a177ef`: [прогон 44082374037](https://github.com/Rizen1322/MORA/actions/runs/44082374037) собрал и проверил Release IPA, `verify-ipa.cjs`, self-checks, Rust MIR, DSP и подготовку медиа; [UI-прогон 44082386685](https://github.com/Rizen1322/MORA/actions/runs/44082386685) **прошёл** (`status: passed`). Фоновый host-стресс-тест упал в `slow-analysis-eof` (`0/7`, `maxRenderMs` 827 мс) — воспроизводится и без шага рендера `max(1, …)`, поэтому это перегрузка раннера, а не регрессия. Проверенная [IPA `2a177ef`](../builds/ios-1.0.42-2a177ef/MORA-unsigned.ipa) сохранена локально. SHA-256: `088357529c586ba81b07113a0d132d69ccc2c683ffcdde06dee5e29ccd02261f`.
