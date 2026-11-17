@@ -279,6 +279,20 @@ import Foundation
         }
     }
 
+    /// Wave settings changed: the next launch must build a fresh queue with them.
+    func resetForNewSettings() {
+        waveSource = nil
+        yandexSessionId = nil
+        waveError = nil
+        waveLoading = false
+        entries = []
+        index = 0
+        originalEntries = nil
+        context = Context(type: "library", id: nil, label: "Медиатека")
+        if NativeMixHost.shared.active { NativeMixHost.shared.stop { _ in } }
+        onStateChange?()
+    }
+
     // MARK: - Private
 
     private func startAt(_ targetIndex: Int, paused: Bool) async throws {

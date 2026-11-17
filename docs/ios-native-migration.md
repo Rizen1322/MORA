@@ -206,3 +206,7 @@ macOS: workflow `.github/workflows/ios.yml` компилирует отдель�
 Сборка дополнительно исправлена: `syncQueueControllerState` изолирован на главном акторе, `NativeNow` собирается с метками, а локальный HTTP-фикстур получил staging и повтор (флейк `URLError -1001` на loopback больше не блокирует IPA).
 
 Проверки `2a177ef`: [прогон 44082374037](https://github.com/Rizen1322/MORA/actions/runs/44082374037) собрал и проверил Release IPA, `verify-ipa.cjs`, self-checks, Rust MIR, DSP и подготовку медиа; [UI-прогон 44082386685](https://github.com/Rizen1322/MORA/actions/runs/44082386685) **прошёл** (`status: passed`). Фоновый host-стресс-тест упал в `slow-analysis-eof` (`0/7`, `maxRenderMs` 827 мс) — воспроизводится и без шага рендера `max(1, …)`, поэтому это перегрузка раннера, а не регрессия. Проверенная [IPA `2a177ef`](../builds/ios-1.0.42-2a177ef/MORA-unsigned.ipa) сохранена локально. SHA-256: `088357529c586ba81b07113a0d132d69ccc2c683ffcdde06dee5e29ccd02261f`.
+### Волна: состояние и сброс настроек (build 43)
+
+- `receive` больше не затирает нативное состояние волны снапшотом страницы: `syncQueueControllerState` применяется после каждого пуша, но переопределяет только то, чем владеет `NativeQueueController` (активная волна, очередь, режимы при активном воспроизведении, текущий трек).
+- `NativeWaveState` запоминает факт записи настроек (`consumeChange`), а закрытие шторки с изменением вызывает `NativeQueueController.resetForNewSettings()`: трек и очередь сбрасываются, следующая волна собирается по новым параметрам.

@@ -116,7 +116,12 @@ check((requests.last?.2?["wave"] as? [String: Any])?["mode"] as? String == "mix"
 try await state.execute("yandexSeed", ["group": ["seed-a"], "value": "seed-b"], request: request)
 check((requests.last?.2?["wave"] as? [String: Any])?["yandexSeeds"] as? [String] == ["seed-b"], "yandex seed replaces its group")
 
+check(!state.consumeChange(), "no tuning change before any write")
+try await state.execute("set", ["group": "wave", "key": "diversity", "value": "discover"], request: request)
+check(state.consumeChange(), "a tuning write is reported once")
+check(!state.consumeChange(), "the tuning change is consumed")
 do { try await state.execute("set", ["group": "player", "key": "mood", "value": "calm"], request: request); fail("foreign group accepted") } catch {}
 do { try await state.execute("unknown", [:], request: request); fail("unknown action accepted") } catch {}
+check(!state.consumeChange(), "a rejected write is not a change")
 
 print("Native wave: settings sheet, page from the queue slice, inactive and empty states, tuning writes passed")

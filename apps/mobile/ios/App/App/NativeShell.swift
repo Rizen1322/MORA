@@ -781,20 +781,39 @@ final class NativeShellStore: ObservableObject {
 
     @MainActor private func syncQueueControllerState() {
         let qc = NativeQueueController.shared
-        self.queue = qc.entries.compactMap { NativeQueuedTrack(["entryId": $0.entryId, "trackId": $0.trackId]) }
-        self.ui.playback.shuffle = qc.shuffle
-        self.ui.playback.repeatMode = qc.repeatMode
-        self.ui.playback.automix = qc.automixEnabled
-        self.ui.playback.canShuffle = qc.entries.count > 1
-        self.ui.wave.loading = qc.waveLoading
-        self.ui.wave.error = qc.waveError
-        self.ui.wave.active = qc.waveSource.flatMap(NativeWaveSource.init(rawValue:))
-        self.ui.wave.playing = qc.isWave && (player.playing || host?.active == true)
+        let playing = qc.isWave && (player.playing || host?.active == true)
+        // The page's snapshot knows nothing about the Swift queue: only override what the controller owns.
+        if !qc.entries.isEmpty { self.queue = qc.entries.compactMap { NativeQueuedTrack(["entryId": $0.entryId, "trackId": $0.trackId]) } }
+        if !qc.entries.isEmpty || NativeMixHost.shared.active {
+            self.ui.playback.shuffle = qc.shuffle
+            self.ui.playback.repeatMode = qc.repeatMode
+            self.ui.playback.automix = qc.automixEnabled
+            self.ui.playback.canShuffle = qc.entries.count > 1
+        }
+        if qc.waveSource != nil || qc.waveLoading {
+            self.ui.wave.loading = qc.waveLoading
+            self.ui.wave.error = qc.waveError
+            self.ui.wave.active = qc.waveSource.flatMap(NativeWaveSource.init(rawValue:))
+            self.ui.wave.playing = playing
+        }
         if let cur = qc.currentEntry, let track = byId[cur.trackId] {
             self.ui.now = NativeNow(id: track.id, title: track.title, artist: track.artist, label: qc.context.label,
                                     cover: track.cover, playing: player.playing, entryId: cur.entryId,
                                     position: player.position, duration: track.duration)
         }
+    }
+
+    /// The wave sheet closed: a tuning change means the next wave must be built from scratch.
+    @MainActor func waveSettingsDismissed() {
+        guard wave.consumeChange() else { return }
+        NativeQueueController.shared.resetForNewSettings()
+        queue = []
+        ui.now = nil
+        ui.wave.active = nil
+        ui.wave.playing = false
+        ui.wave.loading = false
+        ui.wave.error = nil
+        show("Новая волна соберётся с этими настройками")
     }
 
     /// A snapshot from the page (main thread). Returns whether the shell is on screen.
@@ -832,6 +851,8 @@ final class NativeShellStore: ObservableObject {
             if let scope = next.searchScope { searchScope = scope }
         }
         if next != ui { ui = next }
+        // Stage 4: the Swift queue controller owns playback; the page's snapshot must not reset wave/queue state.
+        if sharedLibrary { Task { @MainActor in self.syncQueueControllerState() } }
         // A push sent before the page saw native's own navigation must not jump back.
         if let pending, pending.path != next.path, Date().timeIntervalSince(pending.at) < 2 {} else {
             pending = nil
@@ -1304,6 +1325,7 @@ struct NativeShellContent: View {
         .environmentObject(store)
         .sheet(isPresented: $store.waveSettingsOpen) {
             NativePageView(waveSource: Binding(get: { store.waveSource ?? store.ui.wave.preferred }, set: { store.waveSource = $0 }))
+                .onDisappear { store.waveSettingsDismissed() }
                 .environmentObject(store)
                 .tint(.moraMint)
                 .presentationDetents([.fraction(0.72), .large])
