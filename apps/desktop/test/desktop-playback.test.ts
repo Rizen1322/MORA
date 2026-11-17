@@ -320,3 +320,36 @@ it('follows confirmed tokens and serializes rapid skips without exposing file co
   expect(logs.some(row => row.outcome.manual && row.plan.method === 'skip_fade')).toBe(true);
   await host.stop();
 });
+
+it('keeps refreshing the armed fallback when queue revisions change behind the same incoming track', async () => {
+  const track = (id: string) => ({ id, duration: 20, mixingAllowed: true, analysis: null });
+  const plan = { ...planTransition(track('a'), track('b'), DEFAULT_AUTOMIX_SETTINGS), id: 'refreshed-plan' };
+  let release!: (response: Response) => void;
+  const delayed = new Promise<Response>(resolve => { release = resolve; });
+  let host: DesktopPlayback;
+  const audio = { process: {}, start: vi.fn(async () => ({ sampleRate: 48000, queueFrames: 2048 })),
+    feedFile: vi.fn(async () => {}), stop: vi.fn(async () => {}), command: vi.fn(async (v: any) => {
+      if (v.cmd === 'start') queueMicrotask(() => host.onEvent({ type: 'tick', clock: 0, paused: false, main: v.deck,
+        decks: [0, 1].map(deck => ({ token: deck === v.deck ? v.token : null, playing: deck === v.deck,
+          position: v.frame, totalFrames: 960000, starved: false, ratio: 1, bufferedAhead: 960000 })), transition: null, limiterDb: 0, peak: 0 }));
+    }) };
+  const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(url)).pathname, body = init?.body ? JSON.parse(String(init.body)) : null;
+    if (path === '/internal/desktop/pcm-source') return Response.json({ path: 'private', finalPath: 'private', partPath: '',
+      format: 'f32le', totalFrames: 960000, availableFrames: 960000, complete: true,
+      track: { trackId: body.trackId, title: '', artist: '', duration: 20, coverUrl: '', mixingAllowed: true } });
+    if (path === '/api/settings') return Response.json({ automix: DEFAULT_AUTOMIX_SETTINGS });
+    if (path === '/api/automix/plan') return delayed;
+    return Response.json({});
+  };
+  host = new DesktopPlayback(audio, { backend: () => ({ origin: 'http://127.0.0.1', accessToken: '', pcmToken: 'secret' }),
+    ready: vi.fn(), track: vi.fn(), fetch: fetcher as typeof fetch });
+  try {
+    await host.startSource({ trackId: 'a', entryId: 'entry-a' }, { sampleRate: 48000, position: 0 });
+    await host.prepareQueue(1, [{ trackId: 'b', entryId: 'entry-b' }], 'a');
+    await vi.waitFor(() => expect(host.state().nextTrack?.plan?.method).toBe('fallback_crossfade'), { timeout: 3000 });
+    await host.applyDislikes(['unrelated-track']);
+    release(Response.json({ plan, pending: [] }));
+    await vi.waitFor(() => expect(host.state().nextTrack?.plan?.id).toBe('refreshed-plan'));
+  } finally { await host.stop(); }
+}, 10000);
