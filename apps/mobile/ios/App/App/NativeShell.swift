@@ -772,12 +772,14 @@ final class NativeShellStore: ObservableObject {
             }
         }
         network.start(queue: DispatchQueue(label: "ru.mora.network"))
-        NativeQueueController.shared.onStateChange = { [weak self] in
-            self?.syncQueueControllerState()
+        Task { @MainActor in
+            NativeQueueController.shared.onStateChange = { [weak self] in
+                Task { @MainActor in self?.syncQueueControllerState() }
+            }
         }
     }
 
-    private func syncQueueControllerState() {
+    @MainActor private func syncQueueControllerState() {
         let qc = NativeQueueController.shared
         self.queue = qc.entries.compactMap { NativeQueuedTrack(["entryId": $0.entryId, "trackId": $0.trackId]) }
         self.ui.playback.shuffle = qc.shuffle
@@ -789,18 +791,9 @@ final class NativeShellStore: ObservableObject {
         self.ui.wave.active = qc.waveSource.flatMap(NativeWaveSource.init(rawValue:))
         self.ui.wave.playing = qc.isWave && (player.playing || host?.active == true)
         if let cur = qc.currentEntry, let track = byId[cur.trackId] {
-            var nowDict: [String: Any] = [
-                "id": track.id,
-                "entryId": cur.entryId,
-                "title": track.title,
-                "artist": track.artist,
-                "duration": track.duration,
-                "position": player.position,
-                "playing": player.playing,
-                "label": qc.context.label,
-            ]
-            if let cover = track.cover { nowDict["cover"] = cover }
-            self.ui.now = NativeNow(nowDict)
+            self.ui.now = NativeNow(id: track.id, title: track.title, artist: track.artist, label: qc.context.label,
+                                    cover: track.cover, playing: player.playing, entryId: cur.entryId,
+                                    position: player.position, duration: track.duration)
         }
     }
 
