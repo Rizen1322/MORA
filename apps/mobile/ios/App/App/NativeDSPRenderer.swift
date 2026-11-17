@@ -1455,18 +1455,18 @@ final class MixerCore {
             if active, let current = armed {
                 let end = current.durationFrames + current.gapFrames
                 let rem = end - t
-                if rem > 0 && rem < Double(len) { len = max(1, Int(rem.rounded(.up))) }
+                if rem > 0 && rem < Double(len) { len = Int(rem) }
                 for lane in current.lanes {
                     if !lane.isA && current.gapFrames > 0 { continue }
                     let shift = !lane.isA ? current.bDelayFrames ?? 0 : 0
                     for p in lane.points {
                         let point = p.t + shift
-                        if point > t && point - t < Double(len) { len = max(1, Int((point - t).rounded(.up))) }
+                        if point > t && point - t < Double(len) { len = Int(point - t) }
                     }
                 }
-                if !swapped && current.swapFrame > t && current.swapFrame - t < Double(len) { len = max(1, Int((current.swapFrame - t).rounded(.up))) }
+                if !swapped && current.swapFrame > t && current.swapFrame - t < Double(len) { len = Int(current.swapFrame - t) }
                 let delay = current.bDelayFrames ?? 0
-                if delay > t && delay - t < Double(len) { len = max(1, Int((delay - t).rounded(.up))) }
+                if delay > t && delay - t < Double(len) { len = Int(delay - t) }
             }
             renderSub(outL, outR, off, len)
             clock += Double(len)
