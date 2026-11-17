@@ -210,3 +210,5 @@ macOS: workflow `.github/workflows/ios.yml` компилирует отдель�
 
 - `receive` больше не затирает нативное состояние волны снапшотом страницы: `syncQueueControllerState` применяется после каждого пуша, но переопределяет только то, чем владеет `NativeQueueController` (активная волна, очередь, режимы при активном воспроизведении, текущий трек).
 - `NativeWaveState` запоминает факт записи настроек (`consumeChange`), а закрытие шторки с изменением вызывает `NativeQueueController.resetForNewSettings()`: трек и очередь сбрасываются, следующая волна собирается по новым параметрам.
+
+Проверки `c128b19`: [прогон 44130505360](https://github.com/Rizen1322/MORA/actions/runs/44130505360) собрал и проверил IPA и `verify-ipa.cjs`; [UI-прогон 44127585147](https://github.com/Rizen1322/MORA/actions/runs/44127585147) **прошёл**; host-стресс `slow-analysis-eof` по-прежнему падает на перегруженном раннере. Проверенная [IPA `c128b19`](../builds/ios-1.0.42-c128b19/MORA-unsigned.ipa). SHA-256: `e4841cae8d90006192f1b504c385a13e037d62b8905f8e3e034f3fcad7a155fb`.
