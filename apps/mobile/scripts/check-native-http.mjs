@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, rm, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -84,6 +84,17 @@ try {
     child.on('error', error => reject(new Error('Native HTTP executable could not start', { cause: error })));
     child.on('close', (code, signal) => resolve({ code, signal }));
   });
+  if (result.code !== 0) {
+    try {
+      const dir = join(process.env.HOME ?? '', 'Library/Logs/DiagnosticReports');
+      const reports = (await readdir(dir)).filter((name) => name.endsWith('.ips')).sort();
+      const latest = reports.at(-1);
+      if (latest) {
+        console.log(`Native HTTP crash report: ${latest}`);
+        console.log((await readFile(join(dir, latest), 'utf8')).split('\n').slice(0, 160).join('\n'));
+      } else console.log('Native HTTP crash: no report in DiagnosticReports');
+    } catch (error) { console.log(`Native HTTP crash report unavailable: ${String(error)}`); }
+  }
   assert.equal(result.code, 0, `Native HTTP executable failed: exit=${result.code}, signal=${result.signal}`);
   assert.equal(coverAccepted, true, 'The artwork regression must accept its audio fixture');
   const actual = JSON.parse(await readFile(join(folder, 'analysis-actual.json'), 'utf8'));
