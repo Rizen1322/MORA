@@ -212,3 +212,9 @@ macOS: workflow `.github/workflows/ios.yml` компилирует отдель�
 - `NativeWaveState` запоминает факт записи настроек (`consumeChange`), а закрытие шторки с изменением вызывает `NativeQueueController.resetForNewSettings()`: трек и очередь сбрасываются, следующая волна собирается по новым параметрам.
 
 Проверки `c128b19`: [прогон 44130505360](https://github.com/Rizen1322/MORA/actions/runs/44130505360) собрал и проверил IPA и `verify-ipa.cjs`; [UI-прогон 44127585147](https://github.com/Rizen1322/MORA/actions/runs/44127585147) **прошёл**; host-стресс `slow-analysis-eof` по-прежнему падает на перегруженном раннере. Проверенная [IPA `c128b19`](../builds/ios-1.0.42-c128b19/MORA-unsigned.ipa). SHA-256: `e4841cae8d90006192f1b504c385a13e037d62b8905f8e3e034f3fcad7a155fb`.
+### Этап 3: SoundCloud на Swift (build 43)
+
+- `NativeSoundCloud` повторяет JS-провайдер: находит `client_id` в официальных `a-v2.sndcdn.com/assets/*.js` (кэш 30 минут), читает профиль `/users/<id>` и треки `/users/<id>/tracks`, ищет `/search/tracks`, строго проверяет хосты, размеры ответов и идентичность профиля.
+- Разбор треков сохраняет прежние правила: только открытые транскодинги (без `encrypted`), не приватные, `policy` не BLOCK/SNIP, длительность 30 с – 3 ч, дедупликация по id, артист из `publisher_metadata`.
+- `NativeCatalogState` для `/soundcloud/artist/<id>` сначала использует Swift-провайдер, а JS-маршрут остаётся запасным (и единственным для остальных источников).
+- Ещё не перенесено: разрешение аудиопотока SoundCloud/YouTube (yt-dlp), каталог и поиск Яндекса, тексты песен — это следующие части этапа 3.

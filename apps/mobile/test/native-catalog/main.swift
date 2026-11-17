@@ -12,6 +12,7 @@ func actRows(_ list: [[String: Any]], _ name: String) -> [[String: Any]] {
 }
 
 let state = NativeCatalogState()
+state.soundcloud = nil // the fixtures below replace the native provider
 var requests: [(String, String)] = []
 let track: [String: Any] = ["id": "tr1", "title": "Song", "artist": "Artist", "duration": 185.0, "coverUrl": "https://img/1"]
 let request: NativeCatalogState.Request = { method, path, _ in

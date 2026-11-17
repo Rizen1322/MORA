@@ -6,6 +6,8 @@ final class NativeCatalogState {
     typealias Request = (_ method: String, _ path: String, _ body: [String: Any]?) async throws -> [String: Any]
 
     private var cache: [String: [String: Any]] = [:]
+    /// Stage 3: SoundCloud browsing runs in Swift; the JS route stays as a fallback for other providers.
+    var soundcloud: NativeSoundCloud? = .live
     /// The simulator UI check injects pages instead of calling the real providers.
     private var fixtures: [String: [String: Any]] = [:]
 
@@ -113,8 +115,14 @@ final class NativeCatalogState {
         }
 
         let key = "\(source)/\(kind)/\(id)"
+        var nativePage: [String: Any]?
+        if source == "soundcloud", kind == "artist", let soundcloud, cache[key] == nil {
+            nativePage = try? await soundcloud.artist(id)
+        }
         let data: [String: Any]
-        if let hit = cache[key] { data = hit }
+        if let nativePage, !(nativePage["tracks"] as? [Any] ?? []).isEmpty {
+            cache[key] = nativePage; data = nativePage
+        } else if let hit = cache[key] { data = hit }
         else {
             let url = source == "soundcloud"
                 ? "/api/catalog/soundcloud/artists/\(enc)"

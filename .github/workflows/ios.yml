@@ -105,8 +105,12 @@ jobs:
           "$RUNNER_TEMP/mora-automix-diagnostics-check"
       - name: Test native catalog pages
         run: |
-          swiftc apps/mobile/ios/App/App/NativeCatalogState.swift apps/mobile/test/native-catalog/main.swift -o "$RUNNER_TEMP/mora-catalog-check"
+          swiftc apps/mobile/ios/App/App/NativeSoundCloud.swift apps/mobile/ios/App/App/NativeCatalogState.swift apps/mobile/test/native-catalog/main.swift -o "$RUNNER_TEMP/mora-catalog-check"
           "$RUNNER_TEMP/mora-catalog-check"
+      - name: Test native SoundCloud provider
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeSoundCloud.swift apps/mobile/test/native-soundcloud/main.swift -o "$RUNNER_TEMP/mora-soundcloud-check"
+          "$RUNNER_TEMP/mora-soundcloud-check"
       - name: Test native wave page and settings
         run: |
           swiftc apps/mobile/ios/App/App/NativeShellState.swift apps/mobile/ios/App/App/NativeWaveState.swift apps/mobile/test/native-wave-settings/main.swift -o "$RUNNER_TEMP/mora-wave-settings-check"
