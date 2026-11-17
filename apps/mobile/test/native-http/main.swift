@@ -170,7 +170,7 @@ Task.detached {
         print("Native FFT and decimator: complex DFT, irregular blocks, Double output, history and invalid-input checks passed")
         let analysisFrames = CommandLine.arguments.count > 4 ? Int(CommandLine.arguments[4])! : 44100 * 4
         precondition(analysisFrames > 0 && analysisFrames <= 44100 * 180)
-        stage("MIR analysis \(analysisFrames) frames")
+        print("Native HTTP check: MIR analysis \(analysisFrames) frames")
         let analysisStarted = ProcessInfo.processInfo.systemUptime
         var stage = "starting", stageStarted = analysisStarted
         let profile = try core.analyze(root.deletingLastPathComponent().appendingPathComponent("analysis-input.f32le"), frames: analysisFrames, ticket: NativePreparationTicket(), progress: { next in
@@ -183,7 +183,7 @@ Task.detached {
         print("Native MIR stage \(stage): \(Int((analysisEnded - stageStarted) * 1000))ms")
         print("Native MIR total: \(analysisFrames / 44100)s audio, \(Int((analysisEnded - analysisStarted) * 1000))ms wall time (macOS test host)")
         try JSONSerialization.data(withJSONObject: profile).write(to: root.deletingLastPathComponent().appendingPathComponent("analysis-actual.json"))
-        stage("queue preparation")
+        print("Native HTTP check: queue preparation")
         await job.run(folder: folder, manifest: ["from": 1, "items": [item("B"), item("C")],
             "loopItems": [item("A"), item("B"), item("C")], "settings": ["enabled": false],
             "previous": ["trackId": "A", "duration": 0.5, "mixingAllowed": false]],
@@ -202,7 +202,7 @@ Task.detached {
         let fallbackFolder = root.appendingPathComponent("fallback")
         try FileManager.default.createDirectory(at: fallbackFolder, withIntermediateDirectories: true)
         try firstPCM.write(to: fallbackFolder.appendingPathComponent("0.f32le"))
-        stage("fallback preparation")
+        print("Native HTTP check: fallback preparation")
         let fallback = NativeQueuePreparation(index: 0), fallbackSink = PreparedQueueCheck()
         let badScript = "var MoraPreparation = { analyzeJSON: function() { throw Error('fixture'); }, planJSON: function() { throw Error('fixture'); } };"
         let fallbackItems = ["B", "C", "D", "E", "F", "G", "H"].map { id -> [String: Any] in
