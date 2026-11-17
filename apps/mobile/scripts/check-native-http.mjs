@@ -19,6 +19,7 @@ for (let i = 0; i < 11025; i++) wave.writeInt16LE(Math.round(Math.sin(i * .05) *
 let coverAccepted = false, coverReleased = false;
 let imagesInFlight = 0;
 const server = createServer((req, res) => {
+  console.log(`fixture request ${req.method} ${req.url} header=${req.headers['x-mora-test'] ?? '-'}`);
   if (req.url === '/redirect') {
     assert.equal(req.headers.authorization, 'Bearer fixture');
     res.writeHead(302, { Location: `http://localhost:${server.address().port}/body` }); res.end();
