@@ -79,21 +79,18 @@ try {
   const files = join(folder, 'files'); await mkdir(files);
   const result = await new Promise((resolve, reject) => {
     const hash = createHash('md5').update('XGRlBW9FXlekgbPrRHuSiAtest/audio.mp3salt123').digest('hex');
+    // The macOS simulator JIT has trapped with SIGILL on some CI hosts; the interpreter keeps the fixture deterministic.
     const child = spawn(binary, [`http://127.0.0.1:${server.address().port}`, files,
-      `https://edge.storage.yandex.net/get-mp3/${hash}/1a/test/audio.mp3`, String(frames)], { stdio: 'inherit' });
+      `https://edge.storage.yandex.net/get-mp3/${hash}/1a/test/audio.mp3`, String(frames)],
+      { stdio: 'inherit', env: { ...process.env, JSC_useJIT: '0' } });
     child.on('error', error => reject(new Error('Native HTTP executable could not start', { cause: error })));
     child.on('close', (code, signal) => resolve({ code, signal }));
   });
   if (result.code !== 0) {
-    try {
-      const dir = join(process.env.HOME ?? '', 'Library/Logs/DiagnosticReports');
-      const reports = (await readdir(dir)).filter((name) => name.endsWith('.ips')).sort();
-      const latest = reports.at(-1);
-      if (latest) {
-        console.log(`Native HTTP crash report: ${latest}`);
-        console.log((await readFile(join(dir, latest), 'utf8')).split('\n').slice(0, 160).join('\n'));
-      } else console.log('Native HTTP crash: no report in DiagnosticReports');
-    } catch (error) { console.log(`Native HTTP crash report unavailable: ${String(error)}`); }
+    console.log(`Native HTTP crash: exit=${result.code}, signal=${result.signal}; rerunning under lldb for a backtrace`);
+    spawnSync('lldb', ['-batch', '-o', 'run', '-o', 'thread backtrace all', '--', binary, `http://127.0.0.1:${server.address().port}`, files,
+      `https://edge.storage.yandex.net/get-mp3/${createHash('md5').update('XGRlBW9FXlekgbPrRHuSiAtest/audio.mp3salt123').digest('hex')}/1a/test/audio.mp3`, String(frames)],
+      { stdio: 'inherit', env: { ...process.env, JSC_useJIT: '0' } });
   }
   assert.equal(result.code, 0, `Native HTTP executable failed: exit=${result.code}, signal=${result.signal}`);
   assert.equal(coverAccepted, true, 'The artwork regression must accept its audio fixture');
