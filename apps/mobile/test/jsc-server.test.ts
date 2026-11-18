@@ -53,6 +53,7 @@ function startServer(root: string) {
   const args = (p: unknown) => (Array.isArray(p) ? p : [p]) as never[];
 
   realm.moraHost = {
+    internalToken: 'test-internal-token',
     log: (level: string, text: string) => logs.push(`${level}: ${text}`),
     post: (m: Msg) => { posted.push(m); for (const l of listeners) l(m); },
     timer: (id: number, ms: number, repeat: boolean) => {
@@ -177,5 +178,14 @@ describe('server in JavaScriptCore (server-jsc.js)', () => {
     const status = await server.request('GET', '/api/providers/yandex/likes/import?envelope=1');
     expect(status.status).toBe(200);
     expect(JSON.parse(status.text)).toEqual({ job: null });
+  });
+
+  it('protects /api/mobile/yandex-credentials with internalToken', async () => {
+    const noHeader = await server.request('GET', '/api/mobile/yandex-credentials');
+    expect(noHeader.status).toBe(403);
+    const wrongHeader = await server.request('GET', '/api/mobile/yandex-credentials', null, { 'x-mora-native': 'wrong' });
+    expect(wrongHeader.status).toBe(403);
+    const validDisconnected = await server.request('GET', '/api/mobile/yandex-credentials', null, { 'x-mora-native': 'test-internal-token' });
+    expect(validDisconnected.status).toBe(409);
   });
 });

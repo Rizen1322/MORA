@@ -12,7 +12,9 @@ func actRows(_ list: [[String: Any]], _ name: String) -> [[String: Any]] {
 }
 
 let state = NativeCatalogState()
-state.soundcloud = nil // the fixtures below replace the native provider
+state.soundcloud = nil // the fixtures below replace the native providers
+state.publicCatalog = nil
+state.yandex = nil
 var requests: [(String, String)] = []
 let track: [String: Any] = ["id": "tr1", "title": "Song", "artist": "Artist", "duration": 185.0, "coverUrl": "https://img/1"]
 let request: NativeCatalogState.Request = { method, path, _ in
@@ -132,4 +134,205 @@ let emptyPublic = try await state.page("/public/artist/empty", request: { _, pat
 })
 check(sections(emptyPublic).count == 2 && (sections(emptyPublic)[0]["rows"] as? [[String: Any]])?.first?["play"] == nil, "an empty catalogue page has no play button")
 
-print("Native catalog: yandex artist and album, pagination, public and soundcloud pages, fixtures and id encoding passed")
+// MARK: Native Yandex & Public catalog providers (zero JSC requests)
+
+func json(_ value: Any) -> Data { try! JSONSerialization.data(withJSONObject: value) }
+let failRequest: NativeCatalogState.Request = { method, path, _ in
+    fail("Native provider should have handled \(method) \(path)")
+}
+
+var yandexFetchCount = 0
+let mockYandex = NativeYandexCatalog(
+    credentialsLoader: { ("tok", "https://api.music.yandex.net") },
+    fetch: { request, _ in
+        yandexFetchCount += 1
+        let url = request.url!
+        let path = url.path + (url.query.map { "?\($0)" } ?? "")
+        if path == "/artists/42/brief-info" {
+            return (200, json(["result": [
+                "artist": ["id": 42, "name": "Native YA Artist", "genres": ["indie"]],
+                "popularTracks": [
+                    ["id": 100, "title": "Saved Song", "durationMs": 180000, "albums": [["id": 500, "title": "LP"]], "artists": [["id": 42, "name": "Native YA Artist"]]],
+                    ["id": 102, "title": "Unsaved Song", "durationMs": 210000, "albums": [["id": 500, "title": "LP"]], "artists": [["id": 42, "name": "Native YA Artist"]]],
+                ],
+                "similarArtists": [["id": 77, "name": "Similar"]],
+            ]]))
+        }
+        if path.hasPrefix("/artists/42/direct-albums") {
+            let p = path.contains("page=1") ? 1 : 0
+            return (200, json(["result": [
+                "total": 25, "perPage": 20,
+                "albums": p == 0
+                    ? [["id": 500, "title": "LP 1", "year": 2023]]
+                    : [["id": 500, "title": "LP 1", "year": 2023], ["id": 501, "title": "LP 2", "year": 2025]],
+            ]]))
+        }
+        if path == "/albums/500/with-tracks" {
+            return (200, json(["result": [
+                "id": 500, "title": "LP 1", "year": 2023,
+                "artists": [["id": 42, "name": "Native YA Artist"]],
+                "volumes": [[
+                    ["id": 100, "title": "Saved Song", "durationMs": 180000, "artists": [["id": 42, "name": "Native YA Artist"]]],
+                ]],
+            ]]))
+        }
+        if path.hasPrefix("/search") {
+            let p1 = path.contains("page=1")
+            let tracks: [[String: Any]] = p1
+                ? [
+                    ["id": 100, "title": "Saved Song", "durationMs": 180000, "albums": [["id": 500, "title": "LP 1"]], "artists": [["id": 42, "name": "Native YA Artist"]]],
+                    ["id": 103, "title": "Page 2 Song", "durationMs": 195000, "albums": [["id": 500, "title": "LP 1"]], "artists": [["id": 42, "name": "Native YA Artist"]]],
+                ]
+                : [
+                    ["id": 100, "title": "Saved Song", "durationMs": 180000, "albums": [["id": 500, "title": "LP 1"]], "artists": [["id": 42, "name": "Native YA Artist"]]],
+                    ["id": 102, "title": "Unsaved Song", "durationMs": 210000, "albums": [["id": 500, "title": "LP 1"]], "artists": [["id": 42, "name": "Native YA Artist"]]],
+                ]
+            return (200, json(["result": [
+                "tracks": ["total": 25, "perPage": 20, "results": tracks],
+                "artists": ["results": [["id": 42, "name": "Native YA Artist"]]],
+                "albums": ["results": [["id": 500, "title": "LP 1", "year": 2023, "artists": [["id": 42, "name": "Native YA Artist"]]]]],
+            ]]))
+        }
+        if path == "/account/status" { return (200, json(["result": ["account": ["uid": 777]]])) }
+        if path == "/users/777/likes/tracks" { return (200, json(["result": ["library": ["tracks": [["id": "100", "albumId": "500"]]]]])) }
+        if path == "/tracks" {
+            return (200, json(["result": [
+                ["id": 100, "title": "Saved Song", "durationMs": 180000, "albums": [["id": 500, "title": "LP 1"]], "artists": [["id": 42, "name": "Native YA Artist"]]],
+            ]]))
+        }
+        return (404, Data())
+    }
+)
+
+let ucArtistId = "UC1234567890123456789012"
+let mpreAlbumId = "MPREb_12345678"
+let mockPublic = NativePublicCatalog { req, _ in
+    let body = (try? JSONSerialization.jsonObject(with: req.httpBody ?? Data()) as? [String: Any]) ?? [:]
+    let bid = body["browseId"] as? String ?? ""
+    if bid == ucArtistId {
+        return (200, json([
+            "header": ["musicImmersiveHeaderRenderer": ["title": ["simpleText": "Native Public Artist"], "description": ["simpleText": "YTM Bio"]]],
+            "contents": ["singleColumnBrowseResultsRenderer": ["tabs": [["tabRenderer": ["content": ["sectionListRenderer": ["contents": [
+                ["musicShelfRenderer": ["contents": [[
+                    "musicResponsiveListItemRenderer": [
+                        "playlistItemData": ["videoId": "dQw4w9WgXcQ"],
+                        "flexColumns": [
+                            ["musicResponsiveListItemFlexColumnRenderer": ["text": ["runs": [["text": "Public Hit"]]]]],
+                            ["musicResponsiveListItemFlexColumnRenderer": ["text": ["runs": [["text": "Native Public Artist"]]]]],
+                        ],
+                    ],
+                ]]]],
+                ["musicCarouselShelfRenderer": ["contents": [[
+                    "musicTwoRowItemRenderer": [
+                        "title": ["runs": [["text": "Public LP", "navigationEndpoint": ["browseEndpoint": ["browseId": mpreAlbumId, "browseEndpointContextSupportedConfigs": ["browseEndpointContextMusicConfig": ["pageType": "MUSIC_PAGE_TYPE_ALBUM"]]]]]]],
+                        "subtitle": ["runs": [["text": "Native Public Artist"]]],
+                    ],
+                ]]]],
+            ]]]]]]]],
+        ]))
+    }
+    if bid == mpreAlbumId {
+        return (200, json([
+            "header": ["musicDetailHeaderRenderer": ["title": ["runs": [["text": "Public LP"]]]]],
+            "contents": ["twoColumnBrowseResultsRenderer": ["secondaryContents": ["sectionListRenderer": ["contents": [[
+                "musicShelfRenderer": ["contents": [[
+                    "musicResponsiveListItemRenderer": [
+                        "playlistItemData": ["videoId": "xyz12345678"],
+                        "flexColumns": [
+                            ["musicResponsiveListItemFlexColumnRenderer": ["text": ["runs": [["text": "Album Track"]]]]],
+                            ["musicResponsiveListItemFlexColumnRenderer": ["text": ["runs": [["text": "Native Public Artist"]]]]],
+                        ],
+                    ],
+                ]]],
+            ]]]]]],
+        ]))
+    }
+    return (404, Data())
+}
+
+let nativeState = NativeCatalogState()
+nativeState.soundcloud = nil
+nativeState.yandex = mockYandex
+nativeState.publicCatalog = mockPublic
+
+let lookup: NativeCatalogState.LocalTrackLookup = { provider, extId in
+    if provider == "yandex" && extId == "100:500" { return ("lib-1", true, 1) }
+    return nil
+}
+
+// Yandex artist page with localLookup & optimistic external reaction
+let nativeArtist = try await nativeState.page("/catalog/artist/42", request: failRequest, localLookup: lookup)
+check(nativeArtist["title"] as? String == "Native YA Artist", "native yandex artist title")
+let popRows = rows(sections(nativeArtist)[1])
+check(popRows.count == 2, "native yandex artist popular tracks")
+let savedActs = (popRows[0]["actions"] as? [[String: Any]] ?? []).map { ($0["title"] as? String) ?? "" }
+let unsavedActs = (popRows[1]["actions"] as? [[String: Any]] ?? []).map { ($0["title"] as? String) ?? "" }
+check(!savedActs.contains("Сохранить в медиатеку") && savedActs.contains("Убрать лайк"), "saved track uses local lookup state")
+check(unsavedActs.contains("Сохранить в медиатеку") && unsavedActs.contains("Нравится"), "unsaved track offers save and like")
+
+let fetchesAfterArtist = yandexFetchCount
+nativeState.setExternalReaction(provider: "yandex", externalId: "102:500", value: 1)
+let withPending = try await nativeState.page("/catalog/artist/42", request: failRequest, localLookup: lookup)
+let unsavedAfterReact = (rows(sections(withPending)[1])[1]["actions"] as? [[String: Any]] ?? []).map { ($0["title"] as? String) ?? "" }
+check(yandexFetchCount == fetchesAfterArtist && unsavedAfterReact.contains("Убрать лайк"), "external reaction applies from cache without refetch")
+
+try await nativeState.execute("catalogMore", ["id": "42"], request: failRequest)
+let afterMore = try await nativeState.page("/catalog/artist/42", request: failRequest, localLookup: lookup)
+let afterMoreAlbumRows = rows(sections(afterMore)[2])
+check(afterMoreAlbumRows.count == 1 && (afterMoreAlbumRows[0]["items"] as? [[String: Any]])?.count == 2, "native yandex catalogMore merges without duplicates")
+
+let nativeAlbum = try await nativeState.page("/catalog/album/500", request: failRequest, localLookup: lookup)
+check(nativeAlbum["title"] as? String == "LP 1" && rows(sections(nativeAlbum)[1]).count == 1, "native yandex album rendered without JSC")
+
+// Native Yandex search, pagination, empty-query home, session update & fixtures
+let s0 = try await nativeState.searchYandex(query: "hello", scope: "all", more: false, previousSession: nil, request: failRequest, localLookup: lookup)
+let sid0 = s0["session"] as? String ?? ""
+check(!sid0.isEmpty && (s0["more"] as? Bool) == true && (s0["tracks"] as? [[String: Any]])?.count == 2, "yandex search page 0")
+let s1 = try await nativeState.searchYandex(query: "hello", scope: "all", more: true, previousSession: sid0, request: failRequest, localLookup: lookup)
+let sid1 = s1["session"] as? String ?? ""
+let s1Tracks = s1["tracks"] as? [[String: Any]] ?? []
+check(!sid1.isEmpty && (s1["more"] as? Bool) == false && s1Tracks.count == 3, "yandex search pagination deduplicated: \(s1Tracks.count)")
+let updatedSession = nativeState.updateSearchSessionTrack(sessionId: sid1, externalId: "102:500", reaction: -1, libraryTrackId: "lib-2", saved: true)
+let updatedUnsaved = (updatedSession?["tracks"] as? [[String: Any]])?.first { ($0["externalId"] as? String) == "102:500" }
+check((updatedUnsaved?["reaction"] as? NSNumber)?.intValue == -1 && updatedUnsaved?["saved"] as? Bool == true, "search session track update reflected")
+
+let homeRes = try await nativeState.searchYandex(query: "  ", scope: "all", more: false, previousSession: nil, request: failRequest, localLookup: lookup)
+check((homeRes["tracks"] as? [[String: Any]])?.count == 1, "blank query loads yandex home feed")
+
+nativeState.installSearchFixture("yandex", ["session": "fix", "tracks": [], "artists": [], "albums": [], "more": false])
+_ = try await nativeState.searchYandex(query: "Запрос", scope: "all", more: false, previousSession: nil, request: failRequest)
+check(nativeState.recordedSearchQueries == ["Запрос"], "search fixture records query")
+nativeState.removeSearchFixtures()
+check(nativeState.recordedSearchQueries.isEmpty, "removeSearchFixtures clears history")
+
+nativeState.clearYandex()
+check(nativeState.searchSession(sid1) == nil, "clearYandex evicts search sessions")
+do {
+    _ = try await nativeState.searchYandex(query: "hello", scope: "all", more: true, previousSession: sid1, request: failRequest)
+    fail("stale search session must fail after clearYandex")
+} catch {}
+
+// Native Public Catalog artist & album without JSC
+let nativePubArtist = try await nativeState.page("/public/artist/\(ucArtistId)", request: failRequest)
+check(nativePubArtist["title"] as? String == "Native Public Artist" && rows(sections(nativePubArtist)[1]).count == 1, "native public artist without JSC")
+let nativePubAlbum = try await nativeState.page("/public/album/\(mpreAlbumId)", request: failRequest)
+check(nativePubAlbum["title"] as? String == "Public LP" && rows(sections(nativePubAlbum)[1]).count == 1, "native public album without JSC")
+
+// SoundCloud raw track key normalization
+let scNormalized = NativeCatalogState.enrichTracks([[
+    "id": 999,
+    "title": "SC Song",
+    "artist": "SC Artist",
+    "thumbnail": "https://i1.sndcdn.com/artworks-000.jpg",
+    "artist_id": "555",
+    "webpage_url": "https://soundcloud.com/a/b",
+]], defaultProvider: "soundcloud", lookup: nil)
+check(scNormalized.count == 1
+    && scNormalized[0]["provider"] as? String == "soundcloud"
+    && scNormalized[0]["externalId"] as? String == "999"
+    && scNormalized[0]["coverUrl"] as? String == "https://i1.sndcdn.com/artworks-000.jpg"
+    && scNormalized[0]["artistId"] as? String == "555"
+    && scNormalized[0]["pageUrl"] as? String == "https://soundcloud.com/a/b"
+    && scNormalized[0]["playable"] as? Bool == true, "SoundCloud track normalized for catalog actions")
+
+print("Native catalog: yandex/public/soundcloud native & JSC pages, search pagination, local lookup, fixtures and id encoding passed")

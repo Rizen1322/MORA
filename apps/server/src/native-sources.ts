@@ -112,8 +112,24 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
     settings: getSettings(s.db).automix, feedback: s.automix.ratingStats() };
 }
 
+/** Verifies that an internal mobile request came from Swift rather than the WebView. */
+export function hasNativeInternalAuth(headers: Record<string, unknown> | undefined): boolean {
+  const expected = (globalThis as { moraHost?: { internalToken?: unknown } }).moraHost?.internalToken;
+  const given = headers?.['x-mora-native'];
+  return typeof expected === 'string' && expected.length > 0 && given === expected;
+}
+
 /** Mobile worker only. These private handoff routes are never registered by the desktop server. */
 export function registerNativeSources(app: FastifyInstance, services: Services) {
+  app.get('/api/mobile/yandex-credentials', async (req: any, reply: any) => {
+    reply.header('Cache-Control', 'no-store');
+    if (!hasNativeInternalAuth(req.headers)) {
+      return reply.code(403).send({ error: 'Доступ разрешён только нативному клиенту' });
+    }
+    const creds = services.providers.yandex.nativeCredentials();
+    if (!creds) return reply.code(409).send({ error: 'Подключите аккаунт Яндекс Музыки' });
+    return creds;
+  });
   app.post('/api/mobile/import-file', async (req: any, reply: any) => {
     try { return await importNativeFile(services, req.body); }
     catch (error) { return reply.code(422).send({ error: (error as Error).message }); }

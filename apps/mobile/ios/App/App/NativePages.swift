@@ -152,7 +152,10 @@ struct NativePageView: View {
     private func dialogs(_ list: some View) -> some View {
         list
             .refreshable {
-                if ["/catalog/", "/public/", "/soundcloud/"].contains(where: { store.path.hasPrefix($0) }) { _ = try? await store.call("catalogRefresh") }
+                if ["/catalog/", "/public/", "/soundcloud/"].contains(where: { store.path.hasPrefix($0) }) {
+                    if store.sharedLibrary { store.catalog.invalidate() }
+                    else { _ = try? await store.call("catalogRefresh") }
+                }
                 await load()
             }
             .task(id: "\(store.path)|\(nativeImport || nativeSmart || nativeDiagnostics ? 0 : store.revision)|\(reload)|\(waveSource?.wrappedValue.rawValue ?? "")") { await load() }
@@ -572,7 +575,9 @@ struct NativePageView: View {
                                                   request: { try await NativeServerApp.request($0, $1, body: $2) })
             }
             else if waveSource == nil, store.sharedLibrary, NativeCatalogState.handles(store.path) {
-                value = try await store.catalog.page(store.path, request: { try await NativeServerApp.request($0, $1, body: $2) })
+                value = try await store.catalog.page(store.path,
+                                                     request: { try await NativeServerApp.request($0, $1, body: $2) },
+                                                     localLookup: { store.localCatalogTrack(provider: $0, externalId: $1) })
             }
             else if waveSource == nil, store.sharedLibrary, NativeShellStore.ownScreens.contains(store.path) {
                 return // the shell already replaced this view with its own screen for that route
@@ -666,6 +671,7 @@ struct NativePageView: View {
                     try await store.catalog.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2) })
                     return
                 }
+                if store.sharedLibrary, try await store.executeCatalogPageAction(act.name, args) { return }
                 if store.sharedLibrary, try await store.executeNativePlaybackCommand(act.name, args) { return }
                 if try await store.executeLibraryAction(act.name, args) { return }
                 let result = try await store.call("act", ["name": act.name, "args": args], timeout: 120) as? [String: Any]

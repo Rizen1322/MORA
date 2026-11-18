@@ -304,7 +304,7 @@ extension MoraRootViewController {
                 let seen = try await web.evaluateJavaScript("JSON.stringify(window.__uiQueries)") as? String ?? "unknown"
                 try require(false, "Search query missing; native=" + shell.searchQuery + "; bridge=" + seen)
             }
-            _ = try await web.evaluateJavaScript("window.__uiQueries=[]; window.__uiOriginal=window.moraNativeUi; window.moraNativeUi=async(n,a)=>{if(n==='search'){window.__uiQueries.push(a.q);return {session:'fixture-'+a.source,tracks:[{id:'fixture',title:'Native Song',artist:'Native Artist',album:'Native Album',duration:180,explicit:true,ok:true}],artists:a.source==='yandex'?[{id:'77',title:'Native Artist',detail:'Исполнитель',path:'/catalog/artist/77'}]:[],albums:a.source==='yandex'?[{id:'88',title:'Native Album',detail:'2026',path:'/catalog/album/88'}]:[],more:false};}if(n==='page'&&/^#\\/catalog\\//.test(location.hash)){window.__catalogPageCalls=(window.__catalogPageCalls||0)+1;throw Error('Catalog depended on the page');}if(n==='versionTarget')return{id:'fixture',title:'Native Song',artist:'Native Artist',album:'Native Album',duration:180,ok:true};if(n==='versionSearch')return{session:'versions-fixture',rows:[{key:'yandex:1',id:'ya-1',title:'Native Song Live',artist:'Native Artist',duration:180,ok:true,source:'Яндекс Музыка',tags:'live'}],errors:[]};return window.__uiOriginal(n,a);};0")
+            _ = try await web.evaluateJavaScript("window.__uiQueries=[]; window.__uiOriginal=window.moraNativeUi; window.moraNativeUi=async(n,a)=>{if(n==='search'){if(a.source==='yandex'){window.__yandexSearchPageCalls=(window.__yandexSearchPageCalls||0)+1;throw Error('Yandex search depended on the page');}window.__uiQueries.push(a.q);return {session:'fixture-'+a.source,tracks:[{id:'fixture',title:'Native Song',artist:'Native Artist',album:'Native Album',duration:180,explicit:true,ok:true}],artists:[],albums:[],more:false};}if(n==='page'&&/^#\\/catalog\\//.test(location.hash)){window.__catalogPageCalls=(window.__catalogPageCalls||0)+1;throw Error('Catalog depended on the page');}if(n==='versionTarget')return{id:'fixture',title:'Native Song',artist:'Native Artist',album:'Native Album',duration:180,ok:true};if(n==='versionSearch')return{session:'versions-fixture',rows:[{key:'yandex:1',id:'ya-1',title:'Native Song Live',artist:'Native Artist',duration:180,ok:true,source:'Яндекс Музыка',tags:'live'}],errors:[]};return window.__uiOriginal(n,a);};0")
             shell.go("/search")
             try await wait { self.shell.ui.path == "/search" && descendants(self.content!.view).contains { $0 is UISearchTextField } }
             try await Task.sleep(for: .seconds(2))
@@ -321,12 +321,21 @@ extension MoraRootViewController {
             report["search"] = "typed MORA through UIKit into SwiftUI and bridge; no automatic focus"
             try capture("native-search")
             view.endEditing(true)
+            shell.catalog.installSearchFixture("yandex", [
+                "session": "native-yandex-fixture",
+                "tracks": [["id": "fixture", "title": "Native Song", "artist": "Native Artist", "album": "Native Album", "duration": 180.0, "explicit": true, "ok": true]],
+                "artists": [["id": "77", "title": "Native Artist", "detail": "Исполнитель", "path": "/catalog/artist/77"]],
+                "albums": [["id": "88", "title": "Native Album", "detail": "2026", "path": "/catalog/album/88"]],
+                "more": false,
+            ])
             _ = shell.receive(["path": "/search", "loaded": true, "wave": ["yandex": true]])
             shell.searchSource = "yandex"; shell.searchQuery = "Каталог"
-            try await Task.sleep(for: .seconds(2))
-            try await waitForQuery("Каталог")
+            try await wait { self.shell.catalog.recordedSearchQueries.contains("Каталог") }
+            let yandexPageCalls = try await web.evaluateJavaScript("window.__yandexSearchPageCalls || 0") as? Int ?? -1
+            try require(yandexPageCalls == 0, "Yandex search depended on the page")
             try await Task.sleep(for: .seconds(1))
             try capture("native-search-yandex")
+            shell.catalog.removeSearchFixtures()
             shell.catalog.installFixture("/catalog/artist/77", ["title": "Native Artist", "sections": [
                 ["title": "Популярные треки", "rows": [["kind": "item", "title": "Native Song · 3:00", "subtitle": "Native Artist"]]],
                 ["title": "Альбомы", "rows": [["kind": "shelf", "items": [["id": "88", "title": "Native Album", "path": "/catalog/album/88"]]]]]]])
@@ -397,7 +406,23 @@ extension MoraRootViewController {
             try await wait { !player.changingMode }
             try require(player.actionError == nil && !player.modes.automix, "AutoMix did not save settings")
             try capture("native-player-modes")
-            report["player"] = "visual mixing fixture and animated queue; real shuffle, repeat all/one and AutoMix bridge commands passed"
+            NativeLyricsService.shared.installFixture("visual-a", NativeLyricsResult(
+                status: "synced",
+                lines: [
+                    NativeLyricLine(time: 120, text: "Предыдущая строка текста"),
+                    NativeLyricLine(time: 158, text: "Текущая строка в нативном плеере"),
+                    NativeLyricLine(time: 240, text: "Следующая строка песни"),
+                ],
+                plain: "Текущая строка в нативном плеере",
+                source: "lrclib",
+                matched: NativeLyricMatched(title: "Native Player", artist: "MORA", duration: 180)
+            ))
+            player.visualShowLyrics = true
+            try await Task.sleep(for: .seconds(1))
+            try capture("native-player-lyrics")
+            player.visualShowLyrics = false
+            NativeLyricsService.shared.removeFixtures()
+            report["player"] = "visual mixing fixture, native lyrics panel and animated queue; real shuffle, repeat all/one and AutoMix passed"
             player.open("artist")
             try await wait { self.shell.ui.path == "/catalog/artist/77" && self.presentedViewController == nil }
             try await Task.sleep(for: .seconds(1))
@@ -595,7 +620,9 @@ final class NativeShellStore: ObservableObject {
     private var libraryReader: NativeLibraryStore? // accessed only on libraryIO
     private var libraryReading = false
     private var librarySnapshot: NativeLibraryStore.Snapshot?
+    private var savedIds: Set<String> = []
     private var libraryFailure: String?
+    private var catalogPlayGeneration = 0
     var playlistSort: [String: String] = [:]
     var diagnosticExport: (@MainActor () async throws -> URL)?
     @MainActor func exportDiagnostics() async throws -> URL {
@@ -719,6 +746,7 @@ final class NativeShellStore: ObservableObject {
                     guard let snapshot else { completion(.success(())); return }
                     self.librarySnapshot = snapshot
                     self.library = snapshot.library
+                    self.savedIds = Set(snapshot.library.map(\.id))
                     self.byId = Dictionary(uniqueKeysWithValues: snapshot.tracks.map { ($0.id, $0) })
                     self.playlists = snapshot.playlists
                     self.applyPendingReactions()
@@ -757,6 +785,14 @@ final class NativeShellStore: ObservableObject {
     }
 
     init() {
+        catalog.yandex = NativeYandexCatalog(credentialsLoader: {
+            let res = try await NativeServerApp.request("GET", "/api/mobile/yandex-credentials")
+            guard let token = res["token"] as? String, !token.isEmpty else {
+                throw NativeYandexCatalog.Failure(statusCode: 409, message: "Подключите аккаунт Яндекс Музыки")
+            }
+            let apiBase = (res["apiBase"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "https://api.music.yandex.net"
+            return (token, apiBase)
+        })
         let nc = NotificationCenter.default
         nc.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.captureBackup() }
         backupTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in self?.captureBackup() }
@@ -825,6 +861,274 @@ final class NativeShellStore: ObservableObject {
     func updateYandexConnection(_ linked: Bool) {
         ui.wave.yandex = linked
         if !linked && waveSource == .yandex { waveSource = nil }
+        catalog.clearYandex()
+    }
+
+    func localCatalogTrack(provider: String, externalId: String) -> (trackId: String, saved: Bool, reaction: Int)? {
+        guard let trackId = librarySnapshot?.remoteIndex["\(provider):\(externalId)"],
+              byId[trackId] != nil else { return nil }
+        return (trackId, savedIds.contains(trackId), reaction(trackId))
+    }
+
+    @MainActor func ensureCatalogTrack(_ track: [String: Any], provider: String, priority: Int = 0) async throws -> String {
+        let externalId = (track["externalId"] as? String) ?? (track["id"] as? String) ?? ""
+        if let known = track["libraryTrackId"] as? String, !known.isEmpty, byId[known]?.ok == true { return known }
+        if !externalId.isEmpty, let local = localCatalogTrack(provider: provider, externalId: externalId), byId[local.trackId]?.ok == true {
+            return local.trackId
+        }
+        guard !externalId.isEmpty else { throw NativeLibraryActions.Failure(message: "Трек не найден") }
+        let trackId: String
+        if provider == "yandex" {
+            var payload = track
+            if payload["externalId"] == nil { payload["externalId"] = externalId }
+            let res = try await NativeServerApp.request("POST", "/api/providers/yandex/import", body: ["track": payload], timeout: 60)
+            guard let id = res["trackId"] as? String, !id.isEmpty else { throw NativeLibraryActions.Failure(message: "Не удалось загрузить трек") }
+            trackId = id
+        } else {
+            let resolvedProvider = provider == "soundcloud" ? "soundcloud" : "youtube"
+            let res = try await NativeServerApp.request("POST", "/api/public/prepare",
+                                                        body: ["provider": resolvedProvider, "externalId": externalId, "priority": priority], timeout: 120)
+            guard let id = res["trackId"] as? String, !id.isEmpty else { throw NativeLibraryActions.Failure(message: "Не удалось подготовить трек") }
+            trackId = id
+        }
+        try? await refreshLibraryAfterMutation()
+        return trackId
+    }
+
+    @MainActor func playCatalogTracks(_ rawTracks: [[String: Any]], startIndex: Int, shuffle: Bool,
+                                      context: NativeQueueController.Context) async throws {
+        let selected = rawTracks.indices.contains(startIndex) ? rawTracks[startIndex] : nil
+        let playable = rawTracks.filter { $0["playable"] as? Bool != false }
+        guard !playable.isEmpty else { return }
+        catalogPlayGeneration &+= 1
+        let gen = catalogPlayGeneration
+
+        var ordered: [[String: Any]]
+        if shuffle {
+            var list = playable
+            if let selected, selected["playable"] as? Bool != false,
+               let selectedId = (selected["externalId"] as? String) ?? (selected["id"] as? String),
+               !selectedId.isEmpty,
+               let idx = list.firstIndex(where: { (($0["externalId"] as? String) ?? ($0["id"] as? String)) == selectedId }) {
+                let first = list.remove(at: idx)
+                list.shuffle()
+                list.insert(first, at: 0)
+            } else {
+                list.shuffle()
+            }
+            ordered = Array(list.prefix(25))
+        } else {
+            let clamped = max(0, min(rawTracks.count - 1, startIndex))
+            let tail = rawTracks[clamped...].filter { $0["playable"] as? Bool != false }
+            ordered = Array((tail.isEmpty ? playable : tail).prefix(25))
+        }
+
+        let first = ordered.removeFirst()
+        let firstProvider = (first["audioProvider"] as? String) ?? (first["provider"] as? String) ?? "yandex"
+        let firstId = try await ensureCatalogTrack(first, provider: firstProvider, priority: 0)
+        guard gen == catalogPlayGeneration else { return }
+        try await NativeQueueController.shared.play(trackIds: [firstId], at: 0, context: context)
+        if shuffle != NativeQueueController.shared.shuffle {
+            try? await NativeQueueController.shared.setMode("shuffle")
+        }
+
+        guard !ordered.isEmpty else { return }
+        Task { @MainActor in
+            var remaining = ordered
+            var firstBatch = true
+            while !remaining.isEmpty {
+                let count = firstBatch ? 2 : 4
+                firstBatch = false
+                let chunk = Array(remaining.prefix(count))
+                remaining.removeFirst(chunk.count)
+                guard gen == self.catalogPlayGeneration,
+                      NativeQueueController.shared.context == context,
+                      NativeQueueController.shared.entries.contains(where: { $0.trackId == firstId }) else { return }
+                var ids: [String] = []
+                for item in chunk {
+                    guard gen == self.catalogPlayGeneration else { return }
+                    let p = (item["audioProvider"] as? String) ?? (item["provider"] as? String) ?? "yandex"
+                    if let tid = try? await self.ensureCatalogTrack(item, provider: p, priority: 2) {
+                        ids.append(tid)
+                    }
+                }
+                if !ids.isEmpty,
+                   gen == self.catalogPlayGeneration,
+                   NativeQueueController.shared.context == context {
+                    try? await NativeQueueController.shared.enqueue(trackIds: ids, next: false)
+                }
+            }
+        }
+    }
+
+    @MainActor func executeCatalogPageAction(_ name: String, _ args: [String: Any]) async throws -> Bool {
+        guard sharedLibrary else { return false }
+        if name == "catalogPlay" {
+            let tracks = args["tracks"] as? [[String: Any]] ?? []
+            let ctxRaw = args["context"] as? [String: Any] ?? [:]
+            let type = ctxRaw["type"] as? String == "artist" ? "artist" : "album"
+            let label = (ctxRaw["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Каталог"
+            let ctx = NativeQueueController.Context(type: type, id: ctxRaw["id"] as? String, label: label)
+            let shuffle = args["shuffle"] as? Bool == true
+            let index = shuffle ? -1 : ((args["index"] as? NSNumber)?.intValue ?? 0)
+            try await playCatalogTracks(tracks, startIndex: index, shuffle: shuffle, context: ctx)
+            return true
+        }
+        guard name == "catalogTrack", let track = args["track"] as? [String: Any] else { return false }
+        let kind = args["kind"] as? String ?? ""
+        let provider = (track["audioProvider"] as? String) ?? (track["provider"] as? String) ?? "yandex"
+        let externalId = (track["externalId"] as? String) ?? (track["id"] as? String) ?? ""
+
+        if (kind == "like" || kind == "dislike"), provider == "yandex",
+           localCatalogTrack(provider: "yandex", externalId: externalId) == nil,
+           !externalId.isEmpty {
+            let currentReaction = (track["reaction"] as? NSNumber)?.intValue ?? 0
+            let wanted = kind == "like" ? 1 : -1
+            let next = currentReaction == wanted ? 0 : wanted
+            let escaped = Self.catalogPathComponent(externalId)
+            let res = try await NativeServerApp.request("POST", "/api/catalog/yandex/tracks/\(escaped)/reaction", body: ["value": next])
+            let finalValue = (res["value"] as? NSNumber)?.intValue ?? next
+            if let sync = res["sync"] as? [String: Any], let st = sync["status"] as? String, st == "error" || st == "pending" {
+                show(sync["error"] as? String ?? "Реакция сохранена. Отправка в Яндекс продолжится автоматически.")
+            }
+            catalog.setExternalReaction(provider: "yandex", externalId: externalId, value: finalValue)
+            return true
+        }
+
+        let trackId = try await ensureCatalogTrack(track, provider: provider, priority: kind == "download" ? 2 : 0)
+        switch kind {
+        case "next", "queue":
+            try await NativeQueueController.shared.enqueue(trackIds: [trackId], next: kind == "next")
+            show(kind == "next" ? "Сыграет следующим" : "Добавлено в очередь")
+        case "like", "dislike":
+            let wanted = kind == "like" ? 1 : -1
+            let next = reaction(trackId) == wanted ? 0 : wanted
+            react(id: trackId, value: next)
+            catalog.invalidate()
+        case "save":
+            _ = try await NativeServerApp.request("POST", "/api/tracks/\(Self.catalogPathComponent(trackId))/save", body: ["saved": true])
+            try? await refreshLibraryAfterMutation()
+            catalog.invalidate()
+            show("Сохранено в медиатеку")
+        case "download":
+            _ = try await NativeServerApp.request("POST", "/api/downloads", body: ["trackId": trackId])
+            show("Добавлено в загрузки")
+        default:
+            throw NativeLibraryActions.Failure(message: "Неизвестное действие каталога")
+        }
+        return true
+    }
+
+    @MainActor func executeCatalogSearchAction(kind: String, trackId externalId: String, sessionId: String,
+                                               playlist: String? = nil) async throws -> (go: String?, versions: String?, updated: NativeSearchResults?) {
+        guard let session = catalog.searchSession(sessionId),
+              let index = session.items.firstIndex(where: { (($0["externalId"] as? String) ?? ($0["id"] as? String)) == externalId }) else {
+            throw NativeLibraryActions.Failure(message: "Результаты устарели. Повторите поиск.")
+        }
+        let item = session.items[index]
+        let ctxType = (session.context["type"] as? String) ?? "search"
+        let ctxLabel = (session.context["label"] as? String) ?? "Поиск"
+        let ctx = NativeQueueController.Context(type: ctxType, id: session.context["id"] as? String, label: ctxLabel)
+
+        if kind == "artist" || kind == "album" {
+            let artistId = (item["artists"] as? [[String: Any]])?.first?["id"] as? String ?? (item["artistId"] as? String)
+            let albumId = item["albumId"] as? String
+            if kind == "artist", let artistId, !artistId.isEmpty {
+                return ("/catalog/artist/\(Self.catalogPathComponent(artistId))", nil, nil)
+            }
+            if kind == "album", let albumId, !albumId.isEmpty {
+                return ("/catalog/album/\(Self.catalogPathComponent(albumId))", nil, nil)
+            }
+            let fallbackQuery = kind == "artist" ? (item["artist"] as? String ?? "") : (item["album"] as? String ?? "")
+            return ("/search?q=\(Self.catalogPathComponent(fallbackQuery))&src=\(session.source)", nil, nil)
+        }
+        if kind == "play" {
+            try await playCatalogTracks(session.items, startIndex: index, shuffle: false, context: ctx)
+            return (nil, nil, nil)
+        }
+        if kind == "radio" {
+            let title = item["title"] as? String ?? ""
+            let artist = item["artist"] as? String ?? ""
+            let q = Self.catalogPathComponent("\(artist) \(title)".trimmingCharacters(in: .whitespaces))
+            if !q.isEmpty,
+               let ytSearch = try? await NativeServerApp.request("GET", "/api/search/ytmusic?q=\(q)"),
+               let ytFirst = (ytSearch["items"] as? [[String: Any]])?.first(where: { $0["playable"] as? Bool != false }),
+               let videoId = ytFirst["externalId"] as? String,
+               let radioRes = try? await NativeServerApp.request("GET", "/api/public/radio/\(Self.catalogPathComponent(videoId))"),
+               let radioItems = radioRes["items"] as? [[String: Any]], !radioItems.isEmpty {
+                try await playCatalogTracks(radioItems, startIndex: 0, shuffle: false,
+                                            context: NativeQueueController.Context(type: "online-radio", id: videoId, label: "Радио · \(title)"))
+                return (nil, nil, nil)
+            }
+            let seedId = try await ensureCatalogTrack(item, provider: "yandex", priority: 0)
+            let waveRes = try await NativeServerApp.request("POST", "/api/wave/next", body: ["currentId": seedId, "count": 4])
+            let picks = (waveRes["picks"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+            let list = [seedId] + picks.filter { $0 != seedId }
+            try await NativeQueueController.shared.play(trackIds: list, at: 0,
+                                                        context: NativeQueueController.Context(type: "wave", id: seedId, label: "Волна · \(title)"))
+            return (nil, nil, nil)
+        }
+
+        let local = localCatalogTrack(provider: "yandex", externalId: externalId)
+        if (kind == "like" || kind == "dislike"), local == nil {
+            let current = (item["reaction"] as? NSNumber)?.intValue ?? 0
+            let wanted = kind == "like" ? 1 : -1
+            let next = current == wanted ? 0 : wanted
+            let res = try await NativeServerApp.request("POST", "/api/catalog/yandex/tracks/\(Self.catalogPathComponent(externalId))/reaction", body: ["value": next])
+            let finalValue = (res["value"] as? NSNumber)?.intValue ?? next
+            if let sync = res["sync"] as? [String: Any], let st = sync["status"] as? String, st == "error" || st == "pending" {
+                show(sync["error"] as? String ?? "Реакция сохранена. Отправка в Яндекс продолжится автоматически.")
+            }
+            let rawUpdated = catalog.updateSearchSessionTrack(sessionId: sessionId, externalId: externalId, reaction: finalValue,
+                                                              lookup: { self.localCatalogTrack(provider: $0, externalId: $1) })
+            return (nil, nil, rawUpdated.flatMap(NativeSearchResults.init))
+        }
+
+        let id = try await ensureCatalogTrack(item, provider: "yandex", priority: kind == "download" ? 2 : 0)
+        switch kind {
+        case "next", "queue":
+            try await NativeQueueController.shared.enqueue(trackIds: [id], next: kind == "next")
+            show(kind == "next" ? "Сыграет следующим" : "Добавлено в очередь")
+            return (nil, nil, nil)
+        case "versions":
+            return (nil, id, nil)
+        case "save":
+            _ = try await NativeServerApp.request("POST", "/api/tracks/\(Self.catalogPathComponent(id))/save", body: ["saved": true])
+            try? await refreshLibraryAfterMutation()
+            catalog.invalidate()
+            show("Трек сохранён в медиатеку")
+            let rawUpdated = catalog.updateSearchSessionTrack(sessionId: sessionId, externalId: externalId, libraryTrackId: id, saved: true,
+                                                              lookup: { self.localCatalogTrack(provider: $0, externalId: $1) })
+            return (nil, nil, rawUpdated.flatMap(NativeSearchResults.init))
+        case "download":
+            _ = try await NativeServerApp.request("POST", "/api/downloads", body: ["trackId": id])
+            show("Скачиваем — прогресс в «Загрузках»")
+            return (nil, nil, nil)
+        case "playlist":
+            guard let playlist, playlists.contains(where: { $0.id == playlist }) else {
+                throw NativeLibraryActions.Failure(message: "Плейлист не найден")
+            }
+            _ = try await NativeServerApp.request("POST", "/api/playlists/\(Self.catalogPathComponent(playlist))/tracks", body: ["trackIds": [id]])
+            try? await refreshLibraryAfterMutation()
+            show("Добавлено в плейлист")
+            let rawUpdated = catalog.updateSearchSessionTrack(sessionId: sessionId, externalId: externalId, libraryTrackId: id, saved: true,
+                                                              lookup: { self.localCatalogTrack(provider: $0, externalId: $1) })
+            return (nil, nil, rawUpdated.flatMap(NativeSearchResults.init))
+        case "like", "dislike":
+            let wanted = kind == "like" ? 1 : -1
+            let next = reaction(id) == wanted ? 0 : wanted
+            react(id: id, value: next)
+            catalog.invalidate()
+            let rawUpdated = catalog.updateSearchSessionTrack(sessionId: sessionId, externalId: externalId, reaction: next, libraryTrackId: id,
+                                                              lookup: { self.localCatalogTrack(provider: $0, externalId: $1) })
+            return (nil, nil, rawUpdated.flatMap(NativeSearchResults.init))
+        default:
+            throw NativeLibraryActions.Failure(message: "Неизвестное действие")
+        }
+    }
+
+    private static func catalogPathComponent(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? value
     }
 
     func receive(_ value: [String: Any]) -> Bool {

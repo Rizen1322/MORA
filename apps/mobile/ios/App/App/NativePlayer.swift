@@ -3,7 +3,6 @@ import Combine
 import MediaPlayer
 import SwiftUI
 import UIKit
-import WebKit
 
 /// iPhone full player over the WebView while NativeMixHost plays. It reads native state only,
 /// so it keeps working while WebContent is suspended or reloading.
@@ -54,8 +53,10 @@ final class NativePlayerModel: ObservableObject {
     }
     #if DEBUG
     var visualCheck = false
+    @Published var visualShowLyrics = false
     func installVisualFixture() {
         visualCheck = true
+        receivedAt = Date()
         state = NativePlayerState(["active": true, "playing": true, "duration": 180.0, "position": 160.0,
             "entryId": "visual-a", "currentTrack": ["title": "MORA · Native Player", "artist": "Проверка интерфейса", "trackId": "visual-a"],
             "blend": ["index": 1, "progress": 0.4], "upcoming": [["entryId": "visual-b", "title": "Следующий трек", "artist": "Очередь AutoMix", "transition": ["method": "beatmatch_blend"]]]])
@@ -451,9 +452,15 @@ struct NativePlayerView: View {
         .onAppear {
             model.start()
             #if DEBUG
-            if model.visualCheck { Task { @MainActor in try? await Task.sleep(for: .seconds(4)); queueOpen = true } }
+            if model.visualCheck { Task { @MainActor in try? await Task.sleep(for: .seconds(4)); if !model.visualShowLyrics { queueOpen = true } } }
             #endif
         }
+        #if DEBUG
+        .onChange(of: model.visualShowLyrics) { _, value in
+            if value { queueOpen = false }
+            showLyrics = value
+        }
+        #endif
         .onDisappear { model.finish() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in model.stop() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in model.start() }
@@ -593,113 +600,234 @@ struct NativePlayerView: View {
     }
 }
 
-private struct NativeLyrics {
-    let status: String
-    let plain: String
-    typealias Word = (time: Double, end: Double, text: String)
-    /// `words` is empty without word timings (Whisper alignment); then only whole lines light up.
-    let lines: [(time: Double, text: String, words: [Word])]
-    let offset: Double
-
-    init(_ value: [String: Any]) {
-        status = value["status"] as? String ?? "none"
-        plain = value["plain"] as? String ?? ""
-        let raw = value["wordLines"] as? [[String: Any]] ?? value["lines"] as? [[String: Any]] ?? []
-        lines = raw.compactMap { line in
-            guard let time = (line["t"] as? NSNumber)?.doubleValue, let text = line["text"] as? String else { return nil }
-            let words: [Word] = (line["words"] as? [[String: Any]] ?? []).compactMap { word in
-                guard let t = (word["t"] as? NSNumber)?.doubleValue, let end = (word["end"] as? NSNumber)?.doubleValue, let text = word["text"] as? String else { return nil }
-                return (t, end, text)
-            }
-            return (time, text, words)
-        }
-        offset = (value["offsetMs"] as? NSNumber)?.doubleValue ?? 0
-    }
-}
-
 private struct NativeLyricsView: View {
     @ObservedObject var model: NativePlayerModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var lyrics: NativeLyrics?
+    @State private var lyrics: NativeLyricsResult?
     @State private var failure: String?
     @State private var retry = 0
+    @State private var offsetMs = 0.0
+    @State private var follow = true
+    @State private var refreshRequested = false
+
+    private var activeOffset: Double { offsetMs / 1000.0 }
+    private func clock() -> Double {
+        let s = model.state
+        return s.position + (s.playing ? Date().timeIntervalSince(model.receivedAt) : 0) + activeOffset
+    }
 
     var body: some View {
         let lines = lyrics?.lines ?? []
-        let now = model.state.position + (lyrics?.offset ?? 0) / 1000
-        let active = lines.lastIndex { $0.time <= now } ?? -1
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(spacing: 16) {
-                    if let failure {
-                        Text(failure).foregroundStyle(.white.opacity(0.7))
-                        Button("Повторить") { retry &+= 1 }.buttonStyle(.bordered)
-                    } else if let lyrics {
-                        if !lines.isEmpty {
-                            ForEach(lines.indices, id: \.self) { index in
-                                Button { model.seek(to: max(0, lines[index].time - lyrics.offset / 1000)) } label: {
-                                    Group {
-                                        if index == active && !lines[index].words.isEmpty {
-                                            // Karaoke: the sung words of the current line fill in between the 0.4 s polls.
-                                            TimelineView(.periodic(from: .now, by: 0.1)) { _ in karaoke(lines[index].words, now: clock(lyrics)) }
-                                        } else {
-                                            Text(lines[index].text.isEmpty ? "♪" : lines[index].text)
-                                                .foregroundStyle(index == active ? Color.moraMint : .white.opacity(index < active ? 0.38 : 0.58))
+        VStack(spacing: 0) {
+            header(synced: lyrics?.status == "synced" && !lines.isEmpty)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 16) {
+                        if let failure {
+                            Text(failure).foregroundStyle(.white.opacity(0.7)).multilineTextAlignment(.center)
+                            Button("Повторить") { retry &+= 1 }.buttonStyle(.bordered)
+                        } else if let lyrics {
+                            if !lines.isEmpty {
+                                TimelineView(.periodic(from: .now, by: model.state.playing ? 0.15 : 60)) { _ in
+                                    let now = clock()
+                                    let active = lines.lastIndex { $0.time <= now } ?? -1
+                                    VStack(spacing: 16) {
+                                        ForEach(lines.indices, id: \.self) { index in
+                                            lyricRow(lines[index], index: index, active: active, now: now)
                                         }
                                     }
-                                    .font(.title3.weight(index == active ? .bold : .semibold))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .onChange(of: active) { _, index in
+                                        if follow && index >= 0 {
+                                            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) { proxy.scrollTo(index, anchor: .center) }
+                                        }
+                                    }
+                                    .onChange(of: follow) { _, isFollowing in
+                                        if isFollowing && active >= 0 {
+                                            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { proxy.scrollTo(active, anchor: .center) }
+                                        }
+                                    }
                                 }
-                                .buttonStyle(.plain)
-                                .id(index)
+                            } else if lyrics.status == "plain" && !lyrics.plain.isEmpty {
+                                Text("Текст без синхронизации")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.white.opacity(0.55))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Text(lyrics.plain)
+                                    .font(.title3.weight(.medium))
+                                    .foregroundStyle(.white.opacity(0.9))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            } else {
+                                Text(model.offline ? "Нет сети — текст не удалось загрузить." : "Текст для этой песни не найден.")
+                                    .foregroundStyle(.white.opacity(0.7))
+                                    .multilineTextAlignment(.center)
+                                Button("Поискать снова") { refreshRequested = true; retry &+= 1 }.buttonStyle(.bordered)
                             }
-                        } else if lyrics.status == "plain" && !lyrics.plain.isEmpty {
-                            Text(lyrics.plain).frame(maxWidth: .infinity, alignment: .leading)
+                            if let attribution = Self.attribution(lyrics) {
+                                Text(attribution)
+                                    .font(.caption)
+                                    .foregroundStyle(.white.opacity(0.45))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.top, 8)
+                            }
                         } else {
-                            Text("Текст для этой песни не найден.")
-                            Button("Поискать снова") { retry &+= 1 }.buttonStyle(.bordered)
+                            ProgressView("Ищем текст…")
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 32)
                         }
-                    } else {
-                        ProgressView("Ищем текст…")
+                    }
+                    .padding(20)
+                    .padding(.bottom, 56)
+                }
+                .simultaneousGesture(DragGesture(minimumDistance: 10).onChanged { _ in if follow { follow = false } })
+                .overlay(alignment: .bottomTrailing) {
+                    if !follow && !lines.isEmpty {
+                        Button {
+                            follow = true
+                        } label: {
+                            Label("К текущей строке", systemImage: "scope")
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(.ultraThinMaterial, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.moraMint)
+                        .padding(14)
                     }
                 }
-                .padding(20)
-                .padding(.bottom, 48)
-            }
-            .onChange(of: active) { _, index in
-                if index >= 0 { withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) { proxy.scrollTo(index, anchor: .center) } }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.moraBackground)
-        .task(id: "\(model.state.trackId)|\(retry)") { await load(model.state.trackId, refresh: retry > 0) }
+        .task(id: "\(model.state.trackId)|\(retry)") {
+            let shouldRefresh = refreshRequested
+            refreshRequested = false
+            await load(model.state.trackId, refresh: shouldRefresh)
+        }
     }
 
-    /// The track clock run on from the last poll, as the scrubber does.
-    private func clock(_ lyrics: NativeLyrics) -> Double {
-        let s = model.state
-        return s.position + (s.playing ? Date().timeIntervalSince(model.receivedAt) : 0) + lyrics.offset / 1000
+    private func header(synced: Bool) -> some View {
+        HStack(spacing: 8) {
+            Text("Текст")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.75))
+            Spacer(minLength: 0)
+            if synced {
+                HStack(spacing: 4) {
+                    Button { shiftOffset(by: 250) } label: {
+                        Image(systemName: "minus").font(.caption.weight(.bold)).frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Текст раньше на 0,25 с")
+                    Button { shiftOffset(to: 0) } label: {
+                        Text(Self.offsetText(offsetMs))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.white.opacity(offsetMs == 0 ? 0.55 : 0.9))
+                            .frame(minWidth: 54)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Сбросить сдвиг текста")
+                    Button { shiftOffset(by: -250) } label: {
+                        Image(systemName: "plus").font(.caption.weight(.bold)).frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Текст позже на 0,25 с")
+                }
+                .padding(.horizontal, 6)
+                .background(Color.white.opacity(0.08), in: Capsule())
+            }
+            Button { refreshRequested = true; retry &+= 1 } label: {
+                Image(systemName: "arrow.clockwise").font(.subheadline.weight(.semibold)).frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white.opacity(0.7))
+            .accessibilityLabel("Обновить текст")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 6)
+    }
+
+    private func lyricRow(_ line: NativeLyricLine, index: Int, active: Int, now: Double) -> some View {
+        Button {
+            follow = true
+            model.seek(to: max(0, line.time - activeOffset))
+        } label: {
+            Group {
+                if index == active && !line.words.isEmpty {
+                    karaoke(line.words, now: now)
+                } else {
+                    Text(line.text.isEmpty ? "♪" : line.text)
+                        .foregroundStyle(index == active ? Color.moraMint : .white.opacity(index < active ? 0.38 : 0.62))
+                }
+            }
+            .font(.title3.weight(index == active ? .bold : .semibold))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .multilineTextAlignment(.leading)
+        }
+        .buttonStyle(.plain)
+        .id(index)
     }
 
     /// Word texts carry their own spacing (as in the web WordLyricLine).
-    private func karaoke(_ words: [NativeLyrics.Word], now: Double) -> Text {
+    private func karaoke(_ words: [NativeLyricWord], now: Double) -> Text {
         words.reduce(Text("")) { line, word in
             line + Text(word.text).foregroundColor(now >= word.time ? .moraMint : .white.opacity(0.58))
         }
     }
 
+    private func shiftOffset(by deltaMs: Double) { shiftOffset(to: offsetMs + deltaMs) }
+    private func shiftOffset(to rawMs: Double) {
+        let clamped = min(30_000, max(-30_000, rawMs.rounded()))
+        offsetMs = clamped
+        let id = model.state.trackId
+        guard !id.isEmpty else { return }
+        let keyId = NativeShellStore.shared?.byId[id]?.binding ?? id
+        NativeLyricsService.shared.saveOffsetMs(clamped, for: keyId)
+        guard NativeShellStore.shared?.sharedLibrary == true else { return }
+        let escaped = id.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? id
+        Task { _ = try? await NativeServerApp.request("PUT", "/api/tracks/\(escaped)/lyrics/offset", body: ["offsetMs": Int(clamped)]) }
+    }
+
+    private static func offsetText(_ ms: Double) -> String {
+        let sec = ms / 1000.0
+        let sign = sec > 0.004 ? "+" : ""
+        return sign + String(format: "%.2f", sec).replacingOccurrences(of: ".", with: ",") + " с"
+    }
+
+    private static func attribution(_ lyrics: NativeLyricsResult) -> String? {
+        guard lyrics.status != "none" || lyrics.hasWordTimings else { return nil }
+        if lyrics.hasWordTimings { return "Текст распознан локально (Whisper)" }
+        let base = lyrics.source == "file" ? "Из файла рядом с треком" : "Текст: LRCLIB"
+        if let m = lyrics.matched, !m.title.isEmpty {
+            return "\(base) · \(m.artist) — \(m.title)"
+        }
+        return base
+    }
+
     @MainActor private func load(_ id: String, refresh: Bool) async {
-        lyrics = nil; failure = nil
+        lyrics = nil; failure = nil; follow = true
         guard !id.isEmpty else { failure = "Трек недоступен"; return }
-        guard let webView = NativeShellStore.shared?.webView else { failure = "Медиатека ещё загружается"; return }
+        let track = NativeShellStore.shared?.byId[id]
+        let title = track?.title ?? model.state.title
+        let artist = track?.artist ?? model.state.artist
+        let album = track?.album ?? ""
+        let duration = track?.duration ?? model.state.duration
+        let keyId = track?.binding ?? id
+        let cacheDir = NativeServerApp.root.appendingPathComponent("data/cache/lyrics", isDirectory: true)
         do {
-            let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Any, Error>) in
-                webView.callAsyncJavaScript("const response = await fetch('/api/tracks/' + encodeURIComponent(id) + '/lyrics' + (refresh ? '?refresh=1' : '')); if (!response.ok) throw new Error('HTTP ' + response.status); return await response.json()",
-                                            arguments: ["id": id, "refresh": refresh], in: nil, in: .page) { continuation.resume(with: $0) }
-            }
+            let loaded = try await NativeLyricsService.shared.load(
+                trackId: keyId,
+                title: title,
+                artist: artist,
+                album: album,
+                duration: duration,
+                refresh: refresh,
+                cacheDir: cacheDir
+            )
             guard !Task.isCancelled else { return }
-            if let value = result as? [String: Any] { lyrics = NativeLyrics(value) }
-            else { failure = "Не удалось прочитать текст" }
+            offsetMs = loaded.offsetMs
+            lyrics = loaded
         } catch {
             if !Task.isCancelled { failure = error.localizedDescription }
         }

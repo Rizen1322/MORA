@@ -8,6 +8,7 @@ final class NativeLibraryStore {
     struct Snapshot {
         let tracks: [NativeTrack], library: [NativeTrack], playlists: [NativePlaylist]
         let entries: [String: [Entry]], history: [Play]
+        var remoteIndex: [String: String] = [:]
     }
     struct Failure: LocalizedError {
         let message: String
@@ -116,9 +117,18 @@ final class NativeLibraryStore {
                 return Play(id: id, trackId: track, startedAt: (row["started_at"] as? NSNumber)?.doubleValue ?? 0,
                     playedMs: (row["played_ms"] as? NSNumber)?.doubleValue ?? 0, reason: row["end_reason"] as? String)
             }
+            var remoteIndex: [String: String] = [:]
+            let sourceCols = Set(try rows("PRAGMA table_info(track_sources)").compactMap { $0["name"] as? String })
+            if sourceCols.contains("external_id") {
+                for row in try rows("SELECT provider,external_id,track_id FROM track_sources WHERE kind='remote' AND external_id IS NOT NULL") {
+                    if let p = row["provider"] as? String, let ext = row["external_id"] as? String, let tid = row["track_id"] as? String {
+                        remoteIndex["\(p):\(ext)"] = tid
+                    }
+                }
+            }
             _ = try rows("COMMIT")
             version = current
-            return Snapshot(tracks: all, library: saved, playlists: playlists, entries: entries, history: history)
+            return Snapshot(tracks: all, library: saved, playlists: playlists, entries: entries, history: history, remoteIndex: remoteIndex)
         } catch {
             _ = try? rows("ROLLBACK")
             throw error

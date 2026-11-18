@@ -1,20 +1,75 @@
 import Foundation
 
-/// Native artist/album catalog pages (/catalog/..., /public/..., /soundcloud/...) backed directly
-/// by JSC API instead of the WebView `describeNativeCatalog` helper.
+/// Native artist/album catalog pages (`/catalog/...`, `/public/...`, `/soundcloud/...`) and
+/// native Yandex catalog search sessions, backed by Swift providers with JSC API fallback.
+/// Foundation-only (covered by standalone `swiftc` self-checks).
 final class NativeCatalogState {
     typealias Request = (_ method: String, _ path: String, _ body: [String: Any]?) async throws -> [String: Any]
+    typealias LocalTrackLookup = (_ provider: String, _ externalId: String) -> (trackId: String, saved: Bool, reaction: Int)?
+
+    struct SearchSession {
+        let id: String
+        let source: String
+        let query: String
+        let scope: String
+        var page: Int
+        var items: [[String: Any]]
+        var artists: [[String: Any]]
+        var albums: [[String: Any]]
+        var more: Bool
+        let context: [String: Any]
+    }
 
     private var cache: [String: [String: Any]] = [:]
-    /// Stage 3: SoundCloud browsing runs in Swift; the JS route stays as a fallback for other providers.
+    /// Stage 3: SoundCloud, Public (YouTube Music) and Yandex catalog providers in Swift.
     var soundcloud: NativeSoundCloud? = .live
-    /// The simulator UI check injects pages instead of calling the real providers.
+    var publicCatalog: NativePublicCatalog? = .live
+    var yandex: NativeYandexCatalog?
+
+    /// Search sessions keyed by token (bounded to 24, matching lib/native-catalog.ts).
+    private var searchSessions: [String: SearchSession] = [:]
+    private var searchSessionOrder: [String] = []
+    /// Optimistic reactions for remote catalog tracks not yet imported into local SQLite.
+    private var externalReactions: [String: Int] = [:]
+
+    /// Simulator UI check fixtures (never active in production unless explicitly installed).
     private var fixtures: [String: [String: Any]] = [:]
+    private var searchFixtures: [String: [String: Any]] = [:]
+    private(set) var recordedSearchQueries: [String] = []
 
     func installFixture(_ path: String, _ page: [String: Any]) { fixtures[path] = page; cache.removeAll() }
     func removeFixtures() { fixtures.removeAll(); cache.removeAll() }
-    /// A catalog track action (like/save/queue) changed state the cached page still shows.
-    func invalidate() { cache.removeAll() }
+
+    func installSearchFixture(_ source: String, _ result: [String: Any]) {
+        searchFixtures[source] = result
+    }
+    func removeSearchFixtures() {
+        searchFixtures.removeAll()
+        recordedSearchQueries.removeAll()
+    }
+
+    /// A catalog track action (like/save/queue) or pull-to-refresh invalidated cached state.
+    func invalidate() {
+        cache.removeAll()
+        yandex?.invalidate()
+        publicCatalog?.invalidate()
+    }
+
+    /// Drops Yandex account credentials and cached Yandex pages/sessions when account changes.
+    func clearYandex() {
+        for key in cache.keys where key.hasPrefix("yandex/") { cache.removeValue(forKey: key) }
+        for (sid, session) in searchSessions where session.source == "yandex" {
+            searchSessions.removeValue(forKey: sid)
+            searchSessionOrder.removeAll { $0 == sid }
+        }
+        externalReactions.removeAll()
+        yandex?.clear()
+    }
+
+    func setExternalReaction(provider: String, externalId: String, value: Int) {
+        guard !provider.isEmpty, !externalId.isEmpty else { return }
+        externalReactions["\(provider):\(externalId)"] = value
+    }
 
     static func handles(_ path: String) -> Bool {
         let parts = path.split(separator: "/").map(String.init)
@@ -31,8 +86,12 @@ final class NativeCatalogState {
         let key = "yandex/artist/\(id)"
         var data = cache[key] ?? [:]
         let nextPage = (data["page"] as? NSNumber)?.intValue ?? 0
-        let enc = Self.enc(id)
-        let more = try await request("GET", "/api/catalog/yandex/artists/\(enc)?page=\(nextPage + 1)", nil)
+        let more: [String: Any]
+        if let yandex {
+            more = try await yandex.artistPage(id, page: nextPage + 1)
+        } else {
+            more = try await request("GET", "/api/catalog/yandex/artists/\(Self.enc(id))?page=\(nextPage + 1)", nil)
+        }
         let existing = data["albums"] as? [[String: Any]] ?? []
         let added = more["albums"] as? [[String: Any]] ?? []
         var seen = Set(existing.compactMap { $0["id"] as? String })
@@ -46,7 +105,7 @@ final class NativeCatalogState {
         cache[key] = data
     }
 
-    func page(_ path: String, request: Request) async throws -> [String: Any] {
+    func page(_ path: String, request: Request, localLookup: LocalTrackLookup? = nil) async throws -> [String: Any] {
         if let fixture = fixtures[path] { return fixture }
         let parts = path.split(separator: "/").map(String.init)
         guard parts.count == 3, ["artist", "album"].contains(parts[1]) else {
@@ -62,12 +121,14 @@ final class NativeCatalogState {
                 let data: [String: Any]
                 if let hit = cache[key] { data = hit }
                 else {
-                    let loaded = try await request("GET", "/api/catalog/yandex/albums/\(enc)", nil)
+                    let loaded: [String: Any]
+                    if let yandex { loaded = try await yandex.albumPage(id) }
+                    else { loaded = try await request("GET", "/api/catalog/yandex/albums/\(enc)", nil) }
                     cache[key] = loaded; data = loaded
                 }
                 let album = data["album"] as? [String: Any] ?? [:]
                 let title = album["title"] as? String ?? ""
-                let tracks = data["tracks"] as? [[String: Any]] ?? []
+                let tracks = Self.enrichTracks(data["tracks"] as? [[String: Any]] ?? [], defaultProvider: "yandex", lookup: localLookup, pendingReactions: externalReactions)
                 let artists = album["artists"] as? [[String: Any]] ?? []
                 let subtitle = artists.compactMap { $0["name"] as? String }.joined(separator: ", ")
                 let year = (album["year"] as? NSNumber).map { String($0.intValue) }
@@ -87,13 +148,15 @@ final class NativeCatalogState {
             let data: [String: Any]
             if let hit = cache[key] { data = hit }
             else {
-                var loaded = try await request("GET", "/api/catalog/yandex/artists/\(enc)?page=0", nil)
+                var loaded: [String: Any]
+                if let yandex { loaded = try await yandex.artistPage(id, page: 0) }
+                else { loaded = try await request("GET", "/api/catalog/yandex/artists/\(enc)?page=0", nil) }
                 loaded["page"] = 0
                 cache[key] = loaded; data = loaded
             }
             let artist = data["artist"] as? [String: Any] ?? [:]
             let name = artist["name"] as? String ?? ""
-            let popular = data["popularTracks"] as? [[String: Any]] ?? []
+            let popular = Self.enrichTracks(data["popularTracks"] as? [[String: Any]] ?? [], defaultProvider: "yandex", lookup: localLookup, pendingReactions: externalReactions)
             let albums = data["albums"] as? [[String: Any]] ?? []
             let similar = data["similarArtists"] as? [[String: Any]] ?? []
             let genres = (artist["genres"] as? [String] ?? []).joined(separator: " · ")
@@ -116,11 +179,15 @@ final class NativeCatalogState {
 
         let key = "\(source)/\(kind)/\(id)"
         var nativePage: [String: Any]?
-        if source == "soundcloud", kind == "artist", let soundcloud, cache[key] == nil {
-            nativePage = try? await soundcloud.artist(id)
+        if cache[key] == nil {
+            if source == "soundcloud", kind == "artist", let soundcloud {
+                nativePage = try? await soundcloud.artist(id)
+            } else if source == "public", let publicCatalog {
+                nativePage = try? await (kind == "artist" ? publicCatalog.artist(id) : publicCatalog.album(id))
+            }
         }
         let data: [String: Any]
-        if let nativePage, !(nativePage["tracks"] as? [Any] ?? []).isEmpty {
+        if let nativePage, !(nativePage["tracks"] as? [Any] ?? []).isEmpty || !(nativePage["title"] as? String ?? "").isEmpty {
             cache[key] = nativePage; data = nativePage
         } else if let hit = cache[key] { data = hit }
         else {
@@ -131,7 +198,8 @@ final class NativeCatalogState {
             cache[key] = loaded; data = loaded
         }
         let title = data["title"] as? String ?? ""
-        let tracks = data["tracks"] as? [[String: Any]] ?? []
+        let defaultProvider = source == "soundcloud" ? "soundcloud" : "youtube"
+        let tracks = Self.enrichTracks(data["tracks"] as? [[String: Any]] ?? [], defaultProvider: defaultProvider, lookup: localLookup, pendingReactions: externalReactions)
         let src = data["source"] as? String ?? source
         let albums = data["albums"] as? [[String: Any]] ?? []
         let isArtist = kind == "artist"
@@ -162,6 +230,179 @@ final class NativeCatalogState {
         return ["title": title, "style": "catalog", "sections": sections]
     }
 
+    // MARK: Native Yandex Search
+
+    func searchSession(_ id: String) -> SearchSession? {
+        searchSessions[id]
+    }
+
+    /// Runs Yandex Music search or Home likes feed directly in Swift (with JSC API fallback),
+    /// returning the exact dictionary shape consumed by `NativeSearchResults`.
+    func searchYandex(query: String, scope: String, more: Bool, previousSession: String?,
+                      request: Request, localLookup: LocalTrackLookup? = nil) async throws -> [String: Any] {
+        let cleanQuery = String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
+        if let fixture = searchFixtures["yandex"] {
+            recordedSearchQueries.append(cleanQuery)
+            return fixture
+        }
+        let validScope = ["track", "artist", "album"].contains(scope) ? scope : "all"
+        let previous: SearchSession?
+        if more {
+            guard let previousSession, let prev = searchSessions[previousSession] else {
+                throw NSError(domain: "NativeCatalogState", code: 2, userInfo: [NSLocalizedDescriptionKey: "Результаты устарели. Повторите поиск."])
+            }
+            guard prev.source == "yandex", prev.query == cleanQuery, prev.scope == validScope else {
+                throw NSError(domain: "NativeCatalogState", code: 3, userInfo: [NSLocalizedDescriptionKey: "Поиск уже изменился"])
+            }
+            previous = prev
+        } else {
+            previous = nil
+        }
+
+        let nextPage = previous.map { $0.page + 1 } ?? 0
+        guard nextPage <= 100 else {
+            throw NSError(domain: "NativeCatalogState", code: 4, userInfo: [NSLocalizedDescriptionKey: "Слишком много страниц результатов"])
+        }
+
+        let found: [String: Any]
+        if let yandex {
+            found = cleanQuery.isEmpty ? try await yandex.home() : try await yandex.search(cleanQuery, page: nextPage, type: validScope)
+        } else {
+            let path = cleanQuery.isEmpty
+                ? "/api/catalog/yandex/home"
+                : "/api/catalog/yandex/search?q=\(Self.enc(cleanQuery))&page=\(nextPage)&type=\(Self.enc(validScope))"
+            found = try await request("GET", path, nil)
+        }
+
+        let incomingTracks = Self.enrichTracks(found["tracks"] as? [[String: Any]] ?? [], defaultProvider: "yandex", lookup: localLookup, pendingReactions: externalReactions)
+        let incomingArtists = (found["artists"] as? [[String: Any]] ?? []).map { raw -> [String: Any] in
+            var link = Self.artistLink(raw, pathPrefix: "/catalog/artist/")
+            if (link["detail"] as? String ?? "").isEmpty { link["detail"] = "Исполнитель" }
+            return link
+        }
+        let incomingAlbums = (found["albums"] as? [[String: Any]] ?? []).map { raw -> [String: Any] in
+            var link = Self.albumLink(raw)
+            if (link["detail"] as? String ?? "").isEmpty { link["detail"] = "Альбом" }
+            return link
+        }
+
+        let mergedTracks = Self.unique((previous?.items ?? []) + incomingTracks) { Self.trackId($0) }
+        let mergedArtists = Self.unique((previous?.artists ?? []) + incomingArtists) { $0["id"] as? String ?? "" }
+        let mergedAlbums = Self.unique((previous?.albums ?? []) + incomingAlbums) { $0["id"] as? String ?? "" }
+        let hasMoreMap = found["hasMore"] as? [String: Any] ?? [:]
+        let hasMore = (hasMoreMap["tracks"] as? Bool == true) || (hasMoreMap["artists"] as? Bool == true) || (hasMoreMap["albums"] as? Bool == true)
+        let page = (found["page"] as? NSNumber)?.intValue ?? nextPage
+
+        let token = UUID().uuidString
+        let label = "Яндекс Музыка" + (cleanQuery.isEmpty ? "" : " · " + cleanQuery)
+        let session = SearchSession(
+            id: token, source: "yandex", query: cleanQuery, scope: validScope, page: page,
+            items: mergedTracks, artists: mergedArtists, albums: mergedAlbums, more: hasMore,
+            context: ["type": "search", "label": label]
+        )
+        storeSession(session)
+        return renderSearchSession(session, lookup: localLookup)
+    }
+
+    func updateSearchSessionTrack(sessionId: String, externalId: String, reaction: Int? = nil,
+                                  libraryTrackId: String? = nil, saved: Bool? = nil,
+                                  lookup: LocalTrackLookup? = nil) -> [String: Any]? {
+        guard var session = searchSessions[sessionId] else { return nil }
+        if let reaction { setExternalReaction(provider: session.source, externalId: externalId, value: reaction) }
+        for i in session.items.indices where Self.trackId(session.items[i]) == externalId {
+            if let reaction { session.items[i]["reaction"] = reaction }
+            if let libraryTrackId { session.items[i]["libraryTrackId"] = libraryTrackId }
+            if let saved { session.items[i]["saved"] = saved }
+        }
+        searchSessions[sessionId] = session
+        return renderSearchSession(session, lookup: lookup)
+    }
+
+    private func storeSession(_ session: SearchSession) {
+        searchSessions[session.id] = session
+        searchSessionOrder.removeAll { $0 == session.id }
+        searchSessionOrder.append(session.id)
+        while searchSessionOrder.count > 24, let oldest = searchSessionOrder.first {
+            searchSessionOrder.removeFirst()
+            searchSessions.removeValue(forKey: oldest)
+        }
+    }
+
+    private func renderSearchSession(_ session: SearchSession, lookup: LocalTrackLookup?) -> [String: Any] {
+        let formattedTracks = session.items.map { item -> [String: Any] in
+            let id = Self.trackId(item)
+            let local = lookup?(session.source, id)
+            let reaction = local?.reaction ?? (item["reaction"] as? NSNumber)?.intValue ?? 0
+            let saved = local?.saved ?? (item["saved"] as? Bool == true)
+            var row: [String: Any] = [
+                "id": id,
+                "externalId": id,
+                "provider": item["provider"] as? String ?? session.source,
+                "title": item["title"] as? String ?? "",
+                "artist": item["artist"] as? String ?? "",
+                "album": item["album"] as? String ?? "",
+                "duration": (item["duration"] as? NSNumber)?.doubleValue ?? 0.0,
+                "reaction": reaction,
+                "ok": item["playable"] as? Bool != false,
+                "saved": saved,
+                "explicit": item["explicit"] as? Bool == true,
+                "tags": "",
+            ]
+            if let cover = item["coverUrl"] as? String, !cover.isEmpty { row["cover"] = cover }
+            return row
+        }
+        return [
+            "session": session.id,
+            "page": session.page,
+            "more": session.more,
+            "artists": session.artists,
+            "albums": session.albums,
+            "tracks": formattedTracks,
+        ]
+    }
+
+    // MARK: helpers
+
+    static func enrichTracks(_ tracks: [[String: Any]], defaultProvider: String, lookup: LocalTrackLookup?,
+                             pendingReactions: [String: Int] = [:]) -> [[String: Any]] {
+        tracks.map { raw in
+            var t = raw
+            let extId = trackId(raw)
+            let provider = (raw["audioProvider"] as? String) ?? (raw["provider"] as? String) ?? defaultProvider
+            if t["provider"] == nil { t["provider"] = provider }
+            if t["externalId"] == nil && !extId.isEmpty { t["externalId"] = extId }
+            if t["coverUrl"] == nil, let thumb = raw["thumbnail"] as? String { t["coverUrl"] = thumb }
+            if t["artistId"] == nil, let aid = raw["artist_id"] as? String { t["artistId"] = aid }
+            if t["pageUrl"] == nil, let page = raw["webpage_url"] as? String { t["pageUrl"] = page }
+            if t["playable"] == nil { t["playable"] = true }
+            if !extId.isEmpty, let local = lookup?(provider, extId) {
+                t["libraryTrackId"] = local.trackId
+                t["saved"] = local.saved
+                t["reaction"] = local.reaction
+            } else if !extId.isEmpty, let pending = pendingReactions["\(provider):\(extId)"] {
+                t["reaction"] = pending
+            }
+            return t
+        }
+    }
+
+    private static func trackId(_ item: [String: Any]) -> String {
+        if let s = item["externalId"] as? String, !s.isEmpty { return s }
+        if let s = item["id"] as? String, !s.isEmpty { return s }
+        if let n = item["id"] as? NSNumber { return String(n.int64Value) }
+        return ""
+    }
+
+    private static func unique(_ items: [[String: Any]], by key: ([String: Any]) -> String) -> [[String: Any]] {
+        var seen = Set<String>()
+        var out: [[String: Any]] = []
+        for item in items {
+            let k = key(item)
+            if k.isEmpty || seen.insert(k).inserted { out.append(item) }
+        }
+        return out
+    }
+
     private static func hero(style: String, title: String, cover: String?, subtitle: String?, detail: String?,
                              playable: Bool, items: [[String: Any]], context: [String: Any]) -> [String: Any] {
         var row: [String: Any] = ["kind": "hero", "style": style, "title": title]
@@ -177,27 +418,32 @@ final class NativeCatalogState {
     }
 
     private static func trackRows(_ items: [[String: Any]], numbered: Bool, source: String, context: [String: Any]) -> [[String: Any]] {
-        items.enumerated().map { index, track in
+        let provider = source == "ytmusic" ? "youtube" : source
+        return items.enumerated().map { index, track in
             let title = track["title"] as? String ?? ""
             let artist = track["artist"] as? String ?? ""
             let duration = (track["duration"] as? NSNumber)?.doubleValue ?? 0
-            let saved = (track["libraryTrackId"] as? String) != nil
+            let saved = (track["saved"] as? Bool) ?? ((track["libraryTrackId"] as? String) != nil)
             let reaction = (track["reaction"] as? NSNumber)?.intValue ?? 0
             let liked = reaction > 0
+            let disliked = reaction < 0
             let subtitle = numbered && !artist.isEmpty ? "\(index + 1). \(artist)" : artist
+            var canonicalTrack = track
+            if canonicalTrack["provider"] == nil { canonicalTrack["provider"] = provider }
             let playPayload: [String: Any] = ["tracks": items, "index": index, "context": context]
             var actions: [[String: Any]] = [
-                ["title": "Играть следующим", "symbol": "text.line.first.and.arrowtriangle.forward", "act": ["name": "catalogTrack", "args": ["kind": "next", "track": track]]],
-                ["title": "В очередь", "symbol": "text.append", "act": ["name": "catalogTrack", "args": ["kind": "queue", "track": track]]],
-                ["title": liked ? "Убрать из любимого" : "Нравится", "symbol": liked ? "heart.slash" : "heart", "act": ["name": "catalogTrack", "args": ["kind": "like", "track": track]]],
+                ["title": "Играть следующим", "symbol": "text.line.first.and.arrowtriangle.forward", "act": ["name": "catalogTrack", "args": ["kind": "next", "track": canonicalTrack]]],
+                ["title": "В очередь", "symbol": "text.append", "act": ["name": "catalogTrack", "args": ["kind": "queue", "track": canonicalTrack]]],
+                ["title": liked ? "Убрать лайк" : "Нравится", "symbol": liked ? "heart.fill" : "heart", "act": ["name": "catalogTrack", "args": ["kind": "like", "track": canonicalTrack]]],
+                ["title": disliked ? "Убрать дизлайк" : "Не нравится", "symbol": "hand.thumbsdown", "act": ["name": "catalogTrack", "args": ["kind": "dislike", "track": canonicalTrack]]],
             ]
             if !saved {
-                actions.append(["title": "Сохранить в медиатеку", "symbol": "plus", "act": ["name": "catalogTrack", "args": ["kind": "save", "track": track]]])
+                actions.append(["title": "Сохранить в медиатеку", "symbol": "plus", "act": ["name": "catalogTrack", "args": ["kind": "save", "track": canonicalTrack]]])
             }
-            actions.append(["title": "Скачать", "symbol": "arrow.down.circle", "act": ["name": "catalogTrack", "args": ["kind": "download", "track": track]]])
+            actions.append(["title": "Скачать", "symbol": "arrow.down.circle", "act": ["name": "catalogTrack", "args": ["kind": "download", "track": canonicalTrack]]])
             var row: [String: Any] = [
                 "kind": "item",
-                "title": "\(title) · \(Self.time(duration))",
+                "title": duration > 0 ? "\(title) · \(Self.time(duration))" : title,
                 "subtitle": subtitle,
                 "act": ["name": "catalogPlay", "args": playPayload],
                 "actions": actions,

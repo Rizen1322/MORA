@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import Fastify from 'fastify';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Services } from '../src/app.ts';
 vi.mock('../src/automix.ts', () => ({ getSettings: () => ({ automix: { enabled: true } }) }));
-import { nativeSources } from '../src/native-sources.ts';
+import { nativeSources, registerNativeSources } from '../src/native-sources.ts';
 
 it('hands off the whole known queue rather than just the next two songs, preserving order', async () => {
   const resolve = vi.fn(async (source: { external_id: string }) => ({ kind: 'direct', url: `https://audio.test/${source.external_id}.mp3` }));
@@ -114,4 +115,27 @@ it('hands off a bound local recording by its virtual server path', async () => {
       source: { kind: 'upload', trackId: 'replacement', serverPath: '/data/library/song.mp3' } });
     expect(resolve).not.toHaveBeenCalled();
   } finally { stat.mockRestore(); }
+});
+
+it('serves yandex credentials only when x-mora-native matches moraHost.internalToken', async () => {
+  const g = globalThis as { moraHost?: { internalToken?: string } };
+  const prevHost = g.moraHost;
+  let creds: { token: string; apiBase: string } | null = null;
+  const app = Fastify();
+  registerNativeSources(app, { providers: { yandex: { nativeCredentials: () => creds } } } as unknown as Services);
+  g.moraHost = { internalToken: 'secret-mobile-token' };
+  try {
+    expect((await app.inject('/api/mobile/yandex-credentials')).statusCode).toBe(403);
+    expect((await app.inject({ url: '/api/mobile/yandex-credentials', headers: { 'x-mora-native': 'wrong' } })).statusCode).toBe(403);
+    const missing = await app.inject({ url: '/api/mobile/yandex-credentials', headers: { 'x-mora-native': 'secret-mobile-token' } });
+    expect(missing.statusCode).toBe(409);
+    creds = { token: 'oauth-123', apiBase: 'https://api.music.yandex.net' };
+    const ok = await app.inject({ url: '/api/mobile/yandex-credentials', headers: { 'x-mora-native': 'secret-mobile-token' } });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.headers['cache-control']).toBe('no-store');
+    expect(ok.json()).toEqual({ token: 'oauth-123', apiBase: 'https://api.music.yandex.net' });
+  } finally {
+    await app.close();
+    g.moraHost = prevHost;
+  }
 });

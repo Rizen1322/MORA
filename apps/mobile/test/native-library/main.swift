@@ -118,4 +118,8 @@ require(invalidCover.tracks.first { $0.id == "two" }?.cover == nil, "Untrusted Y
 write("DELETE FROM plays; DELETE FROM playlist_tracks; DELETE FROM playlists;")
 let cleared = try reader.readIfChanged()!
 require(cleared.history.isEmpty && cleared.playlists.isEmpty && cleared.entries.isEmpty, "Deletes are reflected without page events")
+require(cleared.remoteIndex.isEmpty, "Schema without external_id leaves remoteIndex empty")
+write("ALTER TABLE track_sources ADD COLUMN external_id TEXT; UPDATE track_sources SET external_id='yt123456789' WHERE id=2; UPDATE track_sources SET external_id='200:600' WHERE id=3;")
+let withRemote = try reader.readIfChanged()!
+require(withRemote.remoteIndex["youtube:yt123456789"] == "asset" && withRemote.remoteIndex["yandex:200:600"] == "two", "Remote external_id index populated when column exists")
 print("Native library: read-only WAL, commits, saved tracks, likes, bindings, duplicate entries, history and covers passed")

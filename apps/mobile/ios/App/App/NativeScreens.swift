@@ -843,6 +843,15 @@ struct NativeSearchView: View {
         Task { @MainActor in
             defer { if !isPlay { busy = false } }
             do {
+                if store.sharedLibrary, store.catalog.searchSession(session) != nil {
+                    let res = try await store.executeCatalogSearchAction(kind: kind, trackId: track.id, sessionId: session, playlist: playlist)
+                    if isPlay, generation != playGeneration { return }
+                    guard key == requested, store.path == origin else { return }
+                    if let path = res.go { store.go(path) }
+                    if let id = res.versions { store.presentVersions(id: id) }
+                    if let updated = res.updated { results[source] = updated }
+                    return
+                }
                 var args: [String: Any] = ["kind": kind, "id": track.id, "session": session]
                 if let playlist { args["playlist"] = playlist }
                 let value = try await store.call("searchAction", args, timeout: 180) as? [String: Any]
@@ -879,9 +888,21 @@ struct NativeSearchView: View {
         searching.insert(source); errors[source] = nil
         defer { if key == requested && !Task.isCancelled { searching.remove(source) } }
         do {
-            var args: [String: Any] = ["source": source, "q": query, "scope": source == "yandex" ? scope : "all", "more": more]
-            if more { args["session"] = results[source]?.session }
-            let value = try await store.call("search", args, timeout: 60)
+            let value: Any?
+            if store.sharedLibrary && source == "yandex" {
+                value = try await store.catalog.searchYandex(
+                    query: query,
+                    scope: scope,
+                    more: more,
+                    previousSession: more ? results[source]?.session : nil,
+                    request: { try await NativeServerApp.request($0, $1, body: $2, timeout: 60) },
+                    localLookup: { store.localCatalogTrack(provider: $0, externalId: $1) }
+                )
+            } else {
+                var args: [String: Any] = ["source": source, "q": query, "scope": source == "yandex" ? scope : "all", "more": more]
+                if more { args["session"] = results[source]?.session }
+                value = try await store.call("search", args, timeout: 60)
+            }
             guard key == requested, !Task.isCancelled else { return }
             guard let found = NativeSearchResults(value) else { throw NativeShellError.page }
             results[source] = found

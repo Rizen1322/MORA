@@ -37,6 +37,8 @@ final class NativeServer {
     }
     private var nativeReplies: [Int: NativeReply] = [:]
     private var nextNativeId = -1 // page requests use non-negative IDs
+    /// Per-process secret visible only to NativeServer and the private JSC context; stripped from page requests.
+    private let internalToken = UUID().uuidString
     struct RequestFailure: LocalizedError {
         let message: String
         var errorDescription: String? { message }
@@ -94,11 +96,15 @@ final class NativeServer {
         queue.async {
             if ["req", "abort"].contains(message["t"] as? String ?? ""),
                let id = (message["id"] as? NSNumber)?.intValue, id < 0 { return }
-            if message["t"] as? String == "req", let id = (message["id"] as? NSNumber)?.intValue {
+            var outgoing = message
+            if outgoing["t"] as? String == "req", let id = (outgoing["id"] as? NSNumber)?.intValue {
                 self.open.insert(id)
-                self.requestStart[id] = ("\(message["method"] ?? "") \((message["url"] as? String ?? "").split(separator: "?").first ?? "")", ProcessInfo.processInfo.systemUptime, 0)
+                self.requestStart[id] = ("\(outgoing["method"] ?? "") \((outgoing["url"] as? String ?? "").split(separator: "?").first ?? "")", ProcessInfo.processInfo.systemUptime, 0)
+                if let headers = outgoing["headers"] as? [String: Any] {
+                    outgoing["headers"] = headers.filter { $0.key.lowercased() != "x-mora-native" }
+                }
             }
-            self.timed("message \(message["t"] ?? "")") { self.receive(message) }
+            self.timed("message \(outgoing["t"] ?? "")") { self.receive(outgoing) }
         }
     }
 
@@ -121,8 +127,10 @@ final class NativeServer {
                             self.finishNative(id, .failure(URLError(.timedOut)), abort: true)
                         }
                     }
+                    var headers: [String: String] = ["x-mora-native": self.internalToken]
+                    if text != nil { headers["content-type"] = "application/json" }
                     self.receive(["t": "req", "id": id, "method": method, "url": path,
-                                  "headers": text == nil ? [:] : ["content-type": "application/json"], "body": text as Any? ?? NSNull()])
+                                  "headers": headers, "body": text as Any? ?? NSNull()])
                 }
             }
         }, onCancel: {
@@ -319,6 +327,7 @@ final class NativeServer {
         set(host, "timer", { [unowned self] (id: Int, ms: Double, repeating: Bool) in self.arm(id, ms, repeating) } as @convention(block) (Int, Double, Bool) -> Void)
         set(host, "clearTimer", { [unowned self] (id: Int) in self.timers.removeValue(forKey: id)?.cancel() } as @convention(block) (Int) -> Void)
         set(host, "now", { ProcessInfo.processInfo.systemUptime * 1000 } as @convention(block) () -> Double)
+        host.setValue(internalToken, forProperty: "internalToken")
         set(host, "random", { [unowned self] (length: Int) -> JSValue in
             var data = Data(count: max(0, min(length, 65536)))
             _ = data.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, $0.count, $0.baseAddress!) }
