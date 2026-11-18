@@ -58,6 +58,8 @@ final class NativeMixHost {
     private var preparation: NativeQueuePreparation?
     private var analysisWorker = NativeMixAnalysis()
     private var analysisSettings: [String: Any] = [:]
+    /// The bundled planning script, kept for re-planning after a growing start.
+    private var analysisScript = ""
     private var analysisPolicies: [String: Bool] = [:]
     private var artworkLoader = NativeQueueArtwork()
     private var sourceBytes: [Int: Int] = [:]
@@ -251,8 +253,35 @@ final class NativeMixHost {
             if final { self.tracks[at].removeValue(forKey: "growing"); self.tracks[at].removeValue(forKey: "estimatedFrames") }
             self.config["tracks"] = self.tracks
             self.renderer?.grow(file: key, frames: frames, final: final)
-            if final { self.publish("grown"); MoraPlaybackJournal.record("native.preparation.grown", ["seq": at, "frames": frames]) }
+            if final {
+                self.publish("grown"); MoraPlaybackJournal.record("native.preparation.grown", ["seq": at, "frames": frames])
+                if at == self.index { self.replanAfterGrowth() }
+            }
         }
+    }
+    /// A growing start hands the first future song over before the seed PCM is final: planning was skipped,
+    /// so the first transition stayed the reserve crossfade. With the finished seed, plan it again.
+    private func replanAfterGrowth() {
+        guard let folder, tracks.indices.contains(index + 1), let manifest = knownManifest,
+              !analysisScript.isEmpty, !analysisSettings.isEmpty else { return }
+        let current = tracks[index], next = tracks[index + 1]
+        guard current["growing"] as? Bool != true, available(index + 1) else { return }
+        let plan = next["plan"] as? [String: Any] ?? [:]
+        guard next["transition"] == nil || plan["method"] as? String == "fallback_crossfade" else { return }
+        guard let entry = next["entryId"] as? String,
+              let item = (manifest["items"] as? [[String: Any]])?.first(where: { $0["entryId"] as? String == entry }),
+              let nextFile = next["file"] as? Int, file(nextFile) != nil,
+              let seedFile = current["file"] as? Int, file(seedFile) != nil else { return }
+        let at = index + 1
+        let before: [String: Any] = ["trackId": current["trackId"] ?? "",
+            "duration": Double(current["totalFrames"] as? Int ?? 0) / sr,
+            "mixingAllowed": current["mixingAllowed"] as? Bool ?? true, "analysis": NSNull()]
+        let worker = analysisWorker
+        worker.enqueue(folder: folder, before: before, previousPCM: current, next: item, pcm: next, index: at,
+                       script: analysisScript, settings: analysisSettings,
+                       upgrade: { [weak self] at, track in self?.applyAnalysis(worker, at: at, track: track) },
+                       event: { [weak self] _, reason in self?.recordAnalysis(worker, reason: reason) })
+        MoraPlaybackJournal.record("native.preparation.replan", ["seq": at, "reason": "grownSeed"])
     }
     func start(id: String, config: [String: Any], completion: @escaping Reply) {
         work.async { self.startOnQueue(id: id, config: config, completion: completion) }
@@ -456,6 +485,7 @@ final class NativeMixHost {
                       manifest["previous"] is [String: Any], manifest["settings"] is [String: Any],
                       let scriptURL = Bundle.main.url(forResource: "native-preparation", withExtension: "js", subdirectory: "public") else { throw Failure.invalid }
                 let script = try self.preparationScript ?? String(contentsOf: scriptURL, encoding: .utf8)
+                self.analysisScript = script
                 for item in items {
                     guard let key = item["file"] as? Int, (0..<1_000_000).contains(key), item["source"] is [String: Any] else { throw Failure.invalid }
                 }
