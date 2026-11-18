@@ -134,6 +134,8 @@ final class NativeQueuePreparation: @unchecked Sendable {
         let loop = manifest["loopItems"] as? [[String: Any]] ?? []
         configure(remaining: raw.count, loopCount: loop.count)
         var before = previous, previousPCM = seed
+        if before["entryId"] == nil, let eid = seed["entryId"] { before["entryId"] = eid }
+        if before["id"] == nil, let tid = before["trackId"] ?? seed["trackId"] { before["id"] = tid }
         if let frames = seed["totalFrames"] as? Int {
             let est = seed["growing"] as? Bool == true ? (seed["estimatedFrames"] as? Int ?? frames) : frames
             before["duration"] = Double(max(frames, est)) / 48000
@@ -381,7 +383,11 @@ final class NativeMixAnalysis: @unchecked Sendable {
                 track.removeValue(forKey: "transition"); track.removeValue(forKey: "plan")
                 track["plan"] = result["plan"]
                 var policies: [String: Bool] = [:]
-                for source in [request.a, request.b] { policies[source.value["entryId"] as? String ?? ""] = source.value["mixingAllowed"] as? Bool == true }
+                for source in [request.a, request.b] {
+                    if let eid = source.value["entryId"] as? String, !eid.isEmpty {
+                        policies[eid] = source.value["mixingAllowed"] as? Bool == true
+                    }
+                }
                 track["_analysisPolicy"] = policies
                 if let tr = result["transition"] as? [String: Any], let trigger = tr["triggerFrame"] as? Int,
                    let entry = tr["entryFrame"] as? Int, trigger < request.a.frames, entry < request.b.frames {

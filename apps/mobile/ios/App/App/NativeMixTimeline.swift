@@ -41,7 +41,7 @@ enum NativeMixTimeline {
     /// Duration-only equal-power reserve; never waits for JavaScriptCore/MIR.
     static func reserve(before: [String: Any], next: [String: Any], frames: Int, settings: [String: Any]) -> [String: Any]? {
         guard settings["enabled"] as? Bool != false, before["mixingAllowed"] as? Bool == true,
-              next["mixingAllowed"] as? Bool == true, let a = before["duration"] as? Double, a.isFinite, a >= 15, frames > 0 else { return nil }
+              next["mixingAllowed"] as? Bool == true, let a = before["duration"] as? Double, a.isFinite, a > 0, frames > 0 else { return nil }
         func limit(_ name: String, _ fallback: Double, _ maximum: Double) -> Double {
             guard let v = (settings[name] as? NSNumber)?.doubleValue, v.isFinite else { return fallback }
             return max(0, min(maximum, v))

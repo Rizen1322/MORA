@@ -49,6 +49,10 @@ precondition(NativeMixTimeline.reserve(before: previous, next: candidate, frames
 precondition(NativeMixTimeline.reserve(before: previous, next: ["mixingAllowed": false], frames: 48000, settings: [:]) == nil)
 precondition(NativeMixTimeline.reserve(before: ["duration": Double.nan, "mixingAllowed": true], next: candidate, frames: 48000, settings: [:]) == nil)
 precondition(NativeMixTimeline.reserve(before: previous, next: candidate, frames: 1, settings: [:]) == nil)
+let shortReserve = NativeMixTimeline.reserve(before: ["trackId": "S0", "duration": 3.0, "mixingAllowed": true],
+                                             next: ["trackId": "S1", "mixingAllowed": true],
+                                             frames: 3 * 48000, settings: ["enabled": true])
+precondition((shortReserve?["transition"] as? [String: Any]) != nil, "Short 3s fixture pair lost its reserve crossfade")
 print("Native reserve: timing, equal power, disabled/forbidden/invalid inputs passed")
 
 let full: [[String: Any]] = (1...74).map { ["entryId": "E\($0)", "trackId": "T\($0)"] }
