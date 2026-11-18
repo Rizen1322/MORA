@@ -219,7 +219,7 @@ macOS: workflow `.github/workflows/ios.yml` компилирует отдель�
 - `NativeCatalogState` для `/soundcloud/artist/<id>` сначала использует Swift-провайдер, а JS-маршрут остаётся запасным (и единственным для остальных источников).
 - Ещё не перенесено: разрешение аудиопотока SoundCloud/YouTube (yt-dlp), каталог и поиск Яндекса, тексты песен — это следующие части этапа 3.
 
-Проверки `89598aa`: self-check `native-soundcloud` (client_id, профиль, поиск, DRM/размеры/хосты) прошёл; [прогон 44141349624](https://github.com/Rizen1322/MORA/actions/runs/44141349624) собрал и проверил IPA; [UI-прогон 44140499832](https://github.com/Rizen1322/MORA/actions/runs/44140499832) **прошёл**. Проверенная [IPA `89598aa`](../builds/ios-1.0.42-89598aa/MORA-unsigned.ipa). SHA-256: `99f83f514d77c9d4ff41913c42d7fc89e391c52dc9dc0b88dec593dfc4e00a8b`.
+Проверки `bf26692`: [прогон 44181847951](https://github.com/Rizen1322/MORA/actions/runs/44181847951) собрал и проверил IPA и self-checks; [UI-прогон 44181863303](https://github.com/Rizen1322/MORA/actions/runs/44181863303) **прошёл**. Host-стресс `slow-analysis-eof` (`0/7`) указывает на планирование переходов без анализа — следующий участок работы. Проверенная [IPA `bf26692`](../builds/ios-1.0.42-bf26692/MORA-unsigned.ipa). SHA-256: `d6e9985e4fa29214c5e23567ed49999c26309bafd6f607f62bbb72d54f59fcdc`.
 ### Волна: состояние и переходы (build 43)
 
 - Мини-плеер и виджет читают `player`, который теперь обновляется и в фореграунде: `nativePlaybackChanged` больше не ждёт ухода в фон, поэтому переключение трека сразу меняет название и состояние.
