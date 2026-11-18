@@ -361,8 +361,18 @@ final class NativeMixAnalysis: @unchecked Sendable {
                 }
                 guard let core = Self.core else { throw NativePreparationCore.Failure.script }
                 var a = request.a.value, b = request.b.value
-                a["analysis"] = try analyze(request.a, core: core, scriptKey: scriptKey, request: request, role: "seed")
-                b["analysis"] = try analyze(request.b, core: core, scriptKey: scriptKey, request: request, role: "candidate")
+                // Missing MIR (thermal, blocked analyzer, unreadable file) must still yield a reserve
+                // crossfade: the planner accepts a null analysis, but only cancellation aborts the pair.
+                func analysis(_ source: Source, role: String) throws -> Any {
+                    do { return try analyze(source, core: core, scriptKey: scriptKey, request: request, role: role) }
+                    catch {
+                        if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
+                        stage("analysisUnavailable", request, role: role)
+                        return NSNull()
+                    }
+                }
+                a["analysis"] = try analysis(request.a, role: "seed")
+                b["analysis"] = try analysis(request.b, role: "candidate")
                 if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
                 stage("planning", request)
                 let result = try core.plan(a: a, b: b, settings: request.settings, sampleRate: 48000)
