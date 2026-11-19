@@ -725,14 +725,14 @@ private struct NativeLyricsView: View {
                                 .onChange(of: active, initial: true) { _, index in
                                     if follow && index >= 0 {
                                         withAnimation(reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.9)) {
-                                            proxy.scrollTo(index, anchor: UnitPoint(x: 0.5, y: 0.28))
+                                            proxy.scrollTo(index, anchor: UnitPoint(x: 0.5, y: 0.30))
                                         }
                                     }
                                 }
                                 .onChange(of: follow) { _, isFollowing in
                                     if isFollowing && active >= 0 {
                                         withAnimation(reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.88)) {
-                                            proxy.scrollTo(active, anchor: UnitPoint(x: 0.5, y: 0.28))
+                                            proxy.scrollTo(active, anchor: UnitPoint(x: 0.5, y: 0.30))
                                         }
                                     }
                                 }
@@ -785,7 +785,7 @@ private struct NativeLyricsView: View {
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: 0.0),
-                        .init(color: .black, location: 0.09),
+                        .init(color: .black, location: 0.05),
                         .init(color: .black, location: 0.84),
                         .init(color: .clear, location: 1.0),
                     ],

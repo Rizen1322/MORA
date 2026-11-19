@@ -1219,7 +1219,7 @@ struct NativeLibraryView: View {
                 Section {
                     destination("Любимое", "heart.fill", "/liked", count: store.liked.count)
                     destination("Плейлисты", "music.note.list", "/library/playlists", count: store.playlists.count)
-                    destination("Артисты", "music.mic.fill", "/library/artists", count: artistCount)
+                    destination("Артисты", "music.mic", "/library/artists", count: artistCount)
                     destination("Альбомы", "square.stack.fill", "/library/albums", count: albumCount)
                     destination("Песни", "music.note", "/library/tracks", count: store.library.count)
                     destination("Загруженные", "arrow.down.circle.fill", "/downloads", count: offlineCount)
@@ -1329,7 +1329,7 @@ struct NativeLibraryView: View {
                     .font(.system(size: 19, weight: .semibold))
                     .foregroundStyle(Color.moraMint)
                     .frame(width: 28, height: 28)
-                Text(title).font(.title3.weight(.regular)).foregroundStyle(.white)
+                Text(title).font(.body.weight(.medium)).foregroundStyle(.white)
                 Spacer()
                 if count > 0 {
                     Text("\(count)")
@@ -1338,7 +1338,7 @@ struct NativeLibraryView: View {
                 }
                 Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.32))
             }
-            .frame(minHeight: 46)
+            .frame(minHeight: 42)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

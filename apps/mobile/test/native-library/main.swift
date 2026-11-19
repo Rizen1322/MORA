@@ -107,7 +107,7 @@ let page = try first.page("/playlist/p")!
 let nativePage = NativePage(page)!
 require(nativePage.style == "catalog" && !nativePage.menu.isEmpty, "Playlist page uses catalog style and toolbar menu")
 if let first = nativePage.sections.first?.rows.first, case .hero(let style, let title, _, _, _, let play, let shuffle) = first {
-    require(style == "album" && title == "Один", "Playlist hero carries title")
+    require(style == "album" && title == "Любимые", "Playlist hero carries title")
     require(play?.name == "playAll" && shuffle?.name == "playAll", "Playlist hero plays and shuffles")
 } else { fatalError("Playlist hero row missing") }
 require(nativePage.sections.last?.rows.count == 3, "Native playlist renders repeated entries and unsaved assets")

@@ -114,6 +114,7 @@ struct NativeSourcesView: View {
                 }
                 if !account.fields.isEmpty {
                     Button(account.hasSecret ? "Проверить подключение" : "Подключить Яндекс") { connect(account) }
+                        .foregroundStyle(Color.moraMint).fontWeight(.semibold)
                         .disabled(busy).accessibilityIdentifier("sources.connect")
                 }
                 ForEach(account.docs, id: \.absoluteString) { url in Link(url.host ?? "Помощь со входом", destination: url) }

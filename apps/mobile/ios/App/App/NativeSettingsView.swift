@@ -89,7 +89,7 @@ struct NativeSettingsView: View {
         return Section {
             HStack(spacing: 10) {
                 statPill("AutoMix", off ? "Выкл" : "Вкл", tint: off ? .secondary : .moraMint)
-                statPill("Яндекс", yandexLinked ? "Активен" : "Не вход.", tint: yandexLinked ? .moraMint : .moraGold)
+                statPill("Яндекс", yandexLinked ? "Активен" : "Отключён", tint: yandexLinked ? .moraMint : .moraGold)
                 statPill("Треков", "\(store.library.count)", tint: .white)
             }
             .padding(.vertical, 4)
@@ -101,7 +101,7 @@ struct NativeSettingsView: View {
     private func statPill(_ label: String, _ value: String, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.white.opacity(0.55)).textCase(.uppercase)
-            Text(value).font(.subheadline.weight(.bold)).foregroundStyle(tint).lineLimit(1)
+            Text(value).font(.subheadline.weight(.bold)).foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
@@ -112,7 +112,7 @@ struct NativeSettingsView: View {
     private var transitions: some View {
         Section {
             toggle("AutoMix", "automix", "enabled", true, "Плавные переходы между треками")
-            picker("Характер", "automix", "style", "auto", [("auto", "Авто · рекомендуется"), ("smooth", "Длинные и плавные"), ("tight", "Короткие, по фразе")], "В режиме «Авто» зависит от музыки", disabled: off)
+            picker("Характер", "automix", "style", "auto", [("auto", "Авто"), ("smooth", "Длинные и плавные"), ("tight", "Короткие, по фразе")], "В режиме «Авто» зависит от музыки", disabled: off)
             toggle("Сводить по «Следующий»", "automix", "mixOnNext", true, "Первое нажатие — короткий переход, второе — сразу", disabled: off)
         } header: { Text("Переходы") } footer: { Text(off ? "AutoMix выключен: треки играют подряд без наложения." : "AutoMix сводит песни в темп и по фразам.") }
             .listRowBackground(Color.moraSurface)
@@ -121,7 +121,7 @@ struct NativeSettingsView: View {
         Section("Воспроизведение") {
             toggle("Радио после очереди", "wave", "continueRadio", true, "Когда альбом или плейлист закончился, играет похожая музыка")
             toggle("Альбомы без наложения", "automix", "respectAlbums", true, "Треки одного альбома идут подряд, как задумал автор", disabled: off)
-            picker("Громкость", "automix", "loudnessTarget", "-16", [("off", "Выключено"), ("-14", "Громче (−14 LUFS)"), ("-16", "Обычно (−16 LUFS) · рекомендуется"), ("-18", "Тише, больше запаса (−18 LUFS)")], "Выравнивает громкость разных треков", numeric: true)
+            picker("Громкость", "automix", "loudnessTarget", "-16", [("off", "Выключено"), ("-14", "Громче (−14 LUFS)"), ("-16", "Обычно (−16 LUFS)"), ("-18", "Тише, больше запаса (−18 LUFS)")], "Выравнивает громкость разных треков", numeric: true)
         }.listRowBackground(Color.moraSurface)
     }
     private var downloads: some View {
@@ -245,6 +245,7 @@ struct NativeSettingsView: View {
                 })) { ForEach(options.indices, id: \.self) { Text(options[$0].1).tag(options[$0].0) } }
                     .labelsHidden()
                     .pickerStyle(.menu)
+                    .fixedSize(horizontal: true, vertical: false)
                     .tint(Color.moraMint)
             }
             Text(detail).font(.caption).foregroundStyle(.secondary)

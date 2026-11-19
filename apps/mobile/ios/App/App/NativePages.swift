@@ -89,12 +89,19 @@ struct NativePageView: View {
     private var nativeDiagnostics: Bool { waveSource == nil && store.sharedLibrary && NativeDiagnosticsState.handles(store.path) }
 
     private var pageList: some View {
-        styled(withSearch(List {
+        styled(List {
             if let name = importingFile { ProgressView("Добавляем «" + name + "»…").frame(maxWidth: .infinity).listRowBackground(Color.clear) }
             if let waveSource { waveHeader(waveSource) }
             if let page {
                 if let failure { Text(failure).foregroundStyle(.red) }
-                ForEach(Array(page.sections.enumerated()), id: \.offset) { _, section in sectionView(section) }
+                if !hasHero, let prompt = page.search, !prompt.isEmpty { pageSearchField(prompt) }
+                ForEach(Array(page.sections.enumerated()), id: \.offset) { index, section in
+                    if hasHero, index == page.sections.count - 1, let prompt = page.search, !prompt.isEmpty,
+                       (section.rows.count >= 6 || !query.isEmpty) {
+                        pageSearchField(prompt)
+                    }
+                    sectionView(section)
+                }
             } else if let failure {
                 ContentUnavailableView("Не удалось открыть", systemImage: "exclamationmark.triangle", description: Text(failure))
                     .listRowBackground(Color.clear)
@@ -102,7 +109,7 @@ struct NativePageView: View {
             } else {
                 ProgressView(waveSource == nil ? "Загрузка…" : "Загружаем настройки…").frame(maxWidth: .infinity).listRowBackground(Color.clear)
             }
-        }))
+        })
         .scrollContentBackground(.hidden)
         .background(Color.moraBackground)
         // Only full-bleed hero pages carry their title inside the scroll header; library lists keep navigation titles.
@@ -249,12 +256,33 @@ struct NativePageView: View {
         if catalog { list.listStyle(.plain) } else { list.listStyle(.insetGrouped) }
     }
 
-    @ViewBuilder private func withSearch(_ list: some View) -> some View {
-        if let prompt = page?.search {
-            list.searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: prompt)
-        } else {
-            list
+    private func pageSearchField(_ prompt: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.white.opacity(0.5))
+            TextField(prompt, text: $query)
+                .foregroundStyle(.white)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .submitLabel(.search)
+            if !query.isEmpty {
+                Button { query = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Очистить поиск")
+            }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.moraSurfaceElevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 
     // MARK: rows
@@ -719,7 +747,7 @@ struct NativePageView: View {
                                                      request: { try await NativeServerApp.request($0, $1, body: $2) },
                                                      localLookup: { store.localCatalogTrack(provider: $0, externalId: $1) })
             }
-            else if waveSource == nil, store.sharedLibrary, NativeShellStore.ownScreens.contains(store.path) {
+            else if waveSource == nil, NativeRoute.screen(store.path) != .page || (store.sharedLibrary && NativeShellStore.ownScreens.contains(store.path)) {
                 return // the shell already replaced this view with its own screen for that route
             }
             else if waveSource == nil, let local = try store.libraryPage() { value = local }
