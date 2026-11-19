@@ -28,9 +28,15 @@ struct NativeSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let failure { Section { Text(failure).foregroundStyle(.red); Button("Повторить") { Task { await load() } }.disabled(busy) } }
-                if let message { Section { Text(message).foregroundStyle(.secondary) } }
+                if let failure {
+                    Section {
+                        Text(failure).foregroundStyle(.red)
+                        Button("Повторить") { Task { await load() } }.disabled(busy)
+                    }.listRowBackground(Color.moraSurface)
+                }
+                if let message { Section { Text(message).foregroundStyle(.secondary) }.listRowBackground(Color.moraSurface) }
                 if settings != nil {
+                    overview
                     transitions
                     playback
                     downloads
@@ -40,8 +46,10 @@ struct NativeSettingsView: View {
                     Section {
                         Toggle("Расширенные настройки", isOn: $advanced)
                     } footer: { Text("DJ-приёмы, пределы переходов и служебные сведения.") }
+                        .listRowBackground(Color.moraSurface)
                     if advanced { advancedTransitions; services }
-                } else if failure == nil { ProgressView("Загружаем настройки…") }
+                } else if failure == nil { ProgressView("Загружаем настройки…").listRowBackground(Color.clear) }
+                Section { Color.clear.frame(height: 56).listRowBackground(Color.clear) }
             }
             .scrollContentBackground(.hidden)
             .background(Color.moraBackground)
@@ -76,48 +84,95 @@ struct NativeSettingsView: View {
         }
     }
 
+    private var overview: some View {
+        let yandexLinked = store.ui.wave.sources.contains(.yandex)
+        return Section {
+            HStack(spacing: 10) {
+                statPill("AutoMix", off ? "Выкл" : "Вкл", tint: off ? .secondary : .moraMint)
+                statPill("Яндекс", yandexLinked ? "Активен" : "Не вход.", tint: yandexLinked ? .moraMint : .moraGold)
+                statPill("Треков", "\(store.library.count)", tint: .white)
+            }
+            .padding(.vertical, 4)
+            .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+            .listRowBackground(Color.moraSurface)
+        }
+    }
+
+    private func statPill(_ label: String, _ value: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.white.opacity(0.55)).textCase(.uppercase)
+            Text(value).font(.subheadline.weight(.bold)).foregroundStyle(tint).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.moraSurfaceElevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
     private var transitions: some View {
         Section {
             toggle("AutoMix", "automix", "enabled", true, "Плавные переходы между треками")
             picker("Характер", "automix", "style", "auto", [("auto", "Авто · рекомендуется"), ("smooth", "Длинные и плавные"), ("tight", "Короткие, по фразе")], "В режиме «Авто» зависит от музыки", disabled: off)
             toggle("Сводить по «Следующий»", "automix", "mixOnNext", true, "Первое нажатие — короткий переход, второе — сразу", disabled: off)
         } header: { Text("Переходы") } footer: { Text(off ? "AutoMix выключен: треки играют подряд без наложения." : "AutoMix сводит песни в темп и по фразам.") }
+            .listRowBackground(Color.moraSurface)
     }
     private var playback: some View {
         Section("Воспроизведение") {
             toggle("Радио после очереди", "wave", "continueRadio", true, "Когда альбом или плейлист закончился, играет похожая музыка")
             toggle("Альбомы без наложения", "automix", "respectAlbums", true, "Треки одного альбома идут подряд, как задумал автор", disabled: off)
             picker("Громкость", "automix", "loudnessTarget", "-16", [("off", "Выключено"), ("-14", "Громче (−14 LUFS)"), ("-16", "Обычно (−16 LUFS) · рекомендуется"), ("-18", "Тише, больше запаса (−18 LUFS)")], "Выравнивает громкость разных треков", numeric: true)
-        }
+        }.listRowBackground(Color.moraSurface)
     }
     private var downloads: some View {
         Section {
             toggle("Скачивать лайкнутые", "downloads", "autoLiked", false, "Любимое из YouTube, SoundCloud и Яндекса сохраняется на iPhone")
             toggle("Только Wi-Fi", "downloads", "wifiOnly", false, "Фоновые загрузки ждут Wi-Fi")
             picker("Держать волну скачанной", "downloads", "keepWave", "0", [("0", "Выключено"), ("5", "5 треков"), ("10", "10 треков"), ("20", "20 треков"), ("50", "50 треков")], "Следующие треки волны сохраняются с учётом лимита кэша", numeric: true)
-            link("Загрузки", "/downloads", "arrow.down.circle")
+            link("Загрузки", "/downloads", "arrow.down.circle.fill")
         } header: { Text("Офлайн") } footer: {
             Text(settings?.bool("downloads", "wifiOnly", fallback: false) == true ? "Фоновые загрузки ждут подключения к Wi-Fi." : "Загрузка идёт через любое подключение, в том числе мобильное.")
-        }
+        }.listRowBackground(Color.moraSurface)
     }
     private var appearance: some View {
         Section("Внешний вид") {
             picker("Анимации", "ui", "motion", "system", [("system", "Как в системе"), ("full", "Полные"), ("reduced", "Минимум движения")], "Минимум заменяет визуализации статичным видом")
-        }
+        }.listRowBackground(Color.moraSurface)
     }
     private var more: some View {
         Section("Ещё") {
             link("Звук", "/sound", "slider.vertical.3", detail: "Эквалайзер и пресеты")
-            link("Яндекс Музыка", "/sources", "person.crop.circle", detail: "Аккаунт и синхронизация")
-            Button { verifyLibrary() } label: { Label("Проверить файлы медиатеки", systemImage: "checkmark.circle") }.disabled(busy)
-        }
+            link("Яндекс Музыка", "/sources", "person.crop.circle.fill", detail: "Аккаунт и синхронизация", tint: .moraGold)
+            Button { verifyLibrary() } label: {
+                HStack(spacing: 12) {
+                    NativeIconBadge(symbol: "checkmark.circle.fill", size: 28, tint: .moraMint)
+                    Text("Проверить файлы медиатеки").foregroundStyle(.white)
+                    Spacer()
+                }
+            }.disabled(busy)
+        }.listRowBackground(Color.moraSurface)
     }
     private var backups: some View {
         Section {
-            Button { exportBackup(library: true) } label: { Label("Экспорт медиатеки", systemImage: "square.and.arrow.up") }.disabled(busy)
-            link("Автоматические копии", "/backups", "clock.arrow.circlepath")
-            Button { exportBackup(library: false) } label: { Label("Сохранить копию плейлистов", systemImage: "square.and.arrow.up") }.disabled(busy)
-            Button { importing = true } label: { Label("Восстановить из файла", systemImage: "square.and.arrow.down") }.disabled(busy)
+            Button { exportBackup(library: true) } label: {
+                HStack(spacing: 12) {
+                    NativeIconBadge(symbol: "square.and.arrow.up", size: 28, tint: .moraMint)
+                    Text("Экспорт медиатеки").foregroundStyle(.white)
+                }
+            }.disabled(busy)
+            link("Автоматические копии", "/backups", "clock.arrow.circlepath", tint: .moraGold)
+            Button { exportBackup(library: false) } label: {
+                HStack(spacing: 12) {
+                    NativeIconBadge(symbol: "square.and.arrow.up.on.square", size: 28, tint: .moraMint)
+                    Text("Сохранить копию плейлистов").foregroundStyle(.white)
+                }
+            }.disabled(busy)
+            Button { importing = true } label: {
+                HStack(spacing: 12) {
+                    NativeIconBadge(symbol: "square.and.arrow.down", size: 28, tint: .moraGold)
+                    Text("Восстановить из файла").foregroundStyle(.white)
+                }
+            }.disabled(busy)
             if let backup {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(backup.name)
@@ -127,17 +182,19 @@ struct NativeSettingsView: View {
                 Button("Отмена", role: .cancel) { self.backup = nil }.disabled(busy)
             }
         } header: { Text("Резервная копия") } footer: { Text("Медиатека: настройки, плейлисты, лайки и история. Копия плейлистов: названия и порядок песен. Аудиофайлы и аккаунты в копию не входят.") }
+            .listRowBackground(Color.moraSurface)
     }
     @ViewBuilder private var advancedTransitions: some View {
         Section("Переходы подробно") {
             picker("Начало следующего трека", "automix", "entryMode", "smart", [("smart", "Умный вход"), ("preserve", "Сохранять начало")], "Умный вход может пропустить часть вступления", disabled: off)
-        }
+        }.listRowBackground(Color.moraSurface)
         Section {
             toggle("Обмен басом", "automix", "eqHandoff", true, "Бас двух треков не звучит одновременно", disabled: off)
             toggle("DJ-подводки", "automix", "djPhrasing", true, "Фильтр и короткое эхо, не режущие вокал", disabled: off || !handoff || !stems)
             toggle("Стабильный темп вокала", "automix", "masterTempo", true, "Подстраивается следующий трек, а не текущий голос", disabled: off || !stems)
             toggle("Инструментальные петли", "automix", "loopBridges", true, "Затухающий финал держится повтором такта", disabled: off || !handoff || !stems)
         } header: { Text("DJ-приёмы") } footer: { if off { Text("Включите AutoMix, чтобы использовать DJ-приёмы.") } }
+            .listRowBackground(Color.moraSurface)
         Section {
             if settings?.string("automix", "entryMode", fallback: "smart") != "preserve" {
                 slider("Пропуск вступления", "maxEntrySkipSeconds", 45, 0...75, 1, "с", "Насколько глубоко входить в следующий трек")
@@ -146,6 +203,7 @@ struct NativeSettingsView: View {
             slider("Длина перехода", "maxBlendSeconds", 32, 8...48, 1, "с", "Сколько максимум звучат два трека вместе")
             slider("Резервный кроссфейд", "fallbackSeconds", 6, 1...12, 1, "с", "Пока анализ трека не готов")
         } header: { Text("Пределы переходов") } footer: { Text("Точные точки и длину AutoMix выбирает по анализу музыки.") }
+            .listRowBackground(Color.moraSurface)
     }
     @ViewBuilder private var services: some View {
         Section("Служебные сведения") {
@@ -165,8 +223,9 @@ struct NativeSettingsView: View {
             if let healthFailure { Text("Не удалось обновить сведения: \(healthFailure)").foregroundStyle(.secondary) }
             Button { exportDiagnostics() } label: { Label("Экспорт диагностики (ZIP)", systemImage: "square.and.arrow.up") }.disabled(busy || !MoraPlaybackJournal.enabled)
             Button("Очистить кэш звука", role: .destructive) { clearCache = true }.disabled(busy)
-        }
-        Section { link("Как сводятся треки", "/diagnostics", "waveform.path.ecg", detail: "Диагностика AutoMix") }
+        }.listRowBackground(Color.moraSurface)
+        Section { link("Как сводятся треки", "/diagnostics", "waveform.path.ecg", detail: "Диагностика AutoMix", tint: .moraGold) }
+            .listRowBackground(Color.moraSurface)
     }
 
     private func label(_ title: String, _ detail: String) -> some View {
@@ -176,11 +235,21 @@ struct NativeSettingsView: View {
         Toggle(isOn: Binding(get: { settings?.bool(group, key, fallback: fallback) ?? fallback }, set: { save(group, key, $0) })) { label(title, detail) }.disabled(busy || disabled)
     }
     private func picker(_ title: String, _ group: String, _ key: String, _ fallback: String, _ options: [(String, String)], _ detail: String, disabled: Bool = false, numeric: Bool = false) -> some View {
-        Picker(selection: Binding(get: { settings?.picker(group, key, fallback: fallback) ?? fallback }, set: { value in
-            do { save(group, key, try NativeSettingsState.pickerValue(value, numeric: numeric)) }
-            catch { failure = error.localizedDescription }
-        })) { ForEach(options.indices, id: \.self) { Text(options[$0].1).tag(options[$0].0) } } label: { label(title, detail) }
-            .pickerStyle(.menu).disabled(busy || disabled)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(title).foregroundStyle(.white).lineLimit(1)
+                Spacer(minLength: 8)
+                Picker(title, selection: Binding(get: { settings?.picker(group, key, fallback: fallback) ?? fallback }, set: { value in
+                    do { save(group, key, try NativeSettingsState.pickerValue(value, numeric: numeric)) }
+                    catch { failure = error.localizedDescription }
+                })) { ForEach(options.indices, id: \.self) { Text(options[$0].1).tag(options[$0].0) } }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .tint(Color.moraMint)
+            }
+            Text(detail).font(.caption).foregroundStyle(.secondary)
+        }
+        .disabled(busy || disabled)
     }
     private func slider(_ title: String, _ key: String, _ fallback: Double, _ range: ClosedRange<Double>, _ step: Double, _ unit: String, _ detail: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -192,9 +261,17 @@ struct NativeSettingsView: View {
             Text(detail).font(.caption).foregroundStyle(.secondary)
         }.disabled(busy || off)
     }
-    private func link(_ title: String, _ path: String, _ symbol: String, detail: String? = nil) -> some View {
+    private func link(_ title: String, _ path: String, _ symbol: String, detail: String? = nil, tint: Color = .moraMint) -> some View {
         Button { store.go(path) } label: {
-            HStack { Label { VStack(alignment: .leading, spacing: 4) { Text(title); if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) } } } icon: { Image(systemName: symbol) }; Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) }
+            HStack(spacing: 12) {
+                NativeIconBadge(symbol: symbol, size: 28, tint: tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).foregroundStyle(.white)
+                    if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+                }
+                Spacer()
+                Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.35))
+            }
         }
     }
     private func integer(_ value: Any?) -> Int { (value as? NSNumber)?.intValue ?? 0 }

@@ -203,6 +203,8 @@ extension MoraRootViewController {
             shell.go("/")
             try await wait { self.shell.ui.path == "/" }
             try await wait { self.shell.sharedLibrary }
+            try await Task.sleep(for: .seconds(1))
+            try capture("native-home")
             _ = try await web.evaluateJavaScript("window.__nativePagesOriginal=window.moraNativeUi;window.__nativePageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='backup'||n==='page'&&/^#\\/(settings|downloads|sound|backups|sources|import|yandex-playlists|smart-playlists|smart-playlist|duplicates|statistics|diagnostics|wave)(?:[?]|$)/.test(location.hash)){window.__nativePageCalls.push(n+':'+location.hash+':'+JSON.stringify(a||{}));throw Error('Native screen requested the page');}return window.__nativePagesOriginal(n,a);};0")
             let originalSettings = try await NativeServerApp.request("GET", "/api/settings")
             let originalAutomix = (originalSettings["automix"] as? [String: Any])?["enabled"] as? Bool ?? true
@@ -336,12 +338,13 @@ extension MoraRootViewController {
             try await Task.sleep(for: .seconds(1))
             try capture("native-search-yandex")
             shell.catalog.removeSearchFixtures()
-            shell.catalog.installFixture("/catalog/artist/77", ["title": "Native Artist", "sections": [
+            shell.catalog.installFixture("/catalog/artist/77", ["title": "Native Artist", "style": "catalog", "sections": [
+                ["rows": [["kind": "hero", "style": "artist", "title": "Native Artist", "subtitle": "Альтернатива · Хип-хоп", "play": ["name": "catalogPlay", "args": [:]], "shuffle": ["name": "catalogPlay", "args": ["shuffle": true]]]]],
                 ["title": "Популярные треки", "rows": [["kind": "item", "title": "Native Song · 3:00", "subtitle": "Native Artist"]]],
-                ["title": "Альбомы", "rows": [["kind": "shelf", "items": [["id": "88", "title": "Native Album", "path": "/catalog/album/88"]]]]]]])
-            shell.catalog.installFixture("/catalog/album/88", ["title": "Native Album", "sections": [
-                ["rows": [["kind": "hero", "style": "album", "title": "Native Album", "subtitle": "Native Artist"]]],
-                ["rows": [["kind": "item", "title": "Native Song · 3:00", "subtitle": "Native Artist"]]]]])
+                ["title": "Альбомы", "rows": [["kind": "shelf", "items": [["id": "88", "title": "Native Album", "detail": "2026", "path": "/catalog/album/88"]]]]]]])
+            shell.catalog.installFixture("/catalog/album/88", ["title": "Native Album", "style": "catalog", "sections": [
+                ["rows": [["kind": "hero", "style": "album", "title": "Native Album", "subtitle": "Native Artist", "detail": "2026 · 1 трек", "play": ["name": "catalogPlay", "args": [:]], "shuffle": ["name": "catalogPlay", "args": ["shuffle": true]]]]],
+                ["rows": [["kind": "item", "title": "Native Song · 3:00", "subtitle": "Native Artist", "number": 1]]]]])
             shell.go("/catalog/artist/77")
             try await wait { self.shell.ui.path == "/catalog/artist/77" }
             try await Task.sleep(for: .seconds(1))
@@ -409,11 +412,14 @@ extension MoraRootViewController {
             NativeLyricsService.shared.installFixture("visual-a", NativeLyricsResult(
                 status: "synced",
                 lines: [
-                    NativeLyricLine(time: 120, text: "Предыдущая строка текста"),
-                    NativeLyricLine(time: 158, text: "Текущая строка в нативном плеере"),
-                    NativeLyricLine(time: 240, text: "Следующая строка песни"),
+                    NativeLyricLine(time: 120, text: "Когда гаснут огни большого города"),
+                    NativeLyricLine(time: 158, text: "Музыка держит нас на одной волне\nи не отпускает до самого рассвета"),
+                    NativeLyricLine(time: 240, text: "Среди шума улиц слышен только этот бит"),
+                    NativeLyricLine(time: 252, text: "Каждый переход звучит как одно дыхание"),
+                    NativeLyricLine(time: 264, text: "Тёмный изумруд и мягкий свет в ночи"),
+                    NativeLyricLine(time: 276, text: "Остаётся только слушать до конца"),
                 ],
-                plain: "Текущая строка в нативном плеере",
+                plain: "Музыка держит нас на одной волне",
                 source: "lrclib",
                 matched: NativeLyricMatched(title: "Native Player", artist: "MORA", duration: 180)
             ))
@@ -527,6 +533,10 @@ extension MoraRootViewController {
                              "albumArtist": "MORA Artist", "genre": "Test", "year": "2026"]])
             try require(shell.byId[restoredTrack.id]?.album == "MORA Album", "Native metadata save was not applied")
             _ = try await web.evaluateJavaScript("window.__musicOriginal=window.moraNativeUi;window.__musicPageCalls=[];window.moraNativeUi=async(n,a)=>{if(n==='page'){window.__musicPageCalls.push(location.hash);throw Error('Music page depended on the page');}return window.__musicOriginal(n,a);};0")
+            shell.go("/library")
+            try await wait { self.shell.path == "/library" && self.shell.nativeContentVisible }
+            try await Task.sleep(for: .seconds(1))
+            try capture("native-library")
             let musicScreens: [(String, String)] = [("/library/albums", "native-albums"), ("/library/artists", "native-artists"),
                 ("/album/MORA%20Artist/MORA%20Album", "native-album"), ("/artist/MORA%20Artist", "native-artist"),
                 ("/track-edit/\(restoredTrack.id)", "native-track-editor")]
@@ -1544,18 +1554,35 @@ struct NativeCover: View {
     var radius: CGFloat = 8
     var image: UIImage? = nil
     var embedded: String? = nil
+    var monogram: String? = nil
+    var aspectSquare: Bool = false
     @State private var loaded: UIImage?
 
     var body: some View {
-        ZStack {
+        let artwork = ZStack {
             if let shown = image ?? loaded ?? NativeCovers.cached(url) {
                 Image(uiImage: shown).resizable().scaledToFill()
             } else {
-                Color.moraMint.opacity(0.1)
-                Image(systemName: "music.note").font(.system(size: size * 0.36)).foregroundStyle(.white.opacity(0.4))
+                LinearGradient(colors: [Color.moraMint.opacity(0.24), Color.moraSurface], startPoint: .topLeading, endPoint: .bottomTrailing)
+                if let initial = monogram?.trimmingCharacters(in: .whitespacesAndNewlines).first {
+                    Text(String(initial).uppercased())
+                        .font(.system(size: aspectSquare ? 42 : max(14, size * 0.40), weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.moraMint.opacity(0.92))
+                } else {
+                    Image(systemName: "music.note")
+                        .font(.system(size: aspectSquare ? 38 : size * 0.36))
+                        .foregroundStyle(.white.opacity(0.42))
+                }
             }
         }
-        .frame(width: size, height: size)
+        Group {
+            if aspectSquare {
+                Color.clear.aspectRatio(1, contentMode: .fit)
+                    .overlay { artwork }
+            } else {
+                artwork.frame(width: size, height: size)
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .accessibilityHidden(true)
         .task(id: embedded ?? url) {
@@ -1609,12 +1636,15 @@ struct NativeShellContent: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityHidden(true)
                 }
+            }
+            .overlay(alignment: .bottom) {
                 if let text = store.banner {
                     Text(text).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
                         .padding(.horizontal, 16).padding(.vertical, 10)
                         .moraGlass(Capsule())
-                        .padding(.horizontal, 24).padding(.top, 8)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .padding(.horizontal, 20).padding(.bottom, 12)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .allowsHitTesting(false)
                         .accessibilityHidden(true) // announced when it appears
                 }
             }

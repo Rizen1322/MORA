@@ -29,32 +29,49 @@ struct NativeSourcesView: View {
                     Section {
                         Text(failure).foregroundStyle(.red)
                         Button("Повторить") { Task { await load(force: true) } }.disabled(busy)
-                    }
+                    }.listRowBackground(Color.moraSurface)
                 }
-                if let message { Section { Text(message).foregroundStyle(.secondary) } }
+                if let message { Section { Text(message).foregroundStyle(.secondary) }.listRowBackground(Color.moraSurface) }
                 if let account {
                     connection(account)
                     if account.linked {
                         if settings != nil { synchronization }
                         if importLikes { likesImport }
                         Section {
-                            Button { store.go("/search?src=yandex") } label: { Label("Поиск в Яндексе", systemImage: "magnifyingglass") }
-                            Button { store.go("/yandex-playlists") } label: { Label("Мои плейлисты Яндекса", systemImage: "music.note.list") }
-                            Button { store.waveSource = .yandex; store.go("/wave") } label: { Label("Моя волна Яндекса", systemImage: "waveform") }
-                        }
+                            Button { store.go("/search?src=yandex") } label: {
+                                HStack(spacing: 12) {
+                                    NativeIconBadge(symbol: "magnifyingglass", size: 28, tint: .moraMint)
+                                    Text("Поиск в Яндексе").foregroundStyle(.white)
+                                }
+                            }
+                            Button { store.go("/yandex-playlists") } label: {
+                                HStack(spacing: 12) {
+                                    NativeIconBadge(symbol: "music.note.list", size: 28, tint: .moraMint)
+                                    Text("Мои плейлисты Яндекса").foregroundStyle(.white)
+                                }
+                            }
+                            Button { store.waveSource = .yandex; store.go("/wave") } label: {
+                                HStack(spacing: 12) {
+                                    NativeIconBadge(symbol: "waveform", size: 28, tint: .moraGold)
+                                    Text("Моя волна Яндекса").foregroundStyle(.white)
+                                }
+                            }
+                        }.listRowBackground(Color.moraSurface)
                     }
                     if account.hasSecret || account.connected {
                         Section {
                             Button("Отключить аккаунт", role: .destructive) { disconnecting = true }.disabled(busy)
-                        }
+                        }.listRowBackground(Color.moraSurface)
                     }
-                } else if failure == nil { ProgressView("Проверяем подключение…") }
+                } else if failure == nil { ProgressView("Проверяем подключение…").listRowBackground(Color.clear) }
                 Section {
                     Text("SoundCloud и YouTube Music доступны через поиск без подключения аккаунта.").foregroundStyle(.secondary)
-                }
+                }.listRowBackground(Color.moraSurface)
+                Section { Color.clear.frame(height: 56).listRowBackground(Color.clear) }
             }
             .scrollContentBackground(.hidden)
             .background(Color.moraBackground)
+            .tint(Color.moraMint)
             .navigationTitle("Источники")
             .accessibilityIdentifier("native-sources-screen")
             .toolbar {
@@ -102,6 +119,7 @@ struct NativeSourcesView: View {
                 ForEach(account.docs, id: \.absoluteString) { url in Link(url.host ?? "Помощь со входом", destination: url) }
             }
         } header: { Text("Яндекс Музыка") } footer: { Text("Аккаунт нужен для вашей волны, лайков и плейлистов Яндекса.") }
+            .listRowBackground(Color.moraSurface)
     }
 
     private func credential(_ field: NativeSourceAccount.Field, _ account: NativeSourceAccount) -> some View {
@@ -122,6 +140,7 @@ struct NativeSourcesView: View {
             sync("Импорт лайков в медиатеку", "importLikes", "Коллекция Яндекса попадает в «Любимое»")
             sync("Обучение «Моей волны»", "waveFeedback", "Яндекс узнаёт, что прозвучало и что пропущено")
         } header: { Text("Синхронизация") }
+            .listRowBackground(Color.moraSurface)
     }
 
     private func sync(_ title: String, _ key: String, _ detail: String) -> some View {
@@ -153,6 +172,7 @@ struct NativeSourcesView: View {
                 }
             }
         } header: { Text("Любимое из Яндекса") } footer: { Text("Перенесите коллекцию лайков в MORA. Подготовка треков продолжится после закрытия этой страницы.") }
+            .listRowBackground(Color.moraSurface)
     }
 
     @MainActor private func load(force: Bool = false) async {

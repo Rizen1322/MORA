@@ -364,6 +364,7 @@ struct NativePageSection {
 struct NativePage {
     let title: String
     let sections: [NativePageSection]
+    let menu: [NativePageRow]
     let search: String?
     let refresh: Double?
     /// "catalog": artist and album pages, drawn as a plain list with large section titles.
@@ -377,6 +378,7 @@ struct NativePage {
                               rows: (s["rows"] as? [[String: Any]] ?? []).compactMap(NativePageRow.init),
                               play: s["play"] as? [String: Any], reorder: NativePageAct(s["reorder"]))
         }
+        menu = (value["menu"] as? [[String: Any]] ?? []).compactMap(NativePageRow.init)
         search = value["search"] as? String
         refresh = (value["refresh"] as? Double).flatMap { $0 > 0 ? max(1, $0) : nil }
         style = value["style"] as? String

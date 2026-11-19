@@ -78,6 +78,10 @@ struct NativePageView: View {
 
     // Split out of body: as one expression it exceeds the Swift type checker's time limit.
     private var catalog: Bool { page?.style == "catalog" }
+    private var hasHero: Bool {
+        if case .hero = page?.sections.first?.rows.first { return true }
+        return false
+    }
     private var nativeImport: Bool { waveSource == nil && store.sharedLibrary && NativeImportState.handles(store.path) }
     /// Smart playlists, duplicates and statistics are native data screens: a shell snapshot must not reload them.
     private var nativeSmart: Bool { waveSource == nil && store.sharedLibrary && NativeSmartState.handles(store.path) }
@@ -101,9 +105,9 @@ struct NativePageView: View {
         }))
         .scrollContentBackground(.hidden)
         .background(Color.moraBackground)
-        // the header carries the title on artist and album pages
-        .navigationTitle(catalog ? "" : page?.title ?? "")
-        .navigationBarTitleDisplayMode(waveSource == nil && !catalog ? .automatic : .inline)
+        // Only full-bleed hero pages carry their title inside the scroll header; library lists keep navigation titles.
+        .navigationTitle(hasHero ? "" : page?.title ?? "")
+        .navigationBarTitleDisplayMode(waveSource == nil && !hasHero ? .automatic : .inline)
         .toolbar { toolbar }
     }
 
@@ -146,6 +150,62 @@ struct NativePageView: View {
         if waveSource != nil { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } } }
         if page?.sections.contains(where: { $0.reorder != nil }) == true && query.isEmpty {
             ToolbarItem(placement: .topBarTrailing) { EditButton() }
+        }
+        if let menuItems = page?.menu, !menuItems.isEmpty {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    ForEach(menuItems.indices, id: \.self) { index in
+                        menuControl(menuItems[index])
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .foregroundStyle(.white.opacity(0.9))
+                }
+                .accessibilityLabel("Действия")
+            }
+        }
+    }
+
+    @ViewBuilder private func menuControl(_ row: NativePageRow) -> some View {
+        switch row {
+        case .button(let title, let symbol, let act, let style, let disabled, let confirmRow, let promptRow):
+            Button(role: style == "destructive" ? .destructive : nil) {
+                if let confirmRow { confirm = (confirmRow, act) }
+                else if let promptRow { promptText = promptRow.initial; prompt = (promptRow, act) }
+                else { run(act, ["form": form]) }
+            } label: {
+                if let symbol { Label(title, systemImage: symbol) } else { Text(title) }
+            }
+            .disabled(disabled || running)
+
+        case .choice(let title, _, let value, let options, let act, let disabled):
+            let choiceKey = "\(act.name)|\(act.args["key"] as? String ?? title)"
+            let current = pendingChoices[choiceKey] ?? value
+            Menu {
+                ForEach(options.indices, id: \.self) { index in
+                    Button {
+                        pendingChoices[choiceKey] = options[index].value
+                        run(act, ["value": options[index].value])
+                    } label: {
+                        if options[index].value == current {
+                            Label(options[index].label, systemImage: "checkmark")
+                        } else {
+                            Text(options[index].label)
+                        }
+                    }
+                }
+            } label: {
+                Label(title, systemImage: "arrow.up.arrow.down")
+            }
+            .disabled(disabled || running)
+
+        case .link(let title, _, let symbol, let path):
+            Button { store.go(path) } label: {
+                if let symbol { Label(title, systemImage: symbol) } else { Text(title) }
+            }
+
+        default:
+            EmptyView()
         }
     }
 
@@ -217,7 +277,7 @@ struct NativePageView: View {
                         guard query.isEmpty else { return nil }
                         return { from, to in if let first = from.first { run(act, ["from": first, "to": to]) } }
                     })
-                    .listRowBackground(catalog ? Color.moraBackground : Color.white.opacity(0.06))
+                    .listRowBackground(catalog ? Color.moraBackground : Color.moraSurface)
             } header: {
                 if let title = section.title {
                     if catalog { Text(title).textCase(nil).font(.title3.bold()).foregroundStyle(.white) }
@@ -230,25 +290,49 @@ struct NativePageView: View {
     }
 
     private func heroButtons(play: NativePageAct?, shuffle: NativePageAct?, capsule: Bool) -> some View {
-        HStack(spacing: 16) {
-            if let shuffle {
-                Button { run(shuffle) } label: {
-                    Image(systemName: "shuffle").font(.title3.weight(.semibold)).frame(width: 52, height: 52).background(.white.opacity(0.14), in: Circle())
-                }.accessibilityLabel("Вперемешку")
-            }
+        HStack(spacing: 12) {
             if let play {
                 Button { run(play) } label: {
                     if capsule {
-                        Label("Слушать", systemImage: "play.fill").font(.headline).foregroundStyle(Color.moraBackground)
-                            .padding(.horizontal, 34).frame(height: 52).background(.white, in: Capsule())
+                        Label("Слушать", systemImage: "play.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.moraBackground)
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                            .background(Color.moraMint, in: Capsule())
                     } else {
-                        Image(systemName: "play.fill").font(.title.weight(.bold)).foregroundStyle(Color.moraBackground)
-                            .frame(width: 68, height: 68).background(.white, in: Circle())
+                        Label("Слушать", systemImage: "play.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.moraBackground)
+                            .padding(.horizontal, 28)
+                            .frame(height: 46)
+                            .background(Color.moraMint, in: Capsule())
                     }
-                }.accessibilityLabel("Слушать")
+                }
+                .accessibilityLabel("Слушать")
+            }
+            if let shuffle {
+                Button { run(shuffle) } label: {
+                    if capsule {
+                        Label("Вперемешку", systemImage: "shuffle")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.moraMint)
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                            .background(Color.moraSurfaceElevated, in: Capsule())
+                            .overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 0.75))
+                    } else {
+                        Image(systemName: "shuffle")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(Color.moraMint)
+                            .frame(width: 46, height: 46)
+                            .background(Color.moraSurfaceElevated, in: Circle())
+                            .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 0.75))
+                    }
+                }
+                .accessibilityLabel("Вперемешку")
             }
         }
-        .buttonStyle(.plain).foregroundStyle(.white).disabled(running)
+        .buttonStyle(.plain)
+        .disabled(running)
     }
 
     @ViewBuilder private func rowView(_ row: NativePageRow, section: NativePageSection, tracks: [NativeTrack]) -> some View {
@@ -303,6 +387,7 @@ struct NativePageView: View {
                     ForEach(options.indices, id: \.self) { i in Text(options[i].label).tag(options[i].value) }
                 } label: { labelled(title, detail) }
                     .pickerStyle(.menu)
+                    .tint(Color.moraMint)
                     .disabled(disabled || running)
             }
 
@@ -341,7 +426,7 @@ struct NativePageView: View {
                 }
             }
             .buttonStyle(.plain)
-            .listRowBackground(primary ? Color.clear : Color.white.opacity(0.06))
+            .listRowBackground(primary ? Color.clear : (catalog ? Color.moraBackground : Color.moraSurface))
             .listRowInsets(primary ? EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0) : EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
             .disabled(disabled || running)
 
@@ -406,36 +491,91 @@ struct NativePageView: View {
             .tint(.moraMint)
 
         case .hero(let style, let title, let subtitle, let detail, let cover, let play, let shuffle):
+            let width = UIScreen.main.bounds.width
             if style == "artist" {
-                let width = UIScreen.main.bounds.width
                 ZStack(alignment: .bottom) {
-                    NativeCover(url: cover, size: width, radius: 0).frame(width: width, height: width * 0.8).clipped()
-                        .blur(radius: 30).opacity(0.55)
-                    LinearGradient(colors: [Color.moraBackground.opacity(0.15), Color.moraBackground.opacity(0.6), Color.moraBackground],
-                                   startPoint: .top, endPoint: .bottom)
+                    NativeCover(url: cover, size: width, radius: 0, monogram: title)
+                        .frame(width: width, height: 310)
+                        .clipped()
+                        .blur(radius: 34)
+                        .opacity(0.5)
+                    LinearGradient(
+                        colors: [Color.moraBackground.opacity(0.1), Color.moraBackground.opacity(0.65), Color.moraBackground],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
                     VStack(spacing: 10) {
-                        NativeCover(url: cover, size: 148, radius: 74)
-                            .overlay(Circle().stroke(Color.moraMint.opacity(0.35), lineWidth: 2))
-                            .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1).padding(2))
+                        NativeCover(url: cover, size: 142, radius: 71, monogram: title)
+                            .overlay(Circle().stroke(Color.moraMint.opacity(0.4), lineWidth: 1.5))
+                            .overlay(Circle().stroke(Color.white.opacity(0.16), lineWidth: 1).padding(2))
                             .shadow(color: .black.opacity(0.5), radius: 20, y: 8)
-                        Text("ИСПОЛНИТЕЛЬ").font(.caption2.weight(.bold)).tracking(1.2).foregroundStyle(Color.moraMint)
-                        Text(title).font(.system(size: 36, weight: .heavy)).multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.6).shadow(radius: 8)
-                        if let subtitle, !subtitle.isEmpty { Text(subtitle).font(.subheadline).foregroundStyle(.white.opacity(0.75)).lineLimit(2) }
-                        heroButtons(play: play, shuffle: shuffle, capsule: false).padding(.top, 2)
-                    }.padding(.horizontal, 20).padding(.bottom, 18)
+                        Text(title)
+                            .font(.system(size: 34, weight: .bold))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.65)
+                        if let subtitle, !subtitle.isEmpty {
+                            Text(subtitle)
+                                .font(.subheadline)
+                                .foregroundStyle(.white.opacity(0.68))
+                                .lineLimit(2)
+                        }
+                        heroButtons(play: play, shuffle: shuffle, capsule: false).padding(.top, 4)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 18)
                 }
-                .listRowInsets(EdgeInsets()).listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.moraBackground)
             } else {
-                VStack(spacing: 8) {
-                    NativeCover(url: cover, size: min(UIScreen.main.bounds.width * 0.68, 300), radius: 14)
-                        .shadow(color: .black.opacity(0.5), radius: 18, y: 8).padding(.bottom, 10)
-                    Text(title).font(.title2.bold()).multilineTextAlignment(.center)
-                    if let subtitle, !subtitle.isEmpty { Text(subtitle).font(.title3).foregroundStyle(Color.moraMint).multilineTextAlignment(.center) }
-                    if let detail, !detail.isEmpty { Text(detail).font(.footnote.weight(.medium)).foregroundStyle(.secondary) }
-                    heroButtons(play: play, shuffle: shuffle, capsule: true).padding(.top, 8)
+                ZStack(alignment: .top) {
+                    ZStack(alignment: .bottom) {
+                        NativeCover(url: cover, size: width, radius: 0, monogram: title)
+                            .frame(width: width, height: 320)
+                            .clipped()
+                            .blur(radius: 44)
+                            .opacity(0.38)
+                        LinearGradient(
+                            colors: [Color.moraBackground.opacity(0.1), Color.moraBackground.opacity(0.75), Color.moraBackground],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 320)
+                    }
+                    VStack(spacing: 8) {
+                        NativeCover(url: cover, size: 220, radius: 14, monogram: title)
+                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(0.12), lineWidth: 0.75))
+                            .shadow(color: .black.opacity(0.52), radius: 20, y: 10)
+                            .padding(.bottom, 8)
+                        Text(title)
+                            .font(.title2.bold())
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 16)
+                        if let subtitle, !subtitle.isEmpty {
+                            Text(subtitle)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(Color.moraMint)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 16)
+                        }
+                        if let detail, !detail.isEmpty {
+                            Text(detail)
+                                .font(.footnote.weight(.medium))
+                                .foregroundStyle(.white.opacity(0.62))
+                                .padding(.horizontal, 16)
+                        }
+                        heroButtons(play: play, shuffle: shuffle, capsule: true)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 8)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 10)
+                    .padding(.bottom, 16)
                 }
-                .frame(maxWidth: .infinity).padding(.vertical, 12)
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)).listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.moraBackground)
             }
 
         case .shelf(let items):
@@ -444,7 +584,7 @@ struct NativePageView: View {
                     ForEach(items) { item in
                         Button { store.go(item.path) } label: {
                             VStack(alignment: item.round ? .center : .leading, spacing: 6) {
-                                NativeCover(url: item.cover, size: 150, radius: item.round ? 75 : 12)
+                                NativeCover(url: item.cover, size: 150, radius: item.round ? 75 : 12, monogram: item.title)
                                     .overlay(Group {
                                         if item.round {
                                             Circle().stroke(Color.white.opacity(0.16), lineWidth: 1)
@@ -475,7 +615,7 @@ struct NativePageView: View {
                         let isArtist = path?.hasPrefix("/artist/") == true || path?.hasPrefix("/catalog/artist/") == true || path?.hasPrefix("/public/artist/") == true || path?.hasPrefix("/soundcloud/artist/") == true
                         if let number { Text("\(number)").font(.body.monospacedDigit()).foregroundStyle(.secondary).frame(width: 26) }
                         else if cover != nil || isArtist {
-                            NativeCover(url: cover ?? nil, size: isArtist ? 52 : 48, radius: isArtist ? 26 : 8)
+                            NativeCover(url: cover ?? nil, size: isArtist ? 52 : 48, radius: isArtist ? 26 : 8, monogram: title)
                                 .overlay(Group { if isArtist { Circle().stroke(Color.white.opacity(0.16), lineWidth: 1) } })
                                 .shadow(color: .black.opacity(isArtist ? 0.3 : 0), radius: 5, y: 2)
                         }

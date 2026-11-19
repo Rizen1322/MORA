@@ -331,6 +331,8 @@ final class NativeSleepTimer: ObservableObject {
 
 extension Color {
     static let moraBackground = Color(red: 5 / 255, green: 13 / 255, blue: 10 / 255)
+    static let moraSurface = Color(red: 13 / 255, green: 25 / 255, blue: 20 / 255)
+    static let moraSurfaceElevated = Color(red: 20 / 255, green: 38 / 255, blue: 30 / 255)
     static let moraMint = Color(red: 74 / 255, green: 222 / 255, blue: 154 / 255)
     static let moraGold = Color(red: 245 / 255, green: 200 / 255, blue: 110 / 255)
 }
@@ -366,59 +368,69 @@ struct NativePlayerView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var queueOpen = false
     @State private var showLyrics = false
+    @State private var lyricsRefreshToken = 0
     @Namespace private var playerLayout
 
     var body: some View {
         let s = model.state
         VStack(spacing: 0) {
-            HStack {
-                IconButton(symbol: "chevron.down", label: "Свернуть плеер") { model.close("close") }
-                Spacer()
-                Text(model.offline ? "Нет сети" : "Сейчас играет").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
-                    .accessibilityHidden(true)
-                Spacer()
-                Menu {
-                    Button("Добавить в плейлист", systemImage: "text.badge.plus") { model.addToPlaylist() }.disabled(s.trackId.isEmpty)
-                    Button("Другая версия", systemImage: "arrow.triangle.swap") { model.versions() }
-                    Button("Перейти к исполнителю", systemImage: "music.mic") { model.open("artist") }
-                    Button("Перейти к альбому", systemImage: "square.stack") { model.open("album") }.disabled(model.albumPath == nil)
-                    if let url = URL(string: "mora://track/" + s.trackId), !s.trackId.isEmpty { ShareLink(item: url) { Label("Поделиться треком", systemImage: "square.and.arrow.up") } }
-                    Button("Звук и эквалайзер", systemImage: "slider.vertical.3") { model.navigate("/sound") }
-                } label: {
-                    Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
-                }.accessibilityLabel("Действия с треком")
+            if !showLyrics {
+                HStack {
+                    IconButton(symbol: "chevron.down", label: "Свернуть плеер") { model.close("close") }
+                    Spacer()
+                    Text(model.offline ? "Нет сети" : "Сейчас играет").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
+                        .accessibilityHidden(true)
+                    Spacer()
+                    Menu {
+                        trackMenuItems(s)
+                    } label: {
+                        Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
+                    }.accessibilityLabel("Действия с треком")
+                }
+                .padding(.horizontal, -10)
             }
-            .padding(.horizontal, -10)
-            Spacer(minLength: 12)
-            if queueOpen {
+            if showLyrics {
+                compactLyricsHeader(s)
+                    .padding(.top, 8)
+                    .padding(.bottom, 6)
+                NativeLyricsView(model: model, externalRefresh: lyricsRefreshToken)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity)
+            } else if queueOpen {
+                Spacer(minLength: 12)
                 HStack(spacing: 12) {
-                    NativeCover(url: nil, size: 64, radius: 10, image: model.artwork).matchedGeometryEffect(id: "cover", in: playerLayout)
+                    NativeCover(url: nil, size: 64, radius: 10, image: model.artwork, monogram: s.title).matchedGeometryEffect(id: "cover", in: playerLayout)
                     metadata.matchedGeometryEffect(id: "metadata", in: playerLayout)
                 }
                 NativeQueueContent(model: model).frame(maxHeight: .infinity)
                     .transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : 16)))
             } else {
+                Spacer(minLength: 12)
                 cover(playing: s.playing).matchedGeometryEffect(id: "cover", in: playerLayout)
                 Spacer(minLength: 16)
                 metadata.matchedGeometryEffect(id: "metadata", in: playerLayout)
             }
             NativeScrubber(state: s, receivedAt: model.receivedAt, pending: model.scrub) { model.seek(to: $0) }
-                .padding(.top, 18)
-            transport(playing: s.playing).padding(.vertical, 12)
-            Spacer(minLength: 8)
-            NativeSystemVolume().frame(height: 32).padding(.top, 12)
+                .padding(.top, showLyrics ? 8 : 18)
+            transport(playing: s.playing).padding(.vertical, showLyrics ? 8 : 12)
+            if !showLyrics { Spacer(minLength: 8) }
+            NativeSystemVolume().frame(height: 32).padding(.top, showLyrics ? 6 : 12)
             HStack {
-                IconButton(symbol: "quote.bubble", label: "Текст песни") {
+                IconButton(symbol: showLyrics ? "quote.bubble.fill" : "quote.bubble", label: showLyrics ? "Скрыть текст песни" : "Текст песни") {
                     queueOpen = false; showLyrics.toggle()
-                }.foregroundStyle(showLyrics ? Color.moraMint : .white.opacity(0.7))
+                }
+                .foregroundStyle(showLyrics ? .white : .white.opacity(0.7))
+                .background(Circle().fill(Color.white.opacity(showLyrics ? 0.18 : 0)).frame(width: 42, height: 42))
                 Spacer()
                 sleepMenu
                 Spacer()
                 RoutePicker().frame(width: 44, height: 44)
                 Spacer()
                 IconButton(symbol: "list.bullet", label: queueOpen ? "Показать обложку" : "Очередь") {
-                    queueOpen.toggle()
-                }.foregroundStyle(queueOpen ? Color.moraMint : .white.opacity(0.7))
+                    showLyrics = false; queueOpen.toggle()
+                }
+                .foregroundStyle(queueOpen ? Color.moraMint : .white.opacity(0.7))
+                .background(Circle().fill(Color.moraMint.opacity(queueOpen ? 0.2 : 0)).frame(width: 42, height: 42))
             }
             .padding(.top, 10)
         }
@@ -437,6 +449,7 @@ struct NativePlayerView: View {
         }
         .animation(.easeOut(duration: 0.25), value: model.banner)
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.48, dampingFraction: 0.86), value: queueOpen)
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.46, dampingFraction: 0.86), value: showLyrics)
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
         .alert("Не удалось выполнить действие", isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(model.actionError ?? "") }
         .sheet(isPresented: Binding(get: { !model.playlistTarget.isEmpty }, set: { if !$0 { model.playlistTarget = [] } })) {
@@ -465,6 +478,64 @@ struct NativePlayerView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in model.stop() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in model.start() }
 
+    }
+
+    @ViewBuilder private func trackMenuItems(_ s: NativePlayerState) -> some View {
+        Button("Добавить в плейлист", systemImage: "text.badge.plus") { model.addToPlaylist() }.disabled(s.trackId.isEmpty)
+        Button("Другая версия", systemImage: "arrow.triangle.swap") { model.versions() }
+        if showLyrics {
+            Button("Обновить текст", systemImage: "arrow.clockwise") { lyricsRefreshToken &+= 1 }
+        }
+        Button("Перейти к исполнителю", systemImage: "music.mic") { model.open("artist") }
+        Button("Перейти к альбому", systemImage: "square.stack") { model.open("album") }.disabled(model.albumPath == nil)
+        if let url = URL(string: "mora://track/" + s.trackId), !s.trackId.isEmpty { ShareLink(item: url) { Label("Поделиться треком", systemImage: "square.and.arrow.up") } }
+        Button("Звук и эквалайзер", systemImage: "slider.vertical.3") { model.navigate("/sound") }
+    }
+
+    private func compactLyricsHeader(_ s: NativePlayerState) -> some View {
+        HStack(spacing: 12) {
+            Button { showLyrics = false } label: {
+                NativeCover(url: nil, size: 54, radius: 10, image: model.artwork, monogram: s.title)
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.16), lineWidth: 0.75))
+                    .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
+            }
+            .buttonStyle(.plain)
+            .matchedGeometryEffect(id: "cover", in: playerLayout)
+            .accessibilityLabel("Показать обложку")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(s.title.isEmpty ? "MORA" : s.title)
+                    .font(.headline.bold())
+                    .lineLimit(1)
+                    .foregroundStyle(.white)
+                Text(s.artist)
+                    .font(.subheadline)
+                    .lineLimit(1)
+                    .foregroundStyle(.white.opacity(0.68))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .matchedGeometryEffect(id: "metadata", in: playerLayout)
+            Button { model.react(1) } label: {
+                Image(systemName: model.reaction > 0 ? "heart.fill" : "heart")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(model.reaction > 0 ? Color.moraMint : .white.opacity(0.85))
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(model.reaction > 0 ? "Убрать лайк" : "Нравится")
+            Menu {
+                trackMenuItems(s)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .frame(width: 34, height: 34)
+                    .background(Color.white.opacity(0.14), in: Circle())
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Действия с треком")
+        }
     }
 
     private var sleepMenu: some View {
@@ -539,41 +610,42 @@ struct NativePlayerView: View {
         ZStack {
             LinearGradient(colors: [Color(red: 0.10, green: 0.24, blue: 0.17), .moraBackground], startPoint: .top, endPoint: .bottom)
             if let image = model.artwork {
-                Image(uiImage: image).resizable().scaledToFill().blur(radius: 60).opacity(0.35)
+                Image(uiImage: image).resizable().scaledToFill()
+                    .saturation(showLyrics ? 1.25 : 1.0)
+                    .blur(radius: showLyrics ? 80 : 60)
+                    .opacity(showLyrics ? 0.45 : 0.35)
                     .transition(.opacity)
+            }
+            if showLyrics {
+                RadialGradient(colors: [Color.moraMint.opacity(0.14), .clear], center: .topTrailing, startRadius: 20, endRadius: 420)
+                LinearGradient(colors: [Color.black.opacity(0.32), Color.black.opacity(0.56)], startPoint: .top, endPoint: .bottom)
             }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: model.artwork.map(ObjectIdentifier.init))
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: showLyrics)
     }
 
     private func cover(playing: Bool) -> some View {
-        // Lyrics take all the height the cover leaves, so lines can be large.
-        Group {
-            if showLyrics { Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity) }
-            else { Color.clear.aspectRatio(1, contentMode: .fit).frame(maxWidth: 430) }
-        }
+        Color.clear.aspectRatio(1, contentMode: .fit).frame(maxWidth: 430)
             .overlay {
                 Group {
-                        if showLyrics {
-                            NativeLyricsView(model: model)
-                        } else if let image = model.artwork {
-                            Image(uiImage: image).resizable().scaledToFill().accessibilityHidden(true)
-                        } else {
-                            ZStack {
-                                Color.moraMint.opacity(0.12)
-                                Image(systemName: "music.note").font(.system(size: 64)).foregroundStyle(.white.opacity(0.4))
-                            }
-                            .accessibilityHidden(true)
+                    if let image = model.artwork {
+                        Image(uiImage: image).resizable().scaledToFill().accessibilityHidden(true)
+                    } else {
+                        ZStack {
+                            Color.moraMint.opacity(0.12)
+                            Image(systemName: "music.note").font(.system(size: 64)).foregroundStyle(.white.opacity(0.4))
                         }
+                        .accessibilityHidden(true)
                     }
+                }
                 .transition(.opacity)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: model.artwork.map(ObjectIdentifier.init))
             }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(0.6), radius: playing ? 30 : 14, y: playing ? 20 : 10)
-            .scaleEffect(showLyrics || playing || reduceMotion ? 1 : 0.94)
+            .scaleEffect(playing || reduceMotion ? 1 : 0.94)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: playing)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: showLyrics)
             .layoutPriority(-1)
     }
 
@@ -602,13 +674,17 @@ struct NativePlayerView: View {
 
 private struct NativeLyricsView: View {
     @ObservedObject var model: NativePlayerModel
+    var externalRefresh: Int = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @ScaledMetric(relativeTo: .title) private var lyricFontSize: CGFloat = 29
     @State private var lyrics: NativeLyricsResult?
     @State private var failure: String?
     @State private var retry = 0
     @State private var offsetMs = 0.0
     @State private var follow = true
     @State private var refreshRequested = false
+    @State private var showTimingTools = false
 
     private var activeOffset: Double { offsetMs / 1000.0 }
     private func clock() -> Double {
@@ -618,152 +694,252 @@ private struct NativeLyricsView: View {
 
     var body: some View {
         let lines = lyrics?.lines ?? []
-        VStack(spacing: 0) {
-            header(synced: lyrics?.status == "synced" && !lines.isEmpty)
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(spacing: 16) {
-                        if let failure {
-                            Text(failure).foregroundStyle(.white.opacity(0.7)).multilineTextAlignment(.center)
-                            Button("Повторить") { retry &+= 1 }.buttonStyle(.bordered)
-                        } else if let lyrics {
-                            if !lines.isEmpty {
-                                TimelineView(.periodic(from: .now, by: model.state.playing ? 0.15 : 60)) { _ in
-                                    let now = clock()
-                                    let active = lines.lastIndex { $0.time <= now } ?? -1
-                                    VStack(spacing: 16) {
-                                        ForEach(lines.indices, id: \.self) { index in
-                                            lyricRow(lines[index], index: index, active: active, now: now)
-                                        }
+        let synced = lyrics?.status == "synced" && !lines.isEmpty
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 24) {
+                    if let failure {
+                        VStack(spacing: 12) {
+                            Text(failure)
+                                .font(.body)
+                                .foregroundStyle(.white.opacity(0.75))
+                                .multilineTextAlignment(.center)
+                            Button("Повторить") { retry &+= 1 }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.moraMint)
+                                .foregroundStyle(Color.moraBackground)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 56)
+                    } else if let lyrics {
+                        if !lines.isEmpty {
+                            TimelineView(.periodic(from: .now, by: model.state.playing ? 0.15 : 60)) { _ in
+                                let now = clock()
+                                let active = lines.lastIndex { $0.time <= now } ?? -1
+                                VStack(alignment: .leading, spacing: 24) {
+                                    ForEach(lines.indices, id: \.self) { index in
+                                        lyricRow(lines[index], index: index, active: active, now: now)
                                     }
-                                    .onChange(of: active) { _, index in
-                                        if follow && index >= 0 {
-                                            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) { proxy.scrollTo(index, anchor: .center) }
-                                        }
-                                    }
-                                    .onChange(of: follow) { _, isFollowing in
-                                        if isFollowing && active >= 0 {
-                                            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { proxy.scrollTo(active, anchor: .center) }
+                                }
+                                .animation(reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.88), value: active)
+                                .onChange(of: active, initial: true) { _, index in
+                                    if follow && index >= 0 {
+                                        withAnimation(reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.9)) {
+                                            proxy.scrollTo(index, anchor: UnitPoint(x: 0.5, y: 0.28))
                                         }
                                     }
                                 }
-                            } else if lyrics.status == "plain" && !lyrics.plain.isEmpty {
-                                Text("Текст без синхронизации")
-                                    .font(.caption.weight(.medium))
-                                    .foregroundStyle(.white.opacity(0.55))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                Text(lyrics.plain)
-                                    .font(.title3.weight(.medium))
-                                    .foregroundStyle(.white.opacity(0.9))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            } else {
-                                Text(model.offline ? "Нет сети — текст не удалось загрузить." : "Текст для этой песни не найден.")
-                                    .foregroundStyle(.white.opacity(0.7))
-                                    .multilineTextAlignment(.center)
-                                Button("Поискать снова") { refreshRequested = true; retry &+= 1 }.buttonStyle(.bordered)
+                                .onChange(of: follow) { _, isFollowing in
+                                    if isFollowing && active >= 0 {
+                                        withAnimation(reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.88)) {
+                                            proxy.scrollTo(active, anchor: UnitPoint(x: 0.5, y: 0.28))
+                                        }
+                                    }
+                                }
                             }
-                            if let attribution = Self.attribution(lyrics) {
-                                Text(attribution)
-                                    .font(.caption)
-                                    .foregroundStyle(.white.opacity(0.45))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.top, 8)
-                            }
-                        } else {
-                            ProgressView("Ищем текст…")
-                                .frame(maxWidth: .infinity)
-                                .padding(.top, 32)
-                        }
-                    }
-                    .padding(20)
-                    .padding(.bottom, 56)
-                }
-                .simultaneousGesture(DragGesture(minimumDistance: 10).onChanged { _ in if follow { follow = false } })
-                .overlay(alignment: .bottomTrailing) {
-                    if !follow && !lines.isEmpty {
-                        Button {
-                            follow = true
-                        } label: {
-                            Label("К текущей строке", systemImage: "scope")
+                        } else if lyrics.status == "plain" && !lyrics.plain.isEmpty {
+                            Text("Текст без синхронизации")
                                 .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(.ultraThinMaterial, in: Capsule())
+                                .foregroundStyle(Color.moraMint.opacity(0.85))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text(lyrics.plain)
+                                .font(.title3.weight(.semibold))
+                                .lineSpacing(7)
+                                .foregroundStyle(.white.opacity(0.9))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            VStack(spacing: 12) {
+                                Text(model.offline ? "Нет сети — текст не удалось загрузить." : "Текст для этой песни не найден.")
+                                    .font(.body)
+                                    .foregroundStyle(.white.opacity(0.75))
+                                    .multilineTextAlignment(.center)
+                                Button("Поискать снова") { refreshRequested = true; retry &+= 1 }
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(.moraMint)
+                                    .foregroundStyle(Color.moraBackground)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 56)
+                        }
+                        if let attribution = Self.attribution(lyrics) {
+                            Text(attribution)
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.42))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 12)
+                        }
+                    } else {
+                        ProgressView("Ищем текст…")
+                            .tint(.moraMint)
+                            .foregroundStyle(.white.opacity(0.75))
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 64)
+                    }
+                }
+                .padding(.horizontal, 2)
+                .padding(.top, 28)
+                .padding(.bottom, 96)
+            }
+            .simultaneousGesture(DragGesture(minimumDistance: 10).onChanged { _ in if follow { follow = false } })
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .black, location: 0.09),
+                        .init(color: .black, location: 0.84),
+                        .init(color: .clear, location: 1.0),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .overlay(alignment: .bottomLeading) {
+                if !follow && !lines.isEmpty {
+                    Button {
+                        follow = true
+                    } label: {
+                        Label("К текущей строке", systemImage: "scope")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.moraMint)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                            .background {
+                                if reduceTransparency {
+                                    Capsule().fill(Color.moraSurfaceElevated)
+                                } else {
+                                    Capsule().fill(.ultraThinMaterial)
+                                }
+                            }
+                            .overlay(Capsule().stroke(Color.white.opacity(0.16), lineWidth: 0.75))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 10)
+                    .transition(.opacity)
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if synced {
+                    HStack(spacing: 8) {
+                        if showTimingTools {
+                            HStack(spacing: 4) {
+                                Button { shiftOffset(by: 250) } label: {
+                                    Image(systemName: "minus").font(.caption.weight(.bold)).frame(width: 30, height: 32)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Текст раньше на 0,25 с")
+                                Button { shiftOffset(to: 0) } label: {
+                                    Text(Self.offsetText(offsetMs))
+                                        .font(.caption.monospacedDigit().weight(.semibold))
+                                        .foregroundStyle(.white.opacity(offsetMs == 0 ? 0.65 : 1))
+                                        .frame(minWidth: 52)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Сбросить сдвиг текста")
+                                Button { shiftOffset(by: -250) } label: {
+                                    Image(systemName: "plus").font(.caption.weight(.bold)).frame(width: 30, height: 32)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Текст позже на 0,25 с")
+                                Divider().frame(height: 16).overlay(Color.white.opacity(0.2))
+                                Button { refreshRequested = true; retry &+= 1 } label: {
+                                    Image(systemName: "arrow.clockwise").font(.caption.weight(.semibold)).frame(width: 30, height: 32)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Обновить текст")
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background {
+                                if reduceTransparency {
+                                    Capsule().fill(Color.moraSurfaceElevated)
+                                } else {
+                                    Capsule().fill(.ultraThinMaterial)
+                                }
+                            }
+                            .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.75))
+                            .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .trailing)))
+                        }
+                        Button {
+                            withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.85)) {
+                                showTimingTools.toggle()
+                            }
+                        } label: {
+                            Image(systemName: showTimingTools ? "xmark" : "slider.horizontal.3")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(showTimingTools ? Color.moraMint : .white.opacity(0.9))
+                                .frame(width: 42, height: 42)
+                                .background {
+                                    if reduceTransparency {
+                                        Circle().fill(Color.moraSurfaceElevated)
+                                    } else {
+                                        Circle().fill(.ultraThinMaterial)
+                                    }
+                                }
+                                .overlay(Circle().stroke(Color.white.opacity(0.18), lineWidth: 0.75))
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(Color.moraMint)
-                        .padding(14)
+                        .accessibilityLabel(showTimingTools ? "Скрыть настройку сдвига" : "Настройка сдвига текста")
                     }
+                    .padding(.bottom, 10)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.moraBackground)
         .task(id: "\(model.state.trackId)|\(retry)") {
             let shouldRefresh = refreshRequested
             refreshRequested = false
             await load(model.state.trackId, refresh: shouldRefresh)
         }
-    }
-
-    private func header(synced: Bool) -> some View {
-        HStack(spacing: 8) {
-            Text("Текст")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.75))
-            Spacer(minLength: 0)
-            if synced {
-                HStack(spacing: 4) {
-                    Button { shiftOffset(by: 250) } label: {
-                        Image(systemName: "minus").font(.caption.weight(.bold)).frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Текст раньше на 0,25 с")
-                    Button { shiftOffset(to: 0) } label: {
-                        Text(Self.offsetText(offsetMs))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.white.opacity(offsetMs == 0 ? 0.55 : 0.9))
-                            .frame(minWidth: 54)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Сбросить сдвиг текста")
-                    Button { shiftOffset(by: -250) } label: {
-                        Image(systemName: "plus").font(.caption.weight(.bold)).frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Текст позже на 0,25 с")
-                }
-                .padding(.horizontal, 6)
-                .background(Color.white.opacity(0.08), in: Capsule())
-            }
-            Button { refreshRequested = true; retry &+= 1 } label: {
-                Image(systemName: "arrow.clockwise").font(.subheadline.weight(.semibold)).frame(width: 32, height: 32)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white.opacity(0.7))
-            .accessibilityLabel("Обновить текст")
+        .onChange(of: externalRefresh) { _, _ in
+            refreshRequested = true
+            retry &+= 1
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 6)
     }
 
     private func lyricRow(_ line: NativeLyricLine, index: Int, active: Int, now: Double) -> some View {
-        Button {
+        let isActive = index == active
+        let distance = active < 0 ? 0 : abs(index - active)
+        let depthActive = follow && active >= 0 && !reduceMotion && !reduceTransparency
+        let blurRadius: CGFloat = !isActive && depthActive && distance <= 5 ? min(4.2, CGFloat(distance) * 1.4) : 0
+        let opacityValue: Double = {
+            if isActive { return 1.0 }
+            if !follow || active < 0 { return index < active ? 0.40 : 0.62 }
+            switch distance {
+            case 1: return 0.42
+            case 2: return 0.25
+            default: return 0.14
+            }
+        }()
+        let scaleValue: CGFloat = {
+            if isActive || !follow || active < 0 || reduceMotion { return 1.0 }
+            switch distance {
+            case 1: return 0.98
+            case 2: return 0.96
+            default: return 0.95
+            }
+        }()
+
+        return Button {
             follow = true
             model.seek(to: max(0, line.time - activeOffset))
         } label: {
             Group {
-                if index == active && !line.words.isEmpty {
+                if isActive && !line.words.isEmpty {
                     karaoke(line.words, now: now)
                 } else {
                     Text(line.text.isEmpty ? "♪" : line.text)
-                        .foregroundStyle(index == active ? Color.moraMint : .white.opacity(index < active ? 0.38 : 0.62))
+                        .foregroundStyle(isActive ? Color.white : Color.white.opacity(0.95))
                 }
             }
-            .font(.title3.weight(index == active ? .bold : .semibold))
+            .font(.system(size: min(lyricFontSize, 38), weight: .bold))
+            .lineSpacing(3)
             .frame(maxWidth: .infinity, alignment: .leading)
             .multilineTextAlignment(.leading)
+            .shadow(color: isActive ? Color.moraMint.opacity(0.32) : .clear, radius: isActive ? 14 : 0, y: 2)
+            .opacity(opacityValue)
+            .blur(radius: blurRadius)
+            .scaleEffect(scaleValue, anchor: .leading)
         }
         .buttonStyle(.plain)
         .id(index)
@@ -772,7 +948,8 @@ private struct NativeLyricsView: View {
     /// Word texts carry their own spacing (as in the web WordLyricLine).
     private func karaoke(_ words: [NativeLyricWord], now: Double) -> Text {
         words.reduce(Text("")) { line, word in
-            line + Text(word.text).foregroundColor(now >= word.time ? .moraMint : .white.opacity(0.58))
+            let color: Color = now >= word.end ? .white : (now >= word.time ? .moraMint : .white.opacity(0.38))
+            return line + Text(word.text).foregroundColor(color)
         }
     }
 

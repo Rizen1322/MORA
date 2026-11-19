@@ -66,18 +66,23 @@ func encoded(_ value: String) -> String {
 }
 let albumsPage = NativePage(try first.page("/library/albums"))!
 let albumRow = albumsPage.sections.first?.rows.first
-require(albumsPage.title == "Альбомы", "Native albums title")
+require(albumsPage.title == "Альбомы" && albumsPage.style == "catalog", "Native albums title and style")
 if case .item(let title, let subtitle, _, _, _, let path, _, _, _) = albumRow! {
     require(title == "Альбом" && (subtitle ?? "").contains("Артист"), "Album row shows the album artist")
     require(path == "/album/\(encoded("Артист"))/\(encoded("Альбом"))", "Album row links to its native page")
 } else { fatalError("Album row is not an item") }
 let artistsPage = NativePage(try first.page("/library/artists"))!
-require(artistsPage.sections.first?.rows.count == 2, "Artists group saved tracks, unknown artist included")
+require(artistsPage.style == "catalog" && artistsPage.sections.first?.rows.count == 2, "Artists group saved tracks, unknown artist included")
 let albumPage = NativePage(try first.page("/album/\(encoded("Артист"))/\(encoded("Альбом"))"))!
-require(albumPage.title == "Альбом" && albumPage.sections.last?.rows.count == 1, "Album page lists its saved track")
-require((albumPage.sections.first?.footer ?? "").contains("Артист · 1999 · 1 трек"), "Album footer shows artist, year and duration")
+require(albumPage.title == "Альбом" && albumPage.style == "catalog" && albumPage.sections.last?.rows.count == 1, "Album page lists its saved track")
+if let first = albumPage.sections.first?.rows.first, case .hero(let style, let title, let subtitle, _, _, let play, let shuffle) = first {
+    require(style == "album" && title == "Альбом", "Album hero carries the album title")
+    require((subtitle ?? "").contains("Артист · 1999 · 1 трек"), "Album hero shows artist, year and duration")
+    require(play?.name == "playAll" && shuffle?.name == "playAll", "Album hero plays and shuffles")
+} else { fatalError("Album hero row missing") }
+require(!albumPage.menu.isEmpty, "Album page exposes actions in the toolbar menu")
 let artistPage = NativePage(try first.page("/artist/\(encoded("Артист"))"))!
-require(artistPage.title == "Артист" && artistPage.sections.last?.rows.count == 1, "Artist page lists the artist's saved tracks")
+require(artistPage.title == "Артист" && artistPage.style == "catalog" && artistPage.sections.last?.rows.count == 1, "Artist page lists the artist's saved tracks")
 require(artistPage.sections.count == 3, "Artist page has a hero, controls and tracks")
 if let first = artistPage.sections.first?.rows.first, case .hero(let style, let title, let subtitle, _, _, let play, let shuffle) = first {
     require(style == "artist" && title == "Артист", "Artist hero carries the name")
@@ -100,6 +105,11 @@ if let artwork = editor.sections.last?.rows.last, case .file(_, _, let types, _,
 } else { fatalError("Track editor has no artwork row") }
 let page = try first.page("/playlist/p")!
 let nativePage = NativePage(page)!
+require(nativePage.style == "catalog" && !nativePage.menu.isEmpty, "Playlist page uses catalog style and toolbar menu")
+if let first = nativePage.sections.first?.rows.first, case .hero(let style, let title, _, _, _, let play, let shuffle) = first {
+    require(style == "album" && title == "Один", "Playlist hero carries title")
+    require(play?.name == "playAll" && shuffle?.name == "playAll", "Playlist hero plays and shuffles")
+} else { fatalError("Playlist hero row missing") }
 require(nativePage.sections.last?.rows.count == 3, "Native playlist renders repeated entries and unsaved assets")
 let history = NativePage(try first.page("/history"))!
 require(history.sections.last?.rows.count == 2, "Native history includes playback-only tracks")

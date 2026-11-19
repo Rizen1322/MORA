@@ -19,14 +19,15 @@ struct NativeSoundView: View {
                     Section {
                         Text(failure).foregroundStyle(.red)
                         Button("Обновить настройки") { Task { await load() } }.disabled(busy || editing)
-                    }
+                    }.listRowBackground(Color.moraSurface)
                 }
                 if let sound {
                     controls(sound)
                     Section("Полосы") {
                         ForEach(NativeSoundState.bands.indices, id: \.self) { index in band(index, sound) }
-                    }
-                } else if failure == nil { ProgressView("Загружаем настройки звука…") }
+                    }.listRowBackground(Color.moraSurface)
+                } else if failure == nil { ProgressView("Загружаем настройки звука…").listRowBackground(Color.clear) }
+                Section { Color.clear.frame(height: 56).listRowBackground(Color.clear) }
             }
             .scrollContentBackground(.hidden)
             .background(Color.moraBackground)
@@ -62,6 +63,7 @@ struct NativeSoundView: View {
                 ForEach(sound.presets.indices, id: \.self) { Text(sound.presets[$0].name).tag($0) }
             }.pickerStyle(.menu).accessibilityIdentifier("native-sound-preset")
         } footer: { Text("Вывод звука (AirPlay, Bluetooth) выбирается кнопкой в плеере.") }
+            .listRowBackground(Color.moraSurface)
             .disabled(busy || editing)
     }
     private func band(_ index: Int, _ sound: NativeSoundState) -> some View {

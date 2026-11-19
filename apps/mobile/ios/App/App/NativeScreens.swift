@@ -63,18 +63,19 @@ extension NativeShellStore {
 
 /// SwiftUI screens of the shell; navigation still uses the page's router.
 
-/// A white symbol on a tinted rounded square, as in iOS Settings; the tint follows the symbol so rows stay stable.
+/// Tinted glass symbol badge matching MORA's obsidian & mint design system.
 struct NativeIconBadge: View {
     let symbol: String
     var size: CGFloat = 30
-    private static let palette: [Color] = [Color(red: 0.10, green: 0.52, blue: 0.36), .blue, .indigo, .orange, .pink, .teal, .purple]
+    var tint: Color = .moraMint
 
     var body: some View {
-        let sum: Int = symbol.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
-        let tint = Self.palette[sum % Self.palette.count]
-        Image(systemName: symbol).font(.system(size: size * 0.5, weight: .semibold)).foregroundStyle(.white)
+        Image(systemName: symbol)
+            .font(.system(size: size * 0.48, weight: .semibold))
+            .foregroundStyle(tint)
             .frame(width: size, height: size)
-            .background(tint.gradient, in: RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+            .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: size * 0.26, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: size * 0.26, style: .continuous).stroke(tint.opacity(0.24), lineWidth: 0.75))
             .accessibilityHidden(true)
     }
 }
@@ -84,10 +85,27 @@ struct NativeIconBadge: View {
 struct NativeHomeView: View {
     @EnvironmentObject private var store: NativeShellStore
 
+    private var favoriteArtists: [(name: String, cover: String?)] {
+        var seen = Set<String>()
+        var out: [(name: String, cover: String?)] = []
+        let ordered = store.liked + store.library
+        for track in ordered {
+            let trimmed = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed.lowercased()).inserted else { continue }
+            out.append((trimmed, track.cover))
+            if out.count >= 10 { break }
+        }
+        return out
+    }
+
+    private static func encoded(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? value
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 26) {
                     header
                     NativeWaveHero(wave: store.ui.wave)
                     stations
@@ -96,12 +114,18 @@ struct NativeHomeView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Добавьте свою музыку").font(.title3.bold())
                             Text("Импортируйте файлы или плейлист, либо найдите музыку в поиске.").foregroundStyle(.white.opacity(0.65))
-                            Button("Импорт") { store.go("/import") }.buttonStyle(.borderedProminent).tint(.moraMint).frame(minHeight: 44)
+                            Button("Импорт") { store.go("/import") }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.moraMint)
+                                .foregroundStyle(Color.moraBackground)
+                                .frame(minHeight: 44)
                         }
                         .padding(18).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 1))
                     }
-                    rail("Недавно добавленные", Array(store.library.prefix(16)), type: "library", all: "/library")
+                    rail("Недавно добавленные", Array(store.library.prefix(16)), type: "library", all: "/library/tracks")
+                    artistRail
                     rail("Любимое", Array(store.liked.prefix(16)), type: "liked", all: "/liked")
                     if !store.playlists.isEmpty { playlists }
                 }
@@ -115,17 +139,23 @@ struct NativeHomeView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide).locale(Locale(identifier: "ru_RU"))))
-                    .font(.subheadline.weight(.medium)).foregroundStyle(.white.opacity(0.6))
+                    .font(.subheadline.weight(.medium)).foregroundStyle(.white.opacity(0.55))
                 Text(NativeText.greeting(hour: Calendar.current.component(.hour, from: .now)))
                     .font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
             }
             Spacer()
             Button { store.go("/more") } label: {
-                Image(systemName: "person.crop.circle").font(.title2).frame(width: 44, height: 44)
+                Image(systemName: "person.crop.circle")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .frame(width: 44, height: 44)
+                    .background(Color.moraSurface, in: Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.1), lineWidth: 0.75))
             }
+            .buttonStyle(.plain)
             .accessibilityLabel("Профиль и настройки")
         }
     }
@@ -142,35 +172,35 @@ struct NativeHomeView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     ZStack {
                                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                            .fill(LinearGradient(colors: [Color.moraMint.opacity(0.18), Color.indigo.opacity(0.35), Color.moraBackground], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                        NativeCover(url: station.cover, size: 172, radius: 18)
-                                            .blur(radius: 22)
+                                            .fill(LinearGradient(colors: [Color.moraSurfaceElevated, Color.moraBackground], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                        NativeCover(url: station.cover, size: 172, radius: 18, monogram: station.artist)
+                                            .blur(radius: 26)
                                             .opacity(0.45)
                                         LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom)
-                                        NativeCover(url: station.cover, size: 108, radius: 54)
-                                            .overlay(Circle().stroke(Color.moraMint.opacity(0.55), lineWidth: 1.5))
+                                        NativeCover(url: station.cover, size: 106, radius: 53, monogram: station.artist)
+                                            .overlay(Circle().stroke(Color.moraMint.opacity(0.45), lineWidth: 1.5))
                                             .shadow(color: .black.opacity(0.45), radius: 10, y: 5)
                                             .offset(y: -6)
                                         VStack {
                                             Spacer()
                                             HStack(spacing: 4) {
-                                                Image(systemName: "waveform").font(.caption2.bold())
+                                                Image(systemName: "waveform").font(.caption2.bold()).foregroundStyle(Color.moraMint)
                                                 Text("РАДИО").font(.caption2.weight(.bold)).tracking(0.6)
                                             }
                                             .foregroundStyle(.white)
-                                            .padding(.horizontal, 8)
+                                            .padding(.horizontal, 9)
                                             .padding(.vertical, 4)
                                             .background(.ultraThinMaterial, in: Capsule())
-                                            .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.75))
+                                            .overlay(Capsule().stroke(Color.white.opacity(0.16), lineWidth: 0.75))
                                         }
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .padding(10)
                                     }
                                     .frame(width: 172, height: 172)
                                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.white.opacity(0.14), lineWidth: 1))
+                                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.white.opacity(0.1), lineWidth: 1))
                                     Text(station.artist + " и похожие").font(.subheadline.weight(.semibold)).lineLimit(2)
-                                    Text("Радиостанция").font(.caption).foregroundStyle(.white.opacity(0.6))
+                                    Text("Радиостанция").font(.caption).foregroundStyle(.white.opacity(0.55))
                                 }
                                 .frame(width: 172, alignment: .leading)
                             }
@@ -187,9 +217,10 @@ struct NativeHomeView: View {
     }
 
     private var tiles: some View {
+        let offlineCount = store.library.filter(\.offline).count
         let items: [(String, String, String, Bool, String?)] = [
             ("/liked", "Любимое", "heart.fill", false, store.liked.isEmpty ? nil : NativeText.tracks(store.liked.count)),
-            ("/downloads", "Загрузки", "arrow.down.circle.fill", false, nil),
+            ("/downloads", "Загрузки", "arrow.down.circle.fill", false, offlineCount > 0 ? NativeText.tracks(offlineCount) : nil),
             ("/history", "История", "clock.arrow.circlepath", true, nil),
             ("/import", "Импорт", "square.and.arrow.down.fill", true, nil)]
         return LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
@@ -197,10 +228,7 @@ struct NativeHomeView: View {
                 let tint = item.3 ? Color.moraGold : Color.moraMint
                 Button { store.go(item.0) } label: {
                     HStack(spacing: 12) {
-                        Image(systemName: item.2).font(.body.weight(.semibold))
-                            .foregroundStyle(tint)
-                            .frame(width: 38, height: 38)
-                            .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        NativeIconBadge(symbol: item.2, size: 38, tint: tint)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(item.1).font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.8)
                             if let detail = item.4 { Text(detail).font(.caption).foregroundStyle(.white.opacity(0.55)).lineLimit(1) }
@@ -209,11 +237,48 @@ struct NativeHomeView: View {
                     }
                     .padding(.horizontal, 12)
                     .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
-                    .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
+    @ViewBuilder private var artistRail: some View {
+        let artists = favoriteArtists
+        if !artists.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Ваши исполнители").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                    Spacer()
+                    Button { store.go("/library/artists") } label: {
+                        HStack(spacing: 4) { Text("Все"); Image(systemName: "chevron.forward").font(.caption.weight(.bold)) }
+                            .font(.subheadline.weight(.medium)).foregroundStyle(Color.moraMint).frame(minHeight: 44)
+                    }
+                    .accessibilityLabel("Все исполнители")
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(alignment: .top, spacing: 16) {
+                        ForEach(artists, id: \.name) { item in
+                            Button { store.go("/artist/\(Self.encoded(item.name))") } label: {
+                                VStack(spacing: 8) {
+                                    NativeCover(url: item.cover, size: 92, radius: 46, monogram: item.name)
+                                        .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 1))
+                                        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+                                    Text(item.name)
+                                        .font(.footnote.weight(.semibold))
+                                        .lineLimit(1)
+                                        .frame(width: 92)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .scrollClipDisabled()
             }
         }
     }
@@ -231,15 +296,17 @@ struct NativeHomeView: View {
                     .accessibilityLabel("Показать все: " + title)
                 }
                 ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(alignment: .top, spacing: 12) {
+                    LazyHStack(alignment: .top, spacing: 14) {
                         ForEach(Array(tracks.enumerated()), id: \.element.id) { i, t in
                             Button { store.play(tracks, at: i, type: type, label: title) } label: {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    NativeCover(url: t.cover, size: 140, radius: 12)
+                                    NativeCover(url: t.cover, size: 152, radius: 12, monogram: t.title)
+                                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.white.opacity(0.09), lineWidth: 0.75))
+                                        .shadow(color: .black.opacity(0.32), radius: 8, y: 4)
                                     Text(t.title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                                    Text(t.artist).font(.caption).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                                    Text(t.artist).font(.caption).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
                                 }
-                                .frame(width: 140, alignment: .leading)
+                                .frame(width: 152, alignment: .leading)
                             }
                             .buttonStyle(.plain)
                             .accessibilityElement(children: .combine)
@@ -255,17 +322,27 @@ struct NativeHomeView: View {
 
     private var playlists: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Плейлисты").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+            HStack {
+                Text("Плейлисты").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                Spacer()
+                Button { store.go("/library/playlists") } label: {
+                    HStack(spacing: 4) { Text("Все"); Image(systemName: "chevron.forward").font(.caption.weight(.bold)) }
+                        .font(.subheadline.weight(.medium)).foregroundStyle(Color.moraMint).frame(minHeight: 44)
+                }
+                .accessibilityLabel("Все плейлисты")
+            }
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: .top, spacing: 12) {
+                LazyHStack(alignment: .top, spacing: 14) {
                     ForEach(store.playlists) { p in
                         Button { store.go("/playlist/\(p.id)") } label: {
                             VStack(alignment: .leading, spacing: 6) {
-                                NativeCover(url: p.cover, size: 140, radius: 12)
+                                NativeCover(url: p.cover, size: 152, radius: 12, monogram: p.name)
+                                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.white.opacity(0.09), lineWidth: 0.75))
+                                    .shadow(color: .black.opacity(0.32), radius: 8, y: 4)
                                 Text(p.name).font(.subheadline.weight(.semibold)).lineLimit(1)
-                                Text(NativeText.tracks(p.count)).font(.caption).foregroundStyle(.white.opacity(0.6))
+                                Text(NativeText.tracks(p.count)).font(.caption).foregroundStyle(.white.opacity(0.55))
                             }
-                            .frame(width: 140, alignment: .leading)
+                            .frame(width: 152, alignment: .leading)
                         }
                         .buttonStyle(.plain)
                         .accessibilityElement(children: .combine)
@@ -287,10 +364,19 @@ struct NativeWaveHero: View {
         let button = wave.button(selected)
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                Label(wave.active != nil ? "Сейчас в эфире" : "Для вас", systemImage: "waveform")
-                    .font(.caption.weight(.bold)).foregroundStyle(Color.moraMint)
+                HStack(spacing: 6) {
+                    if wave.active != nil {
+                        Circle().fill(Color.moraMint).frame(width: 7, height: 7)
+                        Text("Сейчас в эфире")
+                    } else {
+                        Image(systemName: "waveform")
+                        Text("Персональный поток")
+                    }
+                }
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.moraMint)
                 (Text("Моя волна") + Text(".").foregroundColor(.moraMint)).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
-                Text("Знакомое, любимое и то, что ещё предстоит открыть.").font(.subheadline).foregroundStyle(.white.opacity(0.7))
+                Text("Знакомое, любимое и то, что ещё предстоит открыть.").font(.subheadline).foregroundStyle(.white.opacity(0.72))
             }
             Picker("Источник волны", selection: Binding(get: { selected }, set: { store.waveSource = $0 })) {
                 ForEach(wave.sources, id: \.self) { s in
@@ -308,7 +394,8 @@ struct NativeWaveHero: View {
                 .disabled(!button.enabled)
                 Button { store.waveSource = selected; store.go("/wave") } label: {
                     Image(systemName: "slider.horizontal.3").font(.headline).frame(width: 54, height: 54)
-                        .background(.white.opacity(0.1), in: Circle())
+                        .background(Color.white.opacity(0.1), in: Circle())
+                        .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 0.75))
                 }
                 .accessibilityLabel("Настроить волну").accessibilityIdentifier("wave.settings")
             }
@@ -320,13 +407,14 @@ struct NativeWaveHero: View {
         .background {
             let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
             ZStack(alignment: .topTrailing) {
-                shape.fill(LinearGradient(colors: [Color(red: 0.10, green: 0.30, blue: 0.21), Color(red: 0.04, green: 0.11, blue: 0.08)],
+                shape.fill(LinearGradient(colors: [Color(red: 14 / 255, green: 45 / 255, blue: 32 / 255), Color(red: 6 / 255, green: 19 / 255, blue: 14 / 255)],
                                           startPoint: .topLeading, endPoint: .bottomTrailing))
+                RadialGradient(colors: [Color.moraMint.opacity(0.16), .clear], center: .topTrailing, startRadius: 10, endRadius: 220)
                 Image(systemName: "waveform").font(.system(size: 130, weight: .ultraLight))
-                    .foregroundStyle(Color.moraMint.opacity(0.10)).offset(x: 28, y: -6).accessibilityHidden(true)
+                    .foregroundStyle(Color.moraMint.opacity(0.09)).offset(x: 28, y: -6).accessibilityHidden(true)
             }
             .clipShape(shape)
-            .overlay(shape.stroke(Color.moraMint.opacity(0.18)))
+            .overlay(shape.stroke(Color.moraMint.opacity(0.22), lineWidth: 1))
         }
         .onChange(of: wave.active) { _, active in if active != nil { store.waveSource = nil } } // follow what plays now
     }
@@ -431,7 +519,8 @@ struct NativeTrackListView: View {
             Label(title, systemImage: symbol).font(.headline)
                 .frame(maxWidth: .infinity, minHeight: 48)
                 .foregroundStyle(prominent ? Color.moraBackground : Color.moraMint)
-                .background(prominent ? Color.moraMint : Color.moraMint.opacity(0.15), in: Capsule())
+                .background(prominent ? Color.moraMint : Color.moraSurfaceElevated, in: Capsule())
+                .overlay(Capsule().stroke(prominent ? Color.clear : Color.white.opacity(0.09), lineWidth: 0.75))
         }
         .buttonStyle(.plain)
     }
@@ -491,7 +580,8 @@ struct NativeTrackRow: View {
                         .foregroundStyle(selected ? Color.moraMint : .white.opacity(0.4))
                         .accessibilityHidden(true)
                 }
-                NativeCover(url: track.cover, size: 48)
+                NativeCover(url: track.cover, size: 48, monogram: track.title)
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.title).font(.body.weight(.medium)).lineLimit(1)
                     Text(track.artist).font(.subheadline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
@@ -675,12 +765,19 @@ struct NativeSearchView: View {
                 if query.isEmpty { history }
                 if source == "yandex" && !store.ui.wave.yandex {
                     ContentUnavailableView("Подключите Яндекс Музыку", systemImage: "music.note", description: Text("Войдите в аккаунт для поиска по каталогу."))
+                        .listRowBackground(Color.clear)
                     Button("Подключить") { store.go("/sources") }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.moraMint)
+                        .foregroundStyle(Color.moraBackground)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                 } else {
                     if !query.isEmpty && (source == "all" || source == "local") { localSection }
                     ForEach(sources, id: \.self) { value in
                         if !query.isEmpty || source == "yandex" { remoteSection(value) }
                     }
+                    if query.isEmpty && source != "yandex" { browseGrid }
                 }
             }
             .listStyle(.plain).scrollContentBackground(.hidden).background(Color.moraBackground)
@@ -711,36 +808,115 @@ struct NativeSearchView: View {
         default: return "Яндекс Музыка"
         }
     }
+    private static func shortTitle(_ value: String) -> String {
+        switch value {
+        case "all": return "Все"
+        case "local": return "Медиатека"
+        case "ytmusic": return "YouTube Music"
+        case "youtube": return "YouTube"
+        case "soundcloud": return "SoundCloud"
+        default: return "Яндекс"
+        }
+    }
     private var filters: some View {
         Section {
-            Picker("Где искать", selection: $store.searchSource) {
-                ForEach(["all", "local"] + Self.publicSources + ["yandex"], id: \.self) { value in Text(Self.title(value)).tag(value) }
-            }.accessibilityIdentifier("search.source")
-            if source == "yandex" {
-                Picker("Что искать", selection: $store.searchScope) {
-                    Text("Всё").tag("all"); Text("Треки").tag("track"); Text("Артисты").tag("artist"); Text("Альбомы").tag("album")
-                }.pickerStyle(.segmented).accessibilityIdentifier("search.scope")
+            VStack(alignment: .leading, spacing: 10) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(["all", "local"] + Self.publicSources + ["yandex"], id: \.self) { value in
+                            let selected = store.searchSource == value
+                            Button { store.searchSource = value } label: {
+                                Text(Self.shortTitle(value))
+                                    .font(.subheadline.weight(selected ? .semibold : .medium))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .foregroundStyle(selected ? Color.moraBackground : .white.opacity(0.85))
+                                    .background(selected ? Color.moraMint : Color.moraSurface, in: Capsule())
+                                    .overlay(Capsule().stroke(selected ? Color.clear : Color.white.opacity(0.1), lineWidth: 0.75))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                        }
+                    }
+                }
+                .accessibilityIdentifier("search.source")
+
+                if source == "yandex" {
+                    let scopes: [(String, String)] = [("all", "Всё"), ("track", "Треки"), ("artist", "Артисты"), ("album", "Альбомы")]
+                    HStack(spacing: 8) {
+                        ForEach(scopes, id: \.0) { value, label in
+                            let selected = store.searchScope == value
+                            Button { store.searchScope = value } label: {
+                                Text(label)
+                                    .font(.caption.weight(selected ? .bold : .semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 7)
+                                    .foregroundStyle(selected ? Color.moraMint : .white.opacity(0.75))
+                                    .background(selected ? Color.moraMint.opacity(0.18) : Color.moraSurface, in: Capsule())
+                                    .overlay(Capsule().stroke(selected ? Color.moraMint.opacity(0.45) : Color.white.opacity(0.08), lineWidth: 0.75))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                        }
+                    }
+                    .accessibilityIdentifier("search.scope")
+                }
             }
-        }.listRowBackground(Color.clear)
+            .padding(.vertical, 2)
+        }
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
     @ViewBuilder private var history: some View {
-        if recent.isEmpty && source != "yandex" {
-            ContentUnavailableView("Найдите свою музыку", systemImage: "magnifyingglass", description: Text("Поиск по медиатеке, YouTube Music, YouTube, SoundCloud и Яндексу. Можно вставить ссылку на трек."))
-                .listRowBackground(Color.clear)
-        } else if recent.isEmpty {
-            ContentUnavailableView("Поиск в Яндекс Музыке", systemImage: "music.note",
-                                   description: Text("Треки, артисты и альбомы каталога. Выберите, что искать, и введите запрос."))
-                .listRowBackground(Color.clear)
-        } else {
+        if !recent.isEmpty {
             Section {
                 ForEach(recent, id: \.self) { text in
-                    Button { store.searchQuery = text } label: { Label(text, systemImage: "clock").frame(minHeight: 36) }
+                    Button { store.searchQuery = text } label: { Label(text, systemImage: "clock").frame(minHeight: 38) }
                         .swipeActions { Button("Удалить", role: .destructive) { recent.removeAll { $0 == text }; saveRecent() } }
+                        .listRowBackground(Color.clear)
                 }
             } header: {
                 HStack { Text("Недавно искали"); Spacer(); Button("Очистить") { recent = []; saveRecent() } }
             }
         }
+    }
+    private var browseGrid: some View {
+        let cards: [(title: String, symbol: String, path: String, gold: Bool)] = [
+            ("Любимое", "heart.fill", "/liked", false),
+            ("Плейлисты", "music.note.list", "/library/playlists", false),
+            ("Артисты", "music.mic", "/library/artists", true),
+            ("Альбомы", "square.stack", "/library/albums", true),
+        ]
+        return Section {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                ForEach(cards, id: \.path) { card in
+                    let accent = card.gold ? Color.moraGold : Color.moraMint
+                    Button { store.go(card.path) } label: {
+                        ZStack(alignment: .bottomLeading) {
+                            LinearGradient(colors: [accent.opacity(0.2), Color.moraSurface], startPoint: .topLeading, endPoint: .bottomTrailing)
+                            Image(systemName: card.symbol)
+                                .font(.system(size: 32, weight: .semibold))
+                                .foregroundStyle(accent.opacity(0.28))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                                .padding(12)
+                            Text(card.title)
+                                .font(.headline.bold())
+                                .foregroundStyle(.white)
+                                .padding(12)
+                        }
+                        .frame(height: 76)
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 4)
+        } header: {
+            Text("Обзор")
+        }
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
     private var localSection: some View {
         let matches = local
@@ -776,9 +952,10 @@ struct NativeSearchView: View {
         let isArtist = symbol == "music.mic"
         return Button { remember(); store.go(item.path) } label: {
             HStack(spacing: 12) {
-                NativeCover(url: item.cover, size: isArtist ? 52 : 48, radius: isArtist ? 26 : 8)
+                NativeCover(url: item.cover, size: isArtist ? 52 : 48, radius: isArtist ? 26 : 8, monogram: item.title)
                     .overlay(Group {
                         if isArtist { Circle().stroke(Color.white.opacity(0.16), lineWidth: 1) }
+                        else { RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75) }
                     })
                     .shadow(color: .black.opacity(isArtist ? 0.3 : 0), radius: 5, y: 2)
                 VStack(alignment: .leading, spacing: 3) {
@@ -795,9 +972,19 @@ struct NativeSearchView: View {
         let track = hit.track
         return Button { act("play", track: track, source: source, session: session) } label: {
             HStack(spacing: 12) {
-                NativeCover(url: track.cover, size: 48, radius: 8)
+                NativeCover(url: track.cover, size: 48, radius: 8, monogram: track.title)
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 5) { Text(track.title).font(.body.weight(.medium)).lineLimit(1); if hit.explicit { Text("E").font(.caption2.bold()).foregroundStyle(.secondary) } }
+                    HStack(spacing: 5) {
+                        Text(track.title).font(.body.weight(.medium)).lineLimit(1)
+                        if hit.explicit {
+                            Text("E").font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white.opacity(0.75))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        }
+                    }
                     Text(track.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                     if !hit.tags.isEmpty { Text(hit.tags).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
                 }
@@ -921,31 +1108,47 @@ struct NativeMoreView: View {
         NavigationStack {
             List {
                 Section("Музыка") {
-                    link("/wave", "Моя волна", "Бесконечный поток под ваше настроение", "waveform")
-                    link("/history", "История", "Что звучало и как сменялись треки", "clock.arrow.circlepath")
-                    link("/statistics", "Статистика", "Музыка за последние 30 дней", "chart.bar")
-                    link("/duplicates", "Дубликаты", "Объединить одинаковые файлы", "square.on.square")
-                    link("/smart-playlists", "Умные плейлисты", "Подборки по вашим правилам", "sparkles")
-                    link("/downloads", "Загрузки", "Музыка на этом iPhone", "arrow.down.circle")
-                    link("/import", "Импорт", "Плейлисты из Spotify, Apple Music, YouTube", "square.and.arrow.down")
+                    link("/wave", "Моя волна", "Бесконечный поток под ваше настроение", "waveform", tint: .moraMint)
+                    link("/history", "История", "Что звучало и как сменялись треки", "clock.arrow.circlepath", tint: .moraGold)
+                    link("/statistics", "Статистика", "Музыка за последние 30 дней", "chart.bar.fill", tint: .moraGold)
+                    link("/duplicates", "Дубликаты", "Объединить одинаковые файлы", "square.on.square", tint: .moraMint)
+                    link("/smart-playlists", "Умные плейлисты", "Подборки по вашим правилам", "sparkles", tint: .moraGold)
+                    link("/downloads", "Загрузки", "Музыка на этом iPhone", "arrow.down.circle.fill", tint: .moraMint)
+                    link("/import", "Импорт", "Плейлисты из Spotify, Apple Music, YouTube", "square.and.arrow.down.fill", tint: .moraGold)
                 }
                 if !store.playlists.isEmpty {
                     Section("Плейлисты") {
-                        ForEach(store.playlists) { p in link("/playlist/\(p.id)", p.name, NativeText.tracks(p.count), "music.note.list") }
+                        ForEach(store.playlists) { p in
+                            link("/playlist/\(p.id)", p.name, NativeText.tracks(p.count), "music.note.list", tint: .moraMint)
+                        }
                     }
                 }
                 Section("Приложение") {
-                    link("/sources", "Яндекс Музыка", "Аккаунт и синхронизация лайков", "person.crop.circle")
-                    link("/settings", "Настройки", "Переходы, громкость и офлайн", "gearshape")
-                    link("/sound", "Звук", "Эквалайзер и пресеты", "slider.vertical.3")
-                    link("/diagnostics", "Диагностика AutoMix", "Всё ли в порядке со звуком и переходами", "waveform.path.ecg")
+                    link("/sources", "Яндекс Музыка", "Аккаунт и синхронизация лайков", "person.crop.circle.fill", tint: .moraGold)
+                    link("/settings", "Настройки", "Переходы, громкость и офлайн", "gearshape.fill", tint: .moraMint)
+                    link("/sound", "Звук", "Эквалайзер и пресеты", "slider.vertical.3", tint: .moraMint)
+                    link("/diagnostics", "Диагностика AutoMix", "Всё ли в порядке со звуком и переходами", "waveform.path.ecg", tint: .moraGold)
                 }
                 Section {
                     Button { store.setShown(false) } label: {
-                        Label("Перейти на веб-интерфейс", systemImage: "globe").frame(minHeight: 44)
+                        HStack(spacing: 14) {
+                            NativeIconBadge(symbol: "globe", size: 32, tint: .moraMint)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Перейти на веб-интерфейс").foregroundStyle(.white)
+                                Text("Откроет полную веб-версию плеера").font(.footnote).foregroundStyle(.white.opacity(0.55))
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.35))
+                        }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                     }
+                    .listRowBackground(Color.moraSurface)
                 } footer: {
-                    Text("Вернуть нативный интерфейс можно в «Ещё» веб-версии.\nMORA \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
+                    VStack(alignment: .leading, spacing: 18) {
+                        Text("Вернуть нативный интерфейс можно в «Ещё» веб-версии.\nMORA \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
+                        Color.clear.frame(height: 56)
+                    }
                 }
             }
             .listStyle(.insetGrouped)
@@ -961,13 +1164,13 @@ struct NativeMoreView: View {
         }
     }
 
-    private func link(_ path: String, _ title: String, _ hint: String, _ symbol: String) -> some View {
+    private func link(_ path: String, _ title: String, _ hint: String, _ symbol: String, tint: Color = .moraMint) -> some View {
         Button { store.go(path) } label: {
             HStack(spacing: 14) {
-                NativeIconBadge(symbol: symbol)
+                NativeIconBadge(symbol: symbol, size: 32, tint: tint)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).foregroundStyle(.white)
-                    Text(hint).font(.footnote).foregroundStyle(.white.opacity(0.55))
+                    Text(title).font(.body.weight(.medium)).foregroundStyle(.white)
+                    Text(hint).font(.footnote).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
                 }
                 Spacer()
                 Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.35))
@@ -977,58 +1180,169 @@ struct NativeMoreView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityHint(hint)
-        .listRowBackground(Color.white.opacity(0.06))
+        .listRowBackground(Color.moraSurface)
     }
 }
 
 
 struct NativeLibraryView: View {
     @EnvironmentObject private var store: NativeShellStore
+
     private var likedArtists: [NativeTrack] {
         var seen = Set<String>()
-        return store.liked.filter { !$0.artist.isEmpty && seen.insert($0.artist).inserted }
-            .sorted { $0.artist.localizedCaseInsensitiveCompare($1.artist) == .orderedAscending }
+        return store.liked.filter {
+            let trimmed = $0.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !trimmed.isEmpty && seen.insert(trimmed.lowercased()).inserted
+        }
+        .sorted { $0.artist.localizedCaseInsensitiveCompare($1.artist) == .orderedAscending }
     }
+
+    private var artistCount: Int {
+        Set(store.library.map { $0.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty }).count
+    }
+
+    private var albumCount: Int {
+        Set(store.library.map { $0.album.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty }).count
+    }
+
+    private var offlineCount: Int {
+        store.library.filter(\.offline).count
+    }
+
+    private var recentTracks: [(offset: Int, element: NativeTrack)] {
+        Array(store.library.prefix(12).enumerated())
+    }
+
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    destination("Любимое", "heart", "/liked")
-                    destination("Плейлисты", "music.note.list", "/library/playlists")
-                    destination("Артисты", "music.mic", "/library/artists")
-                    destination("Альбомы", "square.stack", "/library/albums")
-                    destination("Песни", "music.note", "/library/tracks")
-                    destination("Загруженные", "arrow.down.circle", "/downloads")
+                    destination("Любимое", "heart.fill", "/liked", count: store.liked.count)
+                    destination("Плейлисты", "music.note.list", "/library/playlists", count: store.playlists.count)
+                    destination("Артисты", "music.mic.fill", "/library/artists", count: artistCount)
+                    destination("Альбомы", "square.stack.fill", "/library/albums", count: albumCount)
+                    destination("Песни", "music.note", "/library/tracks", count: store.library.count)
+                    destination("Загруженные", "arrow.down.circle.fill", "/downloads", count: offlineCount)
                 }
-                if !store.liked.isEmpty {
-                    Section("Артисты любимых треков") {
-                        ForEach(likedArtists) { track in
-                            Button { store.run("open", ["id": track.id, "to": "artist"]) } label: {
-                                Label(track.artist, systemImage: "music.mic")
-                            }.listRowBackground(Color.clear)
+                .listSectionSeparator(.hidden)
+
+                if !likedArtists.isEmpty {
+                    Section {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            LazyHStack(alignment: .top, spacing: 14) {
+                                ForEach(likedArtists) { track in
+                                    Button { store.run("open", ["id": track.id, "to": "artist"]) } label: {
+                                        VStack(spacing: 8) {
+                                            NativeCover(url: track.cover, size: 78, radius: 39, monogram: track.artist)
+                                                .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 1))
+                                                .shadow(color: .black.opacity(0.32), radius: 8, y: 4)
+                                            Text(track.artist)
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.white)
+                                                .lineLimit(1)
+                                                .frame(width: 80)
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel(track.artist)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .scrollClipDisabled()
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 10, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    } header: {
+                        HStack {
+                            Text("Любимые артисты").font(.title3.bold()).foregroundStyle(.white).textCase(nil)
+                            Spacer()
+                            Button { store.go("/library/artists") } label: {
+                                HStack(spacing: 4) { Text("Все"); Image(systemName: "chevron.forward").font(.caption.weight(.bold)) }
+                                    .font(.subheadline.weight(.medium)).foregroundStyle(Color.moraMint)
+                            }
                         }
                     }
                 }
-                Section("Недавно добавлено") {
-                    ForEach(Array(store.library.prefix(8).enumerated()), id: \.element.id) { index, track in
-                        NativeTrackRow(track: track) { store.play(store.library, at: index, type: "library", label: "Медиатека") }
+
+                if !recentTracks.isEmpty {
+                    Section {
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 18) {
+                            ForEach(recentTracks, id: \.element.id) { index, track in
+                                Button { store.play(store.library, at: index, type: "library", label: "Медиатека") } label: {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        NativeCover(url: track.cover, radius: 12, monogram: track.title, aspectSquare: true)
+                                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.white.opacity(0.09), lineWidth: 0.75))
+                                            .shadow(color: .black.opacity(0.32), radius: 8, y: 4)
+                                        Text(track.title)
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(.white)
+                                            .lineLimit(1)
+                                        Text(track.artist)
+                                            .font(.caption)
+                                            .foregroundStyle(.white.opacity(0.55))
+                                            .lineLimit(1)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityHint("Играть")
+                                .contextMenu { NativeTrackActions(track: track, play: { store.play(store.library, at: index, type: "library", label: "Медиатека") }) }
+                            }
+                        }
+                        .padding(.top, 4)
+                        .padding(.bottom, 72)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 16, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    } header: {
+                        HStack {
+                            Text("Недавно добавлено").font(.title3.bold()).foregroundStyle(.white).textCase(nil)
+                            Spacer()
+                            Button { store.go("/library/tracks") } label: {
+                                HStack(spacing: 4) { Text("Все"); Image(systemName: "chevron.forward").font(.caption.weight(.bold)) }
+                                    .font(.subheadline.weight(.medium)).foregroundStyle(Color.moraMint)
+                            }
+                        }
                     }
                 }
             }
-            .listStyle(.plain).scrollContentBackground(.hidden)
-            .background(Color.moraBackground).navigationTitle("Медиатека")
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color.moraBackground)
+            .navigationTitle("Медиатека")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { store.go("/more") } label: {
+                        Image(systemName: "ellipsis.circle").foregroundStyle(.white.opacity(0.85))
+                    }
+                    .accessibilityLabel("Ещё и настройки")
+                }
+            }
         }
     }
-    private func destination(_ title: String, _ symbol: String, _ path: String) -> some View {
+
+    private func destination(_ title: String, _ symbol: String, _ path: String, count: Int) -> some View {
         Button { store.go(path) } label: {
             HStack(spacing: 14) {
-                NativeIconBadge(symbol: symbol, size: 34)
-                Text(title).font(.title3).foregroundStyle(.white)
+                Image(systemName: symbol)
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(Color.moraMint)
+                    .frame(width: 28, height: 28)
+                Text(title).font(.title3.weight(.regular)).foregroundStyle(.white)
                 Spacer()
-                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.35))
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+                Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.32))
             }
-            .frame(minHeight: 48)
+            .frame(minHeight: 46)
             .contentShape(Rectangle())
-        }.buttonStyle(.plain).listRowBackground(Color.clear)
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(Color.clear)
+        .listRowSeparatorTint(Color.white.opacity(0.08))
     }
 }
