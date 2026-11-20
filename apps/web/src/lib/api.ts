@@ -255,13 +255,24 @@ export class ApiError extends Error {
 }
 
 async function req<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(url, {
-    method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    signal,
-  });
-  const text = await res.text();
+  let res: Response, text: string;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal,
+    });
+    text = await res.text();
+  } catch (e) {
+    const error = e as Error;
+    // A cancelled request is the caller's own doing and is suppressed by its revision checks.
+    if (error?.name === 'AbortError') throw e;
+    // fetch() reports these with runtime wording ("Failed to fetch", "signal timed out"): the UI shows messages verbatim.
+    if (error?.name === 'TimeoutError' || /timed out/i.test(error?.message ?? ''))
+      throw new ApiError('Источник не ответил вовремя. Попробуйте ещё раз.', 0);
+    throw new ApiError('Нет связи с локальным сервером MORA. Проверьте, что приложение запущено.', 0);
+  }
   let data: unknown = null;
   try {
     data = text ? JSON.parse(text) : null;

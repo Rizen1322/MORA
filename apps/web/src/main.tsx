@@ -9,6 +9,7 @@ import './styles/desktop.css';
 import './styles/search.css';
 import './styles/listening.css';
 import { App } from './App.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { controller, trackOf, useApp } from './store/app.ts';
 import { desktop } from './lib/desktop.ts';
 import { startNativeUi } from './lib/native-ui.ts';
@@ -63,6 +64,8 @@ startNativeUi();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );

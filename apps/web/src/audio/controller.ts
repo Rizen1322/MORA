@@ -365,6 +365,25 @@ export class PlayerController {
   async configureDesktopStation(station: NativeRadioConfig, context?: PlayContext): Promise<void> {
     await desktop?.nativeMix?.setStation?.(station, context ?? this.state.context);
   }
+
+  /** «Похожее на этот трек» under the native host: the playing song keeps playing, the queue behind it is
+   * replaced by the station around this track, and the seed stays the anchor for its later refills. */
+  async startDesktopSimilar(track: Track): Promise<void> {
+    if (!desktop?.nativeMix?.setStation) return;
+    if (track.reaction < 0) { this.notify('Эта песня отмечена дизлайком. Выберите другую основу радио.', 'error'); return; }
+    const station: NativeRadioConfig = { kind: 'online', seed: { title: track.title, artist: track.artist }, anchor: 'seed' };
+    const context: PlayContext = { type: 'online-radio', label: `Похожее на «${track.title}»` };
+    if (this.nativeAt < 0 || this.currentEntry?.trackId !== track.id) {
+      // Nothing of this track plays natively yet: start with it, then continue around it.
+      await this.startDesktopStation(station, context).catch(() => { /* the start already reported its error */ });
+      return;
+    }
+    // The page's own queue sync computes the station from the context: point it at this anchored one first.
+    this.nativeStation = station;
+    this.continueAs(context, [], 'context', true);
+    this.set({ error: null });
+    await desktop.nativeMix.setStation(station, context).catch(e => this.notify((e as Error).message, 'error'));
+  }
   private nativeFiles = new Map<string, { file: number; frames: number }>();
   private nativeFileSeq = 0;
   private nativeTracks: NativeItem[] = [];
@@ -559,6 +578,8 @@ export class PlayerController {
         const handoff = await this.nativeMix.prepareQueue(at + 1, entries.map((e, i) => manifestEntry(e, i ? entries[i - 1] : current)), current.trackId,
           loop.map((e, i) => manifestEntry(e, i ? loop[i - 1] : undefined)), this.nativeAbort.signal, queueRevision !== this.nativeQueueRevision,
           this.state.queue.map((e, i, queue) => manifestEntry(e, i ? queue[i - 1] : undefined)));
+        // A start or a newer queue command during the handoff makes this station stale: it must not re-apply it.
+        if (revision !== this.nativeRevision || this.nativeAbort.signal.aborted) return;
         if (desktop?.nativeMix?.setStation) {
           const type = this.state.context?.type;
           const station: NativeRadioConfig | null = type === 'wave' ? { kind: 'own' } : type === 'yandex-wave' ? { kind: 'yandex', yandexSessionId: current.yandexSessionId } : type === 'online-radio' ? { kind: 'online' } : null;

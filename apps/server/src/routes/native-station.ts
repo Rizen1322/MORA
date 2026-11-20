@@ -7,7 +7,7 @@ import { isYandexTrackId } from '../providers/yandex-audio.ts';
 import { radioIdentity, rankRadio, tasteSeeds } from '../../../web/src/lib/radio-taste.ts';
 import type { PublicTrack } from '../public/provider.ts';
 
-type Body = { kind: 'own' | 'yandex' | 'online'; seed?: { title: string; artist: string }; currentId?: string; exclude: string[]; count?: number; yandexSessionId?: string };
+type Body = { kind: 'own' | 'yandex' | 'online'; seed?: { title: string; artist: string }; anchor?: 'seed'; currentId?: string; exclude: string[]; count?: number; yandexSessionId?: string };
 
 export function registerNativeStationRoutes(app: FastifyInstance, s: Services): void {
   app.post<{ Body: Body }>('/internal/desktop/station-next', async (req, reply) => {
@@ -18,6 +18,7 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
     const validId = (id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= 256;
     if (!b || !['own', 'yandex', 'online'].includes(b.kind) || !Array.isArray(b.exclude) || b.exclude.length > 2000 || b.exclude.some(id => !validId(id)) ||
       (b.currentId !== undefined && !validId(b.currentId)) || (b.yandexSessionId !== undefined && !validId(b.yandexSessionId)) ||
+      (b.anchor !== undefined && (b.anchor !== 'seed' || !b.seed)) ||
       (b.count !== undefined && (!Number.isInteger(b.count) || b.count < 1 || b.count > 6)) ||
       (b.seed !== undefined && (!b.seed || typeof b.seed.title !== 'string' || typeof b.seed.artist !== 'string' || !(b.seed.title.trim() || b.seed.artist.trim()) || b.seed.title.length + b.seed.artist.length > 199)))
       return reply.code(400).send({ error: 'Некорректные параметры волны' });
@@ -52,8 +53,10 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
       }
       for (const play of history) { const t = byId.get(play.track_id); if (t && Date.now() - play.started_at < 7200000) seen.add(radioIdentity(t)); }
       const initial = !b.currentId && !b.exclude.length;
-      const seeds = tasteSeeds(library, history.length ? history[0].started_at : 0);
-      const primary = initial && b.seed ? b.seed : (b.currentId ? byId.get(b.currentId) : undefined) ?? seeds.shift() ?? b.seed;
+      // "Similar to this track" keeps its seed on every refill instead of drifting to the listener's taste.
+      const pinned = b.anchor === 'seed' ? b.seed : undefined;
+      const seeds = pinned ? [] : tasteSeeds(library, history.length ? history[0].started_at : 0);
+      const primary = pinned ?? (initial && b.seed ? b.seed : (b.currentId ? byId.get(b.currentId) : undefined) ?? seeds.shift() ?? b.seed);
       if (!primary) throw new Error('Поставьте лайк или выберите основу радио');
       const resolved = await Promise.allSettled([primary, ...seeds.slice(0, 2)].map(async seed => (await s.publicMusic.search('ytmusic', `${seed.artist} ${seed.title}`.trim(), abort.signal)).find(t => t.playable)));
       abort.signal.throwIfAborted();
@@ -61,7 +64,7 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
       const first = resolved[0].status === 'fulfilled' ? resolved[0].value : undefined;
       if (initial && b.seed && !first) throw new Error('Не нашли начальную песню для радио');
       if (!found.length) throw new Error(resolved.every(r => r.status === 'rejected')
-        ? 'YouTube Music не отвечает. Проверьте интернет или VPN и попробуйте снова.' : 'Не нашли основу радио');
+        ? 'YouTube Music не отвечает. Проверьте интернет или VPN и попробуйте снова.' : pinned ? 'Не нашли похожих песен. Попробуйте позже или другой трек.' : 'Не нашли основу радио');
       const results = await Promise.allSettled([...new Set(found.map(t => t.externalId))].slice(0, 3).map(id => s.publicMusic.radio(id, abort.signal)));
       abort.signal.throwIfAborted();
       const pool = results.flatMap(r => r.status === 'fulfilled' ? r.value.map(t => ({ ...t, libraryTrackId: t.libraryTrackId ?? null })) : []);

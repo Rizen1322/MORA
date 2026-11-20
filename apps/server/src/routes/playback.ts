@@ -264,13 +264,22 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
     return { ok: true };
   });
 
-  app.get<{ Querystring: { limit?: string } }>('/api/automix/log', async (req) => ({ items: automix.recent(Math.min(100, Number(req.query.limit) || 30)) }));
+  app.get<{ Querystring: { limit?: string } }>('/api/automix/log', async (req) => ({
+    items: automix.recent(Math.min(100, Math.max(1, Math.trunc(Number(req.query.limit) || 30)))) }));
 
   // --------------------------------------------------------------------- wave
 
-  app.post<{ Body: { currentId?: string | null; session?: string[]; mood?: WaveMood; diversity?: WaveDiversity; mode?: 'normal' | 'mix'; count?: number; exclude?: string[]; offline?: boolean } }>('/api/wave/next', async (req) => {
-    const st = getSettings(db).wave;
+  app.post<{ Body: { currentId?: string | null; session?: string[]; mood?: WaveMood; diversity?: WaveDiversity; mode?: 'normal' | 'mix'; count?: number; exclude?: string[]; offline?: boolean } }>('/api/wave/next', async (req, reply) => {
     const b = req.body ?? {};
+    const ids = (value: unknown) => value === undefined ||
+      (Array.isArray(value) && value.length <= 2000 && value.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 256));
+    if ((b.currentId !== undefined && b.currentId !== null && (typeof b.currentId !== 'string' || b.currentId.length > 256)) ||
+      !ids(b.session) || !ids(b.exclude) ||
+      (b.count !== undefined && (!Number.isInteger(b.count) || b.count < 1 || b.count > 20)) ||
+      (b.mode !== undefined && b.mode !== 'normal' && b.mode !== 'mix')) {
+      return reply.code(400).send({ error: 'Некорректные параметры волны' });
+    }
+    const st = getSettings(db).wave;
     const picks = wave.next({
       currentId: b.currentId ?? null,
       session: b.session ?? [],
@@ -319,7 +328,9 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
   });
 
   app.get<{ Querystring: { limit?: string } }>('/api/history', async (req) => {
-    const rows = q(db, 'SELECT id, track_id, context, started_at, played_ms, end_reason FROM plays ORDER BY id DESC LIMIT ?').all(Math.min(500, Number(req.query.limit) || 100)) as {
+    // A negative LIMIT means "no limit" in SQLite: clamp instead of returning the whole journal.
+    const limit = Math.min(500, Math.max(1, Math.trunc(Number(req.query.limit) || 100)));
+    const rows = q(db, 'SELECT id, track_id, context, started_at, played_ms, end_reason FROM plays ORDER BY id DESC LIMIT ?').all(limit) as {
       id: number;
       track_id: string;
       context: string;

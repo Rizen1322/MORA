@@ -3190,3 +3190,9 @@ button:disabled { cursor: default; }
 .source-check input, .source-row-check { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 
 :root[data-motion="reduced"] *, :root[data-motion="reduced"] *::before, :root[data-motion="reduced"] *::after { animation-duration:1ms!important; animation-iteration-count:1!important; transition-duration:1ms!important; scroll-behavior:auto!important; }
+
+.ui-crash { position: fixed; inset: 0; z-index: 200; display: grid; place-content: center; gap: 14px; padding: 32px; text-align: center; background: var(--bg); color: var(--text); }
+.ui-crash h1 { font-size: 22px; }
+.ui-crash p { max-width: 52ch; color: var(--text-2); }
+.ui-crash pre { max-width: min(680px, 90vw); max-height: 30vh; overflow: auto; white-space: pre-wrap; text-align: left; font-size: 12px; color: var(--danger); }
+.ui-crash-actions { display: flex; justify-content: center; gap: 10px; }

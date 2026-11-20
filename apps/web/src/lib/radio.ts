@@ -144,6 +144,9 @@ function followStation(found: Station, items: PublicTrack[], abort: AbortControl
  */
 let restoring = false, restoreRetryAt = 0;
 function restoreStation(): void {
+  // The desktop host restores and extends its own station; the page's session is not what feeds it there.
+  // Without this guard every playback tick near the queue end started a new search and station sync.
+  if (controller.autonomousRadio) return;
   if (session || restoring || useRadio.getState().loading || Date.now() < restoreRetryAt) return;
   const state = controller.state;
   if (state.context?.type !== 'online-radio' || state.index < 0 || state.queue.length - state.index - 1 > 4) return;
@@ -278,6 +281,8 @@ async function buttonStation(run: (request: number, abort: AbortController) => P
 
 /** "Similar to this song": the playing song stays and the station follows it; any other song starts first. */
 export function startSimilar(t: Track): Promise<void> {
+  // The native host owns the station on the desktop: it can keep the seed as the anchor between refills.
+  if (controller.autonomousRadio) return controller.startDesktopSimilar(t);
   return buttonStation(async (request, abort) => {
     if (t.reaction < 0) throw new Error('Эта песня отмечена дизлайком. Выберите другую основу радио.');
     const context: PlayContext = { type: 'online-radio', label: `Похожее на «${t.title}»` };

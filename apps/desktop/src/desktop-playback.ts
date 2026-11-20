@@ -66,6 +66,8 @@ export class DesktopPlayback {
   private context: NativeRecoverySnapshot['context'];
   private stationRevision = 0;
   private stationAbort = new AbortController();
+  /** Starts still choosing their first track: their station is newer than anything the page can sync. */
+  private stationStarts = 0;
   private stationLoading = false;
   private stationRetryAt = 0;
   private stationSkipped = new Set<string>();
@@ -149,7 +151,11 @@ export class DesktopPlayback {
   }
   async setStation(station: NativeRadioConfig | null, context?: NativeRecoverySnapshot['context']): Promise<NativeMixState> {
     if (station && !['own', 'yandex', 'online'].includes(station.kind)) throw Error('Неизвестный источник волны');
-    const next = station && this.station?.kind === station.kind ? { ...this.station, ...(station.seed ? { seed: station.seed } : {}) } : station;
+    // A sync describes the station the page knew when it sent it; a start in flight already chose a newer
+    // one. Resetting here would abort that start's request and surface the runtime's AbortError to the page.
+    if (this.stationStarts) return this.state();
+    const next = station && this.station?.kind === station.kind
+      ? { ...this.station, ...(station.seed ? { seed: station.seed, anchor: station.anchor } : {}) } : station;
     if (JSON.stringify(next) !== JSON.stringify(this.station)) {
       this.resetStation(); this.station = next ? { ...next } : null;
     }
@@ -160,30 +166,33 @@ export class DesktopPlayback {
   async startStation(station: NativeRadioConfig, config: NativeSourceConfig): Promise<NativeMixState> {
     if (!station || !['own', 'yandex', 'online'].includes(station.kind)) throw Error('Неизвестный источник волны');
     this.resetStation();
-    let revision = this.stationRevision;
-    const skipped: string[] = [];
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const result = await this.request<{ entries: NativeQueueEntry[]; context: NativeRecoverySnapshot['context']; yandexSessionId?: string }>(
-        '/internal/desktop/station-next', { ...station, exclude: skipped, count: 1 }, this.stationAbort.signal);
-      if (revision !== this.stationRevision) throw Error('Запуск отменён');
-      const first = result.entries[0];
-      if (!first) throw Error('Нет доступных рекомендаций');
-      const started = this.startSource(first, config);
-      revision = this.stationRevision;
-      try { await started; }
-      catch (error) {
-        if (revision !== this.stationRevision || ![404, 409, 410, 502].includes((error as { statusCode?: number }).statusCode ?? 0) || attempt === 5) throw error;
-        skipped.push(first.trackId);
-        continue;
+    this.stationStarts++;
+    try {
+      let revision = this.stationRevision;
+      const skipped: string[] = [];
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const result = await this.request<{ entries: NativeQueueEntry[]; context: NativeRecoverySnapshot['context']; yandexSessionId?: string }>(
+          '/internal/desktop/station-next', { ...station, exclude: skipped, count: 1 }, this.stationAbort.signal);
+        if (revision !== this.stationRevision) throw Error('Запуск отменён');
+        const first = result.entries[0];
+        if (!first) throw Error('Нет доступных рекомендаций');
+        const started = this.startSource(first, config);
+        revision = this.stationRevision;
+        try { await started; }
+        catch (error) {
+          if (revision !== this.stationRevision || ![404, 409, 410, 502].includes((error as { statusCode?: number }).statusCode ?? 0) || attempt === 5) throw error;
+          skipped.push(first.trackId);
+          continue;
+        }
+        if (revision !== this.stationRevision || this.current?.entryId !== first.entryId) return this.state();
+        this.stationSkipped = new Set(skipped);
+        this.station = { ...station, ...(result.yandexSessionId ? { yandexSessionId: result.yandexSessionId } : {}) };
+        this.context = result.context;
+        void this.refillStation();
+        return this.state();
       }
-      if (revision !== this.stationRevision || this.current?.entryId !== first.entryId) return this.state();
-      this.stationSkipped = new Set(skipped);
-      this.station = { ...station, ...(result.yandexSessionId ? { yandexSessionId: result.yandexSessionId } : {}) };
-      this.context = result.context;
-      void this.refillStation();
       return this.state();
-    }
-    return this.state();
+    } finally { this.stationStarts--; }
   }
   private async refillStation(): Promise<void> {
     const station = this.station, current = this.current, revision = this.stationRevision;

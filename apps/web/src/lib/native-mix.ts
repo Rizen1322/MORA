@@ -105,6 +105,8 @@ export interface NativeQueueEntry {
 export interface NativeRadioConfig {
   kind: 'own' | 'yandex' | 'online';
   seed?: { title: string; artist: string };
+  /** Keep the station anchored to `seed` instead of drifting to the listener's taste ("similar to this track"). */
+  anchor?: 'seed';
   yandexSessionId?: string;
 }
 export interface NativeRecoverySnapshot {
