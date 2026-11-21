@@ -570,6 +570,7 @@ extension MoraRootViewController {
             try capture("native-restored-player")
             restoredPlayer.close("close")
             let controller = NativeQueueController.shared
+            if controller.shuffle { try await controller.setMode("shuffle") }
             let context = NativeQueueController.Context(type: "library", id: nil, label: "Проверка очереди")
             try await controller.play(trackIds: [restoredTrack.id, restoredTrack.id], at: 0, context: context, startPaused: true)
             let playingEntry = controller.currentEntry
