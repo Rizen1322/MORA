@@ -181,7 +181,18 @@ describe('server in JavaScriptCore (server-jsc.js)', () => {
   });
 
   it('boots the iOS radio route with native-only authentication', async () => {
-    expect((await server.request('POST', '/api/mobile/station-next', { kind: 'online', exclude: [] })).status).toBe(403);
+    const payload = JSON.stringify({ kind: 'online', exclude: [] });
+    const headers = { 'content-type': 'application/json' };
+    expect((await server.request('POST', '/api/mobile/station-next', payload, headers)).status).toBe(403);
+    const native = await server.request('POST', '/api/mobile/station-next', payload, { ...headers, 'x-mora-native': 'test-internal-token' });
+    expect(native.status).toBe(422);
+  });
+  it('restores the native queue with its position and duplicate occurrences', async () => {
+    const url = '/api/queue?native=1';
+    expect(JSON.parse((await server.request('GET', url)).text)).toEqual({});
+    const body = { items: [{ trackId: 'same', entryId: 'first' }, { trackId: 'same', entryId: 'second' }], index: 1, position: 37, shuffle: false, repeat: 'all' };
+    expect((await server.request('PUT', '/api/queue', JSON.stringify(body), { 'content-type': 'application/json' })).status).toBe(200);
+    expect(JSON.parse((await server.request('GET', url)).text)).toEqual(body);
   });
   it('protects /api/mobile/yandex-credentials with internalToken', async () => {
     const noHeader = await server.request('GET', '/api/mobile/yandex-credentials');

@@ -18,6 +18,10 @@ struct NativeDownloadJob: Codable, Equatable, Identifiable {
         guard receivedBytes > 0, expectedBytes >= receivedBytes, elapsed > 0 else { return nil }
         return Double(expectedBytes - receivedBytes) * elapsed / Double(receivedBytes)
     }
+    mutating func fail(_ message: String) {
+        state = .failed
+        error = message
+    }
     mutating func apply(_ action: String) {
         guard state != .done && state != .cancelled else { return }
         switch action {

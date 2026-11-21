@@ -202,8 +202,7 @@ import Network
             DispatchQueue.main.async {
                 guard let id = downloadTask.taskDescription, self.tasks[id] === downloadTask,
                       let i = self.jobs.firstIndex(where: { $0.id == id }) else { return }
-                self.jobs[i].state = .failed
-                self.jobs[i].error = "Не удалось сохранить аудио: \(error.localizedDescription)"
+                self.jobs[i].fail("Не удалось сохранить аудио: \(error.localizedDescription)")
                 self.publish(force: true)
             }
             return
@@ -212,7 +211,8 @@ import Network
             defer { try? FileManager.default.removeItem(at: staged) }
             guard let id = downloadTask.taskDescription, self.tasks[id] === downloadTask, let i = self.jobs.firstIndex(where: { $0.id == id }) else { return }
             guard let response = downloadTask.response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
-                self.jobs[i].state = .failed; self.jobs[i].error = "Сервис отклонил загрузку — обновите адрес в MORA"; self.publish(force: true); return
+                self.jobs[i].fail("Сервис отклонил загрузку — обновите адрес в MORA")
+                self.publish(force: true); return
             }
             do {
                 let bytes = try staged.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
@@ -222,7 +222,7 @@ import Network
                 try FileManager.default.moveItem(at: staged, to: destination)
                 try FileManager.default.setAttributes(NativePreparationFiles.attributes, ofItemAtPath: destination.path)
                 self.jobs[i].receivedBytes = Int64(bytes); self.jobs[i].expectedBytes = Int64(bytes); self.jobs[i].state = .done; self.jobs[i].error = nil
-            } catch { self.jobs[i].state = .failed; self.jobs[i].error = error.localizedDescription }
+            } catch { self.jobs[i].fail(error.localizedDescription) }
             self.publish(force: true)
         }
     }

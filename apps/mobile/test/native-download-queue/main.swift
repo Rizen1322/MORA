@@ -24,3 +24,9 @@ job.receivedBytes = 1400
 assert(job.reservedBytes == 1400, "Unknown content length must reserve received bytes")
 job.receivedBytes = 400
 assert(job.reservedBytes == 1000, "Queued transfers keep their estimate reserved")
+
+var diskFailure = job
+diskFailure.fail("Не удалось сохранить аудио")
+assert(diskFailure.state == .failed && diskFailure.error == "Не удалось сохранить аудио")
+diskFailure.apply("retry")
+assert(diskFailure.state == .queued && diskFailure.error == nil)

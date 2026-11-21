@@ -25,7 +25,8 @@ import Foundation
     private(set) var waveSource: String? // own | yandex | online | nil
     private(set) var waveLoading = false
     private(set) var waveError: String?
-    private(set) var pendingTrackId: String?
+    private var pendingEntry: Entry?
+    var pendingTrackId: String? { pendingEntry?.trackId }
     private var resumePosition = 0.0
     private var savedPosition = 0.0
     private var wasPlaying = false
@@ -121,6 +122,11 @@ import Foundation
         }
         switch action {
         case "remove":
+            if pendingEntry?.entryId == entryId {
+                revision &+= 1
+                pendingEntry = nil
+                NativeMixHost.shared.cancelPendingStart()
+            }
             if from == index {
                 let nextIdx = from + 1 < entries.count ? from : (entries.count > 1 ? from - 1 : -1)
                 var remaining = entries
@@ -397,7 +403,7 @@ import Foundation
     /// Wave settings changed: the next launch must build a fresh queue with them.
     func resetForNewSettings() {
         revision &+= 1
-        pendingTrackId = nil
+        pendingEntry = nil
         waveWaitTask?.cancel(); waveWaitTask = nil; waveWaitEntry = nil
         waveSource = nil
         waveOffline = false
@@ -428,11 +434,11 @@ import Foundation
         let host = NativeMixHost.shared
         host.cancelPendingStart()
         syncTask?.cancel()
-        pendingTrackId = entry.trackId
+        pendingEntry = entry
         onStateChange?()
         defer {
             if rev == revision {
-                pendingTrackId = nil
+                pendingEntry = nil
                 onStateChange?()
                 scheduleSync()
             }
@@ -449,9 +455,12 @@ import Foundation
         let manifest: [String: Any]
         do {
             manifest = try await NativeServerApp.request("POST", "/api/mobile/native-sources", body: body, timeout: networkSource ? Self.networkWait : 30)
-        } catch let error as URLError where error.code == .timedOut && networkSource {
+        } catch {
             guard rev == revision else { throw CancellationError() }
-            throw NativeMediaHTTP.Failure.transport(error.errorCode)
+            if let urlError = error as? URLError, urlError.code == .timedOut, networkSource {
+                throw NativeMediaHTTP.Failure.transport(urlError.errorCode)
+            }
+            throw error
         }
         guard rev == revision else { throw CancellationError() }
         guard let item = (manifest["items"] as? [[String: Any]])?.first else {
@@ -629,9 +638,12 @@ import Foundation
 
     private func stopPlayback() {
         revision &+= 1
-        pendingTrackId = nil
+        pendingEntry = nil
         finishPlay(reason: "stop")
         sessionId = nil
+        waveSource = nil
+        waveOffline = false
+        context = Context(type: "library", id: nil, label: "Медиатека")
         resumePosition = 0
         wasPlaying = false
         NativeMixHost.shared.stop { _ in }
