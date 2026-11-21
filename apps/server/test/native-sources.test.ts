@@ -26,6 +26,18 @@ it('rejects malformed queue file keys before querying any provider', async () =>
   await expect(nativeSources({} as Services, [{ trackId: 'x', entryId: 'x', file: -1 }], 'x')).rejects.toThrow('Неверная очередь');
 });
 
+it('skips a deleted or zero-duration future track without losing valid occurrences', async () => {
+  const services = svc(async () => ({ kind: 'direct', url: 'https://audio.test/live.mp3' }));
+  const original = services.lib.media.bind(services.lib);
+  vi.spyOn(services.lib, 'media').mockImplementation(id => {
+    const track = original(id);
+    return id === 'deleted' ? null : id === 'empty' && track ? { ...track, duration: 0 } : track;
+  });
+  const tracks = ['deleted', 'live', 'empty', 'live'];
+  const manifest = await nativeSources(services, tracks.map((trackId, file) => ({ trackId, file, entryId: String(file) })), 'current');
+  expect(manifest.items.map(item => item.entryId)).toEqual(['1', '3']);
+});
+
 afterEach(() => { vi.useRealTimers(); });
 const svc = (resolve: (source: { external_id: string }) => Promise<unknown>) => ({ db: {}, lib: {
   get: () => null,

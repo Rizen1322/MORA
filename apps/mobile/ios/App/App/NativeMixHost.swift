@@ -330,6 +330,13 @@ final class NativeMixHost {
                 self.reply(completion, .failure(error))
             }
     }
+    func cancelPendingStart() {
+        work.async {
+            self.initialTicket?.cancel()
+            self.initialTicket = nil; self.initialConfig = [:]
+        }
+    }
+
     /// The first song follows the same native loader/decoder as the future queue.
     /// No page callback is needed between download completion and audio start.
     func prepareStart(id: String, item: [String: Any], config: [String: Any], networkTimeout: TimeInterval? = nil, completion: @escaping Reply) {
@@ -766,6 +773,10 @@ final class NativeMixHost {
     /// Speed/pitch, tone and volume change live and carry over to later selects.
     func settings(_ values: [String: Any], completion: @escaping Reply) {
         work.async {
+            if values["tone"] != nil && values["preDb"] == nil {
+                self.config.removeValue(forKey: "preDb")
+                self.initialConfig.removeValue(forKey: "preDb")
+            }
             for key in ["tone", "preDb", "playback", "volume"] { if let value = values[key] { self.config[key] = value } }
             if self.initialTicket != nil {
                 for key in ["tone", "preDb", "playback", "volume"] { if let value = values[key] { self.initialConfig[key] = value } }
@@ -903,7 +914,7 @@ final class NativeMixHost {
         if artworks.indices.contains(index), let artwork = artworks[index] { info[MPMediaItemPropertyArtwork] = artwork }
         let publishedInfo = info
         let publishedTrackId = tracks.indices.contains(index) ? tracks[index]["trackId"] as? String ?? "" : ""
-        NativeStationFiles.updatePosition(trackId: publishedTrackId, position: position)
+        NativeStationFiles.updatePosition(entryId: state["entryId"] as? String ?? "", trackId: publishedTrackId, position: position)
         let canAdvance = tracks.indices.contains(index + 1) || preparation?.hasRemaining == true || pendingSkips > 0
         let canReverse = canGoBack
         var event = state

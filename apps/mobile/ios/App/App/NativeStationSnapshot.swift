@@ -14,6 +14,7 @@ struct NativeStationSnapshot: Codable, Equatable {
         var duration: Double
         var artwork: String?
         var localFile: String?
+        var entryId: String? = nil
     }
     struct Settings: Codable, Equatable { var mood: String, diversity: String, mode: String }
     var schemaVersion = 1
@@ -52,6 +53,13 @@ struct NativeStationSnapshot: Codable, Equatable {
               ["normal", "mix"].contains(settings.mode),
               tracks.allSatisfy({ !$0.trackId.isEmpty && $0.trackId.utf8.count <= 512 && $0.duration.isFinite && $0.duration >= 0 }) else { throw Failure.invalid }
     }
+    func indexOfPlayingEntry(_ entryId: String, trackId: String) -> Int? {
+        tracks.firstIndex { track in
+            if let savedEntry = track.entryId { return savedEntry == entryId }
+            return track.trackId == trackId // Snapshots written before queue entries had identifiers.
+        }
+    }
+
     func localTracks(in root: URL) throws -> [Track] {
         try validate()
         func available(_ track: Track) -> Bool {

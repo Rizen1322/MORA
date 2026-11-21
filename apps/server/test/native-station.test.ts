@@ -20,6 +20,29 @@ it('replaces a restricted station candidate without discarding playable recommen
   } finally { await app.close(); }
 });
 
+it('uses catalog recommendations on the private iOS route', async () => {
+  const app = Fastify();
+  const item = (id: string) => ({ externalId: id, title: id, artist: id, playable: true, audioProvider: 'youtube' });
+  const radio = vi.fn(async () => [item('fresh')]);
+  const prepareProgressive = vi.fn(async (_provider: string, id: string) => `local-${id}`);
+  const services = { cfg: {}, db: { prepare: () => ({ get: () => undefined, all: () => [] }) },
+    lib: { listDTO: () => [], sources: () => [] },
+    publicMusic: { search: async () => [item('seed')], radio, prepareProgressive } } as unknown as Services;
+  vi.stubGlobal('moraHost', { internalToken: 'ios-token' });
+  registerNativeStationRoutes(app, services);
+  const request = { method: 'POST' as const, url: '/api/mobile/station-next', payload: { kind: 'online', exclude: [], seed: item('seed') } };
+  try {
+    expect((await app.inject(request)).statusCode).toBe(403);
+    const response = await app.inject({ ...request, headers: { 'x-mora-native': 'ios-token' } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().entries.map((entry: { trackId: string }) => entry.trackId)).toEqual(['local-seed', 'local-fresh']);
+    expect(radio).toHaveBeenCalledWith('seed', expect.any(AbortSignal));
+  } finally {
+    vi.unstubAllGlobals();
+    await app.close();
+  }
+});
+
 it('carries artist spacing over the native queue refill boundary including collaborations', async () => {
   const app = Fastify();
   const item = (id: string, artist: string) => ({ externalId: id, title: id, artist, playable: true, audioProvider: 'youtube' });

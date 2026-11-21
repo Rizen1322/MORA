@@ -180,6 +180,9 @@ describe('server in JavaScriptCore (server-jsc.js)', () => {
     expect(JSON.parse(status.text)).toEqual({ job: null });
   });
 
+  it('boots the iOS radio route with native-only authentication', async () => {
+    expect((await server.request('POST', '/api/mobile/station-next', { kind: 'online', exclude: [] })).status).toBe(403);
+  });
   it('protects /api/mobile/yandex-credentials with internalToken', async () => {
     const noHeader = await server.request('GET', '/api/mobile/yandex-credentials');
     expect(noHeader.status).toBe(403);

@@ -55,12 +55,12 @@ enum NativeStationFiles {
             try? fm.removeItem(at: url)
         }
     }
-    static func updatePosition(trackId: String, position: Double) {
+    static func updatePosition(entryId: String, trackId: String, position: Double) {
         playbackIO.async {
             let now = ProcessInfo.processInfo.systemUptime
             guard now - lastPositionWrite >= 1.5 else { return }
             lock.lock(); defer { lock.unlock() }
-            guard var snapshot = try? load(), let at = snapshot.tracks.firstIndex(where: { $0.trackId == trackId }) else { return }
+            guard var snapshot = try? load(), let at = snapshot.indexOfPlayingEntry(entryId, trackId: trackId) else { return }
             snapshot.index = at; snapshot.position = position; snapshot.updatedAt = .now
             do { try save(snapshot); lastPositionWrite = now } catch {}
         }

@@ -40,7 +40,7 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
   await Promise.all(Array.from({ length: Math.min(4, entries.length) }, async () => {
     while (next < entries.length) {
       const index = next++, entry = entries[index], track = s.lib.media(entry.trackId);
-      if (!track || !(track.duration > 0)) throw Error('Неподдерживаемый трек в очереди');
+      if (!track || !(track.duration > 0)) continue;
       const identity = s.lib.get(entry.trackId) ?? track;
       const sources = s.lib.sources(track.id), remote = sources.find(source => source.kind === 'remote');
       const resolving = (async (): Promise<NativeMediaSource> => {
@@ -107,9 +107,10 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
   const previous = s.lib.media(previousId);
   if (!previous) throw Error('Текущий трек не найден');
   // Dead entries are not handed to native; the page removes them by entryId.
+  const settings = getSettings(s.db);
   return { items: items.filter(item => item && item.source.kind !== 'unavailable'), previous: { trackId: previousId, duration: previous.duration,
     mixingAllowed: s.lib.mixingPolicy.get(previous.provider) === true, analysis: s.analysis.get(previous.content_hash) },
-    settings: getSettings(s.db).automix, feedback: s.automix.ratingStats() };
+    settings: settings.automix, sound: settings.sound, feedback: s.automix.ratingStats() };
 }
 
 /** Verifies that an internal mobile request came from Swift rather than the WebView. */

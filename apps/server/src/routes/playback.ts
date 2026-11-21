@@ -337,7 +337,8 @@ export function registerPlaybackRoutes(app: FastifyInstance, s: Services): void 
 
   // -------------------------------------------------------------------- queue
 
-  app.get('/api/queue', async () => kvGet(db, 'queue', null));
+  app.get<{ Querystring: { native?: string } }>('/api/queue', async (req) =>
+    kvGet(db, 'queue', null) ?? (req.query.native === '1' ? {} : null));
   app.put<{ Body: unknown }>('/api/queue', async (req, reply) => {
     const body = req.body as { items?: unknown[] } | null;
     if (!body || !Array.isArray(body.items) || body.items.length > 5000) return reply.code(400).send({ error: 'некорректная очередь' });

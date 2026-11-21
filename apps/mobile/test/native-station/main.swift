@@ -14,6 +14,13 @@ var librarySnapshot = snapshot; librarySnapshot.context = "library"
 assert(!librarySnapshot.isWave)
 let local = try decoded.localTracks(in: root)
 assert(local.count == 1)
+assert(decoded.indexOfPlayingEntry("legacyEntry", trackId: "one") == 0)
+var repeated = snapshot
+var first = track; first.entryId = "first"
+var second = track; second.entryId = "second"
+repeated.tracks = [first, second]
+assert(repeated.indexOfPlayingEntry("second", trackId: "one") == 1)
+assert(repeated.indexOfPlayingEntry("missing", trackId: "one") == nil)
 for bytes in [Data(), Data("broken".utf8), Data("{}".utf8)] {
     do { _ = try NativeStationSnapshot.decode(bytes); assertionFailure("Accepted corrupt snapshot") } catch {}
 }

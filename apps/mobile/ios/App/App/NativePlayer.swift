@@ -88,7 +88,7 @@ final class NativePlayerModel: ObservableObject {
             defer { then?() }
             guard let self, case .success(let value) = result else { return }
             var next = NativePlayerState(value)
-            let restored = !next.active ? NativeShellStore.shared?.ui.now : nil
+            let restored = next.entryId.isEmpty ? NativeShellStore.shared?.ui.now : nil
             if let restored {
                 next = NativePlayerState(["active": true, "playing": restored.playing, "entryId": restored.entryId,
                     "position": restored.position, "duration": restored.duration,
@@ -127,23 +127,27 @@ final class NativePlayerModel: ObservableObject {
     /// The same command path as the lock screen.
     private func send(_ action: String, time: Double? = nil, then: (() -> Void)? = nil) {
         // `then` runs once the post-command state is shown, so a seek target never flashes back to the old position.
-        if !host.active, let store = NativeShellStore.shared {
-            Task { @MainActor in
+        Task { @MainActor in
+            let queue = NativeQueueController.shared
+            if let store = NativeShellStore.shared,
+               !host.active || (store.sharedLibrary && queue.ownsQueue) {
                 do {
                     if store.sharedLibrary {
-                        try await NativeQueueController.shared.command(action, seekTime: time)
+                        try await queue.command(action, seekTime: time)
                     } else {
                         var args: [String: Any] = ["action": action]
                         if let time { args["time"] = time }
                         _ = try await store.call("playerCommand", args)
                     }
-                } catch { self.actionError = error.localizedDescription }
+                } catch {
+                    if !NativeShellStore.isCancelled(error) { self.actionError = error.localizedDescription }
+                }
                 self.refresh(then: then)
+                return
             }
-            return
-        }
-        host.command(action, time: time, source: "player") { [weak self] _ in
-            if let self { self.refresh(then: then) } else { then?() }
+            host.command(action, time: time, source: "player") { [weak self] _ in
+                if let self { self.refresh(then: then) } else { then?() }
+            }
         }
     }
     func transport(_ action: String) {

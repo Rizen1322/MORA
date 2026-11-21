@@ -193,10 +193,21 @@ import Network
         }
     }
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        guard let root = Self.root else { return }
-        let staged = root.appendingPathComponent(UUID().uuidString + ".partial")
-        do { try FileManager.default.moveItem(at: location, to: staged) }
-        catch { DispatchQueue.main.async { NativeShellStore.shared?.show("Не удалось сохранить аудио: \(error.localizedDescription)") }; return }
+        let staged: URL
+        do {
+            guard let root = Self.root else { throw CocoaError(.fileNoSuchFile) }
+            staged = root.appendingPathComponent(UUID().uuidString + ".partial")
+            try FileManager.default.moveItem(at: location, to: staged)
+        } catch {
+            DispatchQueue.main.async {
+                guard let id = downloadTask.taskDescription, self.tasks[id] === downloadTask,
+                      let i = self.jobs.firstIndex(where: { $0.id == id }) else { return }
+                self.jobs[i].state = .failed
+                self.jobs[i].error = "Не удалось сохранить аудио: \(error.localizedDescription)"
+                self.publish(force: true)
+            }
+            return
+        }
         DispatchQueue.main.async {
             defer { try? FileManager.default.removeItem(at: staged) }
             guard let id = downloadTask.taskDescription, self.tasks[id] === downloadTask, let i = self.jobs.firstIndex(where: { $0.id == id }) else { return }
@@ -207,7 +218,7 @@ import Network
                 let bytes = try staged.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                 let other = self.jobs.filter { $0.id != id && ![.cancelled, .failed].contains($0.state) }.reduce(Int64(0)) { $0 + $1.reservedBytes }
                 guard bytes > 0, Int64(bytes) + other <= self.limitBytes else { throw self.failure("Пустой файл или превышен лимит кэша") }
-                let destination = root.appendingPathComponent(id + ".media")
+                let destination = staged.deletingLastPathComponent().appendingPathComponent(id + ".media")
                 try FileManager.default.moveItem(at: staged, to: destination)
                 try FileManager.default.setAttributes(NativePreparationFiles.attributes, ofItemAtPath: destination.path)
                 self.jobs[i].receivedBytes = Int64(bytes); self.jobs[i].expectedBytes = Int64(bytes); self.jobs[i].state = .done; self.jobs[i].error = nil

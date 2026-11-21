@@ -105,6 +105,9 @@ struct NativeSoundView: View {
                 let latest = try await NativeServerApp.request("GET", "/api/settings")
                 let state = try NativeSoundState(latest)
                 let response = try await NativeServerApp.request("PUT", "/api/settings", body: state.patch(edit))
+                if let sound = response["sound"] as? [String: Any], let tone = sound["tone"] {
+                    NativeMixHost.shared.settings(["tone": tone]) { _ in }
+                }
                 sound = try NativeSoundState(response)
             } catch {
                 let saveError = error.localizedDescription
