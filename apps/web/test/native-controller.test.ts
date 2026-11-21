@@ -77,6 +77,19 @@ it('hydrates a reloaded page from the audible native track and controls it witho
   expect(mix.command.mock.calls.map(c => c[0])).toEqual(['pause', 'play']);
   expect(mix.upload).not.toHaveBeenCalled(); expect(mix.start).not.toHaveBeenCalled(); expect(mix.prepareQueue).not.toHaveBeenCalled();
 });
+it('leaves a Swift-owned queue with its owner when WebContent reloads', async () => {
+  const entry = { trackId: 'a', entryId: 'entry-a', origin: 'user' as const };
+  vi.mocked(api.queue).mockResolvedValue({ items: [entry], index: 0, position: 8, context: null, repeat: 'off', shuffle: false });
+  const mix = { state: vi.fn(async () => state({ entryId: 'entry-a', position: 11, listeningOwned: true })), prepareQueue: vi.fn() };
+  vi.stubGlobal('window', { moraNativePlayback: { route: 'webkit', mixActive: true, mix } });
+  const controller = new PlayerController(id => ({ id, duration: 120 } as Track), vi.fn());
+  await controller.restore();
+  expect(controller.state).toMatchObject({ queue: [entry], position: 8, status: 'idle' });
+  expect(mix.state).toHaveBeenCalledOnce();
+  expect(mix.prepareQueue).not.toHaveBeenCalled();
+  expect(api.saveQueue).not.toHaveBeenCalled();
+});
+
 it('does not apply an old native restore after a newer playback intent', async () => {
   const entry = { trackId: 'old', entryId: 'entry-old', origin: 'user' as const };
   vi.mocked(api.queue).mockResolvedValue({ items: [entry], index: 0, position: 4, context: null, repeat: 'off', shuffle: false });

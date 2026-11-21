@@ -135,6 +135,7 @@ final class NativeMixHost {
         let duration = tracks.indices.contains(index) ? NativeMixTimeline.duration(tracks[index], sampleRate: sr) : 0
         let state: [String: Any] = ["active": folder != nil, "playing": wantsPlaying && !failed,
             "preparing": preparing, "controlRevision": controlRevision, "index": index, "position": position, "duration": duration,
+            "listeningOwned": config["listeningOwned"] as? Bool == true,
             "renderedFrames": rendered, "queuedFrames": queued, "presentedFrames": presented,
             "epoch": epoch, "ownership": ownershipRevision, "underruns": underruns, "maxRenderMs": maxRenderMs, "failed": failed,
             "outputBufferCount": outputBufferCount, "outputLatency": outputLatency,

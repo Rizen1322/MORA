@@ -651,6 +651,14 @@ export class PlayerController {
   private onNativeState(s: NativeMixState): void {
     if (desktop?.nativeMix && this.nativeStarting) return;
     if (this.nativeAt < 0) return;
+    if (s.listeningOwned && !desktop?.nativeMix) {
+      this.nativeAt = -1;
+      this.nativeRevision++;
+      this.nativeAbort.abort();
+      if (this.saveTimer) clearTimeout(this.saveTimer);
+      this.set({ status: 'idle' });
+      return;
+    }
     if (!s.active || s.failed) {
       this.nativeRevision++; this.nativeAbort.abort(); this.nativeManifestKey = '';
       this.nativeAt = -1;
@@ -2645,7 +2653,8 @@ export class PlayerController {
       if (stale()) return;
       const saved = q && Array.isArray(q.items) ? q : null;
       const items = saved?.items.filter((e) => this.track(e.trackId)) ?? [];
-      const active = native?.active && !native.failed && (!native.preparing || desktop?.nativeMix && native.currentTrack) ? native : null;
+      const active = native?.active && !native.failed && (!native.listeningOwned || !!desktop?.nativeMix)
+        && (!native.preparing || desktop?.nativeMix && native.currentTrack) ? native : null;
       const hostQueue = active?.queue;
       if (hostQueue?.some(e => !this.track(e.trackId))) await this.refreshLibrary();
       // A native queue can outlive WebContent and its last persisted position.

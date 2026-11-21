@@ -345,8 +345,16 @@ import Foundation
     func syncFromHost(_ snapshot: [String: Any]) {
         guard snapshot["active"] as? Bool == true else { return }
         if let idx = snapshot["index"] as? Int { hostIndex = idx }
-        guard let eid = snapshot["entryId"] as? String,
-              let found = entries.firstIndex(where: { $0.entryId == eid }) else { return }
+        guard let eid = snapshot["entryId"] as? String, !eid.isEmpty else { return }
+        if snapshot["listeningOwned"] as? Bool != true, ownsQueue, pendingEntry == nil {
+            ownsQueue = false
+            entries = []; originalEntries = nil; index = 0
+            waveSource = nil; waveOffline = false
+            syncTask?.cancel(); unsavedQueue = nil
+            onStateChange?()
+            return
+        }
+        guard let found = entries.firstIndex(where: { $0.entryId == eid }) else { return }
         resumePosition = snapshot["position"] as? Double ?? resumePosition
         let playing = snapshot["playing"] as? Bool == true
         let paused = wasPlaying && !playing
@@ -479,7 +487,8 @@ import Foundation
         guard let preparedItem = resolved.first else {
             throw NSError(domain: "NativeQueue", code: 5, userInfo: [NSLocalizedDescriptionKey: "Файл трека недоступен"])
         }
-        var config: [String: Any] = ["sampleRate": 48000.0, "position": position, "paused": paused, "gainDb": 0.0]
+        var config: [String: Any] = ["sampleRate": 48000.0, "position": position, "paused": paused,
+                                     "gainDb": 0.0, "listeningOwned": true]
         if let sound = manifest["sound"] as? [String: Any] {
             config["tone"] = sound["tone"]
             config["playback"] = sound["playback"]
