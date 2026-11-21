@@ -19,7 +19,32 @@ final class NativePreparationTicket: @unchecked Sendable {
 /// Native file transport while the background-audio process is running. No WebView
 /// fetch, JS wake-up, page timer or finite beginBackgroundTask is involved.
 final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDelegate, @unchecked Sendable {
-    enum Failure: Error { case invalidURL, http(Int), transport(Int), network, cancelled, tooLarge }
+    enum Failure: LocalizedError {
+        case invalidURL, http(Int), transport(Int), network, cancelled, tooLarge
+
+        static func isConnectionLoss(_ error: Error) -> Bool {
+            let code: Int
+            switch error {
+            case Failure.transport(let value): code = value
+            case let url as URLError: code = url.errorCode
+            default: return false
+            }
+            switch URLError.Code(rawValue: code) {
+            case .timedOut, .notConnectedToInternet, .networkConnectionLost, .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost:
+                return true
+            default: return false
+            }
+        }
+
+        var errorDescription: String? {
+            if Self.isConnectionLoss(self) { return "Не удалось загрузить трек. Проверьте подключение к интернету." }
+            switch self {
+            case .invalidURL, .http, .transport, .network: return "Не удалось загрузить трек из этого источника."
+            case .cancelled: return "Загрузка отменена."
+            case .tooLarge: return "Аудиофайл слишком большой для воспроизведения."
+            }
+        }
+    }
     private final class Transfer {
         let destination: URL, partial: URL, file: FileHandle, limit: Int, ticket: NativePreparationTicket
         let completion: (Result<Void, Error>) -> Void

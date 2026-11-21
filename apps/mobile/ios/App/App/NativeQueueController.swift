@@ -30,6 +30,10 @@ import Foundation
     private var revision = 0
     private var hostIndex = 0
     private var waveOffline = false
+    private static let networkWait: TimeInterval = 12
+    private var retryWaveOnlineAt: TimeInterval = 0
+    private var waveWaitEntry: String?
+    private var waveWaitTask: Task<Void, Never>?
     private var activePlayId: Int?
     private var playStartedAt = Date()
     private var yandexSessionId: String?
@@ -41,11 +45,13 @@ import Foundation
 
     var currentEntry: Entry? { entries.indices.contains(index) ? entries[index] : nil }
     var isWave: Bool { waveSource != nil || ["wave", "yandex-wave", "online-radio"].contains(context.type) }
+    var weakWaveNetwork: Bool { isWave && waveOffline && retryWaveOnlineAt > 0 }
 
     func play(trackIds: [String], at startIndex: Int, context: Context, startPaused: Bool = false, keepWave: Bool = false) async throws {
         guard !trackIds.isEmpty else { return }
         if !keepWave {
             waveSource = nil
+            waveOffline = false
             yandexSessionId = nil
             yandexQueueIds = []
             waveError = nil
@@ -196,18 +202,37 @@ import Foundation
     }
 
     func startWave(source: String, offline: Bool) async throws {
-        if waveSource == source && NativeMixHost.shared.active {
+        guard !waveLoading else { return }
+        if waveSource == source, NativeMixHost.shared.active, NativeMixHost.shared.snapshot["ended"] as? Bool != true,
+           NativeMixHost.shared.snapshot["entryId"] as? String == currentEntry?.entryId {
             try await command("toggle")
             return
         }
+        try await launchWave(source: source, offline: offline)
+    }
+
+    private func launchWave(source: String, offline: Bool) async throws {
         waveLoading = true
         waveError = nil
-        waveOffline = offline
         onStateChange?()
         defer { waveLoading = false; onStateChange?() }
+        let useOffline = offline || ProcessInfo.processInfo.systemUptime < retryWaveOnlineAt
+        do {
+            try await loadWave(source: source, offline: useOffline)
+            if !useOffline { retryWaveOnlineAt = 0 }
+        } catch where !useOffline && (NativeMediaHTTP.Failure.isConnectionLoss(error)
+            || (source == "yandex" && [502, 503, 504].contains((error as? NativeServer.RequestFailure)?.status ?? 0))) {
+            retryWaveOnlineAt = ProcessInfo.processInfo.systemUptime + 60
+            try await loadWave(source: source, offline: true)
+        }
+    }
+
+    private func loadWave(source: String, offline: Bool) async throws {
+        let rev = revision
 
         if source == "yandex" && !offline {
-            let res = try await NativeServerApp.request("POST", "/api/providers/yandex/wave", body: ["count": 2, "queue": Array(yandexQueueIds.suffix(100))])
+            let res = try await NativeServerApp.request("POST", "/api/providers/yandex/wave", body: ["count": 2, "queue": Array(yandexQueueIds.suffix(100))], timeout: Self.networkWait)
+            guard rev == revision else { throw CancellationError() }
             yandexSessionId = (res["sessionId"] as? String) ?? (res["session"] as? String)
             let items = res["items"] as? [[String: Any]] ?? []
             var ids: [String] = []
@@ -216,8 +241,11 @@ import Foundation
                 let tid: String?
                 if let existing = item["trackId"] as? String, !existing.isEmpty { tid = existing }
                 else if let track = item["track"] as? [String: Any] {
-                    let imp = try? await NativeServerApp.request("POST", "/api/providers/yandex/import", body: ["track": track])
-                    tid = imp?["trackId"] as? String
+                    do {
+                        let imp = try await NativeServerApp.request("POST", "/api/providers/yandex/import", body: ["track": track], timeout: Self.networkWait)
+                        tid = imp["trackId"] as? String
+                    } catch where !NativeMediaHTTP.Failure.isConnectionLoss(error) { tid = nil }
+                    guard rev == revision else { throw CancellationError() }
                 } else { tid = nil }
                 if let tid, (NativeShellStore.shared?.reaction(tid) ?? 0) >= 0, !ids.contains(tid) {
                     ids.append(tid)
@@ -228,18 +256,24 @@ import Foundation
                 throw NSError(domain: "NativeWave", code: 1, userInfo: [NSLocalizedDescriptionKey: waveError!])
             }
             waveSource = "yandex"
+            waveOffline = false
             try await play(trackIds: ids, at: 0, context: Context(type: "yandex-wave", id: "yandex", label: "Моя волна · Яндекс"), keepWave: true)
             return
         }
 
         let res = try await NativeServerApp.request("POST", "/api/wave/next", body: ["count": 4, "offline": offline])
-        let picks = (res["picks"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+        guard rev == revision else { throw CancellationError() }
+        var picks = (res["picks"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+        if offline && picks.count < 4 { picks += downloadedWaveTracks(excluding: Set(picks), count: 4 - picks.count) }
+        waveOffline = offline
         guard !picks.isEmpty else {
             waveError = offline ? "Нет скачанных треков для офлайн-волны" : "Добавьте треки в медиатеку, чтобы запустить волну"
             throw NSError(domain: "NativeWave", code: 2, userInfo: [NSLocalizedDescriptionKey: waveError!])
         }
-        waveSource = source == "online" ? "online" : "own"
-        try await play(trackIds: picks, at: 0, context: Context(type: source == "online" ? "online-radio" : "wave", id: source, label: source == "online" ? "Онлайн-радио" : "Моя волна"), keepWave: true)
+        waveSource = source
+        let onlineRadio = source == "online" && !offline
+        let label = offline ? "Моя волна · без сети" : (onlineRadio ? "Онлайн-радио" : "Моя волна")
+        try await play(trackIds: picks, at: 0, context: Context(type: onlineRadio ? "online-radio" : "wave", id: source, label: label), keepWave: true)
     }
 
     func startArtistRadio(artist: String, tracks: [NativeTrack]) async throws {
@@ -255,6 +289,7 @@ import Foundation
             throw NSError(domain: "NativeWave", code: 3, userInfo: [NSLocalizedDescriptionKey: "Недостаточно треков для радио исполнителя"])
         }
         waveSource = "own"
+        waveOffline = false
         try await play(trackIds: ids, at: 0, context: Context(type: "wave", id: artist, label: "\(artist) и похожие"), keepWave: true)
     }
 
@@ -277,11 +312,50 @@ import Foundation
         if isWave && entries.count - 1 - index <= 2 {
             Task { @MainActor in await topUpWaveIfNeeded() }
         }
+        checkWaveBuffering(snapshot)
+    }
+
+    private func checkWaveBuffering(_ snapshot: [String: Any]) {
+        guard !waveLoading, let source = waveSource, let entry = currentEntry,
+              snapshot["entryId"] as? String == entry.entryId else { return }
+        let waiting = snapshot["waitingForPreparation"] as? Bool == true
+        let recover = waveOffline && snapshot["ended"] as? Bool == true && !waiting
+            && (snapshot["count"] as? Int ?? 0) == hostIndex + 1
+            && NativeShellStore.shared?.offline != true
+        var waitingForNetwork = false
+        if !waveOffline && waiting {
+            let upcoming = entries.dropFirst(index + 1).map(\.trackId)
+            let downloaded = Set(downloadedIds(for: upcoming))
+            waitingForNetwork = upcoming.contains { !downloaded.contains($0) && NativeShellStore.shared?.byId[$0]?.offline != true }
+        }
+        guard recover || waitingForNetwork else {
+            waveWaitTask?.cancel(); waveWaitTask = nil; waveWaitEntry = nil
+            return
+        }
+        guard waveWaitEntry != entry.entryId else { return }
+        waveWaitTask?.cancel()
+        waveWaitEntry = entry.entryId
+        let rev = revision
+        let delay = recover ? max(0, retryWaveOnlineAt - ProcessInfo.processInfo.systemUptime) : Self.networkWait
+        waveWaitTask = Task { @MainActor in
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+            let host = NativeMixHost.shared.snapshot
+            guard !Task.isCancelled, revision == rev, !waveLoading, currentEntry == entry,
+                  host["entryId"] as? String == entry.entryId,
+                  host[waitingForNetwork ? "waitingForPreparation" : "ended"] as? Bool == true else { return }
+            if recover && NativeShellStore.shared?.offline == true { return }
+            if waitingForNetwork { retryWaveOnlineAt = ProcessInfo.processInfo.systemUptime + 60 }
+            do { try await launchWave(source: source, offline: waitingForNetwork || NativeShellStore.shared?.offline == true) }
+            catch { if !NativeShellStore.isCancelled(error) { NativeShellStore.shared?.show(error.localizedDescription) } }
+        }
     }
 
     /// Wave settings changed: the next launch must build a fresh queue with them.
     func resetForNewSettings() {
+        revision &+= 1
+        waveWaitTask?.cancel(); waveWaitTask = nil; waveWaitEntry = nil
         waveSource = nil
+        waveOffline = false
         yandexSessionId = nil
         waveError = nil
         waveLoading = false
@@ -303,12 +377,21 @@ import Foundation
         finishPlay(reason: "skip")
 
         let nativeFiles = downloadedIds(for: [entry.trackId])
-        let manifest = try await NativeServerApp.request("POST", "/api/mobile/native-sources", body: [
+        let networkSource = nativeFiles.isEmpty && NativeShellStore.shared?.byId[entry.trackId]?.offline != true
+        let deadline = ProcessInfo.processInfo.systemUptime + Self.networkWait
+        let body: [String: Any] = [
             "entries": [["entryId": entry.entryId, "trackId": entry.trackId, "file": 0]],
             "previousId": entry.trackId,
             "nativeFiles": nativeFiles,
-        ])
-        guard rev == revision else { return }
+        ]
+        let manifest: [String: Any]
+        do {
+            manifest = try await NativeServerApp.request("POST", "/api/mobile/native-sources", body: body, timeout: networkSource ? Self.networkWait : 30)
+        } catch let error as URLError where error.code == .timedOut && networkSource {
+            guard rev == revision else { throw CancellationError() }
+            throw NativeMediaHTTP.Failure.transport(error.errorCode)
+        }
+        guard rev == revision else { throw CancellationError() }
         guard let item = (manifest["items"] as? [[String: Any]])?.first else {
             throw NSError(domain: "NativeQueue", code: 5, userInfo: [NSLocalizedDescriptionKey: "Источник трека недоступен"])
         }
@@ -317,16 +400,25 @@ import Foundation
         NativePlaybackHooks.install(host)
         if sessionId == nil || !host.active {
             let begun = try await hostReply { host.begin($0) }
+            guard rev == revision else { throw CancellationError() }
             sessionId = begun["id"] as? String
         }
         guard let sid = sessionId, rev == revision else { return }
         let resolved = try await resolveUploadSources([item], sessionId: sid)
-        guard let preparedItem = resolved.first, rev == revision else {
+        guard rev == revision else { throw CancellationError() }
+        guard let preparedItem = resolved.first else {
             throw NSError(domain: "NativeQueue", code: 5, userInfo: [NSLocalizedDescriptionKey: "Файл трека недоступен"])
         }
         let config: [String: Any] = ["sampleRate": 48000.0, "position": 0.0, "paused": paused, "gainDb": 0.0]
-        let state = try await hostReply { host.prepareStart(id: sid, item: preparedItem, config: config, completion: $0) }
-        guard rev == revision else { return }
+        let state: [String: Any]
+        let timeout = networkSource ? max(0, deadline - ProcessInfo.processInfo.systemUptime) : Self.networkWait
+        do {
+            state = try await hostReply { host.prepareStart(id: sid, item: preparedItem, config: config, networkTimeout: timeout, completion: $0) }
+        } catch {
+            guard rev == revision else { throw CancellationError() }
+            throw error
+        }
+        guard rev == revision else { throw CancellationError() }
         hostIndex = state["index"] as? Int ?? 0
 
         beginPlay(entry)
@@ -393,13 +485,17 @@ import Foundation
 
     private func topUpWaveIfNeeded() async {
         guard isWave, !toppingUpWave, entries.count - 1 - index <= 2 else { return }
+        if waveOffline, NativeShellStore.shared?.offline != true,
+           ProcessInfo.processInfo.systemUptime >= retryWaveOnlineAt { return }
         toppingUpWave = true
         defer { toppingUpWave = false }
         let existing = Set(entries.map(\.trackId))
-        if waveSource == "yandex" {
+        let rev = revision
+        if waveSource == "yandex" && !waveOffline {
             var yBody: [String: Any] = ["count": 2, "queue": Array(yandexQueueIds.suffix(100))]
             if let yandexSessionId { yBody["session"] = yandexSessionId }
             guard let res = try? await NativeServerApp.request("POST", "/api/providers/yandex/wave", body: yBody) else { return }
+            guard rev == revision else { return }
             if let s = (res["sessionId"] as? String) ?? (res["session"] as? String) { yandexSessionId = s }
             let items = res["items"] as? [[String: Any]] ?? []
             var newIds: [String] = []
@@ -411,6 +507,7 @@ import Foundation
                         let imp = try? await NativeServerApp.request("POST", "/api/providers/yandex/import", body: ["track": track]) {
                     tid = imp["trackId"] as? String
                 } else { tid = nil }
+                guard rev == revision else { return }
                 if let tid, !existing.contains(tid), !newIds.contains(tid), (NativeShellStore.shared?.reaction(tid) ?? 0) >= 0 {
                     newIds.append(tid)
                 }
@@ -430,7 +527,9 @@ import Foundation
         ]
         if let currentId = currentEntry?.trackId { nextBody["currentId"] = currentId }
         guard let res = try? await NativeServerApp.request("POST", "/api/wave/next", body: nextBody) else { return }
-        let picks = (res["picks"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }.filter { !existing.contains($0) }
+        guard rev == revision else { return }
+        var picks = (res["picks"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }.filter { !existing.contains($0) }
+        if waveOffline && picks.count < 3 { picks += downloadedWaveTracks(excluding: existing.union(picks), count: 3 - picks.count) }
         if !picks.isEmpty {
             entries.append(contentsOf: picks.map { Entry(entryId: UUID().uuidString, trackId: $0) })
             onStateChange?()
@@ -506,6 +605,14 @@ import Foundation
     private func downloadedIds(for trackIds: [String]) -> [String] {
         let done = Set(NativeDownloadManager.shared.jobs.filter { $0.state == .done }.map(\.trackId))
         return trackIds.filter { done.contains($0) }
+    }
+
+    private func downloadedWaveTracks(excluding: Set<String>, count: Int) -> [String] {
+        let downloads = NativeDownloadManager.shared
+        let ids = Set(downloads.jobs.filter { $0.state == .done }.map(\.trackId)).subtracting(excluding)
+        return Array(ids.shuffled().lazy.filter {
+            (NativeShellStore.shared?.reaction($0) ?? 0) >= 0 && downloads.localFile($0) != nil
+        }.prefix(count))
     }
 
     private func hostReply(_ call: (@escaping NativeMixHost.Reply) -> Void) async throws -> [String: Any] {

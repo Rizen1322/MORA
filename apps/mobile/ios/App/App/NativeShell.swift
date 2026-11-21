@@ -721,6 +721,7 @@ final class NativeShellStore: ObservableObject {
     @Published var playlistTarget: [NativeTrack] = []
     /// No usable network path: online searches and streams fail, downloads still play.
     @Published private(set) var offline = false
+    @Published private(set) var weakWaveNetwork = false
     private let network = NWPathMonitor()
     @MainActor var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web && !NativeDeepLink.splashVisible }
     var screen: NativeScreen { NativeRoute.screen(path) }
@@ -827,6 +828,7 @@ final class NativeShellStore: ObservableObject {
 
     @MainActor private func syncQueueControllerState() {
         let qc = NativeQueueController.shared
+        if weakWaveNetwork != qc.weakWaveNetwork { weakWaveNetwork = qc.weakWaveNetwork }
         let playing = qc.isWave && (player.playing || host?.active == true)
         // The page's snapshot knows nothing about the Swift queue: only override what the controller owns.
         if !qc.entries.isEmpty { self.queue = qc.entries.compactMap { NativeQueuedTrack(["entryId": $0.entryId, "trackId": $0.trackId]) } }
@@ -1225,7 +1227,10 @@ final class NativeShellStore: ObservableObject {
         if (error as NSError).domain == "WKErrorDomain" { return PageFailure(message: "Интерфейс не ответил — попробуйте ещё раз") }
         return error
     }
-    static func isCancelled(_ error: Error) -> Bool { error is PageCancelled }
+    static func isCancelled(_ error: Error) -> Bool {
+        if case NativeMediaHTTP.Failure.cancelled = error { return true }
+        return error is PageCancelled || error is CancellationError
+    }
 
     /// A command: its own errors reach the listener as the page's toasts.
     func run(_ name: String, _ args: [String: Any] = [:]) {
@@ -1338,7 +1343,7 @@ final class NativeShellStore: ObservableObject {
                         context: .init(type: type, id: id, label: label)
                     )
                 } catch {
-                    show(error.localizedDescription)
+                    if !Self.isCancelled(error) { show(error.localizedDescription) }
                 }
             }
             return
@@ -1617,8 +1622,8 @@ struct NativeShellContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if store.offline {
-                Text("Не в сети")
+            if store.offline || store.weakWaveNetwork {
+                Text(store.offline ? "Не в сети" : "Слабое соединение · офлайн-волна")
                     .font(.footnote.weight(.medium)).foregroundStyle(Color.moraGold)
                     .frame(maxWidth: .infinity).padding(.vertical, 6)
                     .background(Color.moraGold.opacity(0.12))
@@ -1626,7 +1631,6 @@ struct NativeShellContent: View {
             ZStack(alignment: .top) {
                 screen.id(store.path)
                     .transition(.opacity)
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: store.path)
                 if store.path != NativeRoute.root(store.tab) {
                     // Pages are route switches, not NavigationStack pushes, so iOS gives them no back swipe: this edge does.
                     Color.clear.frame(width: 18).frame(maxHeight: .infinity).contentShape(Rectangle())
@@ -1637,6 +1641,7 @@ struct NativeShellContent: View {
                         .accessibilityHidden(true)
                 }
             }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: store.path)
             .overlay(alignment: .bottom) {
                 if let text = store.banner {
                     Text(text).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)

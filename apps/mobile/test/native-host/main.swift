@@ -122,6 +122,17 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         _ = try await call { host.command("previoustrack", source: "fixture", completion: $0) }
         last = try await call { host.state($0) }
         try require((last["currentTrack"] as? [String: Any])?["entryId"] as? String == "first", "Previous lost native PCM")
+        do {
+            _ = try await call { host.prepareStart(id: id, item: item("stalled"),
+                config: ["sampleRate": 48000.0, "position": 0.0], networkTimeout: 1, completion: $0) }
+            throw Failure.check("Stalled network request ignored the startup deadline")
+        } catch NativeMediaHTTP.Failure.transport(let code) {
+            try require(code == URLError.timedOut.rawValue, "Wrong error for an expired startup deadline")
+            try require(NativeMediaHTTP.Failure.isConnectionLoss(URLError(.timedOut)), "Timeout did not qualify for offline Wave")
+            try require(!NativeMediaHTTP.Failure.isConnectionLoss(NativeMediaHTTP.Failure.http(404)), "Missing track qualified for offline Wave")
+        }
+        last = try await call { host.state($0) }
+        try require((last["currentTrack"] as? [String: Any])?["entryId"] as? String == "first", "Stalled replacement changed the current track")
         let cancelled = Task { try await call { host.prepareStart(id: id, item: item("obsolete"),
             config: ["sampleRate": 48000.0, "position": 0.0], completion: $0) } }
         try await pending()

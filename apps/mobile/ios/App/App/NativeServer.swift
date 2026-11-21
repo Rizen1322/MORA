@@ -41,6 +41,7 @@ final class NativeServer {
     private let internalToken = UUID().uuidString
     struct RequestFailure: LocalizedError {
         let message: String
+        var status: Int? = nil
         var errorDescription: String? { message }
     }
     /// Diagnostics (MoraAudioPlugin.diagnosticReport): what each request, download and long JS call cost.
@@ -167,7 +168,9 @@ final class NativeServer {
         case "end":
             do {
                 let value = try JSONSerialization.jsonObject(with: reply.data) as? [String: Any]
-                guard (200..<300).contains(reply.status) else { throw RequestFailure(message: value?["error"] as? String ?? "Ошибка медиатеки (\(reply.status))") }
+                guard (200..<300).contains(reply.status) else {
+                    throw RequestFailure(message: value?["error"] as? String ?? "Ошибка медиатеки (\(reply.status))", status: reply.status)
+                }
                 guard let value else { throw RequestFailure(message: "Неверный ответ медиатеки") }
                 finishNative(id, .success(value))
             } catch { finishNative(id, .failure(error)) }
