@@ -81,8 +81,8 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
   });
   const playback = new DesktopPlayback(audio, { backend,
     ready: rate => { media.reset(); media.start(rate); }, track: track => media.track(track) });
-  const syncDislikes = () => playback.applyDislikes(services.lib.listDTO().filter(t => t.reaction < 0).map(t => t.id));
-  // Library events arrive per track during imports; one full scan per burst is enough.
+  const syncDislikes = () => playback.applyDislikes(services.lib.dislikedTrackIds());
+  // Library events arrive per track during imports; refresh once per burst.
   let reactionTimer: NodeJS.Timeout | undefined;
   const unsubscribeReactions = services.events.on(event => {
     if (event.type === 'library' && !reactionTimer) reactionTimer = setTimeout(() => { reactionTimer = undefined; void syncDislikes().catch(console.error); }, 100);

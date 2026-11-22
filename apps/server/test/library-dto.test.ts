@@ -32,3 +32,24 @@ it('builds one track exactly as the full list does, without reading the whole li
   expect(a.services.lib.trackDTO('y1')!.reaction).toBe(1);
   expect(a.services.lib.trackDTO('w1')).toMatchObject({ likedAt: 7, binding: { assetId: 'r1', origin: { uploader: 'S' } } });
 });
+
+it('finds effective dislikes, including Yandex overrides without a local reaction', () => {
+  const { db, lib } = a.services;
+  db.prepare("INSERT INTO tracks(id, content_hash, title, provider, added_at, updated_at) VALUES ('y2', ?, 'Yandex second song', 'yandex', 4, 4)").run('b'.repeat(64));
+  db.prepare("INSERT INTO track_sources(track_id, provider, kind, external_id) VALUES ('y2', 'yandex', 'remote', '456:10')").run();
+  db.prepare("INSERT INTO yandex_reaction_sync(external_id, value, status, updated_at) VALUES ('456:11', 1, 'synced', 5)").run();
+  db.prepare("INSERT INTO reactions(track_id, value, updated_at) VALUES ('r1', -1, 7), ('y2', -1, 7)").run();
+  const remote = db.prepare("UPDATE yandex_reaction_sync SET value = ? WHERE external_id = '456:11'");
+  const expectDislikes = (ids: string[]) => {
+    const actual = lib.dislikedTrackIds().sort();
+    expect(actual).toEqual(ids);
+    expect(actual).toEqual(lib.listDTO().filter(t => t.reaction < 0).map(t => t.id).sort());
+  };
+
+  expectDislikes(['r1']); // The remote like overrides the local dislike.
+  remote.run(0);
+  expectDislikes(['r1']); // An explicit remote clear also overrides it.
+  db.prepare("DELETE FROM reactions WHERE track_id = 'y2'").run();
+  remote.run(-1);
+  expectDislikes(['r1', 'y2']);
+});

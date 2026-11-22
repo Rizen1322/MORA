@@ -10,6 +10,7 @@ import {
   planSkip,
   planTransition,
   planRequestedTransition,
+  ratingBias,
   ratingFeatures,
   ratingStats,
   stepAsync,
@@ -29,6 +30,7 @@ import { reviewedGeometryHash, type ReviewedPlanResolver } from './reviewed-tran
 import { rustCompute, rustComputeAsync, rustCorePath } from './rust-core.ts';
 import { measureRust } from './rust-render.ts';
 import { creativeFinalists } from './creative-selection.ts';
+import { desktopPhrase, verifyDesktopPhrase } from './desktop-phrasing.ts';
 
 export interface AppSettings {
   automix: AutoMixSettings;
@@ -121,7 +123,10 @@ export class AutoMixService {
     const r = this.prepare(fromId, toId);
     if ('plan' in r) return r;
     const baseline = rustCorePath() ? rustCompute<TransitionPlan>('plan', { from: r.pa, to: r.pb, settings: r.settings, feedback: r.feedback }) : planTransition(r.pa, r.pb, r.settings, undefined, r.feedback);
-    const plan = process.env.AUTOMIX_DESKTOP === '1' ? creativeFinalists([baseline], r.pa, r.pb, r.settings, r.feedback)[0] : baseline;
+    let plan = process.env.AUTOMIX_DESKTOP === '1' ? creativeFinalists([baseline], r.pa, r.pb, r.settings, r.feedback)[0] : baseline;
+    if (process.env.AUTOMIX_DESKTOP === '1' && rustCorePath() && !plan.debug.renderCheck) {
+      plan = { ...plan, debug: { ...plan.debug, renderCheck: { policy: 'render-finalists-3', skipped: 'pcm-not-ready' } } };
+    }
     if (!r.pending.length) this.store(r.key, plan, r.a.content_hash, r.b.content_hash);
     return { plan, cached: false, pending: r.pending };
   }
@@ -132,6 +137,7 @@ export class AutoMixService {
     if ('plan' in r || r.pending.length) return;
     const baseline = rustCorePath() ? await rustComputeAsync<TransitionPlan>('plan', { from: r.pa, to: r.pb, settings: r.settings, feedback: r.feedback })
       : planTransition(r.pa, r.pb, r.settings, undefined, r.feedback);
+    if (q(this.db, 'SELECT 1 FROM transition_cache WHERE key = ?').get(r.key)) return;
     const plan = process.env.AUTOMIX_DESKTOP === '1' ? creativeFinalists([baseline], r.pa, r.pb, r.settings, r.feedback)[0] : baseline;
     this.store(r.key, { ...plan, debug: { ...plan.debug, renderCheck: { policy: 'render-finalists-2', skipped: 'pcm-not-ready' } } }, r.a.content_hash, r.b.content_hash);
   }
@@ -150,12 +156,17 @@ export class AutoMixService {
       ? r.pending.length ? [await rustComputeAsync<TransitionPlan>('plan', { from: r.pa, to: r.pb, settings: r.settings, feedback: r.feedback })]
         : await rustComputeAsync<TransitionPlan[]>('plan', { from: r.pa, to: r.pb, settings: r.settings, feedback: r.feedback, mode: 'finalists' })
       : r.pending.length ? [planTransition(r.pa, r.pb, r.settings, undefined, r.feedback)] : await stepAsync(planFinalistsSteps(r.pa, r.pb, r.settings, r.feedback));
-    if (process.env.AUTOMIX_DESKTOP === '1' && !r.pending.length) finalists = creativeFinalists(finalists, r.pa, r.pb, r.settings, r.feedback);
-    if (finalists.length < 2) {
+    let phrase: TransitionPlan | null = null;
+    if (process.env.AUTOMIX_DESKTOP === '1' && !r.pending.length) {
+      if (rustCorePath()) phrase = desktopPhrase(finalists[0], r.pa, r.pb, r.settings, /(?:^|[^\p{L}])(?:instrumental|инструментал)(?:$|[^\p{L}])/iu.test(r.a.title));
+      if (phrase && r.feedback && ratingBias(r.feedback, phrase, r.pa.analysis, r.pb.analysis).bias < 0) phrase = null;
+      finalists = creativeFinalists(finalists, r.pa, r.pb, r.settings, r.feedback);
+    }
+    if (finalists.length < 2 && !phrase) {
       if (!r.pending.length) this.store(r.key, finalists[0], r.a.content_hash, r.b.content_hash);
       return { plan: finalists[0], cached: false, pending: r.pending };
     }
-    const spans = finalistSpans(finalists);
+    const spans = finalistSpans(phrase ? [...finalists, phrase] : finalists);
     // iPhone hot or in Low Power Mode (set by apps/mobile): the 2-5 renders wait like missing PCM does
     const saver = process.env.MORA_POWER_SAVER === '1';
     const [sa, sb] = saver ? [null, null] : await Promise.all([read(fromId, ...spans.a), read(toId, ...spans.b)]).catch(() => [null, null]);
@@ -164,6 +175,13 @@ export class AutoMixService {
       const skipped = { ...finalists[0], debug: { ...finalists[0].debug, renderCheck: { policy: 'render-finalists-2', skipped: 'pcm-not-ready' } } };
       this.store(r.key, skipped, r.a.content_hash, r.b.content_hash);
       return { plan: skipped, cached: false, pending: r.pending };
+    }
+    if (phrase) {
+      const verified = await verifyDesktopPhrase(phrase, sa, sb).catch(() => null);
+      if (verified) {
+        this.store(r.key, verified, r.a.content_hash, r.b.content_hash);
+        return { plan: verified, cached: false, pending: r.pending };
+      }
     }
     let plan = finalists[0];
     try { plan = await chooseByRender(finalists, sa, sb, rustCorePath() ? measureRust : undefined); } catch { /* a failed check keeps the planner's choice */ }
@@ -191,7 +209,7 @@ export class AutoMixService {
     const key = fnv1a(
       // Invalidate automatic choices while preserving the exact IDs of listener-approved plans.
       [a.id, b.id, a.content_hash, b.content_hash, ANALYZER_VERSION, PLANNER_VERSION, 'transition-styles-7-local-recipes', JSON.stringify(settings), pa.mixingAllowed, pb.mixingAllowed,
-        ...(process.env.AUTOMIX_DESKTOP === '1' ? ['desktop-full-mix-1'] : []),
+        ...(process.env.AUTOMIX_DESKTOP === '1' ? ['desktop-full-mix-2'] : []),
         a.album, b.album, pa.albumArtist, pb.albumArtist, a.track_no, b.track_no, a.disc_no, b.disc_no, !!pa.analysis, !!pb.analysis,
         // new ratings make new plans; without any the key stays as before
         vocalKey(pa.analysis?.vocalActivity),vocalKey(pb.analysis?.vocalActivity), ...(feedback ? [feedback.version] : [])].join('|'),

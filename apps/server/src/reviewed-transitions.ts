@@ -36,21 +36,31 @@ const points = (value: unknown, duration: number, lo: number, hi: number): boole
 
 /** Only the bounded full-mix plan format used by the reviewed trials is accepted. */
 export function reviewedPlanFits(p: TransitionPlan, a: PlannerTrack, b: PlannerTrack): boolean {
+  const delay = p?.bDelay ?? 0;
+  const bClock = p?.duration - delay;
   if (!p || p.method !== 'beatmatch_blend' || ![p.aExit, p.bEntry, p.duration, p.swapAt, p.gainA, p.gainB, p.confidence].every(finite)
     || p.confidence < 0 || p.confidence > 1 || typeof p.version !== 'string'
     || p.duration < .5 || p.duration > 64 || p.aExit < 0 || p.bEntry < 0 || p.swapAt < 0 || p.swapAt > p.duration
-    || p.gap !== 0 || (p.bDelay ?? 0) !== 0 || p.vocalA || p.vocalB || p.echo || p.voiceEcho || p.tapeStopA
+    || p.gap !== 0 || !finite(delay) || delay < 0 || delay >= p.duration || p.vocalA || p.vocalB || p.echo || p.voiceEcho || p.tapeStopA
     || p.gainA < -60 || p.gainA > 24 || p.gainB < -60 || p.gainB > 24
-    || !points(p.tempoB, p.duration, .5, 2) || (p.tempoA !== undefined && !points(p.tempoA, p.duration, .5, 2))
+    || !points(p.tempoB, bClock, .5, 2) || (p.tempoA !== undefined && !points(p.tempoA, p.duration, .5, 2))
     || !Array.isArray(p.automation) || p.automation.length < 2 || p.automation.length > 10) return false;
+  if (delay > 0) {
+    const loop = p.loopA, pa = a.analysis?.beat?.period, pb = b.analysis?.beat?.period;
+    if (!loop || !pa || !pb || p.tempoA || p.tempoB.length !== 1 || p.tempoB[0][1] !== 1
+      || delay >= p.swapAt || Math.abs(loop.start - p.aExit) > .001
+      || Math.abs(loop.end - loop.start - 3 * pa) > .001 || Math.abs(p.swapAt - 9 * pa) > .003
+      || Math.abs(p.swapAt - delay - 4 * pb) > .003 || Math.abs(9 * pa - 12 * pb) > .045
+      || loop.until <= p.aExit + p.swapAt) return false;
+  }
   const seen = new Set<string>();
   for (const lane of p.automation) {
     if (!lane || !['A', 'B'].includes(lane.deck) || !['gain', 'low', 'mid', 'high', 'filter'].includes(lane.lane)
-      || seen.has(`${lane.deck}/${lane.lane}`) || !points(lane.points, p.duration, lane.lane === 'filter' ? -1 : 0, lane.lane === 'gain' ? 2 : 1)) return false;
+      || seen.has(`${lane.deck}/${lane.lane}`) || !points(lane.points, lane.deck === 'B' ? bClock : p.duration, lane.lane === 'filter' ? -1 : 0, lane.lane === 'gain' ? 2 : 1)) return false;
     seen.add(`${lane.deck}/${lane.lane}`);
   }
   if (!seen.has('A/gain') || !seen.has('B/gain')) return false;
-  const endA = p.aExit + integrateTempo(p.tempoA, p.duration), endB = p.bEntry + integrateTempo(p.tempoB, p.duration);
+  const endA = p.aExit + integrateTempo(p.tempoA, p.duration), endB = p.bEntry + integrateTempo(p.tempoB, bClock);
   const aEnd = Math.min(a.duration, a.analysis?.audibleEnd ?? a.duration), bEnd = Math.min(b.duration, b.analysis?.audibleEnd ?? b.duration);
   if (![endA, endB, aEnd, bEnd].every(finite) || p.aExit < (a.analysis?.audibleStart ?? 0) - .001
     || p.bEntry < (b.analysis?.audibleStart ?? 0) - .001 || endA > aEnd + .025 || endB > bEnd + .025) return false;
@@ -70,7 +80,7 @@ export function reviewedPlanFits(p: TransitionPlan, a: PlannerTrack, b: PlannerT
 export class ReviewedTransitions implements ReviewedPlanResolver {
   constructor(private readonly file: string) {}
   resolve(a: PlannerTrack, b: PlannerTrack, fromHash: string, toHash: string, settings: AutoMixSettings): TransitionPlan | null {
-    if (!settings.enabled || !a.mixingAllowed || !b.mixingAllowed || !a.analysis || !b.analysis || settings.stemMixing === false) return null;
+    if (!settings.enabled || !a.mixingAllowed || !b.mixingAllowed || !a.analysis || !b.analysis) return null;
     // An album's playback semantics take precedence over any per-pair preference.
     if (settings.respectAlbums && a.album && a.album === b.album && a.albumArtist === b.albumArtist) return null;
     try {
@@ -83,6 +93,7 @@ export class ReviewedTransitions implements ReviewedPlanResolver {
       if (!e.id || !/^[a-f0-9]{64}$/.test(e.fromHash) || !/^[a-f0-9]{64}$/.test(e.toHash)
         || e.evidence?.rating !== 'good' || !e.evidence.reviewId || !e.evidence.variantId
         || !/^[a-f0-9]{64}$/.test(e.evidence.manifestSha256) || e.planSha256 !== reviewedPlanHash(e.plan)
+        || (settings.stemMixing === false && !(e.plan?.bDelay && e.plan.loopA))
         || REVIEWED_SETTINGS.some(key => e.settings?.[key] !== (settings[key] ?? null)) || !reviewedPlanFits(e.plan, a, b)) return null;
       const plan = JSON.parse(JSON.stringify(e.plan)) as TransitionPlan;
       return { ...plan, id: `reviewed-${e.planSha256.slice(0, 20)}`, version: PLANNER_VERSION, fromTrackId: a.id, toTrackId: b.id,

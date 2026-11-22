@@ -172,6 +172,18 @@ export class Library {
     return q(this.db, 'SELECT * FROM tracks ORDER BY added_at DESC, title').all() as unknown as TrackRow[];
   }
 
+  private effectiveReaction(id: string, provider: string, local: number): number {
+    return (provider === 'yandex' ? this.displayReactionFor?.(id, local) : undefined) ?? local;
+  }
+
+  dislikedTrackIds(): string[] {
+    // Yandex can override a local reaction or provide one without a local row.
+    const rows = q(this.db, `SELECT t.id, t.provider, COALESCE(r.value, 0) AS value
+      FROM tracks t LEFT JOIN reactions r ON r.track_id = t.id
+      WHERE t.provider = 'yandex' OR r.value < 0`).all() as { id: string; provider: string; value: number }[];
+    return rows.filter(({ id, provider, value }) => this.effectiveReaction(id, provider, value) < 0).map(({ id }) => id);
+  }
+
   /** Imports one local file. `kind` managed copies (moves) it into the library, linked keeps it in place. */
   async importFile(file: string, originalName: string, kind: 'managed' | 'linked'): Promise<{ track: TrackRow; duplicate: boolean }> {
     const stat = await fsp.stat(file);
@@ -522,8 +534,7 @@ export class Library {
       playCount: t.play_count,
       skipCount: t.skip_count,
       lastPlayedAt: t.last_played_at,
-      // Only Yandex tracks carry a remote reaction; skipping the hook keeps lists free of per-track queries.
-      reaction: (t.provider === 'yandex' ? this.displayReactionFor?.(t.id, reaction) : undefined) ?? reaction,
+      reaction: this.effectiveReaction(t.id, t.provider, reaction),
       ...(t.provider === 'yandex' && this.reactionSyncFor ? { reactionSync: this.reactionSyncFor(t.id) } : {}),
       analysis,
       mixingAllowed: this.mixingPolicy.get(t.provider) ?? false,
