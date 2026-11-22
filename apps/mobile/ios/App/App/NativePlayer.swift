@@ -1524,17 +1524,18 @@ private struct NativeScrubber: View {
                         })
                 }
                 .frame(height: 44)
-                HStack {
-                    Text(NativePlayerTime.text(shown))
-                    Spacer()
+                ZStack {
+                    HStack {
+                        Text(NativePlayerTime.text(shown))
+                        Spacer()
+                        Text("−" + NativePlayerTime.text(max(0, state.duration - shown)))
+                    }
                     if state.blending && showMixingLabel {
                         Text("Микширование").font(.caption2.weight(.medium))
                             .foregroundStyle(.white.opacity(reduceMotion || !state.playing ? 0.8 : 0.65 + 0.35 * sin(context.date.timeIntervalSinceReferenceDate * 3)))
                             .shadow(color: .white.opacity(0.25), radius: 3)
                             .transition(.opacity)
-                        Spacer()
                     }
-                    Text("−" + NativePlayerTime.text(max(0, state.duration - shown)))
                 }
                 .font(.caption.monospacedDigit().weight(.medium))
                 .foregroundStyle(.white.opacity(0.55))

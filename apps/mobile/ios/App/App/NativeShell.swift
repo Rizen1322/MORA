@@ -607,7 +607,6 @@ final class NativeShellStore: ObservableObject {
     @Published private(set) var ui = NativeUiState()
     /// The route on screen: the page's, or the one native just asked for (until the page confirms it).
     @Published private(set) var path = "/"
-    @Published private(set) var navDirection: Int = 0
     @Published private(set) var shown = UserDefaults.standard.object(forKey: "mora.nativeShell") as? Bool ?? true
     @Published private(set) var player = NativePlayerState()
     @Published private(set) var artwork: UIImage?
@@ -1356,7 +1355,6 @@ final class NativeShellStore: ObservableObject {
                 navHistory.append(self.path)
                 if navHistory.count > 64 { navHistory.removeFirst() }
             }
-            navDirection = 1
         }
         self.path = next
         pending = (self.path, Date())
@@ -1366,7 +1364,6 @@ final class NativeShellStore: ObservableObject {
         UIAccessibility.post(notification: .screenChanged, argument: nil)
         go(NativeRoute.root(tab))
         navHistory.removeAll()
-        navDirection = 0
     }
 
     func play(_ list: [NativeTrack], at index: Int, type: String, label: String, id: String? = nil) {
@@ -1392,7 +1389,6 @@ final class NativeShellStore: ObservableObject {
     }
     /// The page's history: native pages sit on top of the route they were opened from.
     func back() {
-        navDirection = -1
         if let previous = navHistory.popLast() {
             self.path = previous
             pending = (previous, Date())
@@ -1766,15 +1762,7 @@ struct NativeShellContent: View {
                     .background(Color.moraGold.opacity(0.12))
             }
             ZStack(alignment: .top) {
-                screen.id(store.path)
-                    .transition(
-                        reduceMotion || store.navDirection == 0
-                            ? .opacity
-                            : .asymmetric(
-                                insertion: .move(edge: store.navDirection > 0 ? .trailing : .leading).combined(with: .opacity),
-                                removal: .move(edge: store.navDirection > 0 ? .leading : .trailing).combined(with: .opacity)
-                            )
-                    )
+                screen
                 if store.path != NativeRoute.root(store.tab) {
                     // Pages are route switches, not NavigationStack pushes, so iOS gives them no back swipe: this edge does.
                     Color.clear.frame(width: 18).frame(maxHeight: .infinity).contentShape(Rectangle())
@@ -1785,8 +1773,6 @@ struct NativeShellContent: View {
                         .accessibilityHidden(true)
                 }
             }
-            .clipped()
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: store.path)
             .overlay(alignment: .bottom) {
                 if let text = store.banner {
                     Text(text).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)

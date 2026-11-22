@@ -31,11 +31,6 @@ struct NativeSoundView: View {
                     playbackSection(sound)
                     stageSection(sound)
                     Section("Полосы") {
-                        NativeEQCurveView(
-                            gains: displayedGains(sound),
-                            enabled: pendingEnabled ?? sound.enabled
-                        )
-                        .listRowSeparator(.hidden)
                         ForEach(NativeSoundState.bands.indices, id: \.self) { index in band(index, sound) }
                     }.listRowBackground(Color.moraSurface)
                 } else if failure == nil { ProgressView("Загружаем настройки звука…").listRowBackground(Color.clear) }
@@ -74,6 +69,11 @@ struct NativeSoundView: View {
                 if sound.selectedPreset == nil { Text("Свой").tag(-1) }
                 ForEach(sound.presets.indices, id: \.self) { Text(sound.presets[$0].name).tag($0) }
             }.pickerStyle(.menu).accessibilityIdentifier("native-sound-preset")
+            NativeEQCurveView(
+                gains: displayedGains(sound),
+                enabled: pendingEnabled ?? sound.enabled
+            )
+            .listRowSeparator(.hidden)
         } footer: { Text("Вывод звука (AirPlay, Bluetooth) выбирается кнопкой в плеере.") }
             .listRowBackground(Color.moraSurface)
             .disabled(busy || editing)
