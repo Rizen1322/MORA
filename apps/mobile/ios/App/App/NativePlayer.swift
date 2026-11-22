@@ -198,13 +198,14 @@ final class NativePlayerModel: ObservableObject {
     private func loadNavigation(_ id: String) {
         guard !id.isEmpty, let store = NativeShellStore.shared else { return }
         navigationTrack = id; artists = []; albumPath = nil
-        if store.sharedLibrary, let raw = store.localTrackLinks(id: id) {
-            let links = Self.unpackTrackLinks(raw)
-            artists = links.artists
-            albumPath = links.albumPath
-            return
-        }
         Task { @MainActor in
+            if store.sharedLibrary, let raw = store.localTrackLinks(id: id) {
+                guard state.trackId == id else { return }
+                let links = Self.unpackTrackLinks(raw)
+                artists = links.artists
+                albumPath = links.albumPath
+                return
+            }
             do {
                 let value = try await store.call("trackLinks", ["id": id]) as? [String: Any]
                 guard state.trackId == id else { return }
@@ -223,18 +224,19 @@ final class NativePlayerModel: ObservableObject {
         if destination == "artist", let artist = artists.first { navigate(artist.path); return }
         let id = state.trackId
         guard let store = NativeShellStore.shared else { return }
-        if store.sharedLibrary, let raw = store.localTrackLinks(id: id) {
-            let links = Self.unpackTrackLinks(raw)
-            artists = links.artists
-            albumPath = links.albumPath
-            if let path = destination == "album" ? links.albumPath : links.artists.first?.path {
-                navigate(path)
-            } else {
-                actionError = NativeShellError.page.localizedDescription
-            }
-            return
-        }
         Task { @MainActor in
+            if store.sharedLibrary, let raw = store.localTrackLinks(id: id) {
+                guard state.trackId == id else { return }
+                let links = Self.unpackTrackLinks(raw)
+                artists = links.artists
+                albumPath = links.albumPath
+                if let path = destination == "album" ? links.albumPath : links.artists.first?.path {
+                    navigate(path)
+                } else {
+                    actionError = NativeShellError.page.localizedDescription
+                }
+                return
+            }
             do {
                 let value = try await store.call("trackLinks", ["id": id]) as? [String: Any]
                 guard state.trackId == id else { return }
@@ -366,6 +368,137 @@ extension Color {
     static let moraGold = Color(red: 245 / 255, green: 200 / 255, blue: 110 / 255)
 }
 
+private enum NativeCoverPalette {
+    struct Colors: Equatable {
+        let primary: Color
+        let secondary: Color
+
+        static let fallback = Colors(
+            primary: Color(red: 0.08, green: 0.22, blue: 0.16),
+            secondary: Color(red: 0.04, green: 0.14, blue: 0.10)
+        )
+    }
+
+    private final class Entry {
+        weak var image: UIImage?
+        let colors: Colors
+
+        init(image: UIImage, colors: Colors) {
+            self.image = image
+            self.colors = colors
+        }
+    }
+
+    private static let lock = NSLock()
+    private static var cache: [ObjectIdentifier: Entry] = [:]
+    private static var order: [ObjectIdentifier] = []
+    private static let maxEntries = 24
+
+    static func colors(for image: UIImage?) -> Colors {
+        guard let image else { return .fallback }
+        let key = ObjectIdentifier(image)
+        lock.lock()
+        if let entry = cache[key], entry.image === image {
+            if order.last != key {
+                order.removeAll { $0 == key }
+                order.append(key)
+            }
+            lock.unlock()
+            return entry.colors
+        }
+        lock.unlock()
+
+        let computed = extract(from: image)
+
+        lock.lock()
+        cache[key] = Entry(image: image, colors: computed)
+        order.removeAll { $0 == key }
+        order.append(key)
+        while order.count > maxEntries {
+            let evicted = order.removeFirst()
+            cache.removeValue(forKey: evicted)
+        }
+        lock.unlock()
+        return computed
+    }
+
+    private static func extract(from image: UIImage) -> Colors {
+        guard let cgImage = image.cgImage else { return .fallback }
+        var pixels = [UInt8](repeating: 0, count: 64)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let base = buffer.baseAddress,
+                  let context = CGContext(
+                      data: base,
+                      width: 4,
+                      height: 4,
+                      bitsPerComponent: 8,
+                      bytesPerRow: 16,
+                      space: CGColorSpaceCreateDeviceRGB(),
+                      bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+                  ) else { return false }
+            context.interpolationQuality = .medium
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 4, height: 4))
+            return true
+        }
+        guard drawn else { return .fallback }
+
+        struct Sample {
+            let hue: CGFloat
+            let saturation: CGFloat
+            let brightness: CGFloat
+            var score: CGFloat { saturation * (0.45 + 0.55 * brightness) }
+        }
+
+        var samples: [Sample] = []
+        samples.reserveCapacity(16)
+
+        for i in 0..<16 {
+            let offset = i * 4
+            let a = CGFloat(pixels[offset + 3]) / 255.0
+            guard a >= 0.08 else { continue }
+            let r = min(1.0, CGFloat(pixels[offset]) / 255.0 / a)
+            let g = min(1.0, CGFloat(pixels[offset + 1]) / 255.0 / a)
+            let b = min(1.0, CGFloat(pixels[offset + 2]) / 255.0 / a)
+
+            var h: CGFloat = 0
+            var s: CGFloat = 0
+            var v: CGFloat = 0
+            var alpha: CGFloat = 0
+            guard UIColor(red: r, green: g, blue: b, alpha: 1).getHue(&h, saturation: &s, brightness: &v, alpha: &alpha) else {
+                continue
+            }
+            guard v >= 0.08, s >= 0.08 else { continue }
+            samples.append(Sample(hue: h, saturation: s, brightness: v))
+        }
+
+        guard !samples.isEmpty else { return .fallback }
+        samples.sort { $0.score > $1.score }
+
+        let first = samples[0]
+        let primaryS = min(0.72, max(0.25, first.saturation))
+        let primaryB = min(0.30, max(0.12, first.brightness))
+        let primary = Color(hue: Double(first.hue), saturation: Double(primaryS), brightness: Double(primaryB))
+
+        let distinct = samples.dropFirst().first { candidate in
+            let diff = abs(candidate.hue - first.hue)
+            return min(diff, 1.0 - diff) >= 0.08
+        }
+
+        let secondary: Color
+        if let second = distinct {
+            let secondaryS = min(0.72, max(0.25, second.saturation))
+            let secondaryB = min(0.30, max(0.12, second.brightness))
+            secondary = Color(hue: Double(second.hue), saturation: Double(secondaryS), brightness: Double(secondaryB))
+        } else {
+            let secondaryS = min(0.72, max(0.25, primaryS * 0.78))
+            let secondaryB = min(0.30, max(0.12, primaryB * 0.62))
+            secondary = Color(hue: Double(first.hue), saturation: Double(secondaryS), brightness: Double(secondaryB))
+        }
+
+        return Colors(primary: primary, secondary: secondary)
+    }
+}
+
 private struct IconButton: View {
     let symbol: String
     let label: String
@@ -398,6 +531,8 @@ struct NativePlayerView: View {
     @State private var queueOpen = false
     @State private var showLyrics = false
     @State private var lyricsRefreshToken = 0
+    @State private var coverDragOffset: CGFloat = 0
+    @GestureState private var isCoverDragging = false
     @Namespace private var playerLayout
 
     var body: some View {
@@ -436,10 +571,15 @@ struct NativePlayerView: View {
             } else {
                 Spacer(minLength: 12)
                 cover(playing: s.playing).matchedGeometryEffect(id: "cover", in: playerLayout)
-                Spacer(minLength: 16)
+                if s.blending {
+                    autoMixPill(next: s.upcoming.first, playing: s.playing)
+                        .padding(.top, 12)
+                        .transition(.opacity.combined(with: .scale(scale: 0.94)))
+                }
+                Spacer(minLength: 14)
                 metadata.matchedGeometryEffect(id: "metadata", in: playerLayout)
             }
-            NativeScrubber(state: s, receivedAt: model.receivedAt, pending: model.scrub) { model.seek(to: $0) }
+            NativeScrubber(state: s, receivedAt: model.receivedAt, pending: model.scrub, showMixingLabel: showLyrics || queueOpen) { model.seek(to: $0) }
                 .padding(.top, showLyrics ? 8 : 18)
             transport(playing: s.playing).padding(.vertical, showLyrics ? 8 : 12)
             if !showLyrics { Spacer(minLength: 8) }
@@ -479,6 +619,16 @@ struct NativePlayerView: View {
         .animation(.easeOut(duration: 0.25), value: model.banner)
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.48, dampingFraction: 0.86), value: queueOpen)
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.46, dampingFraction: 0.86), value: showLyrics)
+        .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.84), value: s.blending)
+        .onChange(of: queueOpen) { _, open in if open { coverDragOffset = 0 } }
+        .onChange(of: showLyrics) { _, open in if open { coverDragOffset = 0 } }
+        .onChange(of: isCoverDragging) { _, active in
+            if !active && coverDragOffset != 0 {
+                withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.78)) {
+                    coverDragOffset = 0
+                }
+            }
+        }
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
         .alert("Не удалось выполнить действие", isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(model.actionError ?? "") }
         .sheet(isPresented: Binding(get: { !model.playlistTarget.isEmpty }, set: { if !$0 { model.playlistTarget = [] } })) {
@@ -636,22 +786,122 @@ struct NativePlayerView: View {
     }
 
     private var backdrop: some View {
-        ZStack {
-            LinearGradient(colors: [Color(red: 0.10, green: 0.24, blue: 0.17), .moraBackground], startPoint: .top, endPoint: .bottom)
-            if let image = model.artwork {
-                Image(uiImage: image).resizable().scaledToFill()
-                    .saturation(showLyrics ? 1.25 : 1.0)
-                    .blur(radius: showLyrics ? 80 : 60)
-                    .opacity(showLyrics ? 0.45 : 0.35)
-                    .transition(.opacity)
+        let palette = NativeCoverPalette.colors(for: model.artwork)
+        let emeraldHint = Color(red: 0.05, green: 0.16, blue: 0.11)
+        return ZStack {
+            Group {
+                if #available(iOS 18.0, *) {
+                    MeshGradient(
+                        width: 3,
+                        height: 3,
+                        points: [
+                            SIMD2<Float>(0.0, 0.0), SIMD2<Float>(0.5, 0.0), SIMD2<Float>(1.0, 0.0),
+                            SIMD2<Float>(0.0, 0.5), SIMD2<Float>(0.5, 0.46), SIMD2<Float>(1.0, 0.5),
+                            SIMD2<Float>(0.0, 1.0), SIMD2<Float>(0.5, 1.0), SIMD2<Float>(1.0, 1.0)
+                        ],
+                        colors: [
+                            palette.primary, emeraldHint, palette.secondary,
+                            palette.secondary, palette.primary, .moraBackground,
+                            .moraBackground, emeraldHint, .moraBackground
+                        ],
+                        background: .moraBackground
+                    )
+                } else {
+                    ZStack {
+                        LinearGradient(
+                            colors: [palette.primary, palette.secondary, .moraBackground],
+                            startPoint: .topLeading,
+                            endPoint: .bottom
+                        )
+                        RadialGradient(
+                            colors: [palette.primary.opacity(0.65), emeraldHint.opacity(0.45), .clear],
+                            center: .topTrailing,
+                            startRadius: 20,
+                            endRadius: 460
+                        )
+                    }
+                }
             }
+            .overlay {
+                if let image = model.artwork {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .saturation(showLyrics ? 1.2 : 1.0)
+                        .blur(radius: showLyrics ? 80 : 60)
+                        .opacity(showLyrics ? 0.36 : 0.28)
+                        .id(ObjectIdentifier(image))
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .clipped()
             if showLyrics {
-                RadialGradient(colors: [Color.moraMint.opacity(0.14), .clear], center: .topTrailing, startRadius: 20, endRadius: 420)
-                LinearGradient(colors: [Color.black.opacity(0.32), Color.black.opacity(0.56)], startPoint: .top, endPoint: .bottom)
+                RadialGradient(colors: [Color.moraMint.opacity(0.12), .clear], center: .topTrailing, startRadius: 20, endRadius: 420)
+                LinearGradient(colors: [Color.black.opacity(0.34), Color.black.opacity(0.58)], startPoint: .top, endPoint: .bottom)
+            } else {
+                LinearGradient(colors: [Color.black.opacity(0.14), Color.black.opacity(0.40)], startPoint: .top, endPoint: .bottom)
             }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: model.artwork.map(ObjectIdentifier.init))
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: model.artwork.map(ObjectIdentifier.init))
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: showLyrics)
+    }
+
+    private func autoMixPill(next: NativePlayerRow?, playing: Bool) -> some View {
+        let nextTitle = next.flatMap { $0.title.isEmpty ? nil : $0.title } ?? "следующий трек"
+        return HStack(spacing: 8) {
+            if let next {
+                NativeCover(
+                    url: next.cover ?? NativeShellStore.shared?.byId[next.trackId]?.cover,
+                    size: 22,
+                    radius: 5,
+                    embedded: next.artwork,
+                    monogram: next.title
+                )
+            }
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "waveform")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.moraMint)
+                    .symbolEffect(.variableColor.iterative, isActive: playing && !reduceMotion)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Color.moraGold)
+                    .offset(x: 4, y: -4)
+            }
+            .frame(width: 18, height: 16)
+            .padding(.trailing, 2)
+            HStack(spacing: 4) {
+                Text("Сводится")
+                    .foregroundStyle(.white.opacity(0.92))
+                    .layoutPriority(1)
+                Text("→")
+                    .foregroundStyle(Color.moraGold)
+                    .layoutPriority(1)
+                Text(nextTitle)
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+            .font(.caption.weight(.semibold))
+            .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(
+            Capsule().stroke(
+                LinearGradient(
+                    colors: [Color.moraMint.opacity(0.65), Color.moraGold.opacity(0.65)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ),
+                lineWidth: 1
+            )
+        )
+        .shadow(color: Color.moraMint.opacity(0.18), radius: 10, y: 3)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("AutoMix: сводится \(nextTitle)")
     }
 
     private func cover(playing: Bool) -> some View {
@@ -672,8 +922,43 @@ struct NativePlayerView: View {
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: model.artwork.map(ObjectIdentifier.init))
             }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(0.6), radius: playing ? 30 : 14, y: playing ? 20 : 10)
             .scaleEffect(playing || reduceMotion ? 1 : 0.94)
+            .offset(x: reduceMotion ? 0 : coverDragOffset)
+            .gesture(
+                DragGesture(minimumDistance: 16, coordinateSpace: .global)
+                    .updating($isCoverDragging) { _, active, _ in
+                        active = true
+                    }
+                    .onChanged { value in
+                        guard !queueOpen && !showLyrics else { return }
+                        guard abs(value.translation.width) >= abs(value.translation.height) else {
+                            if coverDragOffset != 0 { coverDragOffset = 0 }
+                            return
+                        }
+                        if !reduceMotion {
+                            coverDragOffset = max(-48, min(48, value.translation.width * 0.45))
+                        }
+                    }
+                    .onEnded { value in
+                        guard !queueOpen && !showLyrics else {
+                            coverDragOffset = 0
+                            return
+                        }
+                        let isHorizontal = abs(value.translation.width) >= abs(value.translation.height)
+                        if isHorizontal && value.translation.width < -60 {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            model.transport("nexttrack")
+                        } else if isHorizontal && value.translation.width > 60 {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            model.transport("previoustrack")
+                        }
+                        withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.78)) {
+                            coverDragOffset = 0
+                        }
+                    }
+            )
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: playing)
             .layoutPriority(-1)
     }
@@ -1153,19 +1438,29 @@ private struct NativeScrubber: View {
     let state: NativePlayerState
     let receivedAt: Date
     let pending: Double?
+    var showMixingLabel: Bool = true
     let seek: (Double) -> Void
     @GestureState private var drag: Double?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let duration = max(state.duration, 1)
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: !state.playing || drag != nil || pending != nil)) { context in
+        let isDragging = drag != nil
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !state.playing || isDragging || pending != nil)) { context in
             let live = min(state.duration, state.position + (state.playing ? max(0, context.date.timeIntervalSince(receivedAt)) : 0))
             let shown = drag ?? pending ?? live
+            let inMixZone = state.blending || (state.mixStart.map { shown >= $0 } ?? false)
+            let activeFill = inMixZone
+                ? LinearGradient(colors: [.moraMint, .moraGold], startPoint: .leading, endPoint: .trailing)
+                : LinearGradient(
+                    colors: [.white.opacity(isDragging ? 1.0 : 0.90), .moraMint.opacity(isDragging ? 0.95 : 0.72)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
             VStack(spacing: 6) {
                 GeometryReader { geo in
                     let width = geo.size.width
-                    let barHeight: CGFloat = drag == nil ? 6 : 10
+                    let barHeight: CGFloat = isDragging ? 9 : 5
                     let x = width * min(1, max(0, shown / duration))
                     let mixX = state.mixStart.map { width * min(1, max(0, $0 / duration)) }
                     let mixW = state.mixStart.map { start -> CGFloat in
@@ -1177,40 +1472,54 @@ private struct NativeScrubber: View {
                             Capsule().fill(.white.opacity(0.18)).frame(height: barHeight)
                             if let mixX, let mixW {
                                 Rectangle()
-                                    .fill(Color.moraMint.opacity(state.blending ? 0.75 : 0.35))
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                Color.moraMint.opacity(state.blending ? 0.80 : 0.35),
+                                                Color.moraGold.opacity(state.blending ? 0.65 : 0.25)
+                                            ],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
                                     .frame(width: mixW, height: barHeight)
                                     .offset(x: mixX)
                             }
-                            Capsule().fill(.white.opacity(state.blending ? 0.95 : 0.65))
-                                .frame(width: x, height: barHeight)
-                                .shadow(color: .white.opacity(state.blending ? 0.65 : 0), radius: 5)
                         }
                         .frame(width: width, height: barHeight)
                         .clipShape(Capsule())
+                        Capsule()
+                            .fill(activeFill)
+                            .frame(width: x, height: barHeight)
+                            .shadow(color: inMixZone ? Color.moraMint.opacity(0.35) : .clear, radius: 6)
                         if let mixX {
                             Capsule()
                                 .fill(Color.moraMint)
-                                .frame(width: 2.5, height: drag == nil ? 11 : 15)
+                                .frame(width: 2.5, height: isDragging ? 14 : 10)
                                 .offset(x: min(max(0, mixX - 1.25), max(0, width - 2.5)))
                                 .shadow(color: Color.moraMint.opacity(0.5), radius: 3)
                         }
-                        if drag != nil {
-                            Circle().fill(.white).frame(width: 20, height: 20).offset(x: x - 10)
+                        if isDragging {
+                            Circle()
+                                .fill(.white)
+                                .frame(width: 18, height: 18)
+                                .shadow(color: .black.opacity(0.35), radius: 4, y: 1)
+                                .offset(x: min(max(0, x - 9), max(0, width - 18)))
                         }
                     }
                     .frame(width: width, height: 44)
                     .contentShape(Rectangle())
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: drag == nil)
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: state.blending)
+                    .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.8), value: isDragging)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: inMixZone)
                     // GestureState resets when the sheet's own pan cancels the drag; a @State value stayed stuck there.
                     .gesture(DragGesture(minimumDistance: 4)
                         .updating($drag) { g, value, _ in
-                            guard state.duration > 0 else { return }
+                            guard state.duration > 0, width > 0 else { return }
                             if value == nil { UISelectionFeedbackGenerator().selectionChanged() }
                             value = min(state.duration, max(0, g.location.x / width * state.duration))
                         }
                         .onEnded { g in
-                            guard state.duration > 0 else { return }
+                            guard state.duration > 0, width > 0 else { return }
                             seek(min(state.duration, max(0, g.location.x / width * state.duration)))
                         })
                 }
@@ -1218,7 +1527,7 @@ private struct NativeScrubber: View {
                 HStack {
                     Text(NativePlayerTime.text(shown))
                     Spacer()
-                    if state.blending {
+                    if state.blending && showMixingLabel {
                         Text("Микширование").font(.caption2.weight(.medium))
                             .foregroundStyle(.white.opacity(reduceMotion || !state.playing ? 0.8 : 0.65 + 0.35 * sin(context.date.timeIntervalSinceReferenceDate * 3)))
                             .shadow(color: .white.opacity(0.25), radius: 3)

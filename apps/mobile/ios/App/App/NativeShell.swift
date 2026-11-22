@@ -607,6 +607,7 @@ final class NativeShellStore: ObservableObject {
     @Published private(set) var ui = NativeUiState()
     /// The route on screen: the page's, or the one native just asked for (until the page confirms it).
     @Published private(set) var path = "/"
+    @Published private(set) var navDirection: Int = 0
     @Published private(set) var shown = UserDefaults.standard.object(forKey: "mora.nativeShell") as? Bool ?? true
     @Published private(set) var player = NativePlayerState()
     @Published private(set) var artwork: UIImage?
@@ -723,7 +724,6 @@ final class NativeShellStore: ObservableObject {
     @Published var playlistTarget: [NativeTrack] = []
     /// No usable network path: online searches and streams fail, downloads still play.
     @Published private(set) var offline = false
-    @Published private(set) var weakWaveNetwork = false
     private let network = NWPathMonitor()
     @MainActor var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web && !NativeDeepLink.splashVisible }
     var screen: NativeScreen { NativeRoute.screen(path) }
@@ -830,7 +830,6 @@ final class NativeShellStore: ObservableObject {
 
     @MainActor private func syncQueueControllerState() {
         let qc = NativeQueueController.shared
-        if weakWaveNetwork != qc.weakWaveNetwork { weakWaveNetwork = qc.weakWaveNetwork }
         let playing = qc.isWave && (player.playing || host?.active == true)
         // The page's snapshot knows nothing about the Swift queue: only override what the controller owns.
         if !qc.entries.isEmpty { self.queue = qc.entries.compactMap { NativeQueuedTrack(["entryId": $0.entryId, "trackId": $0.trackId]) } }
@@ -1357,6 +1356,7 @@ final class NativeShellStore: ObservableObject {
                 navHistory.append(self.path)
                 if navHistory.count > 64 { navHistory.removeFirst() }
             }
+            navDirection = 1
         }
         self.path = next
         pending = (self.path, Date())
@@ -1366,6 +1366,7 @@ final class NativeShellStore: ObservableObject {
         UIAccessibility.post(notification: .screenChanged, argument: nil)
         go(NativeRoute.root(tab))
         navHistory.removeAll()
+        navDirection = 0
     }
 
     func play(_ list: [NativeTrack], at index: Int, type: String, label: String, id: String? = nil) {
@@ -1391,6 +1392,7 @@ final class NativeShellStore: ObservableObject {
     }
     /// The page's history: native pages sit on top of the route they were opened from.
     func back() {
+        navDirection = -1
         if let previous = navHistory.popLast() {
             self.path = previous
             pending = (previous, Date())
@@ -1487,9 +1489,11 @@ final class NativeShellStore: ObservableObject {
             guard let self, case .success(let value) = result else { return }
             Task { @MainActor in NativeQueueController.shared.syncFromHost(value) }
             let next = NativePlayerState(value)
-            if next.trackId != self.player.trackId || next.title != self.player.title || next.artist != self.player.artist || next.playing != self.player.playing || next.active != self.player.active {
+            let metaChanged = next.trackId != self.player.trackId || next.title != self.player.title || next.artist != self.player.artist || next.playing != self.player.playing || next.active != self.player.active
+            let progressChanged = next.blending != self.player.blending || abs(next.position - self.player.position) >= 0.25 || next.duration != self.player.duration || (next.position == 0) != (self.player.position == 0)
+            if metaChanged || progressChanged {
                 self.player = next
-                self.publishWidget()
+                if metaChanged { self.publishWidget() }
             }
             let key = "\(next.entryId)|\(next.artworkReady)"
             if key != self.artworkKey {
@@ -1516,11 +1520,15 @@ final class NativeShellStore: ObservableObject {
             artworkKey = key
             artwork = image
         }
-        let changed = next.trackId != player.trackId || next.playing != player.playing || next.title != player.title
+        let metaChanged = next.trackId != player.trackId || next.playing != player.playing || next.title != player.title
             || next.artist != player.artist || next.active != player.active || next.entryId != player.entryId
-        guard changed else { return }
-        player = next; publishWidget()
-        if sharedLibrary || next.trackId != ui.now?.id { syncQueueControllerState() }
+        let progressChanged = next.blending != player.blending || abs(next.position - player.position) >= 0.25 || next.duration != player.duration || (next.position == 0) != (player.position == 0)
+        guard metaChanged || progressChanged else { return }
+        player = next
+        if metaChanged {
+            publishWidget()
+            if sharedLibrary || next.trackId != ui.now?.id { syncQueueControllerState() }
+        }
     }
 
     /// Home-screen widgets: the playing (or last) track and the newest likes; redrawn only when they change.
@@ -1539,9 +1547,14 @@ final class NativeShellStore: ObservableObject {
     }
 
     var nativePlaying: Bool { host?.active == true && player.active }
+    func isCurrentTrack(_ id: String) -> Bool { nativePlaying ? player.trackId == id : ui.now?.id == id }
     var miniTitle: String? { nativePlaying ? player.title : ui.now?.title }
     var miniArtist: String { nativePlaying ? player.artist : ui.now?.artist ?? "" }
     var miniPlaying: Bool { nativePlaying ? player.playing : ui.now?.playing == true }
+    var miniProgress: Double {
+        guard nativePlaying, player.duration > 0 else { return 0 }
+        return min(1, max(0, player.position / player.duration))
+    }
 
     func togglePlayback() {
         if nativePlaying, let host {
@@ -1556,6 +1569,25 @@ final class NativeShellStore: ObservableObject {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             host.command("nexttrack", source: "player") { [weak self] _ in self?.refreshPlayer() }
         } else { run("next") }
+    }
+    func previous() {
+        if nativePlaying, let host {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            host.command("previoustrack", source: "player") { [weak self] _ in self?.refreshPlayer() }
+        } else { run("playerCommand", ["action": "previoustrack"]) }
+    }
+    func playlistCovers(for playlistId: String) -> [String] {
+        var seen = Set<String>()
+        var urls: [String] = []
+        for entry in librarySnapshot?.entries[playlistId] ?? [] {
+            guard let cover = byId[entry.trackId]?.cover, !cover.isEmpty, seen.insert(cover).inserted else { continue }
+            urls.append(cover)
+            if urls.count >= 4 { return urls }
+        }
+        if urls.isEmpty, let cover = playlists.first(where: { $0.id == playlistId })?.cover, !cover.isEmpty {
+            return [cover]
+        }
+        return urls
     }
     /// A restored track opens natively before the audio engine starts.
     func openPlayer() {
@@ -1664,6 +1696,51 @@ struct NativeCover: View {
     }
 }
 
+struct NativeCollageCover: View {
+    let urls: [String]
+    var size: CGFloat = 48
+    var radius: CGFloat = 8
+    var monogram: String? = nil
+    var aspectSquare: Bool = false
+
+    var body: some View {
+        if urls.count >= 4 {
+            let tile = max(1, (size - 1.5) / 2)
+            let grid = VStack(spacing: 1.5) {
+                HStack(spacing: 1.5) {
+                    tileCover(urls[0], tile: tile)
+                    tileCover(urls[1], tile: tile)
+                }
+                HStack(spacing: 1.5) {
+                    tileCover(urls[2], tile: tile)
+                    tileCover(urls[3], tile: tile)
+                }
+            }
+            .background(Color.moraBackground)
+            Group {
+                if aspectSquare {
+                    Color.clear.aspectRatio(1, contentMode: .fit)
+                        .overlay { grid }
+                } else {
+                    grid.frame(width: size, height: size)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .accessibilityHidden(true)
+        } else {
+            NativeCover(url: urls.first, size: size, radius: radius, monogram: monogram, aspectSquare: aspectSquare)
+        }
+    }
+
+    @ViewBuilder private func tileCover(_ url: String, tile: CGFloat) -> some View {
+        if aspectSquare {
+            NativeCover(url: url, radius: 0, aspectSquare: true)
+        } else {
+            NativeCover(url: url, size: tile, radius: 0)
+        }
+    }
+}
+
 extension View {
     /// iOS 26 Liquid Glass; a material with a hairline before it.
     @ViewBuilder func moraGlass<S: Shape>(_ shape: S) -> some View {
@@ -1682,15 +1759,22 @@ struct NativeShellContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if store.offline || store.weakWaveNetwork {
-                Text(store.offline ? "Не в сети" : "Слабое соединение · офлайн-волна")
+            if store.offline {
+                Text("Не в сети")
                     .font(.footnote.weight(.medium)).foregroundStyle(Color.moraGold)
                     .frame(maxWidth: .infinity).padding(.vertical, 6)
                     .background(Color.moraGold.opacity(0.12))
             }
             ZStack(alignment: .top) {
                 screen.id(store.path)
-                    .transition(.opacity)
+                    .transition(
+                        reduceMotion || store.navDirection == 0
+                            ? .opacity
+                            : .asymmetric(
+                                insertion: .move(edge: store.navDirection > 0 ? .trailing : .leading).combined(with: .opacity),
+                                removal: .move(edge: store.navDirection > 0 ? .leading : .trailing).combined(with: .opacity)
+                            )
+                    )
                 if store.path != NativeRoute.root(store.tab) {
                     // Pages are route switches, not NavigationStack pushes, so iOS gives them no back swipe: this edge does.
                     Color.clear.frame(width: 18).frame(maxHeight: .infinity).contentShape(Rectangle())
@@ -1701,7 +1785,8 @@ struct NativeShellContent: View {
                         .accessibilityHidden(true)
                 }
             }
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: store.path)
+            .clipped()
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: store.path)
             .overlay(alignment: .bottom) {
                 if let text = store.banner {
                     Text(text).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
@@ -1768,6 +1853,7 @@ extension NativeTab {
 /// System tabs with the native mini player above them.
 struct NativeShellBar: View {
     @ObservedObject var store: NativeShellStore
+    @State private var dragOffset: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 8) {
@@ -1810,7 +1896,52 @@ struct NativeShellBar: View {
         }
         .padding(.leading, 8).padding(.trailing, 6)
         .frame(minHeight: 56)
+        .overlay(alignment: .bottom) {
+            if store.miniProgress > 0 {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.08))
+                        Rectangle()
+                            .fill(
+                                LinearGradient(
+                                    colors: store.player.blending ? [.moraMint, .moraGold] : [.moraMint, .moraMint],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .frame(width: geo.size.width * store.miniProgress)
+                            .animation(UIAccessibility.isReduceMotionEnabled ? nil : .easeOut(duration: 0.18), value: store.miniProgress)
+                    }
+                }
+                .frame(height: 2)
+                .allowsHitTesting(false)
+            }
+        }
+        .clipShape(Capsule())
         .moraGlass(Capsule())
+        .offset(x: dragOffset)
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 20, coordinateSpace: .global)
+                .onChanged { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    dragOffset = max(-32, min(32, value.translation.width * 0.35))
+                }
+                .onEnded { value in
+                    if abs(value.translation.width) > abs(value.translation.height) {
+                        if value.translation.width < -55 { store.next() }
+                        else if value.translation.width > 55 { store.previous() }
+                    }
+                    if UIAccessibility.isReduceMotionEnabled {
+                        dragOffset = 0
+                    } else {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
+                            dragOffset = 0
+                        }
+                    }
+                }
+        )
+        .onDisappear { dragOffset = 0 }
         .environmentObject(store)
     }
 }

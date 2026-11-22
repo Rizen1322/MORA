@@ -383,6 +383,15 @@ struct NativeHomeView: View {
         return out
     }
 
+    private var recentlyPlayedTracks: [NativeTrack] {
+        Array(
+            store.library
+                .filter { $0.lastPlayedAt > 0 && $0.ok }
+                .sorted { $0.lastPlayedAt == $1.lastPlayedAt ? $0.id < $1.id : $0.lastPlayedAt > $1.lastPlayedAt }
+                .prefix(4)
+        )
+    }
+
     private static func encoded(_ value: String) -> String {
         value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? value
     }
@@ -395,6 +404,7 @@ struct NativeHomeView: View {
                     NativeWaveHero(wave: store.ui.wave)
                     stations
                     tiles
+                    recentlyPlayed
                     if store.ui.loaded && store.library.isEmpty {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Добавьте свою музыку").font(.title3.bold())
@@ -532,6 +542,63 @@ struct NativeHomeView: View {
         }
     }
 
+    @ViewBuilder private var recentlyPlayed: some View {
+        let tracks = recentlyPlayedTracks
+        if !tracks.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Недавно слушали").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                    Spacer()
+                    Button { store.go("/history") } label: {
+                        HStack(spacing: 4) { Text("Все"); Image(systemName: "chevron.forward").font(.caption.weight(.bold)) }
+                            .font(.subheadline.weight(.medium)).foregroundStyle(Color.moraMint).frame(minHeight: 44)
+                    }
+                    .accessibilityLabel("Вся история")
+                }
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                        let active = store.isCurrentTrack(track.id)
+                        Button { store.play(tracks, at: index, type: "history", label: "Недавно слушали") } label: {
+                            HStack(spacing: 10) {
+                                NativeCover(url: track.cover, size: 44, radius: 8, monogram: track.title)
+                                    .overlay {
+                                        if active {
+                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                .fill(Color.black.opacity(0.45))
+                                                .overlay { NativePlayingIndicator(playing: store.miniPlaying) }
+                                        }
+                                    }
+                                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(track.title)
+                                        .font(.footnote.weight(.semibold))
+                                        .foregroundStyle(active ? Color.moraMint : .white)
+                                        .lineLimit(1)
+                                    Text(track.artist)
+                                        .font(.caption2)
+                                        .foregroundStyle(.white.opacity(0.55))
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 7)
+                            .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+                            .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("\(track.title), \(track.artist)\(active ? (store.miniPlaying ? ", сейчас играет" : ", на паузе") : "")")
+                        .accessibilityHint("Играть")
+                        .contextMenu { NativeTrackActions(track: track, play: { store.play(tracks, at: index, type: "history", label: "Недавно слушали") }) }
+                    }
+                }
+            }
+        }
+    }
+
     @ViewBuilder private var artistRail: some View {
         let artists = favoriteArtists
         if !artists.isEmpty {
@@ -621,7 +688,7 @@ struct NativeHomeView: View {
                     ForEach(store.playlists) { p in
                         Button { store.go("/playlist/\(p.id)") } label: {
                             VStack(alignment: .leading, spacing: 6) {
-                                NativeCover(url: p.cover, size: 152, radius: 12, monogram: p.name)
+                                NativeCollageCover(urls: store.playlistCovers(for: p.id), size: 152, radius: 12, monogram: p.name)
                                     .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.white.opacity(0.09), lineWidth: 0.75))
                                     .shadow(color: .black.opacity(0.32), radius: 8, y: 4)
                                 Text(p.name).font(.subheadline.weight(.semibold)).lineLimit(1)
@@ -849,6 +916,43 @@ struct NativeTrackListView: View {
     }
 }
 
+struct NativePlayingIndicator: View {
+    let playing: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if playing && !reduceMotion {
+            TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { context in
+                bars(at: context.date.timeIntervalSinceReferenceDate)
+            }
+        } else {
+            bars(at: nil)
+        }
+    }
+
+    private func bars(at time: TimeInterval?) -> some View {
+        let heights: [CGFloat]
+        if let t = time {
+            heights = [
+                4 + 9 * (0.5 + 0.5 * sin(t * 5.2)),
+                4 + 9 * (0.5 + 0.5 * sin(t * 6.4 + 1.8)),
+                4 + 9 * (0.5 + 0.5 * sin(t * 4.7 + 3.4)),
+            ]
+        } else {
+            heights = [7, 11, 5.5]
+        }
+        return HStack(alignment: .bottom, spacing: 2) {
+            ForEach(0..<3, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 1.25, style: .continuous)
+                    .fill(Color.moraMint)
+                    .frame(width: 2.5, height: heights[index])
+            }
+        }
+        .frame(width: 14, height: 14, alignment: .bottom)
+        .accessibilityHidden(true)
+    }
+}
+
 struct NativeTrackRow: View {
     let track: NativeTrack
     let play: () -> Void
@@ -856,6 +960,11 @@ struct NativeTrackRow: View {
     var remove: (title: String, symbol: String, run: () -> Void)? = nil
     /// Set while the list is choosing tracks: a tap toggles this row.
     var selected: Bool? = nil
+    @EnvironmentObject private var store: NativeShellStore
+
+    private var isActive: Bool {
+        store.isCurrentTrack(track.id)
+    }
 
     var body: some View {
         Button(action: play) {
@@ -866,9 +975,19 @@ struct NativeTrackRow: View {
                         .accessibilityHidden(true)
                 }
                 NativeCover(url: track.cover, size: 48, monogram: track.title)
+                    .overlay {
+                        if isActive {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.black.opacity(0.45))
+                                .overlay { NativePlayingIndicator(playing: store.miniPlaying) }
+                        }
+                    }
                     .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(track.title).font(.body.weight(.medium)).lineLimit(1)
+                    Text(track.title)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(isActive ? Color.moraMint : .white)
+                        .lineLimit(1)
                     HStack(spacing: 4) {
                         if track.offline && (track.sourceKind == "remote" || track.pinned) {
                             Image(systemName: "arrow.down.circle.fill")
@@ -893,7 +1012,7 @@ struct NativeTrackRow: View {
         .buttonStyle(.plain)
         .disabled(!track.ok && selected == nil)
         .listRowBackground(Color.clear)
-        .accessibilityLabel("\(track.title), \(track.artist)\(track.liked ? ", в любимом" : "")")
+        .accessibilityLabel("\(track.title), \(track.artist)\(isActive ? (store.miniPlaying ? ", сейчас играет" : ", на паузе") : "")\(track.liked ? ", в любимом" : "")")
         .accessibilityValue(NativePlayerTime.text(track.duration))
         .accessibilityHint(selected != nil ? "Выбрать" : track.ok ? "Играть" : "Файл недоступен")
         .accessibilityAddTraits(selected == true ? .isSelected : [])

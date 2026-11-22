@@ -24,7 +24,7 @@ private enum NativeVersionSource {
 @MainActor private final class NativeVersionModel: NSObject, ObservableObject, AVAudioPlayerDelegate {
     private static let parentheticalRegex = try! NSRegularExpression(pattern: #"\(.*?\)|\[.*?\]"#)
     private static let wordSeparatorRegex = try! NSRegularExpression(pattern: #"[^\p{L}\p{N}]+"#)
-    private static let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+    nonisolated private static let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
     let target: NativeTrack
     private let store: NativeShellStore

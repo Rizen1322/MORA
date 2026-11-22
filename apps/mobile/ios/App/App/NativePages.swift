@@ -66,6 +66,7 @@ struct NativePageView: View {
     @State private var documentPicker: NativeDocumentPicker?
     @State private var importingFile: String?
     @State private var importPick: NativeImportPick?
+    @State private var heroVisible = true
 
     var body: some View {
         let current = resolvePage()
@@ -87,6 +88,18 @@ struct NativePageView: View {
     private func hasHero(_ current: NativePage?) -> Bool {
         if case .hero = current?.sections.first?.rows.first { return true }
         return false
+    }
+    private var currentPlaylistId: String? {
+        guard store.path.hasPrefix("/playlist/") else { return nil }
+        let raw = String(store.path.dropFirst("/playlist/".count))
+        guard !raw.isEmpty, !raw.contains("/") else { return nil }
+        let decoded = raw.removingPercentEncoding ?? raw
+        return decoded.isEmpty ? nil : decoded
+    }
+    private func setHeroVisible(_ visible: Bool) {
+        guard heroVisible != visible else { return }
+        if reduceMotion { heroVisible = visible }
+        else { withAnimation(.easeInOut(duration: 0.18)) { heroVisible = visible } }
     }
     private var nativeImport: Bool { waveSource == nil && store.sharedLibrary && NativeImportState.handles(store.path) }
     /// Smart playlists, duplicates and statistics are native data screens: a shell snapshot must not reload them.
@@ -159,6 +172,29 @@ struct NativePageView: View {
                 Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") }
             } else {
                 Button { reload &+= 1 } label: { Label("Обновить", systemImage: "arrow.clockwise") }.disabled(running)
+            }
+        }
+        if hasHero(current), !heroVisible, let current {
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 8) {
+                    Text(current.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .foregroundStyle(.white)
+                    if case .hero(_, _, _, _, _, let play, _) = current.sections.first?.rows.first, let play {
+                        Button { run(play) } label: {
+                            Image(systemName: "play.fill")
+                                .font(.caption.bold())
+                                .foregroundStyle(Color.moraBackground)
+                                .frame(width: 28, height: 28)
+                                .background(Color.moraMint, in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Слушать")
+                        .disabled(running)
+                    }
+                }
+                .transition(.opacity)
             }
         }
         if running { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
@@ -251,11 +287,13 @@ struct NativePageView: View {
                 Button("Отмена", role: .cancel) {}
             }
             .onAppear {
+                heroVisible = true
                 if page == nil, waveSource == nil, let local = try? store.libraryPage(), let built = NativePage(local) {
                     page = built
                 }
             }
             .onChange(of: store.path) {
+                heroVisible = true
                 if waveSource == nil, let local = try? store.libraryPage(), let built = NativePage(local) {
                     page = built
                 } else {
@@ -562,6 +600,8 @@ struct NativePageView: View {
                             .multilineTextAlignment(.center)
                             .lineLimit(2)
                             .minimumScaleFactor(0.65)
+                            .onAppear { setHeroVisible(true) }
+                            .onDisappear { setHeroVisible(false) }
                         if let subtitle, !subtitle.isEmpty {
                             Text(subtitle)
                                 .font(.subheadline)
@@ -577,9 +617,12 @@ struct NativePageView: View {
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.moraBackground)
             } else {
+                let playlistId = currentPlaylistId
+                let collage = playlistId.map { store.playlistCovers(for: $0) } ?? []
+                let showCollage = playlistId != nil && collage.count >= 4
                 ZStack(alignment: .top) {
                     ZStack(alignment: .bottom) {
-                        NativeCover(url: cover, size: width, radius: 0, monogram: title)
+                        NativeCover(url: cover ?? collage.first, size: width, radius: 0, monogram: title)
                             .frame(width: width, height: 320)
                             .clipped()
                             .blur(radius: 44)
@@ -592,14 +635,22 @@ struct NativePageView: View {
                         .frame(height: 320)
                     }
                     VStack(spacing: 8) {
-                        NativeCover(url: cover, size: 220, radius: 14, monogram: title)
-                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(0.12), lineWidth: 0.75))
-                            .shadow(color: .black.opacity(0.52), radius: 20, y: 10)
-                            .padding(.bottom, 8)
+                        Group {
+                            if showCollage {
+                                NativeCollageCover(urls: collage, size: 220, radius: 14, monogram: title)
+                            } else {
+                                NativeCover(url: cover, size: 220, radius: 14, monogram: title)
+                            }
+                        }
+                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(0.12), lineWidth: 0.75))
+                        .shadow(color: .black.opacity(0.52), radius: 20, y: 10)
+                        .padding(.bottom, 8)
                         Text(title)
                             .font(.title2.bold())
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 16)
+                            .onAppear { setHeroVisible(true) }
+                            .onDisappear { setHeroVisible(false) }
                         if let subtitle, !subtitle.isEmpty {
                             Text(subtitle)
                                 .font(.subheadline.weight(.medium))
