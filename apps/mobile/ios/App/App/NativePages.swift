@@ -68,7 +68,8 @@ struct NativePageView: View {
     @State private var importPick: NativeImportPick?
 
     var body: some View {
-        NavigationStack { dialogs(pageList) }
+        let current = resolvePage()
+        NavigationStack { dialogs(pageList(current), refresh: current?.refresh) }
             .sheet(item: $importPick, onDismiss: { reload &+= 1 }) { target in
                 NativeImportPicker(target: target) { choice in
                     if let act = NativePageAct(["name": "resolveImport", "args": ["job": target.job, "position": target.position, "choice": choice]]) { run(act) }
@@ -77,9 +78,14 @@ struct NativePageView: View {
     }
 
     // Split out of body: as one expression it exceeds the Swift type checker's time limit.
-    private var catalog: Bool { page?.style == "catalog" }
-    private var hasHero: Bool {
-        if case .hero = page?.sections.first?.rows.first { return true }
+    private func resolvePage() -> NativePage? {
+        if let page { return page }
+        guard failure == nil, waveSource == nil else { return nil }
+        return (try? store.libraryPage()).flatMap(NativePage.init)
+    }
+    private func isCatalog(_ current: NativePage?) -> Bool { current?.style == "catalog" }
+    private func hasHero(_ current: NativePage?) -> Bool {
+        if case .hero = current?.sections.first?.rows.first { return true }
         return false
     }
     private var nativeImport: Bool { waveSource == nil && store.sharedLibrary && NativeImportState.handles(store.path) }
@@ -88,19 +94,21 @@ struct NativePageView: View {
     /// AutoMix diagnostics reads the JSC API directly: a shell snapshot must not reload and reset its selection.
     private var nativeDiagnostics: Bool { waveSource == nil && store.sharedLibrary && NativeDiagnosticsState.handles(store.path) }
 
-    private var pageList: some View {
-        styled(List {
+    private func pageList(_ current: NativePage?) -> some View {
+        let catalog = isCatalog(current)
+        let hero = hasHero(current)
+        return styled(List {
             if let name = importingFile { ProgressView("Добавляем «" + name + "»…").frame(maxWidth: .infinity).listRowBackground(Color.clear) }
             if let waveSource { waveHeader(waveSource) }
-            if let page {
+            if let current {
                 if let failure { Text(failure).foregroundStyle(.red) }
-                if !hasHero, let prompt = page.search, !prompt.isEmpty { pageSearchField(prompt) }
-                ForEach(Array(page.sections.enumerated()), id: \.offset) { index, section in
-                    if hasHero, index == page.sections.count - 1, let prompt = page.search, !prompt.isEmpty,
+                if !hero, let prompt = current.search, !prompt.isEmpty { pageSearchField(prompt) }
+                ForEach(Array(current.sections.enumerated()), id: \.offset) { index, section in
+                    if hero, index == current.sections.count - 1, let prompt = current.search, !prompt.isEmpty,
                        (section.rows.count >= 6 || !query.isEmpty) {
                         pageSearchField(prompt)
                     }
-                    sectionView(section)
+                    sectionView(section, catalog: catalog, pageTitle: current.title)
                 }
             } else if let failure {
                 ContentUnavailableView("Не удалось открыть", systemImage: "exclamationmark.triangle", description: Text(failure))
@@ -109,13 +117,13 @@ struct NativePageView: View {
             } else {
                 ProgressView(waveSource == nil ? "Загрузка…" : "Загружаем настройки…").frame(maxWidth: .infinity).listRowBackground(Color.clear)
             }
-        })
+        }, catalog: catalog)
         .scrollContentBackground(.hidden)
         .background(Color.moraBackground)
         // Only full-bleed hero pages carry their title inside the scroll header; library lists keep navigation titles.
-        .navigationTitle(hasHero ? "" : page?.title ?? "")
-        .navigationBarTitleDisplayMode(waveSource == nil && !hasHero ? .automatic : .inline)
-        .toolbar { toolbar }
+        .navigationTitle(hero ? "" : current?.title ?? "")
+        .navigationBarTitleDisplayMode(waveSource == nil && !hero ? .automatic : .inline)
+        .toolbar { toolbar(current) }
     }
 
     private func waveHeader(_ source: Binding<NativeWaveSource>) -> some View {
@@ -145,7 +153,7 @@ struct NativePageView: View {
         } footer: { Text("Изменения сохраняются автоматически.") }
     }
 
-    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+    @ToolbarContentBuilder private func toolbar(_ current: NativePage?) -> some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             if waveSource == nil {
                 Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") }
@@ -155,10 +163,10 @@ struct NativePageView: View {
         }
         if running { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
         if waveSource != nil { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } } }
-        if page?.sections.contains(where: { $0.reorder != nil }) == true && query.isEmpty {
+        if current?.sections.contains(where: { $0.reorder != nil }) == true && query.isEmpty {
             ToolbarItem(placement: .topBarTrailing) { EditButton() }
         }
-        if let menuItems = page?.menu, !menuItems.isEmpty {
+        if let menuItems = current?.menu, !menuItems.isEmpty {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     ForEach(menuItems.indices, id: \.self) { index in
@@ -216,7 +224,7 @@ struct NativePageView: View {
         }
     }
 
-    private func dialogs(_ list: some View) -> some View {
+    private func dialogs(_ list: some View, refresh: Double?) -> some View {
         list
             .refreshable {
                 if ["/catalog/", "/public/", "/soundcloud/"].contains(where: { store.path.hasPrefix($0) }) {
@@ -226,8 +234,8 @@ struct NativePageView: View {
                 await load()
             }
             .task(id: "\(store.path)|\(nativeImport || nativeSmart || nativeDiagnostics ? 0 : store.revision)|\(reload)|\(waveSource?.wrappedValue.rawValue ?? "")") { await load() }
-            .task(id: page?.refresh) {
-                guard let seconds = page?.refresh else { return }
+            .task(id: refresh) {
+                guard let seconds = refresh else { return }
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(seconds))
                     if !Task.isCancelled { reload &+= 1 }
@@ -242,7 +250,19 @@ struct NativePageView: View {
                 Button("Готово") { run(p.act, ["value": promptText]) }
                 Button("Отмена", role: .cancel) {}
             }
-            .onChange(of: store.path) { page = nil; failure = nil; form = [:]; pendingToggles = [:]; pendingChoices = [:]; query = "" }
+            .onAppear {
+                if page == nil, waveSource == nil, let local = try? store.libraryPage(), let built = NativePage(local) {
+                    page = built
+                }
+            }
+            .onChange(of: store.path) {
+                if waveSource == nil, let local = try? store.libraryPage(), let built = NativePage(local) {
+                    page = built
+                } else {
+                    page = nil
+                }
+                failure = nil; form = [:]; pendingToggles = [:]; pendingChoices = [:]; query = ""
+            }
             .onChange(of: waveSource?.wrappedValue) { failure = nil; pendingToggles = [:]; pendingChoices = [:] }
             .safeAreaInset(edge: .bottom) {
                 if waveSource != nil, let text = store.banner {
@@ -252,7 +272,7 @@ struct NativePageView: View {
             }
     }
 
-    @ViewBuilder private func styled(_ list: some View) -> some View {
+    @ViewBuilder private func styled(_ list: some View, catalog: Bool) -> some View {
         if catalog { list.listStyle(.plain) } else { list.listStyle(.insetGrouped) }
     }
 
@@ -287,7 +307,7 @@ struct NativePageView: View {
 
     // MARK: rows
 
-    @ViewBuilder private func sectionView(_ section: NativePageSection) -> some View {
+    @ViewBuilder private func sectionView(_ section: NativePageSection, catalog: Bool, pageTitle: String) -> some View {
         let words = NativeSearchText.normalize(query).split(whereSeparator: \.isWhitespace)
         let rows = section.rows.enumerated().filter { _, row in
             if words.isEmpty { return true }
@@ -300,7 +320,7 @@ struct NativePageView: View {
         }
         if !rows.isEmpty || section.footer != nil {
             Section {
-                ForEach(rows, id: \.offset) { _, row in rowView(row, section: section, tracks: tracks) }
+                ForEach(rows, id: \.offset) { _, row in rowView(row, section: section, tracks: tracks, catalog: catalog, pageTitle: pageTitle) }
                     .onMove(perform: section.reorder.flatMap { act -> ((IndexSet, Int) -> Void)? in
                         guard query.isEmpty else { return nil }
                         return { from, to in if let first = from.first { run(act, ["from": first, "to": to]) } }
@@ -363,7 +383,7 @@ struct NativePageView: View {
         .disabled(running)
     }
 
-    @ViewBuilder private func rowView(_ row: NativePageRow, section: NativePageSection, tracks: [NativeTrack]) -> some View {
+    @ViewBuilder private func rowView(_ row: NativePageRow, section: NativePageSection, tracks: [NativeTrack], catalog: Bool, pageTitle: String) -> some View {
         switch row {
         case .text(let title, let detail, let value, let tone):
             HStack(alignment: .firstTextBaseline, spacing: 12) {
@@ -698,7 +718,7 @@ struct NativePageView: View {
                 NativeTrackRow(track: track, play: {
                     guard let i = tracks.firstIndex(where: { $0.id == id }) else { return }
                     let ctx = section.play ?? [:]
-                    store.play(tracks, at: i, type: ctx["type"] as? String ?? "library", label: ctx["label"] as? String ?? page?.title ?? "", id: ctx["id"] as? String)
+                    store.play(tracks, at: i, type: ctx["type"] as? String ?? "library", label: ctx["label"] as? String ?? pageTitle, id: ctx["id"] as? String)
                 }, remove: remove.map { r in (r.title, r.symbol, { run(r.act) }) })
             }
         }

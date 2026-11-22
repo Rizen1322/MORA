@@ -183,9 +183,27 @@ final class NativePlayerModel: ObservableObject {
         }
     }
 
+    private static func unpackTrackLinks(_ value: ([NativeCatalogLink], String?)) -> (artists: [NativeCatalogLink], albumPath: String?) {
+        (value.0, value.1)
+    }
+    private static func unpackTrackLinks(_ value: (String?, [NativeCatalogLink])) -> (artists: [NativeCatalogLink], albumPath: String?) {
+        (value.1, value.0)
+    }
+    private static func unpackTrackLinks(_ value: [String: Any]) -> (artists: [NativeCatalogLink], albumPath: String?) {
+        let artists = (value["artists"] as? [[String: Any]] ?? []).compactMap(NativeCatalogLink.init)
+        let albumPath = (value["album"] as? String) ?? (value["albumPath"] as? String)
+        return (artists, albumPath)
+    }
+
     private func loadNavigation(_ id: String) {
         guard !id.isEmpty, let store = NativeShellStore.shared else { return }
         navigationTrack = id; artists = []; albumPath = nil
+        if store.sharedLibrary, let raw = store.localTrackLinks(id: id) {
+            let links = Self.unpackTrackLinks(raw)
+            artists = links.artists
+            albumPath = links.albumPath
+            return
+        }
         Task { @MainActor in
             do {
                 let value = try await store.call("trackLinks", ["id": id]) as? [String: Any]
@@ -205,6 +223,17 @@ final class NativePlayerModel: ObservableObject {
         if destination == "artist", let artist = artists.first { navigate(artist.path); return }
         let id = state.trackId
         guard let store = NativeShellStore.shared else { return }
+        if store.sharedLibrary, let raw = store.localTrackLinks(id: id) {
+            let links = Self.unpackTrackLinks(raw)
+            artists = links.artists
+            albumPath = links.albumPath
+            if let path = destination == "album" ? links.albumPath : links.artists.first?.path {
+                navigate(path)
+            } else {
+                actionError = NativeShellError.page.localizedDescription
+            }
+            return
+        }
         Task { @MainActor in
             do {
                 let value = try await store.call("trackLinks", ["id": id]) as? [String: Any]
@@ -921,6 +950,7 @@ private struct NativeLyricsView: View {
         }()
 
         return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
             follow = true
             model.seek(to: max(0, line.time - activeOffset))
         } label: {

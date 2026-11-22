@@ -1,7 +1,22 @@
 import SwiftUI
 import UIKit
 
+@MainActor private var searchPlayGeneration = 0
+
 extension NativeShellStore {
+    private static let publicArtistIdRegex = try! NSRegularExpression(pattern: #"^UC[\w-]{22}$"#)
+    private static let publicAlbumIdRegex = try! NSRegularExpression(pattern: #"^MPRE[\w-]{6,80}$"#)
+    private static let soundCloudArtistIdRegex = try! NSRegularExpression(pattern: #"^\d{1,20}$"#)
+
+    private static func searchPathComponent(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? value
+    }
+
+    private static func matchesRegex(_ regex: NSRegularExpression, _ value: String?) -> Bool {
+        guard let value, !value.isEmpty else { return false }
+        return regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) != nil
+    }
+
     /// true means handled, including no-op input; supported errors never retry through WebContent.
     @MainActor func executeLibraryAction(_ name: String, _ args: [String: Any] = [:]) async throws -> Bool {
         guard sharedLibrary else { return false }
@@ -10,6 +25,42 @@ extension NativeShellStore {
         if action == "likeAll" {
             guard let ids = values["ids"] as? [String], !ids.isEmpty else { throw NativeLibraryActions.Failure(message: "Треки не найдены") }
             likeAll(ids)
+            return true
+        }
+        if action == "downloadTracks" {
+            var seen = Set<String>()
+            let ids = (values["ids"] as? [String] ?? []).filter { !$0.isEmpty && seen.insert($0).inserted }
+            guard !ids.isEmpty else { throw NativeLibraryActions.Failure(message: "Треки не найдены") }
+            let todo = ids.filter { byId[$0].map { $0.sourceKind == "remote" && !$0.pinned } ?? true }
+            guard !todo.isEmpty else {
+                show("Эти треки уже на iPhone или не скачиваются")
+                return true
+            }
+            var count = 0
+            for id in todo {
+                _ = try await NativeServerApp.request("POST", "/api/downloads", body: ["trackId": id])
+                count += 1
+            }
+            show("Добавлено в загрузки: \(count)")
+            return true
+        }
+        if action == "deleteTracks" {
+            var seen = Set<String>()
+            let ids = (values["ids"] as? [String] ?? []).filter { !$0.isEmpty && seen.insert($0).inserted }
+            guard !ids.isEmpty else { throw NativeLibraryActions.Failure(message: "Треки не найдены") }
+            var count = 0
+            do {
+                for id in ids {
+                    let encodedId = Self.searchPathComponent(id)
+                    _ = try await NativeServerApp.request("DELETE", "/api/tracks/\(encodedId)", body: nil)
+                    count += 1
+                }
+            } catch {
+                refreshLibrary()
+                throw error
+            }
+            try await refreshLibraryAfterMutation()
+            show("Удалено: \(count)")
             return true
         }
         guard NativeLibraryActions.supports(action) else { return false }
@@ -34,6 +85,240 @@ extension NativeShellStore {
         if let go = result.go { self.go(go) }
         if let message = result.message { show(message) }
         return true
+    }
+
+    @MainActor private func ensureSearchTrack(_ track: [String: Any], provider: String, priority: Int = 0) async throws -> String {
+        let externalId = (track["externalId"] as? String) ?? (track["id"] as? String) ?? ""
+        if let known = track["libraryTrackId"] as? String, !known.isEmpty, byId[known]?.ok == true { return known }
+        if !externalId.isEmpty, let local = localCatalogTrack(provider: provider, externalId: externalId), byId[local.trackId]?.ok == true {
+            return local.trackId
+        }
+        guard !externalId.isEmpty else { throw NativeLibraryActions.Failure(message: "Трек не найден") }
+        let trackId: String
+        if provider == "yandex" {
+            var payload = track
+            if payload["externalId"] == nil { payload["externalId"] = externalId }
+            let res = try await NativeServerApp.request("POST", "/api/providers/yandex/import", body: ["track": payload], timeout: 60)
+            guard let id = res["trackId"] as? String, !id.isEmpty else { throw NativeLibraryActions.Failure(message: "Не удалось загрузить трек") }
+            trackId = id
+        } else {
+            let resolvedProvider = provider == "soundcloud" ? "soundcloud" : "youtube"
+            let res = try await NativeServerApp.request("POST", "/api/public/prepare", body: [
+                "provider": resolvedProvider,
+                "externalId": externalId,
+                "priority": priority,
+                "progressive": true,
+            ], timeout: 120)
+            guard let id = res["trackId"] as? String, !id.isEmpty else { throw NativeLibraryActions.Failure(message: "Не удалось подготовить трек") }
+            trackId = id
+        }
+        try? await refreshLibraryAfterMutation()
+        return trackId
+    }
+
+    @MainActor private func playSearchTracks(_ rawTracks: [[String: Any]], startIndex: Int, defaultProvider: String,
+                                           context: NativeQueueController.Context) async throws {
+        let playable = rawTracks.filter { $0["playable"] as? Bool != false }
+        guard !playable.isEmpty else { return }
+        searchPlayGeneration &+= 1
+        let gen = searchPlayGeneration
+
+        let clamped = max(0, min(rawTracks.count - 1, startIndex))
+        let tail = rawTracks[clamped...].filter { $0["playable"] as? Bool != false }
+        var ordered = Array((tail.isEmpty ? playable : tail).prefix(25))
+
+        let first = ordered.removeFirst()
+        let firstProvider = (first["audioProvider"] as? String) ?? (first["provider"] as? String) ?? defaultProvider
+        let firstId = try await ensureSearchTrack(first, provider: firstProvider, priority: 0)
+        guard gen == searchPlayGeneration else { return }
+        try await NativeQueueController.shared.play(trackIds: [firstId], at: 0, context: context)
+
+        guard !ordered.isEmpty else { return }
+        Task { @MainActor in
+            var remaining = ordered
+            var firstBatch = true
+            while !remaining.isEmpty {
+                let count = firstBatch ? 2 : 4
+                firstBatch = false
+                let chunk = Array(remaining.prefix(count))
+                remaining.removeFirst(chunk.count)
+                guard gen == searchPlayGeneration,
+                      NativeQueueController.shared.context == context,
+                      NativeQueueController.shared.entries.contains(where: { $0.trackId == firstId }) else { return }
+                var ids: [String] = []
+                for item in chunk {
+                    guard gen == searchPlayGeneration else { return }
+                    let p = (item["audioProvider"] as? String) ?? (item["provider"] as? String) ?? defaultProvider
+                    if let tid = try? await self.ensureSearchTrack(item, provider: p, priority: 2) {
+                        ids.append(tid)
+                    }
+                }
+                if !ids.isEmpty,
+                   gen == searchPlayGeneration,
+                   NativeQueueController.shared.context == context {
+                    try? await NativeQueueController.shared.enqueue(trackIds: ids, next: false)
+                }
+            }
+        }
+    }
+
+    @MainActor func executeNativeSearchAction(kind: String, trackId externalId: String, sessionId: String,
+                                              playlist: String? = nil) async throws -> (go: String?, versions: String?, updated: NativeSearchResults?) {
+        guard let session = catalog.searchSession(sessionId),
+              let index = session.items.firstIndex(where: { (($0["externalId"] as? String) ?? ($0["id"] as? String)) == externalId }) else {
+            throw NativeLibraryActions.Failure(message: "Результаты устарели. Повторите поиск.")
+        }
+        let item = session.items[index]
+        let isYandex = session.source == "yandex"
+        let audioProvider = isYandex ? "yandex" : ((item["audioProvider"] as? String) ?? (session.source == "soundcloud" ? "soundcloud" : "youtube"))
+        let ctxType = (session.context["type"] as? String) ?? "search"
+        let ctxLabel = (session.context["label"] as? String) ?? "Поиск"
+        let ctx = NativeQueueController.Context(type: ctxType, id: session.context["id"] as? String, label: ctxLabel)
+
+        if kind == "artist" || kind == "album" {
+            if isYandex {
+                let artistId = (item["artists"] as? [[String: Any]])?.first?["id"] as? String ?? (item["artistId"] as? String)
+                let albumId = item["albumId"] as? String
+                if kind == "artist", let artistId, !artistId.isEmpty {
+                    return ("/catalog/artist/\(Self.searchPathComponent(artistId))", nil, nil)
+                }
+                if kind == "album", let albumId, !albumId.isEmpty {
+                    return ("/catalog/album/\(Self.searchPathComponent(albumId))", nil, nil)
+                }
+            } else if session.source == "ytmusic" {
+                let artistId = item["artistId"] as? String
+                let albumId = item["albumId"] as? String
+                if kind == "artist", Self.matchesRegex(Self.publicArtistIdRegex, artistId), let artistId {
+                    return ("/public/artist/\(Self.searchPathComponent(artistId))", nil, nil)
+                }
+                if kind == "album", Self.matchesRegex(Self.publicAlbumIdRegex, albumId), let albumId {
+                    return ("/public/album/\(Self.searchPathComponent(albumId))", nil, nil)
+                }
+            } else if session.source == "soundcloud" {
+                let artistId = item["artistId"] as? String
+                if kind == "artist", Self.matchesRegex(Self.soundCloudArtistIdRegex, artistId), let artistId {
+                    return ("/soundcloud/artist/\(Self.searchPathComponent(artistId))", nil, nil)
+                }
+            }
+            let fallbackQuery = kind == "artist" ? (item["artist"] as? String ?? "") : (item["album"] as? String ?? "")
+            return ("/search?q=\(Self.searchPathComponent(fallbackQuery))&src=\(Self.searchPathComponent(session.source))", nil, nil)
+        }
+
+        if kind == "play" {
+            try await playSearchTracks(session.items, startIndex: index, defaultProvider: audioProvider, context: ctx)
+            return (nil, nil, nil)
+        }
+
+        if kind == "radio" {
+            let title = item["title"] as? String ?? ""
+            let artist = item["artist"] as? String ?? ""
+            if ["ytmusic", "youtube"].contains(session.source),
+               let radioRes = try? await NativeServerApp.request("GET", "/api/public/radio/\(Self.searchPathComponent(externalId))"),
+               let radioItems = radioRes["items"] as? [[String: Any]], !radioItems.isEmpty {
+                try await playSearchTracks(radioItems, startIndex: 0, defaultProvider: "youtube",
+                                           context: NativeQueueController.Context(type: "online-radio", id: externalId, label: "Радио · \(title)"))
+                return (nil, nil, nil)
+            }
+            let q = Self.searchPathComponent("\(artist) \(title)".trimmingCharacters(in: .whitespaces))
+            if !q.isEmpty,
+               let ytSearch = try? await NativeServerApp.request("GET", "/api/search/ytmusic?q=\(q)"),
+               let ytFirst = (ytSearch["items"] as? [[String: Any]])?.first(where: { $0["playable"] as? Bool != false }),
+               let videoId = ytFirst["externalId"] as? String,
+               let radioRes = try? await NativeServerApp.request("GET", "/api/public/radio/\(Self.searchPathComponent(videoId))"),
+               let radioItems = radioRes["items"] as? [[String: Any]], !radioItems.isEmpty {
+                try await playSearchTracks(radioItems, startIndex: 0, defaultProvider: "youtube",
+                                           context: NativeQueueController.Context(type: "online-radio", id: videoId, label: "Радио · \(title)"))
+                return (nil, nil, nil)
+            }
+            let seedId = try await ensureSearchTrack(item, provider: audioProvider, priority: 0)
+            let waveRes = try await NativeServerApp.request("POST", "/api/wave/next", body: ["currentId": seedId, "count": 4])
+            let picks = (waveRes["picks"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+            let list = [seedId] + picks.filter { $0 != seedId }
+            try await NativeQueueController.shared.play(trackIds: list, at: 0,
+                                                        context: NativeQueueController.Context(type: "wave", id: seedId, label: "Волна · \(title)"))
+            return (nil, nil, nil)
+        }
+
+        let local = localCatalogTrack(provider: audioProvider, externalId: externalId)
+        if (kind == "like" || kind == "dislike"), isYandex, local == nil {
+            let current = (item["reaction"] as? NSNumber)?.intValue ?? 0
+            let wanted = kind == "like" ? 1 : -1
+            let next = current == wanted ? 0 : wanted
+            let res = try await NativeServerApp.request("POST", "/api/catalog/yandex/tracks/\(Self.searchPathComponent(externalId))/reaction", body: ["value": next])
+            let finalValue = (res["value"] as? NSNumber)?.intValue ?? next
+            if let sync = res["sync"] as? [String: Any], let st = sync["status"] as? String, st == "error" || st == "pending" {
+                show(sync["error"] as? String ?? "Реакция сохранена. Отправка в Яндекс продолжится автоматически.")
+            }
+            let rawUpdated = catalog.updateSearchSessionTrack(sessionId: sessionId, externalId: externalId, reaction: finalValue,
+                                                              lookup: { self.localCatalogTrack(provider: $0, externalId: $1) })
+            return (nil, nil, rawUpdated.flatMap(NativeSearchResults.init))
+        }
+
+        if kind == "playlist" {
+            guard let playlist, playlists.contains(where: { $0.id == playlist }) else {
+                throw NativeLibraryActions.Failure(message: "Плейлист не найден")
+            }
+        }
+
+        let id = try await ensureSearchTrack(item, provider: audioProvider, priority: kind == "download" ? 2 : 0)
+        switch kind {
+        case "next", "playNext", "queue":
+            let isNext = kind == "next" || kind == "playNext"
+            try await NativeQueueController.shared.enqueue(trackIds: [id], next: isNext)
+            show(isNext ? "Сыграет следующим" : "Добавлено в очередь")
+            return (nil, nil, nil)
+        case "versions":
+            return (nil, id, nil)
+        case "save":
+            _ = try await NativeServerApp.request("POST", "/api/tracks/\(Self.searchPathComponent(id))/save", body: ["saved": true])
+            try? await refreshLibraryAfterMutation()
+            catalog.invalidate()
+            show("Трек сохранён в медиатеку")
+            let rawUpdated = catalog.updateSearchSessionTrack(sessionId: sessionId, externalId: externalId, libraryTrackId: id, saved: true,
+                                                              lookup: { self.localCatalogTrack(provider: $0, externalId: $1) })
+            return (nil, nil, rawUpdated.flatMap(NativeSearchResults.init))
+        case "download":
+            _ = try await NativeServerApp.request("POST", "/api/downloads", body: ["trackId": id])
+            show("Скачиваем — прогресс в «Загрузках»")
+            return (nil, nil, nil)
+        case "playlist":
+            guard let playlist else {
+                throw NativeLibraryActions.Failure(message: "Плейлист не найден")
+            }
+            _ = try await NativeServerApp.request("POST", "/api/playlists/\(Self.searchPathComponent(playlist))/tracks", body: ["trackIds": [id]])
+            try? await refreshLibraryAfterMutation()
+            show("Добавлено в плейлист")
+            let rawUpdated = catalog.updateSearchSessionTrack(sessionId: sessionId, externalId: externalId, libraryTrackId: id,
+                                                              lookup: { self.localCatalogTrack(provider: $0, externalId: $1) })
+            return (nil, nil, rawUpdated.flatMap(NativeSearchResults.init))
+        case "like", "dislike":
+            let wanted = kind == "like" ? 1 : -1
+            let current = local?.reaction ?? reaction(id)
+            let next = current == wanted ? 0 : wanted
+            react(id: id, value: next)
+            catalog.invalidate()
+            let rawUpdated = catalog.updateSearchSessionTrack(sessionId: sessionId, externalId: externalId, reaction: next, libraryTrackId: id,
+                                                              saved: next == 1 ? true : nil,
+                                                              lookup: { self.localCatalogTrack(provider: $0, externalId: $1) })
+            return (nil, nil, rawUpdated.flatMap(NativeSearchResults.init))
+        default:
+            throw NativeLibraryActions.Failure(message: "Неизвестное действие")
+        }
+    }
+
+    @MainActor func presentSearchVersions(id: String) {
+        if sharedLibrary, let track = byId[id], var parent = presenter {
+            while let presented = parent.presentedViewController { parent = presented }
+            if parent.viewIfLoaded?.window != nil {
+                let controller = UIHostingController(rootView: NativeVersionView(track: track, store: self))
+                controller.modalPresentationStyle = .pageSheet
+                controller.sheetPresentationController?.prefersGrabberVisible = true
+                controller.overrideUserInterfaceStyle = .dark
+                parent.present(controller, animated: true)
+                return
+            }
+        }
+        presentVersions(id: id)
     }
 
     @MainActor private func shareLibraryExport(_ export: NativeLibraryActions.Export) async throws {
@@ -584,7 +869,15 @@ struct NativeTrackRow: View {
                     .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.title).font(.body.weight(.medium)).lineLimit(1)
-                    Text(track.artist).font(.subheadline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                    HStack(spacing: 4) {
+                        if track.offline && (track.sourceKind == "remote" || track.pinned) {
+                            Image(systemName: "arrow.down.circle.fill")
+                                .font(.caption2)
+                                .foregroundStyle(Color.moraMint)
+                                .accessibilityHidden(true)
+                        }
+                        Text(track.artist).font(.subheadline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 4)
                 if track.liked {
@@ -1031,11 +1324,11 @@ struct NativeSearchView: View {
             defer { if !isPlay { busy = false } }
             do {
                 if store.sharedLibrary, store.catalog.searchSession(session) != nil {
-                    let res = try await store.executeCatalogSearchAction(kind: kind, trackId: track.id, sessionId: session, playlist: playlist)
+                    let res = try await store.executeNativeSearchAction(kind: kind, trackId: track.id, sessionId: session, playlist: playlist)
                     if isPlay, generation != playGeneration { return }
                     guard key == requested, store.path == origin else { return }
                     if let path = res.go { store.go(path) }
-                    if let id = res.versions { store.presentVersions(id: id) }
+                    if let id = res.versions { store.presentSearchVersions(id: id) }
                     if let updated = res.updated { results[source] = updated }
                     return
                 }
@@ -1082,6 +1375,13 @@ struct NativeSearchView: View {
                     scope: scope,
                     more: more,
                     previousSession: more ? results[source]?.session : nil,
+                    request: { try await NativeServerApp.request($0, $1, body: $2, timeout: 60) },
+                    localLookup: { store.localCatalogTrack(provider: $0, externalId: $1) }
+                )
+            } else if store.sharedLibrary && Self.publicSources.contains(source) {
+                value = try await store.catalog.searchPublic(
+                    source: source,
+                    query: query,
                     request: { try await NativeServerApp.request($0, $1, body: $2, timeout: 60) },
                     localLookup: { store.localCatalogTrack(provider: $0, externalId: $1) }
                 )
@@ -1188,6 +1488,16 @@ struct NativeMoreView: View {
 struct NativeLibraryView: View {
     @EnvironmentObject private var store: NativeShellStore
 
+    private static func encoded(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? value
+    }
+
+    private static func primaryArtist(_ raw: String) -> String {
+        let separated = raw.replacingOccurrences(of: #"\s*[,;]\s*|\s+(?:feat\.?|ft\.?)\s+"#, with: "\u{1}", options: [.regularExpression, .caseInsensitive])
+        let first = separated.split(separator: "\u{1}").first.map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+        return first.isEmpty ? raw.trimmingCharacters(in: .whitespacesAndNewlines) : first
+    }
+
     private var likedArtists: [NativeTrack] {
         var seen = Set<String>()
         return store.liked.filter {
@@ -1231,7 +1541,7 @@ struct NativeLibraryView: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(alignment: .top, spacing: 14) {
                                 ForEach(likedArtists) { track in
-                                    Button { store.run("open", ["id": track.id, "to": "artist"]) } label: {
+                                    Button { store.go("/artist/\(Self.encoded(Self.primaryArtist(track.artist)))") } label: {
                                         VStack(spacing: 8) {
                                             NativeCover(url: track.cover, size: 78, radius: 39, monogram: track.artist)
                                                 .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 1))

@@ -300,6 +300,7 @@ extension MoraRootViewController {
             func waitForQuery(_ query: String) async throws {
                 let encoded = String(data: try JSONSerialization.data(withJSONObject: query, options: .fragmentsAllowed), encoding: .utf8)!
                 for _ in 0..<40 {
+                    if self.shell.catalog.recordedSearchQueries.contains(query) { return }
                     if try await web.evaluateJavaScript("window.__uiQueries.includes(" + encoded + ")") as? Bool == true { return }
                     try await Task.sleep(for: .milliseconds(250))
                 }
@@ -620,6 +621,7 @@ final class NativeShellStore: ObservableObject {
     private var sendingReactions = false
     private var sheetOpen = false
     private var pending: (path: String, at: Date)?
+    private var navHistory: [String] = []
     private var stationWrite: DispatchWorkItem?
     private let stationIO = DispatchQueue(label: "ru.mora.station")
     private var station: NativeStationSnapshot?
@@ -629,7 +631,7 @@ final class NativeShellStore: ObservableObject {
     private let libraryIO = DispatchQueue(label: "ru.mora.library", qos: .userInitiated)
     private var libraryReader: NativeLibraryStore? // accessed only on libraryIO
     private var libraryReading = false
-    private var librarySnapshot: NativeLibraryStore.Snapshot?
+    private(set) var librarySnapshot: NativeLibraryStore.Snapshot?
     private var savedIds: Set<String> = []
     private var libraryFailure: String?
     private var catalogPlayGeneration = 0
@@ -721,6 +723,7 @@ final class NativeShellStore: ObservableObject {
     @Published var playlistTarget: [NativeTrack] = []
     /// No usable network path: online searches and streams fail, downloads still play.
     @Published private(set) var offline = false
+    @Published private(set) var weakWaveNetwork = false
     private let network = NWPathMonitor()
     @MainActor var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web && !NativeDeepLink.splashVisible }
     var screen: NativeScreen { NativeRoute.screen(path) }
@@ -827,6 +830,7 @@ final class NativeShellStore: ObservableObject {
 
     @MainActor private func syncQueueControllerState() {
         let qc = NativeQueueController.shared
+        if weakWaveNetwork != qc.weakWaveNetwork { weakWaveNetwork = qc.weakWaveNetwork }
         let playing = qc.isWave && (player.playing || host?.active == true)
         // The page's snapshot knows nothing about the Swift queue: only override what the controller owns.
         if !qc.entries.isEmpty { self.queue = qc.entries.compactMap { NativeQueuedTrack(["entryId": $0.entryId, "trackId": $0.trackId]) } }
@@ -1141,6 +1145,29 @@ final class NativeShellStore: ObservableObject {
         value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? value
     }
 
+    @MainActor func localTrackLinks(id: String) -> (album: String?, artists: [NativeCatalogLink])? {
+        guard let track = byId[id] else { return nil }
+        let source = track.artist.isEmpty ? "Неизвестный исполнитель" : track.artist
+        let separated = source.replacingOccurrences(of: "\\s*[,;]\\s*|\\s+(?:feat\\.?|ft\\.?)\\s+", with: "\u{1}", options: .regularExpression)
+        var seen = Set<String>(), names: [String] = []
+        for name in separated.split(separator: "\u{1}").map({ $0.trimmingCharacters(in: .whitespaces) }) where !name.isEmpty {
+            if seen.insert(name.lowercased()).inserted { names.append(name) }
+        }
+        if names.isEmpty { names = ["Неизвестный исполнитель"] }
+        let artists = names.compactMap { name -> NativeCatalogLink? in
+            let path = "/artist/\(Self.catalogPathComponent(name))"
+            return NativeCatalogLink(["id": path, "title": name, "path": path])
+        }
+        let album: String?
+        if !track.album.isEmpty {
+            let credit = track.albumArtist.isEmpty ? (track.artist.isEmpty ? "—" : track.artist) : track.albumArtist
+            album = "/album/\(Self.catalogPathComponent(credit))/\(Self.catalogPathComponent(track.album))"
+        } else {
+            album = nil
+        }
+        return (album, artists)
+    }
+
     func receive(_ value: [String: Any]) -> Bool {
         scheduleStation(value)
         if value["enable"] as? Bool == true { setShown(true, resync: false) }
@@ -1225,7 +1252,10 @@ final class NativeShellStore: ObservableObject {
         if (error as NSError).domain == "WKErrorDomain" { return PageFailure(message: "Интерфейс не ответил — попробуйте ещё раз") }
         return error
     }
-    static func isCancelled(_ error: Error) -> Bool { error is PageCancelled }
+    static func isCancelled(_ error: Error) -> Bool {
+        if case NativeMediaHTTP.Failure.cancelled = error { return true }
+        return error is PageCancelled || error is CancellationError
+    }
 
     /// A command: its own errors reach the listener as the page's toasts.
     func run(_ name: String, _ args: [String: Any] = [:]) {
@@ -1291,6 +1321,10 @@ final class NativeShellStore: ObservableObject {
 
     func presentVersions(id: String, from parent: UIViewController? = nil) {
         Task { @MainActor in
+            if sharedLibrary, let track = byId[id] {
+                presentVersions(track, from: parent)
+                return
+            }
             do {
                 guard let value = try await call("versionTarget", ["target": id]) as? [String: Any], let track = NativeTrack(value) else { throw NativeShellError.page }
                 presentVersions(track, from: parent)
@@ -1317,13 +1351,21 @@ final class NativeShellStore: ObservableObject {
         if path.hasPrefix("/yandex") { searchSource = "yandex" }
         else if let source = url?.queryItems?.first(where: { $0.name == "src" })?.value, ["all", "local", "ytmusic", "youtube", "soundcloud", "yandex"].contains(source) { searchSource = source }
         if let scope = url?.queryItems?.first(where: { $0.name == "type" })?.value, ["all", "track", "artist", "album"].contains(scope) { searchScope = scope }
-        self.path = path.components(separatedBy: "?")[0]
+        let next = path.components(separatedBy: "?")[0]
+        if !next.isEmpty && next != self.path {
+            if navHistory.last != self.path {
+                navHistory.append(self.path)
+                if navHistory.count > 64 { navHistory.removeFirst() }
+            }
+        }
+        self.path = next
         pending = (self.path, Date())
         run("go", ["path": path])
     }
     func select(_ tab: NativeTab) {
         UIAccessibility.post(notification: .screenChanged, argument: nil)
         go(NativeRoute.root(tab))
+        navHistory.removeAll()
     }
 
     func play(_ list: [NativeTrack], at index: Int, type: String, label: String, id: String? = nil) {
@@ -1338,7 +1380,7 @@ final class NativeShellStore: ObservableObject {
                         context: .init(type: type, id: id, label: label)
                     )
                 } catch {
-                    show(error.localizedDescription)
+                    if !Self.isCancelled(error) { show(error.localizedDescription) }
                 }
             }
             return
@@ -1349,8 +1391,14 @@ final class NativeShellStore: ObservableObject {
     }
     /// The page's history: native pages sit on top of the route they were opened from.
     func back() {
-        pending = nil
-        run("back")
+        if let previous = navHistory.popLast() {
+            self.path = previous
+            pending = (previous, Date())
+            run("go", ["path": previous])
+        } else {
+            pending = nil
+            run("back")
+        }
     }
     func queue(_ track: NativeTrack, next: Bool) {
         if sharedLibrary {
@@ -1397,7 +1445,7 @@ final class NativeShellStore: ObservableObject {
                     if self.sharedLibrary {
                         let result = try await NativeServerApp.request("POST", NativeLibraryReactions.path(id), body: ["value": value])
                         try NativeLibraryReactions.validate(result, value: value)
-                        if value < 0, self.reaction(id) < 0, self.ui.now?.id == id, self.ui.wave.active != nil, self.webView != nil {
+                        if value < 0, self.reaction(id) < 0, (self.player.trackId == id || self.ui.now?.id == id), (NativeQueueController.shared.isWave || self.ui.wave.active != nil) {
                             self.run("next", ["ifTrackId": id, "reason": "dislike"])
                         }
                     } else { _ = try await self.call("reactSaved", ["id": id, "value": value]) }
@@ -1439,7 +1487,7 @@ final class NativeShellStore: ObservableObject {
             guard let self, case .success(let value) = result else { return }
             Task { @MainActor in NativeQueueController.shared.syncFromHost(value) }
             let next = NativePlayerState(value)
-            if next.title != self.player.title || next.artist != self.player.artist || next.playing != self.player.playing || next.active != self.player.active {
+            if next.trackId != self.player.trackId || next.title != self.player.title || next.artist != self.player.artist || next.playing != self.player.playing || next.active != self.player.active {
                 self.player = next
                 self.publishWidget()
             }
@@ -1463,9 +1511,16 @@ final class NativeShellStore: ObservableObject {
         // The mini player and the lock-screen widget read `player`: keep them current in the foreground too.
         var next = NativePlayerState(state)
         if ended { next.playing = false }
-        guard next.trackId != player.trackId || next.playing != player.playing || next.title != player.title else { return }
+        let key = "\(next.entryId)|\(next.artworkReady)"
+        if key != artworkKey, let image = (state["artwork"] as? MPMediaItemArtwork)?.image(at: CGSize(width: 120, height: 120)) {
+            artworkKey = key
+            artwork = image
+        }
+        let changed = next.trackId != player.trackId || next.playing != player.playing || next.title != player.title
+            || next.artist != player.artist || next.active != player.active || next.entryId != player.entryId
+        guard changed else { return }
         player = next; publishWidget()
-        if next.trackId != ui.now?.id { syncQueueControllerState() }
+        if sharedLibrary || next.trackId != ui.now?.id { syncQueueControllerState() }
     }
 
     /// Home-screen widgets: the playing (or last) track and the newest likes; redrawn only when they change.
@@ -1531,8 +1586,18 @@ enum NativeCovers {
             var data: Data?
             if url.hasPrefix("https://"), let remote = URL(string: url) {
                 data = try? await URLSession.shared.data(from: remote).0
-            } else if url.hasPrefix("/api/"), let store = NativeShellStore.shared, let base64 = try? await store.call("cover", ["url": url]) as? String {
-                data = Data(base64Encoded: base64)
+            } else if url.hasPrefix("/api/") {
+                if url.hasPrefix("/api/covers/"), NativeShellStore.shared?.sharedLibrary == true {
+                    let fileName = String(url.dropFirst("/api/covers/".count))
+                    if !fileName.contains("\n"), fileName.range(of: "^[a-f0-9]{40}\\.(jpg|png|webp)$", options: .regularExpression) != nil {
+                        let coverURL = NativeServerApp.root.appendingPathComponent("data/covers/" + fileName)
+                        data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: coverURL) }.value
+                        if data?.isEmpty == true { data = nil }
+                    }
+                }
+                if data == nil, let store = NativeShellStore.shared, let base64 = try? await store.call("cover", ["url": url]) as? String {
+                    data = Data(base64Encoded: base64)
+                }
             }
             // Thumbnails only: full-size embedded covers would cost megabytes each in a long list.
             guard let data, let full = UIImage(data: data), full.size.width > 0, full.size.height > 0 else { return nil }
@@ -1617,8 +1682,8 @@ struct NativeShellContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if store.offline {
-                Text("Не в сети")
+            if store.offline || store.weakWaveNetwork {
+                Text(store.offline ? "Не в сети" : "Слабое соединение · офлайн-волна")
                     .font(.footnote.weight(.medium)).foregroundStyle(Color.moraGold)
                     .frame(maxWidth: .infinity).padding(.vertical, 6)
                     .background(Color.moraGold.opacity(0.12))
@@ -1626,7 +1691,6 @@ struct NativeShellContent: View {
             ZStack(alignment: .top) {
                 screen.id(store.path)
                     .transition(.opacity)
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: store.path)
                 if store.path != NativeRoute.root(store.tab) {
                     // Pages are route switches, not NavigationStack pushes, so iOS gives them no back swipe: this edge does.
                     Color.clear.frame(width: 18).frame(maxHeight: .infinity).contentShape(Rectangle())
@@ -1637,6 +1701,7 @@ struct NativeShellContent: View {
                         .accessibilityHidden(true)
                 }
             }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: store.path)
             .overlay(alignment: .bottom) {
                 if let text = store.banner {
                     Text(text).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)

@@ -335,4 +335,120 @@ check(scNormalized.count == 1
     && scNormalized[0]["pageUrl"] as? String == "https://soundcloud.com/a/b"
     && scNormalized[0]["playable"] as? Bool == true, "SoundCloud track normalized for catalog actions")
 
-print("Native catalog: yandex/public/soundcloud native & JSC pages, search pagination, local lookup, fixtures and id encoding passed")
+// MARK: Public search (ytmusic, youtube, soundcloud)
+
+var publicSearchRequests: [String] = []
+let publicSearchRequest: NativeCatalogState.Request = { method, path, _ in
+    check(method == "GET", "public search uses GET")
+    publicSearchRequests.append(path)
+    if path.hasPrefix("/api/search/ytmusic?") {
+        return ["items": [
+            [
+                "externalId": "vid12345678",
+                "title": "Public Track (Remix)",
+                "artist": "Public Artist",
+                "album": "Public Album",
+                "duration": 215.0,
+                "coverUrl": "https://i.ytimg.com/vi/vid12345678/hqdefault.jpg",
+                "pageUrl": "https://music.youtube.com/watch?v=vid12345678",
+                "playable": true,
+                "source": "ytmusic",
+                "audioProvider": "youtube",
+                "kind": "song",
+                "explicit": true,
+                "labels": [["tag": "remix", "origin": "title"], ["tag": "explicit", "origin": "source"]],
+                "artistId": ucArtistId,
+                "albumId": mpreAlbumId,
+                "libraryTrackId": NSNull(),
+            ],
+            [
+                "externalId": "vid87654321",
+                "title": "Second Song",
+                "artist": "Other Artist",
+                "album": "",
+                "duration": 180.0,
+                "playable": false,
+                "source": "ytmusic",
+                "audioProvider": "youtube",
+                "explicit": false,
+                "labels": [],
+            ],
+        ]]
+    }
+    if path.hasPrefix("/api/search/soundcloud?") {
+        return ["items": [[
+            "externalId": "987654321",
+            "title": "SC Live Cut",
+            "artist": "SC DJ",
+            "album": "",
+            "duration": 240.0,
+            "coverUrl": "https://i1.sndcdn.com/artworks-987-t500x500.jpg",
+            "playable": true,
+            "source": "soundcloud",
+            "audioProvider": "soundcloud",
+            "explicit": false,
+            "labels": [["tag": "live", "origin": "title"]],
+            "artistId": "777",
+        ]]]
+    }
+    if path.hasPrefix("/api/search/youtube?") {
+        return ["items": []]
+    }
+    throw NSError(domain: "test", code: 9, userInfo: [NSLocalizedDescriptionKey: "unexpected public search \(path)"])
+}
+
+let publicLookup: NativeCatalogState.LocalTrackLookup = { provider, extId in
+    if provider == "youtube" && extId == "vid12345678" { return ("loc-yt-1", true, 1) }
+    if provider == "soundcloud" && extId == "987654321" { return ("loc-sc-1", false, -1) }
+    return nil
+}
+
+nativeState.removeSearchFixtures()
+let ytmSearch = try await nativeState.searchPublic(source: "ytmusic", query: "  Public Hit  ", request: publicSearchRequest, localLookup: publicLookup)
+let ytmSid = ytmSearch["session"] as? String ?? ""
+check(!ytmSid.isEmpty, "searchPublic creates a session")
+check(nativeState.recordedSearchQueries == ["Public Hit"], "searchPublic records trimmed query")
+check(publicSearchRequests.contains("/api/search/ytmusic?q=Public%20Hit"), "searchPublic encodes query and hits /api/search/ytmusic")
+check((ytmSearch["more"] as? Bool) == false && (ytmSearch["artists"] as? [Any])?.isEmpty == true && (ytmSearch["albums"] as? [Any])?.isEmpty == true, "searchPublic returns standard empty shelves and more=false")
+let ytmTracks = ytmSearch["tracks"] as? [[String: Any]] ?? []
+check(ytmTracks.count == 2, "searchPublic returns all parsed tracks")
+check(ytmTracks[0]["id"] as? String == "vid12345678"
+    && ytmTracks[0]["externalId"] as? String == "vid12345678"
+    && ytmTracks[0]["provider"] as? String == "youtube"
+    && ytmTracks[0]["saved"] as? Bool == true
+    && (ytmTracks[0]["reaction"] as? NSNumber)?.intValue == 1
+    && ytmTracks[0]["localTrackId"] as? String == "loc-yt-1"
+    && ytmTracks[0]["explicit"] as? Bool == true
+    && ytmTracks[0]["tags"] as? String == "remix · explicit", "searchPublic normalizes labels, explicit, and localLookup state")
+check(ytmTracks[1]["ok"] as? Bool == false && ytmTracks[1]["localTrackId"] == nil, "searchPublic preserves playable=false and omits missing localTrackId")
+let storedYtmSession = nativeState.searchSession(ytmSid)
+check(storedYtmSession?.source == "ytmusic" && storedYtmSession?.items.count == 2, "searchPublic stores SearchSession with source and items")
+
+let scSearch = try await nativeState.searchPublic(source: "soundcloud", query: "Live Cut", request: publicSearchRequest, localLookup: publicLookup)
+let scTracks = scSearch["tracks"] as? [[String: Any]] ?? []
+check(scTracks.count == 1
+    && scTracks[0]["provider"] as? String == "soundcloud"
+    && scTracks[0]["saved"] as? Bool == false
+    && (scTracks[0]["reaction"] as? NSNumber)?.intValue == -1
+    && scTracks[0]["localTrackId"] as? String == "loc-sc-1"
+    && scTracks[0]["tags"] as? String == "live", "searchPublic supports soundcloud with localLookup")
+
+let updatedPublic = nativeState.updateSearchSessionTrack(sessionId: ytmSid, externalId: "vid87654321", reaction: 1, libraryTrackId: "loc-yt-2", saved: true, lookup: publicLookup)
+let updatedSecond = (updatedPublic?["tracks"] as? [[String: Any]])?.first { ($0["externalId"] as? String) == "vid87654321" }
+check(updatedSecond?["saved"] as? Bool == true && (updatedSecond?["reaction"] as? NSNumber)?.intValue == 1 && updatedSecond?["localTrackId"] as? String == "loc-yt-2", "updateSearchSessionTrack updates public search track")
+
+// Fixture behavior for searchPublic: records trimmed non-empty query without calling request
+nativeState.removeSearchFixtures()
+nativeState.installSearchFixture("youtube", ["session": "fix-yt", "tracks": [["id": "fx1", "title": "Fixture Track", "artist": "FX", "album": "", "duration": 120.0, "ok": true]], "artists": [], "albums": [], "more": false])
+let ytFixture = try await nativeState.searchPublic(source: "youtube", query: "  MORA  ", request: failRequest, localLookup: publicLookup)
+check(ytFixture["session"] as? String == "fix-yt" && nativeState.recordedSearchQueries == ["MORA"], "searchPublic records trimmed query before returning fixture")
+_ = try await nativeState.searchPublic(source: "youtube", query: "   ", request: failRequest, localLookup: publicLookup)
+check(nativeState.recordedSearchQueries == ["MORA"], "blank query is not recorded")
+nativeState.removeSearchFixtures()
+
+do {
+    _ = try await nativeState.searchPublic(source: "unknown", query: "test", request: failRequest, localLookup: publicLookup)
+    fail("unsupported public search source accepted")
+} catch {}
+
+print("Native catalog: yandex/public/soundcloud native & JSC pages, public search, search pagination, local lookup, fixtures and id encoding passed")
