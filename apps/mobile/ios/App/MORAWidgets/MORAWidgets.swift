@@ -6,7 +6,7 @@ import AppIntents
 /// mora:// (NativeDeepLink); the app writes their data (NativeWidgetData) and reloads them.
 
 private let mint = Color(red: 74 / 255, green: 222 / 255, blue: 154 / 255)
-private let background = Color(red: 5 / 255, green: 13 / 255, blue: 10 / 255)
+private let widgetBackgroundColor = Color(red: 5 / 255, green: 13 / 255, blue: 10 / 255)
 private let emeraldTop = Color(red: 11 / 255, green: 34 / 255, blue: 25 / 255)
 private let emeraldMid = Color(red: 7 / 255, green: 21 / 255, blue: 15 / 255)
 private let mintDeep = Color(red: 19 / 255, green: 56 / 255, blue: 41 / 255)
@@ -86,7 +86,7 @@ private struct MoraWidgetBackdrop: View {
     var body: some View {
         ZStack {
             LinearGradient(
-                colors: [emeraldTop, emeraldMid, background],
+                colors: [emeraldTop, emeraldMid, widgetBackgroundColor],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -187,7 +187,7 @@ struct WaveWidgetView: View {
                             Text("Слушать")
                                 .font(.caption2.weight(.bold))
                         }
-                        .foregroundStyle(background)
+                        .foregroundStyle(widgetBackgroundColor)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
                         .background(mint, in: Capsule())
@@ -209,7 +209,7 @@ struct WaveWidgetView: View {
                             maxHeight: 58
                         )
                     }
-                    .frame(width: 96, maxHeight: .infinity)
+                    .frame(minWidth: 96, maxWidth: 96, maxHeight: .infinity)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 5) {
@@ -414,7 +414,7 @@ struct LikedWidget: Widget {
 struct LockScreenWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "mora.lockscreen", provider: MoraProvider()) { entry in
-            LockScreenWidgetView(entry: entry).containerBackground(background, for: .widget)
+            LockScreenWidgetView(entry: entry).containerBackground(widgetBackgroundColor, for: .widget)
         }
         .configurationDisplayName("MORA на экране блокировки")
         .description("Текущий трек или быстрый запуск волны.")
