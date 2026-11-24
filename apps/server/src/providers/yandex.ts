@@ -341,14 +341,17 @@ export class YandexProvider implements Provider {
     const m = this.matcher();
     const count = Math.max(1, Math.min(4, Math.trunc(options?.count ?? 2)));
     const excluded = new Set((options?.exclude ?? []).map((id) => id.split(':')[0]));
-    const prepare = (sequence: { track: YTrack }[]) => {
+    const filterSequence = (sequence: { track: YTrack }[]) => {
       const seen = new Set<string>();
-      const items = sequence.slice(0, 100).map((s) => this.item(s.track, m)).filter((item) => {
+      return sequence.slice(0, 100).map((s) => this.item(s.track, m)).filter((item) => {
         const id = item.yandexId.split(':')[0];
         if (seen.has(id) || excluded.has(id) || this.localReactionFor?.(item.yandexId) === -1 || this.localReactionFor?.(id) === -1) return false;
         seen.add(id);
         return true;
       });
+    };
+    const prepare = (sequence: { track: YTrack }[]) => {
+      const items = filterSequence(sequence);
       return this.prepareWave(items, count, sequence.map(s => s.track));
     };
     if (sessionId) {
@@ -361,7 +364,25 @@ export class YandexProvider implements Provider {
       includeTracksInResponse: true,
       ...(queue.length ? { queue } : {}),
     });
-    return { sessionId: r.radioSessionId, batchId: r.batchId ?? null, items: await prepare(r.sequence ?? []) };
+    let sequence = r.sequence ?? [];
+    let batchId = r.batchId ?? null;
+    if (!sessionId && r.radioSessionId && filterSequence(sequence).length < count) {
+      const initialIds = sequence.map((s) => {
+        const id = String(s.track.id);
+        return s.track.albums?.[0]?.id ? `${id}:${s.track.albums[0].id}` : id;
+      });
+      const nextQueue = [...new Set([...queue, ...initialIds])].slice(-100);
+      const next = await this.call<{ sequence?: { track: YTrack }[]; batchId?: string; unknownSession?: boolean }>(
+        'POST',
+        `/rotor/session/${encodeURIComponent(r.radioSessionId)}/tracks`,
+        { queue: nextQueue },
+      );
+      if (!next.unknownSession && Array.isArray(next.sequence) && next.sequence.length) {
+        sequence = [...sequence, ...next.sequence];
+        if (next.batchId) batchId = next.batchId;
+      }
+    }
+    return { sessionId: r.radioSessionId, batchId, items: await prepare(sequence) };
   }
 
   private waveSettingsCache?: { at: number; groups: YandexWaveSetting[] };
@@ -381,7 +402,7 @@ export class YandexProvider implements Provider {
     return { groups };
   }
 
-  async feedback(sessionId: string, batchId: string | null, event: { type: 'trackStarted' | 'trackFinished' | 'skip'; trackId: string; totalPlayedSeconds?: number }): Promise<void> {
+  async feedback(sessionId: string, batchId: string | null, event: { type: 'radioStarted' | 'trackStarted' | 'trackFinished' | 'skip'; trackId?: string; totalPlayedSeconds?: number; from?: string }): Promise<void> {
     await this.call('POST', `/rotor/session/${encodeURIComponent(sessionId)}/feedback`, {
       event: { ...event, timestamp: new Date().toISOString() },
       batchId: batchId ?? undefined,

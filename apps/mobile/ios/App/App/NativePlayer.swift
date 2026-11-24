@@ -571,15 +571,10 @@ struct NativePlayerView: View {
             } else {
                 Spacer(minLength: 12)
                 cover(playing: s.playing).matchedGeometryEffect(id: "cover", in: playerLayout)
-                if s.blending {
-                    autoMixPill(next: s.upcoming.first, playing: s.playing)
-                        .padding(.top, 12)
-                        .transition(.opacity.combined(with: .scale(scale: 0.94)))
-                }
                 Spacer(minLength: 14)
                 metadata.matchedGeometryEffect(id: "metadata", in: playerLayout)
             }
-            NativeScrubber(state: s, receivedAt: model.receivedAt, pending: model.scrub, showMixingLabel: showLyrics || queueOpen) { model.seek(to: $0) }
+            NativeScrubber(state: s, receivedAt: model.receivedAt, pending: model.scrub) { model.seek(to: $0) }
                 .padding(.top, showLyrics ? 8 : 18)
             transport(playing: s.playing).padding(.vertical, showLyrics ? 8 : 12)
             if !showLyrics { Spacer(minLength: 8) }
@@ -846,62 +841,6 @@ struct NativePlayerView: View {
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: model.artwork.map(ObjectIdentifier.init))
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: showLyrics)
-    }
-
-    private func autoMixPill(next: NativePlayerRow?, playing: Bool) -> some View {
-        let nextTitle = next.flatMap { $0.title.isEmpty ? nil : $0.title } ?? "следующий трек"
-        return HStack(spacing: 8) {
-            if let next {
-                NativeCover(
-                    url: next.cover ?? NativeShellStore.shared?.byId[next.trackId]?.cover,
-                    size: 22,
-                    radius: 5,
-                    embedded: next.artwork,
-                    monogram: next.title
-                )
-            }
-            ZStack(alignment: .topTrailing) {
-                Image(systemName: "waveform")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.moraMint)
-                    .symbolEffect(.variableColor.iterative, isActive: playing && !reduceMotion)
-                Image(systemName: "sparkles")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(Color.moraGold)
-                    .offset(x: 4, y: -4)
-            }
-            .frame(width: 18, height: 16)
-            .padding(.trailing, 2)
-            HStack(spacing: 4) {
-                Text("Сводится")
-                    .foregroundStyle(.white.opacity(0.92))
-                    .layoutPriority(1)
-                Text("→")
-                    .foregroundStyle(Color.moraGold)
-                    .layoutPriority(1)
-                Text(nextTitle)
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-            }
-            .font(.caption.weight(.semibold))
-            .lineLimit(1)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(
-            Capsule().stroke(
-                LinearGradient(
-                    colors: [Color.moraMint.opacity(0.65), Color.moraGold.opacity(0.65)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                ),
-                lineWidth: 1
-            )
-        )
-        .shadow(color: Color.moraMint.opacity(0.18), radius: 10, y: 3)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("AutoMix: сводится \(nextTitle)")
     }
 
     private func cover(playing: Bool) -> some View {
@@ -1438,7 +1377,6 @@ private struct NativeScrubber: View {
     let state: NativePlayerState
     let receivedAt: Date
     let pending: Double?
-    var showMixingLabel: Bool = true
     let seek: (Double) -> Void
     @GestureState private var drag: Double?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1530,7 +1468,7 @@ private struct NativeScrubber: View {
                         Spacer()
                         Text("−" + NativePlayerTime.text(max(0, state.duration - shown)))
                     }
-                    if state.blending && showMixingLabel {
+                    if state.blending {
                         Text("Микширование").font(.caption2.weight(.medium))
                             .foregroundStyle(.white.opacity(reduceMotion || !state.playing ? 0.8 : 0.65 + 0.35 * sin(context.date.timeIntervalSinceReferenceDate * 3)))
                             .shadow(color: .white.opacity(0.25), radius: 3)

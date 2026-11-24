@@ -782,7 +782,7 @@ final class NativeMixHost {
         renderer = try NativeQueueRenderer(folder: folder, config: next)
         wantsPlaying = playing
         if engine != nil { try fill() }
-        if playing { try engine?.start(); player?.play() }
+        if playing { try startEngine(); player?.play() }
         let nextTr = tracks.indices.contains(index + 1) ? tracks[index + 1]["transition"] as? [String: Any] : nil
         MoraPlaybackJournal.record("native.mix.select", [
             "index": index,
@@ -1043,11 +1043,11 @@ final class NativeMixHost {
                             if self.tracks.indices.contains(self.index + 1) { try self.select(index: self.index + 1, position: 0, playing: true) }
                             else if self.preparation?.hasRemaining == true {
                                 self.continueWhenPrepared = true; self.wantsPlaying = false
-                                try self.engine?.start(); self.holdOutput()
+                                try self.startEngine(); self.holdOutput()
                             } else { try self.select(index: self.index, position: 0, playing: true) }
                         }
                         else if !wasPlaying { try self.select(index: self.index, position: self.position, playing: true) }
-                        else { self.wantsPlaying = true; try self.fill(); try self.engine?.start(); self.player?.play() }
+                        else { self.wantsPlaying = true; try self.fill(); try self.startEngine(); self.player?.play() }
                     }
                 case "nexttrack":
                     if self.pendingSkips == 0 && self.tracks.indices.contains(self.index + 1) {
@@ -1220,6 +1220,30 @@ final class NativeMixHost {
         engine.mainMixerNode.outputVolume = sleepVolume
         engineObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self, weak engine] _ in
             guard let engine else { return }; self?.configurationChanged(engine)
+        }
+    }
+    private func startEngine() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .default, options: [])
+        try session.setActive(true); ownsSession = true
+        if engine == nil { try buildGraph() }
+        do {
+            try engine?.start()
+        } catch {
+            MoraPlaybackJournal.record("native.mix.engineRetry", ["error": error.localizedDescription])
+            let savedContinue = continueWhenPrepared
+            let savedWants = wantsPlaying
+            let savedSkip = skipTarget
+            discardGraph()
+            guard let folder else { throw error }
+            var next = config; next["index"] = index; next["position"] = position
+            try buildGraph()
+            renderer = savedContinue ? nil : try NativeQueueRenderer(folder: folder, config: next)
+            continueWhenPrepared = savedContinue
+            wantsPlaying = savedWants
+            skipTarget = savedSkip
+            if !savedContinue { try fill() }
+            try engine?.start()
         }
     }
     private func discardGraph() {

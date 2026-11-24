@@ -6,6 +6,9 @@ import Foundation
     struct Entry: Equatable {
         let entryId: String
         let trackId: String
+        var yandexId: String? = nil
+        var yandexSessionId: String? = nil
+        var yandexBatchId: String? = nil
     }
     struct Context: Equatable {
         let type: String
@@ -31,6 +34,7 @@ import Foundation
     private var hostIndex = 0
     private var waveOffline = false
     private var activePlayId: Int?
+    private var activePlayEntry: Entry?
     private var playStartedAt = Date()
     private var yandexSessionId: String?
     private var yandexQueueIds: [String] = []
@@ -43,14 +47,19 @@ import Foundation
     var isWave: Bool { waveSource != nil || ["wave", "yandex-wave", "online-radio"].contains(context.type) }
 
     func play(trackIds: [String], at startIndex: Int, context: Context, startPaused: Bool = false, keepWave: Bool = false) async throws {
-        guard !trackIds.isEmpty else { return }
+        let queue = trackIds.map { Entry(entryId: UUID().uuidString, trackId: $0) }
+        try await playEntries(queue, at: startIndex, context: context, startPaused: startPaused, keepWave: keepWave)
+    }
+
+    private func playEntries(_ items: [Entry], at startIndex: Int, context: Context, startPaused: Bool = false, keepWave: Bool = false) async throws {
+        guard !items.isEmpty else { return }
         if !keepWave {
             waveSource = nil
             yandexSessionId = nil
             yandexQueueIds = []
             waveError = nil
         }
-        var queue = trackIds.map { Entry(entryId: UUID().uuidString, trackId: $0) }
+        var queue = items
         var targetIndex = max(0, min(queue.count - 1, startIndex))
         originalEntries = nil
         if shuffle && queue.count > 1 {
@@ -207,28 +216,21 @@ import Foundation
         defer { waveLoading = false; onStateChange?() }
 
         if source == "yandex" && !offline {
-            let res = try await NativeServerApp.request("POST", "/api/providers/yandex/wave", body: ["count": 2, "queue": Array(yandexQueueIds.suffix(100))])
-            yandexSessionId = (res["sessionId"] as? String) ?? (res["session"] as? String)
-            let items = res["items"] as? [[String: Any]] ?? []
-            var ids: [String] = []
-            for item in items {
-                if let yid = item["yandexId"] as? String, !yid.isEmpty, !yandexQueueIds.contains(yid) { yandexQueueIds.append(yid) }
-                let tid: String?
-                if let existing = item["trackId"] as? String, !existing.isEmpty { tid = existing }
-                else if let track = item["track"] as? [String: Any] {
-                    let imp = try? await NativeServerApp.request("POST", "/api/providers/yandex/import", body: ["track": track])
-                    tid = imp?["trackId"] as? String
-                } else { tid = nil }
-                if let tid, (NativeShellStore.shared?.reaction(tid) ?? 0) >= 0, !ids.contains(tid) {
-                    ids.append(tid)
-                }
-            }
-            guard !ids.isEmpty else {
+            let res = try await NativeServerApp.request("POST", "/api/providers/yandex/wave", body: ["count": 3, "queue": Array(yandexQueueIds.suffix(100))])
+            let sid = (res["sessionId"] as? String) ?? (res["session"] as? String)
+            let batchId = res["batchId"] as? String
+            let isNewSession = sid != nil && sid != yandexSessionId
+            yandexSessionId = sid
+            let waveEntries = await collectYandexWaveEntries(from: res, limit: 3, excluding: [])
+            guard !waveEntries.isEmpty else {
                 waveError = "Яндекс Музыка не вернула треки"
                 throw NSError(domain: "NativeWave", code: 1, userInfo: [NSLocalizedDescriptionKey: waveError!])
             }
+            if isNewSession, let sid {
+                sendYandexFeedback(sessionId: sid, batchId: batchId, event: ["type": "radioStarted", "from": "desktop_home-radio_bubble-default"])
+            }
             waveSource = "yandex"
-            try await play(trackIds: ids, at: 0, context: Context(type: "yandex-wave", id: "yandex", label: "Моя волна · Яндекс"), keepWave: true)
+            try await playEntries(waveEntries, at: 0, context: Context(type: "yandex-wave", id: "yandex", label: "Моя волна · Яндекс"), keepWave: true)
             return
         }
 
@@ -259,8 +261,9 @@ import Foundation
     }
 
     func remapTracks(_ mapping: [String: String]) {
-        entries = entries.map { Entry(entryId: $0.entryId, trackId: mapping[$0.trackId] ?? $0.trackId) }
-        originalEntries = originalEntries?.map { Entry(entryId: $0.entryId, trackId: mapping[$0.trackId] ?? $0.trackId) }
+        let remap = { (e: Entry) in Entry(entryId: e.entryId, trackId: mapping[e.trackId] ?? e.trackId, yandexId: e.yandexId, yandexSessionId: e.yandexSessionId, yandexBatchId: e.yandexBatchId) }
+        entries = entries.map(remap)
+        originalEntries = originalEntries?.map(remap)
         onStateChange?()
     }
 
@@ -401,22 +404,9 @@ import Foundation
             if let yandexSessionId { yBody["session"] = yandexSessionId }
             guard let res = try? await NativeServerApp.request("POST", "/api/providers/yandex/wave", body: yBody) else { return }
             if let s = (res["sessionId"] as? String) ?? (res["session"] as? String) { yandexSessionId = s }
-            let items = res["items"] as? [[String: Any]] ?? []
-            var newIds: [String] = []
-            for item in items {
-                if let yid = item["yandexId"] as? String, !yid.isEmpty, !yandexQueueIds.contains(yid) { yandexQueueIds.append(yid) }
-                let tid: String?
-                if let existingId = item["trackId"] as? String, !existingId.isEmpty { tid = existingId }
-                else if let track = item["track"] as? [String: Any],
-                        let imp = try? await NativeServerApp.request("POST", "/api/providers/yandex/import", body: ["track": track]) {
-                    tid = imp["trackId"] as? String
-                } else { tid = nil }
-                if let tid, !existing.contains(tid), !newIds.contains(tid), (NativeShellStore.shared?.reaction(tid) ?? 0) >= 0 {
-                    newIds.append(tid)
-                }
-            }
-            if !newIds.isEmpty {
-                entries.append(contentsOf: newIds.map { Entry(entryId: UUID().uuidString, trackId: $0) })
+            let newEntries = await collectYandexWaveEntries(from: res, limit: 2, excluding: existing)
+            if !newEntries.isEmpty {
+                entries.append(contentsOf: newEntries)
                 onStateChange?()
                 scheduleSync()
             }
@@ -438,6 +428,35 @@ import Foundation
         }
     }
 
+    private func collectYandexWaveEntries(from res: [String: Any], limit: Int, excluding: Set<String>) async -> [Entry] {
+        let sid = (res["sessionId"] as? String) ?? (res["session"] as? String) ?? yandexSessionId
+        let batchId = res["batchId"] as? String
+        let items = res["items"] as? [[String: Any]] ?? []
+        var picked: [Entry] = []
+        var seen = Set<String>()
+        for item in items {
+            guard picked.count < limit else { break }
+            let yid = item["yandexId"] as? String
+            let tid: String?
+            if let existingId = item["trackId"] as? String, !existingId.isEmpty { tid = existingId }
+            else if let track = item["track"] as? [String: Any],
+                    let imp = try? await NativeServerApp.request("POST", "/api/providers/yandex/import", body: ["track": track]) {
+                tid = imp["trackId"] as? String
+            } else { tid = nil }
+            if let tid, !excluding.contains(tid), seen.insert(tid).inserted, (NativeShellStore.shared?.reaction(tid) ?? 0) >= 0 {
+                if let yid, !yid.isEmpty, !yandexQueueIds.contains(yid) { yandexQueueIds.append(yid) }
+                picked.append(Entry(entryId: UUID().uuidString, trackId: tid, yandexId: yid, yandexSessionId: sid, yandexBatchId: batchId))
+            }
+        }
+        return picked
+    }
+
+    private func sendYandexFeedback(sessionId: String, batchId: String?, event: [String: Any]) {
+        var body: [String: Any] = ["sessionId": sessionId, "event": event]
+        if let batchId, !batchId.isEmpty { body["batchId"] = batchId } else { body["batchId"] = NSNull() }
+        Task { _ = try? await NativeServerApp.request("POST", "/api/providers/yandex/feedback", body: body) }
+    }
+
     private func stopPlayback() {
         finishPlay(reason: "stop")
         sessionId = nil
@@ -447,6 +466,10 @@ import Foundation
 
     private func beginPlay(_ entry: Entry) {
         playStartedAt = Date()
+        activePlayEntry = entry
+        if let sid = entry.yandexSessionId, !sid.isEmpty, let yid = entry.yandexId, !yid.isEmpty {
+            sendYandexFeedback(sessionId: sid, batchId: entry.yandexBatchId, event: ["type": "trackStarted", "trackId": yid])
+        }
         let tid = entry.trackId, ctx = context.type
         Task {
             if let res = try? await NativeServerApp.request("POST", "/api/plays", body: ["trackId": tid, "context": ctx]),
@@ -457,9 +480,25 @@ import Foundation
     }
 
     private func finishPlay(reason: String) {
+        let playedSec = max(0.0, Date().timeIntervalSince(playStartedAt))
+        let finishedEntry = activePlayEntry
+        activePlayEntry = nil
+        if let finishedEntry, let sid = finishedEntry.yandexSessionId, !sid.isEmpty, let yid = finishedEntry.yandexId, !yid.isEmpty {
+            let type: String?
+            if reason == "transition" || reason == "ended" || playedSec >= 30 { type = "trackFinished" }
+            else if reason == "skip" { type = "skip" }
+            else { type = nil }
+            if let type {
+                sendYandexFeedback(sessionId: sid, batchId: finishedEntry.yandexBatchId, event: [
+                    "type": type,
+                    "trackId": yid,
+                    "totalPlayedSeconds": Int(playedSec.rounded()),
+                ])
+            }
+        }
         guard let id = activePlayId else { return }
         activePlayId = nil
-        let ms = Int(max(0, Date().timeIntervalSince(playStartedAt) * 1000))
+        let ms = Int(max(0, playedSec * 1000))
         Task {
             _ = try? await NativeServerApp.request("PATCH", "/api/plays/\(id)", body: ["playedMs": ms, "endReason": reason])
         }

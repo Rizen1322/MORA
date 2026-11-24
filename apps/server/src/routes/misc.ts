@@ -218,7 +218,19 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
     }
     try {
       const queue = [...new Set(body.queue ?? [])];
-      const wave = await providers.yandex.wave(body.session ?? null, queue, { count: body.count ?? 2, exclude: queue, seeds: getSettings(db).wave.yandexSeeds });
+      const cutoff = Date.now() - 48 * 3600 * 1000;
+      const recentYandexIds = (q(db, `
+        SELECT ts.external_id AS external_id
+        FROM plays p
+        JOIN track_sources ts ON ts.track_id = p.track_id
+        WHERE ts.provider = 'yandex' AND ts.kind = 'remote' AND p.started_at >= ?
+        ORDER BY p.id DESC LIMIT 150
+      `).all(cutoff) as { external_id: string | null }[])
+        .map((row) => String(row.external_id ?? ''))
+        .filter((id) => isYandexTrackId(id));
+      const exclude = [...new Set([...queue, ...recentYandexIds])];
+      const effectiveQueue = queue.length ? queue : [...new Set(recentYandexIds)].slice(0, 20);
+      const wave = await providers.yandex.wave(body.session ?? null, effectiveQueue, { count: body.count ?? 2, exclude, seeds: getSettings(db).wave.yandexSeeds });
       const ids = wave.items.flatMap((item) => item.trackId ? [item.trackId] : []);
       analysis.prioritize(ids.slice(0, body.count ?? 2), PRIORITY.wave);
       return wave;
@@ -240,7 +252,7 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
     }
   });
 
-  app.post<{ Body: { sessionId: string; batchId: string | null; event: { type: 'trackStarted' | 'trackFinished' | 'skip'; trackId: string; totalPlayedSeconds?: number } } }>(
+  app.post<{ Body: { sessionId: string; batchId: string | null; event: { type: 'radioStarted' | 'trackStarted' | 'trackFinished' | 'skip'; trackId?: string; totalPlayedSeconds?: number; from?: string } } }>(
     '/api/providers/yandex/feedback',
     async (req, reply) => {
       try {
