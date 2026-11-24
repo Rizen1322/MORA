@@ -366,20 +366,24 @@ export class YandexProvider implements Provider {
     });
     let sequence = r.sequence ?? [];
     let batchId = r.batchId ?? null;
-    if (!sessionId && r.radioSessionId && filterSequence(sequence).length < count) {
+    if (!sessionId && r.radioSessionId && excluded.size > 0 && filterSequence(sequence).length < count) {
       const initialIds = sequence.map((s) => {
         const id = String(s.track.id);
         return s.track.albums?.[0]?.id ? `${id}:${s.track.albums[0].id}` : id;
       });
       const nextQueue = [...new Set([...queue, ...initialIds])].slice(-100);
-      const next = await this.call<{ sequence?: { track: YTrack }[]; batchId?: string; unknownSession?: boolean }>(
-        'POST',
-        `/rotor/session/${encodeURIComponent(r.radioSessionId)}/tracks`,
-        { queue: nextQueue },
-      );
-      if (!next.unknownSession && Array.isArray(next.sequence) && next.sequence.length) {
-        sequence = [...sequence, ...next.sequence];
-        if (next.batchId) batchId = next.batchId;
+      try {
+        const next = await this.call<{ sequence?: { track: YTrack }[]; batchId?: string; unknownSession?: boolean }>(
+          'POST',
+          `/rotor/session/${encodeURIComponent(r.radioSessionId)}/tracks`,
+          { queue: nextQueue },
+        );
+        if (!next.unknownSession && Array.isArray(next.sequence) && next.sequence.length) {
+          sequence = [...sequence, ...next.sequence];
+          if (next.batchId) batchId = next.batchId;
+        }
+      } catch {
+        // Keep the initial sequence if follow-up tracks lookup fails.
       }
     }
     return { sessionId: r.radioSessionId, batchId, items: await prepare(sequence) };
