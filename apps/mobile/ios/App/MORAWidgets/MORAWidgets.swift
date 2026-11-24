@@ -7,6 +7,9 @@ import AppIntents
 
 private let mint = Color(red: 74 / 255, green: 222 / 255, blue: 154 / 255)
 private let background = Color(red: 5 / 255, green: 13 / 255, blue: 10 / 255)
+private let emeraldTop = Color(red: 11 / 255, green: 34 / 255, blue: 25 / 255)
+private let emeraldMid = Color(red: 7 / 255, green: 21 / 255, blue: 15 / 255)
+private let mintDeep = Color(red: 19 / 255, green: 56 / 255, blue: 41 / 255)
 
 enum WaveSourceChoice: String, AppEnum {
     case app, own, online, yandex
@@ -76,44 +79,242 @@ struct MoraProvider: TimelineProvider {
     }
 }
 
+private struct MoraWidgetBackdrop: View {
+    var glowAlignment: UnitPoint = .topTrailing
+    var glowOpacity: Double = 0.26
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [emeraldTop, emeraldMid, background],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            RadialGradient(
+                colors: [mint.opacity(glowOpacity), .clear],
+                center: glowAlignment,
+                startRadius: 6,
+                endRadius: 170
+            )
+        }
+    }
+}
+
+private struct MoraWordmark: View {
+    var body: some View {
+        Text("MORA")
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .tracking(1.4)
+            .foregroundStyle(mint.opacity(0.85))
+            .unredacted()
+    }
+}
+
+private struct WaveBarsArtwork: View {
+    let heights: [CGFloat]
+    let barWidth: CGFloat
+    let spacing: CGFloat
+    let maxHeight: CGFloat
+
+    var body: some View {
+        HStack(alignment: .center, spacing: spacing) {
+            ForEach(Array(heights.enumerated()), id: \.offset) { _, ratio in
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [mint, mint.opacity(0.32)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: barWidth, height: max(4, maxHeight * ratio))
+            }
+        }
+        .unredacted()
+    }
+}
+
 private struct Header: View {
     let title: String, symbol: String
+
     var body: some View {
-        Label(title, systemImage: symbol).font(.caption.weight(.semibold)).foregroundStyle(mint).lineLimit(1)
+        HStack(spacing: 6) {
+            Label(title, systemImage: symbol)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(mint)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            MoraWordmark()
+        }
+        .unredacted()
     }
 }
 
 struct WaveWidgetView: View {
     let source: WaveSourceChoice
+    @Environment(\.widgetFamily) private var family
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: source.symbol).font(.title.weight(.semibold)).foregroundStyle(mint)
-            Spacer(minLength: 0)
-            Text("Моя волна").font(.headline).foregroundStyle(.white)
-            Text(source.title).font(.caption).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+        Group {
+            if family == .systemMedium {
+                HStack(alignment: .center, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 5) {
+                            Image(systemName: source.symbol)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(mint)
+                            MoraWordmark()
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(mintDeep.opacity(0.75), in: Capsule())
+                        .overlay(Capsule().stroke(mint.opacity(0.24), lineWidth: 0.75))
+
+                        Spacer(minLength: 0)
+
+                        Text("Моя волна")
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Text(source.title)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.68))
+                            .lineLimit(1)
+
+                        HStack(spacing: 5) {
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 9, weight: .bold))
+                            Text("Слушать")
+                                .font(.caption2.weight(.bold))
+                        }
+                        .foregroundStyle(background)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(mint, in: Capsule())
+                        .padding(.top, 2)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(mintDeep.opacity(0.55))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(mint.opacity(0.22), lineWidth: 0.75)
+                            )
+                        WaveBarsArtwork(
+                            heights: [0.32, 0.62, 0.92, 0.54, 0.80, 0.44, 0.68],
+                            barWidth: 5,
+                            spacing: 4,
+                            maxHeight: 58
+                        )
+                    }
+                    .frame(width: 96, maxHeight: .infinity)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .top) {
+                        Image(systemName: source.symbol)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(mint)
+                            .frame(width: 34, height: 34)
+                            .background(mintDeep.opacity(0.8), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(mint.opacity(0.24), lineWidth: 0.75)
+                            )
+                        Spacer(minLength: 0)
+                        WaveBarsArtwork(
+                            heights: [0.38, 0.78, 1.0, 0.56],
+                            barWidth: 3.5,
+                            spacing: 3,
+                            maxHeight: 22
+                        )
+                    }
+                    Spacer(minLength: 0)
+                    MoraWordmark()
+                    Text("Моя волна")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text(source.title)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.68))
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .unredacted()
         .widgetURL(source.url)
     }
 }
 
 struct ContinueWidgetView: View {
     let entry: MoraEntry
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Header(title: entry.data?.playing == true ? "Сейчас играет" : "Продолжить", symbol: entry.data?.playing == true ? "speaker.wave.2.fill" : "play.fill")
-            Spacer(minLength: 0)
+    @Environment(\.widgetFamily) private var family
+
+    private var trackContent: some View {
+        VStack(alignment: .leading, spacing: 3) {
             if let now = entry.data?.now {
-                Text(now.title).font(.headline).foregroundStyle(.white).lineLimit(2)
-                Text(now.artist).font(.caption).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                Text(now.title)
+                    .font(family == .systemMedium ? .title3.weight(.bold) : .headline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                Text(now.artist)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.65))
+                    .lineLimit(1)
             } else {
-                Text("Откройте MORA").font(.headline).foregroundStyle(.white)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Откройте MORA")
+                        .font(family == .systemMedium ? .title3.weight(.bold) : .headline.weight(.semibold))
+                        .foregroundStyle(.white)
+                    Text("Нажмите, чтобы открыть плеер")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.6))
+                        .lineLimit(1)
+                }
+                .unredacted()
             }
             if let updated = entry.data?.updatedAt {
                 HStack(spacing: 3) {
                     Text("Обновлено")
                     Text(updated, style: .relative)
-                }.font(.caption2).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
+                }
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.48))
+                .lineLimit(1)
+            }
+        }
+    }
+
+    private var playBadge: some View {
+        ZStack {
+            Circle()
+                .fill(mintDeep.opacity(0.85))
+                .overlay(Circle().stroke(mint.opacity(0.28), lineWidth: 1))
+            Image(systemName: entry.data?.playing == true ? "waveform" : "play.fill")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(mint)
+        }
+        .frame(width: 48, height: 48)
+        .unredacted()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Header(
+                title: entry.data?.playing == true ? "Сейчас играет" : "Продолжить",
+                symbol: entry.data?.playing == true ? "speaker.wave.2.fill" : "play.fill"
+            )
+            Spacer(minLength: 0)
+            HStack(alignment: .bottom, spacing: 12) {
+                trackContent
+                if family == .systemMedium {
+                    Spacer(minLength: 0)
+                    playBadge
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -124,18 +325,41 @@ struct ContinueWidgetView: View {
 struct LikedWidgetView: View {
     let entry: MoraEntry
     @Environment(\.widgetFamily) private var family
+
     var body: some View {
         let rows = entry.data?.liked.prefix(family == .systemLarge ? 6 : 3) ?? []
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
             Header(title: entry.data.map { "Любимое · \($0.likedCount)" } ?? "Любимое", symbol: "heart.fill")
             if rows.isEmpty {
                 Spacer(minLength: 0)
-                Text(entry.data == nil ? "Откройте MORA" : "Отмечайте треки сердцем").font(.subheadline).foregroundStyle(.white.opacity(0.7))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.data == nil ? "Откройте MORA" : "Отмечайте треки сердцем")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                    Text("Избранное появится здесь автоматически")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(1)
+                }
+                .unredacted()
             }
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, song in
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(song.title).font(.subheadline.weight(.medium)).foregroundStyle(.white).lineLimit(1)
-                    Text(song.artist).font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, song in
+                HStack(spacing: 8) {
+                    Text("\(index + 1)")
+                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(mint.opacity(0.75))
+                        .frame(width: 14, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(song.title)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Text(song.artist)
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.55))
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
                 }
             }
             Spacer(minLength: 0)
@@ -148,7 +372,10 @@ struct LikedWidgetView: View {
 struct WaveWidget: Widget {
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: "mora.wave", intent: WaveWidgetIntent.self, provider: WaveProvider()) { entry in
-            WaveWidgetView(source: entry.source).containerBackground(background, for: .widget)
+            WaveWidgetView(source: entry.source)
+                .containerBackground(for: .widget) {
+                    MoraWidgetBackdrop(glowAlignment: .trailing, glowOpacity: 0.30)
+                }
         }
         .configurationDisplayName("Моя волна")
         .description("Запускает бесконечный поток под ваше настроение.")
@@ -159,7 +386,10 @@ struct WaveWidget: Widget {
 struct ContinueWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "mora.continue", provider: MoraProvider()) { entry in
-            ContinueWidgetView(entry: entry).containerBackground(background, for: .widget)
+            ContinueWidgetView(entry: entry)
+                .containerBackground(for: .widget) {
+                    MoraWidgetBackdrop(glowAlignment: .topTrailing, glowOpacity: 0.24)
+                }
         }
         .configurationDisplayName("Продолжить слушать")
         .description("Последний трек: продолжить или открыть плеер.")
@@ -170,7 +400,10 @@ struct ContinueWidget: Widget {
 struct LikedWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "mora.liked", provider: MoraProvider()) { entry in
-            LikedWidgetView(entry: entry).containerBackground(background, for: .widget)
+            LikedWidgetView(entry: entry)
+                .containerBackground(for: .widget) {
+                    MoraWidgetBackdrop(glowAlignment: .topLeading, glowOpacity: 0.22)
+                }
         }
         .configurationDisplayName("Любимое")
         .description("Последние треки, отмеченные сердцем.")
@@ -196,7 +429,10 @@ private struct LockScreenWidgetView: View {
         Group {
             switch family {
             case .accessoryCircular:
-                Image(systemName: "waveform").font(.title2).widgetURL(URL(string: "mora://wave"))
+                Image(systemName: "waveform")
+                    .font(.title2)
+                    .unredacted()
+                    .widgetURL(URL(string: "mora://wave"))
             case .accessoryInline:
                 Label(entry.data?.now?.title ?? "Откройте MORA", systemImage: "music.note").widgetURL(URL(string: "mora://player"))
             default:
