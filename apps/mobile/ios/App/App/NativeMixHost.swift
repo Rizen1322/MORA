@@ -921,8 +921,9 @@ final class NativeMixHost {
             MPNowPlayingInfoPropertyPlaybackQueueIndex: index, MPNowPlayingInfoPropertyPlaybackQueueCount: tracks.count]
         if artworks.indices.contains(index), let artwork = artworks[index] { info[MPMediaItemPropertyArtwork] = artwork }
         let publishedInfo = info
+        let publishedEntryId = tracks.indices.contains(index) ? tracks[index]["entryId"] as? String ?? "" : ""
         let publishedTrackId = tracks.indices.contains(index) ? tracks[index]["trackId"] as? String ?? "" : ""
-        NativeStationFiles.updatePosition(trackId: publishedTrackId, position: position)
+        NativeStationFiles.updatePosition(entryId: publishedEntryId, trackId: publishedTrackId, position: position)
         let canAdvance = tracks.indices.contains(index + 1) || preparation?.hasRemaining == true || pendingSkips > 0
         let canReverse = canGoBack
         var event = state
