@@ -236,7 +236,7 @@ struct DownloadCurrentIntent: AppIntent {
             ].first(where: { !$0.isEmpty }) else {
                 return .result(dialog: "Сейчас ничего не играет")
             }
-            try await NativeDownloadManager.shared.enqueue(trackId: id, album: store.byId[id]?.album ?? "")
+            _ = try await NativeServerApp.request("POST", "/api/downloads", body: ["trackId": id])
         } else {
             _ = try await store.call("downloadCurrent", timeout: 60)
         }
@@ -253,7 +253,7 @@ struct StartOfflineWaveIntent: AppIntent {
         if UIApplication.shared.applicationState == .background { AppDelegate.backgroundLaunch = true }
         do {
             if let store = NativeShellStore.shared, store.sharedLibrary {
-                try await NativeQueueController.shared.startWave(source: "own", offline: true, offlineOnly: true)
+                try await NativeQueueController.shared.startWave(source: "own", offline: true)
             } else {
                 try await StationStarter.start(source: "own", waveOnly: true)
             }

@@ -104,6 +104,7 @@ describe('Yandex full MP3 import through local API/download fixtures', () => {
       radioSessionId: 'fixture-duration', batchId: 'batch-duration',
       sequence: ['750', '751'].map((id) => ({ track: track(id) })),
     });
+    if (/^\/rotor\/session\/[^/]+\/feedback$/.test(url.pathname)) return json(res, { result: 'ok' });
     if (url.pathname === '/chart') return json(res, { chart: { tracks: [{ track: track('100') }] } });
     if (url.pathname === '/tracks' && req.method === 'POST') {
       let ids = new URLSearchParams(body).get('track-ids');
@@ -578,6 +579,60 @@ describe('Yandex full MP3 import through local API/download fixtures', () => {
       expect(a.services.lib.get(id)!.content_hash).toBe(digest(mp3));
       expect(digest(fs.readFileSync(target))).toBe(digest(mp3));
     } finally { rename.mockRestore(); }
+  });
+
+  it('excludes recently played 48h Yandex tracks, advances Rotor batch when exhausted, and forwards wave feedback', async () => {
+    const db = a.services.db;
+    const now = Date.now();
+    const recentExt = ['200:10', ...Array.from({ length: 12 }, (_, i) => `${710 + i}:10`)];
+    const insertedTrackIds: string[] = [];
+    for (const ext of recentExt) {
+      let row = a.services.lib.tracksBySource('yandex', ext)[0];
+      if (!row) {
+        row = a.services.lib.addRemote({ provider: 'yandex', externalId: ext, title: `Recent ${ext}`, artist: 'Recent Artist', album: '', duration: 3, meta: {} });
+        insertedTrackIds.push(row.id);
+      }
+      q(db, 'INSERT INTO plays(track_id, context, started_at, ended_at, played_ms, duration_ms, end_reason) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(row.id, 'yandex-wave', now - 3600_000, now - 3500_000, 100_000, 180_000, 'transition');
+    }
+    try {
+      const requests = seen.length;
+      const response = await a.app.inject({ method: 'POST', url: '/api/providers/yandex/wave', payload: { count: 2 } });
+      expect(response.statusCode, response.body).toBe(200);
+      const wave = response.json();
+      expect(wave.sessionId).toBe('fixture-wave');
+      expect(wave.batchId).toBe('batch-next');
+      const returnedIds = wave.items.map((item: { yandexId: string }) => trackId(item.yandexId));
+      for (const excluded of ['200', ...Array.from({ length: 12 }, (_, i) => String(710 + i))]) {
+        expect(returnedIds).not.toContain(excluded);
+      }
+      expect(returnedIds).toContain('722');
+      const calls = seen.slice(requests);
+      const newCall = calls.find((r) => r.path === '/rotor/session/new')!;
+      expect(JSON.parse(newCall.body).queue).toEqual(expect.arrayContaining(['710:10', '721:10']));
+      expect(calls.some((r) => r.path === '/rotor/session/fixture-wave/tracks')).toBe(true);
+
+      const fbStart = seen.length;
+      for (const event of [
+        { type: 'radioStarted', from: 'desktop_home-radio_bubble-default' },
+        { type: 'trackStarted', trackId: '722:10' },
+        { type: 'skip', trackId: '722:10', totalPlayedSeconds: 4 },
+        { type: 'trackFinished', trackId: '723:10', totalPlayedSeconds: 180 },
+      ]) {
+        const fb = await a.app.inject({
+          method: 'POST',
+          url: '/api/providers/yandex/feedback',
+          payload: { sessionId: 'fixture-wave', batchId: 'batch-next', event },
+        });
+        expect(fb.statusCode, fb.body).toBe(200);
+      }
+      const fbCalls = seen.slice(fbStart).filter((r) => r.path === '/rotor/session/fixture-wave/feedback');
+      expect(fbCalls).toHaveLength(4);
+      expect(fbCalls.map((c) => JSON.parse(c.body).event.type)).toEqual(['radioStarted', 'trackStarted', 'skip', 'trackFinished']);
+    } finally {
+      q(db, 'DELETE FROM plays').run();
+      for (const id of insertedTrackIds) q(db, 'DELETE FROM tracks WHERE id = ?').run(id);
+    }
   });
 
 });

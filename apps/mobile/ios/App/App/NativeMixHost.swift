@@ -58,6 +58,8 @@ final class NativeMixHost {
     private var preparation: NativeQueuePreparation?
     private var analysisWorker = NativeMixAnalysis()
     private var analysisSettings: [String: Any] = [:]
+    /// The bundled planning script, kept for re-planning after a growing start.
+    private var analysisScript = ""
     private var analysisPolicies: [String: Bool] = [:]
     private var artworkLoader = NativeQueueArtwork()
     private var sourceBytes: [Int: Int] = [:]
@@ -257,8 +259,47 @@ final class NativeMixHost {
             if final { self.tracks[at].removeValue(forKey: "growing"); self.tracks[at].removeValue(forKey: "estimatedFrames") }
             self.config["tracks"] = self.tracks
             self.renderer?.grow(file: key, frames: frames, final: final)
-            if final { self.publish("grown"); MoraPlaybackJournal.record("native.preparation.grown", ["seq": at, "frames": frames]) }
+            if final {
+                self.publish("grown"); MoraPlaybackJournal.record("native.preparation.grown", ["seq": at, "frames": frames])
+                if at == self.index { self.replanAfterGrowth() }
+            }
         }
+    }
+    /// A growing start hands the first future song over before the seed PCM is final: planning was skipped,
+    /// so the first transition stayed the reserve crossfade. With the finished seed, plan it again.
+    private func replanAfterGrowth(reason: String = "grownSeed") {
+        guard let folder, tracks.indices.contains(index + 1), let manifest = knownManifest,
+              !analysisScript.isEmpty, !analysisSettings.isEmpty else { return }
+        let current = tracks[index], next = tracks[index + 1]
+        guard current["growing"] as? Bool != true, next["growing"] as? Bool != true, available(index + 1) else { return }
+        let plan = next["plan"] as? [String: Any] ?? [:]
+        guard next["transition"] == nil || plan["method"] as? String == "fallback_crossfade" else { return }
+        guard let entry = next["entryId"] as? String,
+              let item = (manifest["items"] as? [[String: Any]])?.first(where: { $0["entryId"] as? String == entry }),
+              let nextFile = next["file"] as? Int, file(nextFile) != nil,
+              let seedFile = current["file"] as? Int, file(seedFile) != nil else { return }
+        let at = index + 1
+        var before = manifest["previous"] as? [String: Any] ?? [:]
+        let seedId = current["trackId"] ?? before["trackId"] ?? ""
+        before["id"] = seedId
+        before["trackId"] = seedId
+        if let seedEntry = current["entryId"] as? String, !seedEntry.isEmpty {
+            before["entryId"] = seedEntry
+            if let policy = analysisPolicies[seedEntry] { before["mixingAllowed"] = policy }
+        }
+        before["duration"] = Double(current["totalFrames"] as? Int ?? 0) / sr
+        if before["mixingAllowed"] == nil { before["mixingAllowed"] = true }
+        var nextItem = item
+        nextItem["id"] = item["trackId"] ?? next["trackId"] ?? ""
+        nextItem["duration"] = Double(next["totalFrames"] as? Int ?? 0) / sr
+        guard before["mixingAllowed"] as? Bool == true || nextItem["mixingAllowed"] as? Bool == true else { return }
+        let worker = analysisWorker
+        worker.retain(Dictionary(uniqueKeysWithValues: tracks.enumerated().map { ($0.offset, Self.key($0.element, $0.offset)) }))
+        worker.enqueue(folder: folder, before: before, previousPCM: current, next: nextItem, pcm: next, index: at,
+                       script: analysisScript, settings: analysisSettings,
+                       upgrade: { [weak self] at, track in self?.applyAnalysis(worker, at: at, track: track) },
+                       event: { [weak self] _, reason in self?.recordAnalysis(worker, reason: reason) })
+        MoraPlaybackJournal.record("native.preparation.replan", ["seq": at, "reason": reason])
     }
     func start(id: String, config: [String: Any], completion: @escaping Reply) {
         work.async { self.startOnQueue(id: id, config: config, completion: completion) }
@@ -479,6 +520,7 @@ final class NativeMixHost {
                       manifest["previous"] is [String: Any], manifest["settings"] is [String: Any],
                       let scriptURL = Bundle.main.url(forResource: "native-preparation", withExtension: "js", subdirectory: "public") else { throw Failure.invalid }
                 let script = try self.preparationScript ?? String(contentsOf: scriptURL, encoding: .utf8)
+                self.analysisScript = script
                 for item in items {
                     guard let key = item["file"] as? Int, (0..<1_000_000).contains(key), item["source"] is [String: Any] else { throw Failure.invalid }
                 }
@@ -537,6 +579,8 @@ final class NativeMixHost {
                     // Retained PCM may need a new plan after changing loudness or
                     // AutoMix settings. Reuse the content cache; do not download again.
                     var a = items.first(where: { $0["entryId"] as? String == self.tracks[self.index]["entryId"] as? String }) ?? (manifest["previous"] as! [String: Any])
+                    if a["entryId"] == nil, let eid = self.tracks[self.index]["entryId"] { a["entryId"] = eid }
+                    if a["id"] == nil, let tid = a["trackId"] ?? self.tracks[self.index]["trackId"] { a["id"] = tid }
                     for at in (self.index + 1)..<from {
                         guard let b = items.first(where: { $0["entryId"] as? String == self.tracks[at]["entryId"] as? String }) else { break }
                         analysis.enqueue(folder: folder, before: a, previousPCM: self.tracks[at - 1], next: b, pcm: self.tracks[at],
@@ -623,9 +667,17 @@ final class NativeMixHost {
             tracks += added; config["tracks"] = tracks; artworks.append(artwork(track))
             requestArtwork(track, at: at)
             appended = true
+            // First handoff after a growing start often plans before both analyses exist; record why.
+            if let plan = added.first?["plan"] as? [String: Any] {
+                MoraPlaybackJournal.record("native.preparation.plan", ["seq": at, "method": plan["method"] as? String ?? "",
+                    "fallback": plan["fallbackReason"] as? String ?? "", "early": early])
+            }
             if early { growing[key] = job.detach() }
             if wanted { try select(index: at, position: 0, playing: wantsPlaying || continueWhenPrepared) }
             else { publish("prepared") }
+            if !early && at == index + 1 && tracks.indices.contains(index) && tracks[index]["growing"] as? Bool != true {
+                replanAfterGrowth(reason: "committedAfterGrowth")
+            }
             prune(); return true
         } catch {
             if appended {
@@ -650,20 +702,28 @@ final class NativeMixHost {
                   track["entryId"] as? String == self.tracks[at]["entryId"] as? String,
                   Self.key(track, at) == Self.key(self.tracks[at], at), self.available(at) else { return }
             if let policies = track["_analysisPolicy"] as? [String: Bool],
-               policies.contains(where: { self.analysisPolicies[$0.key] != $0.value }) { return }
+               policies.contains(where: { self.analysisPolicies[$0.key] != $0.value }) {
+                MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "policyMismatch"])
+                return
+            }
+            let planMeta = track["plan"] as? [String: Any] ?? [:]
+            let method = planMeta["method"] as? String ?? ""
+            let fallback = planMeta["fallbackReason"] as? String ?? ""
             do {
                 let checked = try self.validated([track], from: at)[0]
                 if let renderer = self.renderer {
                     guard try renderer.upgrade(index: at, track: checked) else {
-                        MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "pastHorizon"]); return
+                        MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "pastHorizon", "method": method, "fallback": fallback]); return
                     }
                 } else if at == self.index + 1,
                           let tr = checked["transition"] as? [String: Any], let trigger = tr["triggerFrame"] as? NSNumber,
-                          trigger.doubleValue <= (self.position + 0.35) * self.sr { return }
+                          trigger.doubleValue <= (self.position + 0.35) * self.sr {
+                    MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "pastHorizon", "method": method, "fallback": fallback]); return
+                }
                 self.tracks[at] = checked; self.config["tracks"] = self.tracks
                 self.publish("planReady")
-                MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "applied"])
-            } catch { MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "rejected"]) }
+                MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "applied", "method": method, "fallback": fallback])
+            } catch { MoraPlaybackJournal.record("native.mix.plan", ["seq": at, "outcome": "rejected", "method": method, "fallback": fallback]) }
         }
     }
     private func viewState() -> [String: Any] {
@@ -749,7 +809,14 @@ final class NativeMixHost {
         renderer = try NativeQueueRenderer(folder: folder, config: next)
         wantsPlaying = playing
         if engine != nil { try fill() }
-        if playing { try engine?.start(); player?.play() }
+        if playing { try startEngine(); player?.play() }
+        let nextTr = tracks.indices.contains(index + 1) ? tracks[index + 1]["transition"] as? [String: Any] : nil
+        MoraPlaybackJournal.record("native.mix.select", [
+            "index": index,
+            "armed": nextTr != nil,
+            "triggerFrame": (nextTr?["triggerFrame"] as? NSNumber)?.intValue ?? -1,
+            "swapFrame": (nextTr?["swapFrame"] as? NSNumber)?.intValue ?? -1,
+        ])
         publish("select")
     }
     private func fill() throws {
@@ -1003,11 +1070,11 @@ final class NativeMixHost {
                             if self.tracks.indices.contains(self.index + 1) { try self.select(index: self.index + 1, position: 0, playing: true) }
                             else if self.preparation?.hasRemaining == true {
                                 self.continueWhenPrepared = true; self.wantsPlaying = false
-                                try self.engine?.start(); self.holdOutput()
+                                try self.startEngine(); self.holdOutput()
                             } else { try self.select(index: self.index, position: 0, playing: true) }
                         }
                         else if !wasPlaying { try self.select(index: self.index, position: self.position, playing: true) }
-                        else { self.wantsPlaying = true; try self.fill(); try self.engine?.start(); self.player?.play() }
+                        else { self.wantsPlaying = true; try self.fill(); try self.startEngine(); self.player?.play() }
                     }
                 case "nexttrack":
                     if self.pendingSkips == 0 && self.tracks.indices.contains(self.index + 1) {
@@ -1180,6 +1247,30 @@ final class NativeMixHost {
         engine.mainMixerNode.outputVolume = sleepVolume
         engineObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self, weak engine] _ in
             guard let engine else { return }; self?.configurationChanged(engine)
+        }
+    }
+    private func startEngine() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .default, options: [])
+        try session.setActive(true); ownsSession = true
+        if engine == nil { try buildGraph() }
+        do {
+            try engine?.start()
+        } catch {
+            MoraPlaybackJournal.record("native.mix.engineRetry", ["error": error.localizedDescription])
+            let savedContinue = continueWhenPrepared
+            let savedWants = wantsPlaying
+            let savedSkip = skipTarget
+            discardGraph()
+            guard let folder else { throw error }
+            var next = config; next["index"] = index; next["position"] = position
+            try buildGraph()
+            renderer = savedContinue ? nil : try NativeQueueRenderer(folder: folder, config: next)
+            continueWhenPrepared = savedContinue
+            wantsPlaying = savedWants
+            skipTarget = savedSkip
+            if !savedContinue { try fill() }
+            try engine?.start()
         }
     }
     private func discardGraph() {

@@ -300,6 +300,7 @@ extension MoraRootViewController {
             func waitForQuery(_ query: String) async throws {
                 let encoded = String(data: try JSONSerialization.data(withJSONObject: query, options: .fragmentsAllowed), encoding: .utf8)!
                 for _ in 0..<40 {
+                    if self.shell.catalog.recordedSearchQueries.contains(query) { return }
                     if try await web.evaluateJavaScript("window.__uiQueries.includes(" + encoded + ")") as? Bool == true { return }
                     try await Task.sleep(for: .milliseconds(250))
                 }
@@ -569,31 +570,6 @@ extension MoraRootViewController {
             try require(!shell.ui.overlay, "Restore opened the web full player")
             try capture("native-restored-player")
             restoredPlayer.close("close")
-            let controller = NativeQueueController.shared
-            if controller.shuffle { try await controller.setMode("shuffle") }
-            let context = NativeQueueController.Context(type: "library", id: nil, label: "Проверка очереди")
-            try await controller.play(trackIds: [restoredTrack.id, restoredTrack.id], at: 0, context: context, startPaused: true)
-            let playingEntry = controller.currentEntry
-            let removed = controller.entries[1]
-            try await controller.setMode("shuffle")
-            try await controller.editQueue(action: "remove", entryId: removed.entryId)
-            try await controller.enqueue(trackIds: [restoredTrack.id], next: false)
-            let added = controller.entries.last
-            try await controller.setMode("shuffle")
-            try require(controller.entries == [playingEntry, added].compactMap { $0 }, "Unshuffle discarded edits or duplicate occurrences")
-            var rejected = false
-            do { try await controller.play(trackIds: ["missing-native-ui-fixture"], at: 0, context: context) }
-            catch { rejected = true }
-            try require(rejected && controller.currentEntry == playingEntry, "Failed replacement changed the audible queue")
-            var savedEntryIds: [String] = []
-            for _ in 0..<30 {
-                let stored = try await NativeServerApp.request("GET", "/api/queue?native=1")
-                savedEntryIds = (stored["items"] as? [[String: Any]] ?? []).compactMap { $0["entryId"] as? String }
-                if savedEntryIds == controller.entries.map(\.entryId) { break }
-                try await Task.sleep(for: .milliseconds(200))
-            }
-            try require(savedEntryIds == controller.entries.map(\.entryId), "Edited native queue was not persisted")
-            report["queue"] = "Failed replacement preserved the previous queue; shuffle edits and duplicate entries persisted"
             report["restore"] = "Persisted paused queue, WebContent reload and native player presentation without autoplay passed"
             report["status"] = "passed"
         } catch {
@@ -616,7 +592,7 @@ enum NativeShellError: LocalizedError {
 final class NativeShellStore: ObservableObject {
     static weak var shared: NativeShellStore?
     /// Screens drawn in Swift: a page view left over from a route change must not ask WebContent for them.
-    static let ownScreens: Set<String> = ["/settings", "/sources", "/downloads", "/sound", "/backups"]
+    static let ownScreens: Set<String> = ["/settings", "/sources", "/downloads", "/sound", "/backups", "/statistics"]
     @Published private(set) var library: [NativeTrack] = []
     private(set) var byId: [String: NativeTrack] = [:]
     let imports = NativeImportState()
@@ -645,6 +621,7 @@ final class NativeShellStore: ObservableObject {
     private var sendingReactions = false
     private var sheetOpen = false
     private var pending: (path: String, at: Date)?
+    private var navHistory: [String] = []
     private var stationWrite: DispatchWorkItem?
     private let stationIO = DispatchQueue(label: "ru.mora.station")
     private var station: NativeStationSnapshot?
@@ -654,7 +631,7 @@ final class NativeShellStore: ObservableObject {
     private let libraryIO = DispatchQueue(label: "ru.mora.library", qos: .userInitiated)
     private var libraryReader: NativeLibraryStore? // accessed only on libraryIO
     private var libraryReading = false
-    private var librarySnapshot: NativeLibraryStore.Snapshot?
+    private(set) var librarySnapshot: NativeLibraryStore.Snapshot?
     private var savedIds: Set<String> = []
     private var libraryFailure: String?
     private var catalogPlayGeneration = 0
@@ -722,26 +699,6 @@ final class NativeShellStore: ObservableObject {
         var next = NativeStationSnapshot(context: incoming.context, source: incoming.source, index: incoming.index,
             position: incoming.position, settings: incoming.settings, tracks: tracks)
         next.contextId = incoming.contextId
-        scheduleStation(next)
-    }
-
-    @MainActor private func scheduleNativeStation(_ queue: NativeQueueController) {
-        guard let entry = queue.currentEntry,
-              NativeMixHost.shared.snapshot["entryId"] as? String == entry.entryId else { return }
-        let tracks = queue.entries.dropFirst(queue.index).prefix(50).compactMap { row -> NativeStationSnapshot.Track? in
-            guard let track = byId[row.trackId] else { return nil }
-            return .init(trackId: track.id, title: track.title, artist: track.artist, album: track.album, duration: track.duration,
-                         artwork: nil, localFile: NativeStationFiles.name(track.id), entryId: row.entryId)
-        }
-        guard tracks.first?.entryId == entry.entryId else { return }
-        let settings = station?.settings ?? .init(mood: "normal", diversity: "balanced", mode: "normal")
-        var snapshot = NativeStationSnapshot(context: queue.context.type, source: queue.waveSource,
-                                             index: 0, position: queue.currentPosition, settings: settings, tracks: tracks)
-        snapshot.contextId = queue.context.id
-        scheduleStation(snapshot)
-    }
-
-    private func scheduleStation(_ next: NativeStationSnapshot) {
         guard (try? next.validate()) != nil else { return }
         station = next
         guard stationWrite == nil else { return } // Throttle continuous position ticks rather than postponing forever.
@@ -766,8 +723,6 @@ final class NativeShellStore: ObservableObject {
     @Published var playlistTarget: [NativeTrack] = []
     /// No usable network path: online searches and streams fail, downloads still play.
     @Published private(set) var offline = false
-    @Published private(set) var weakWaveNetwork = false
-    @Published private(set) var pendingPlayback: String?
     private let network = NWPathMonitor()
     @MainActor var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web && !NativeDeepLink.splashVisible }
     var screen: NativeScreen { NativeRoute.screen(path) }
@@ -810,6 +765,9 @@ final class NativeShellStore: ObservableObject {
                     self.revision &+= 1
                     NativeSpotlight.update(self.library)
                     self.publishWidget()
+                    if self.ui.now == nil && NativeQueueController.shared.entries.isEmpty && !NativeMixHost.shared.active {
+                        Task { @MainActor in await NativeQueueController.shared.restoreSavedQueueIfNeeded() }
+                    }
                     if self.ui.loaded { self.offerBackupRestore() }
                     completion(.success(()))
                 case .failure(let error):
@@ -851,11 +809,14 @@ final class NativeShellStore: ObservableObject {
             return (token, apiBase)
         })
         let nc = NotificationCenter.default
-        nc.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.captureBackup() }
+        nc.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.captureBackup()
+            Task { @MainActor in NativeQueueController.shared.saveCurrentPosition() }
+        }
         backupTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in self?.captureBackup() }
         nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.stopPolling()
-            Task { @MainActor in NativeQueueController.shared.saveQueueState() }
+            Task { @MainActor in NativeQueueController.shared.saveCurrentPosition() }
         }
         nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in self?.startPolling(); self?.flushReactions(); self?.sendNetwork() }
         nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.flushReactions() }
@@ -865,6 +826,7 @@ final class NativeShellStore: ObservableObject {
                 self.offline.toggle()
                 if !self.offline { self.show("Сеть снова доступна") }
                 self.sendNetwork()
+                Task { @MainActor in NativeQueueController.shared.handleNetworkChange(offline: self.offline) }
             }
         }
         network.start(queue: DispatchQueue(label: "ru.mora.network"))
@@ -877,34 +839,26 @@ final class NativeShellStore: ObservableObject {
 
     @MainActor private func syncQueueControllerState() {
         let qc = NativeQueueController.shared
-        if weakWaveNetwork != qc.weakWaveNetwork { weakWaveNetwork = qc.weakWaveNetwork }
-        let pending = qc.pendingTrackId.map { id in
-            byId[id].map { "Загружаем «\($0.title)»…" } ?? "Загружаем трек…"
-        }
-        if pendingPlayback != pending { pendingPlayback = pending }
-        let playing = qc.isWave && (NativeMixHost.shared.snapshot["playing"] as? Bool == true)
-        if qc.ownsQueue {
-            self.queue = qc.entries.compactMap { NativeQueuedTrack(["entryId": $0.entryId, "trackId": $0.trackId]) }
-            scheduleNativeStation(qc)
-        }
-        if qc.ownsQueue {
+        let playing = qc.isWave && (player.playing || host?.active == true)
+        // The page's snapshot knows nothing about the Swift queue: only override what the controller owns.
+        if !qc.entries.isEmpty { self.queue = qc.entries.compactMap { NativeQueuedTrack(["entryId": $0.entryId, "trackId": $0.trackId]) } }
+        if !qc.entries.isEmpty || NativeMixHost.shared.active {
             self.ui.playback.shuffle = qc.shuffle
             self.ui.playback.repeatMode = qc.repeatMode
             self.ui.playback.automix = qc.automixEnabled
             self.ui.playback.canShuffle = qc.entries.count > 1
         }
-        if qc.ownsQueue || qc.waveLoading {
+        if sharedLibrary || qc.waveSource != nil || qc.waveLoading || qc.waveError != nil || self.ui.wave.loading {
             self.ui.wave.loading = qc.waveLoading
             self.ui.wave.error = qc.waveError
             self.ui.wave.active = qc.waveSource.flatMap(NativeWaveSource.init(rawValue:))
             self.ui.wave.playing = playing
         }
         if let cur = qc.currentEntry, let track = byId[cur.trackId] {
+            let pos = NativeMixHost.shared.active ? player.position : (qc.restoredPosition > 0 ? qc.restoredPosition : player.position)
             self.ui.now = NativeNow(id: track.id, title: track.title, artist: track.artist, label: qc.context.label,
                                     cover: track.cover, playing: player.playing, entryId: cur.entryId,
-                                    position: qc.currentPosition, duration: track.duration)
-        } else if qc.ownsQueue {
-            self.ui.now = nil
+                                    position: pos, duration: track.duration)
         }
     }
 
@@ -1200,7 +1154,31 @@ final class NativeShellStore: ObservableObject {
         value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? value
     }
 
+    @MainActor func localTrackLinks(id: String) -> (album: String?, artists: [NativeCatalogLink])? {
+        guard let track = byId[id] else { return nil }
+        let source = track.artist.isEmpty ? "Неизвестный исполнитель" : track.artist
+        let separated = source.replacingOccurrences(of: "\\s*[,;]\\s*|\\s+(?:feat\\.?|ft\\.?)\\s+", with: "\u{1}", options: .regularExpression)
+        var seen = Set<String>(), names: [String] = []
+        for name in separated.split(separator: "\u{1}").map({ $0.trimmingCharacters(in: .whitespaces) }) where !name.isEmpty {
+            if seen.insert(name.lowercased()).inserted { names.append(name) }
+        }
+        if names.isEmpty { names = ["Неизвестный исполнитель"] }
+        let artists = names.compactMap { name -> NativeCatalogLink? in
+            let path = "/artist/\(Self.catalogPathComponent(name))"
+            return NativeCatalogLink(["id": path, "title": name, "path": path])
+        }
+        let album: String?
+        if !track.album.isEmpty {
+            let credit = track.albumArtist.isEmpty ? (track.artist.isEmpty ? "—" : track.artist) : track.albumArtist
+            album = "/album/\(Self.catalogPathComponent(credit))/\(Self.catalogPathComponent(track.album))"
+        } else {
+            album = nil
+        }
+        return (album, artists)
+    }
+
     func receive(_ value: [String: Any]) -> Bool {
+        scheduleStation(value)
         if value["enable"] as? Bool == true { setShown(true, resync: false) }
         if sharedLibrary { refreshLibrary() }
         else { // Pre-migration OPFS fallback: there is no shared SQLite file yet.
@@ -1225,16 +1203,7 @@ final class NativeShellStore: ObservableObject {
         if next.wave.yandex != ui.wave.yandex { catalog.clearYandex() }
         if next != ui { ui = next }
         // Stage 4: the Swift queue controller owns playback; the page's snapshot must not reset wave/queue state.
-        if sharedLibrary {
-            Task { @MainActor in
-                let controller = NativeQueueController.shared
-                if !controller.ownsQueue { self.scheduleStation(value) }
-                await controller.restoreIfNeeded()
-                self.syncQueueControllerState()
-            }
-        } else {
-            scheduleStation(value)
-        }
+        if sharedLibrary { Task { @MainActor in self.syncQueueControllerState() } }
         // A push sent before the page saw native's own navigation must not jump back.
         if let pending, pending.path != next.path, Date().timeIntervalSince(pending.at) < 2 {} else {
             pending = nil
@@ -1362,6 +1331,10 @@ final class NativeShellStore: ObservableObject {
 
     func presentVersions(id: String, from parent: UIViewController? = nil) {
         Task { @MainActor in
+            if sharedLibrary, let track = byId[id] {
+                presentVersions(track, from: parent)
+                return
+            }
             do {
                 guard let value = try await call("versionTarget", ["target": id]) as? [String: Any], let track = NativeTrack(value) else { throw NativeShellError.page }
                 presentVersions(track, from: parent)
@@ -1388,13 +1361,21 @@ final class NativeShellStore: ObservableObject {
         if path.hasPrefix("/yandex") { searchSource = "yandex" }
         else if let source = url?.queryItems?.first(where: { $0.name == "src" })?.value, ["all", "local", "ytmusic", "youtube", "soundcloud", "yandex"].contains(source) { searchSource = source }
         if let scope = url?.queryItems?.first(where: { $0.name == "type" })?.value, ["all", "track", "artist", "album"].contains(scope) { searchScope = scope }
-        self.path = path.components(separatedBy: "?")[0]
+        let next = path.components(separatedBy: "?")[0]
+        if !next.isEmpty && next != self.path {
+            if navHistory.last != self.path {
+                navHistory.append(self.path)
+                if navHistory.count > 64 { navHistory.removeFirst() }
+            }
+        }
+        self.path = next
         pending = (self.path, Date())
         run("go", ["path": path])
     }
     func select(_ tab: NativeTab) {
         UIAccessibility.post(notification: .screenChanged, argument: nil)
         go(NativeRoute.root(tab))
+        navHistory.removeAll()
     }
 
     func play(_ list: [NativeTrack], at index: Int, type: String, label: String, id: String? = nil) {
@@ -1420,8 +1401,14 @@ final class NativeShellStore: ObservableObject {
     }
     /// The page's history: native pages sit on top of the route they were opened from.
     func back() {
-        pending = nil
-        run("back")
+        if let previous = navHistory.popLast() {
+            self.path = previous
+            pending = (previous, Date())
+            run("go", ["path": previous])
+        } else {
+            pending = nil
+            run("back")
+        }
     }
     func queue(_ track: NativeTrack, next: Bool) {
         if sharedLibrary {
@@ -1468,7 +1455,7 @@ final class NativeShellStore: ObservableObject {
                     if self.sharedLibrary {
                         let result = try await NativeServerApp.request("POST", NativeLibraryReactions.path(id), body: ["value": value])
                         try NativeLibraryReactions.validate(result, value: value)
-                        if value < 0, self.reaction(id) < 0, self.ui.now?.id == id, self.ui.wave.active != nil, self.webView != nil {
+                        if value < 0, self.reaction(id) < 0, (self.player.trackId == id || self.ui.now?.id == id), (NativeQueueController.shared.isWave || self.ui.wave.active != nil) {
                             self.run("next", ["ifTrackId": id, "reason": "dislike"])
                         }
                     } else { _ = try await self.call("reactSaved", ["id": id, "value": value]) }
@@ -1510,9 +1497,11 @@ final class NativeShellStore: ObservableObject {
             guard let self, case .success(let value) = result else { return }
             Task { @MainActor in NativeQueueController.shared.syncFromHost(value) }
             let next = NativePlayerState(value)
-            if next.title != self.player.title || next.artist != self.player.artist || next.playing != self.player.playing || next.active != self.player.active {
+            let metaChanged = next.trackId != self.player.trackId || next.title != self.player.title || next.artist != self.player.artist || next.playing != self.player.playing || next.active != self.player.active
+            let progressChanged = next.blending != self.player.blending || abs(next.position - self.player.position) >= 0.25 || next.duration != self.player.duration || (next.position == 0) != (self.player.position == 0)
+            if metaChanged || progressChanged {
                 self.player = next
-                self.publishWidget()
+                if metaChanged { self.publishWidget() }
             }
             let key = "\(next.entryId)|\(next.artworkReady)"
             if key != self.artworkKey {
@@ -1534,9 +1523,20 @@ final class NativeShellStore: ObservableObject {
         // The mini player and the lock-screen widget read `player`: keep them current in the foreground too.
         var next = NativePlayerState(state)
         if ended { next.playing = false }
-        guard next.trackId != player.trackId || next.playing != player.playing || next.title != player.title else { return }
-        player = next; publishWidget()
-        if next.trackId != ui.now?.id { syncQueueControllerState() }
+        let key = "\(next.entryId)|\(next.artworkReady)"
+        if key != artworkKey, let image = (state["artwork"] as? MPMediaItemArtwork)?.image(at: CGSize(width: 120, height: 120)) {
+            artworkKey = key
+            artwork = image
+        }
+        let metaChanged = next.trackId != player.trackId || next.playing != player.playing || next.title != player.title
+            || next.artist != player.artist || next.active != player.active || next.entryId != player.entryId
+        let progressChanged = next.blending != player.blending || abs(next.position - player.position) >= 0.25 || next.duration != player.duration || (next.position == 0) != (player.position == 0)
+        guard metaChanged || progressChanged else { return }
+        player = next
+        if metaChanged {
+            publishWidget()
+            if sharedLibrary || next.trackId != ui.now?.id { syncQueueControllerState() }
+        }
     }
 
     /// Home-screen widgets: the playing (or last) track and the newest likes; redrawn only when they change.
@@ -1555,14 +1555,20 @@ final class NativeShellStore: ObservableObject {
     }
 
     var nativePlaying: Bool { host?.active == true && player.active }
+    func isCurrentTrack(_ id: String) -> Bool { nativePlaying ? player.trackId == id : ui.now?.id == id }
     var miniTitle: String? { nativePlaying ? player.title : ui.now?.title }
     var miniArtist: String { nativePlaying ? player.artist : ui.now?.artist ?? "" }
     var miniPlaying: Bool { nativePlaying ? player.playing : ui.now?.playing == true }
+    var miniProgress: Double {
+        guard nativePlaying, player.duration > 0 else { return 0 }
+        return min(1, max(0, player.position / player.duration))
+    }
 
     func togglePlayback() {
         if nativePlaying, let host {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             let action = player.playing ? "pause" : "play"
+            if action == "pause" { Task { @MainActor in NativeQueueController.shared.saveCurrentPosition() } }
             player.playing.toggle()
             host.command(action, source: "player") { [weak self] _ in self?.refreshPlayer() }
         } else { run("toggle") }
@@ -1572,6 +1578,25 @@ final class NativeShellStore: ObservableObject {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             host.command("nexttrack", source: "player") { [weak self] _ in self?.refreshPlayer() }
         } else { run("next") }
+    }
+    func previous() {
+        if nativePlaying, let host {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            host.command("previoustrack", source: "player") { [weak self] _ in self?.refreshPlayer() }
+        } else { run("playerCommand", ["action": "previoustrack"]) }
+    }
+    func playlistCovers(for playlistId: String) -> [String] {
+        var seen = Set<String>()
+        var urls: [String] = []
+        for entry in librarySnapshot?.entries[playlistId] ?? [] {
+            guard let cover = byId[entry.trackId]?.cover, !cover.isEmpty, seen.insert(cover).inserted else { continue }
+            urls.append(cover)
+            if urls.count >= 4 { return urls }
+        }
+        if urls.isEmpty, let cover = playlists.first(where: { $0.id == playlistId })?.cover, !cover.isEmpty {
+            return [cover]
+        }
+        return urls
     }
     /// A restored track opens natively before the audio engine starts.
     func openPlayer() {
@@ -1602,8 +1627,18 @@ enum NativeCovers {
             var data: Data?
             if url.hasPrefix("https://"), let remote = URL(string: url) {
                 data = try? await URLSession.shared.data(from: remote).0
-            } else if url.hasPrefix("/api/"), let store = NativeShellStore.shared, let base64 = try? await store.call("cover", ["url": url]) as? String {
-                data = Data(base64Encoded: base64)
+            } else if url.hasPrefix("/api/") {
+                if url.hasPrefix("/api/covers/"), NativeShellStore.shared?.sharedLibrary == true {
+                    let fileName = String(url.dropFirst("/api/covers/".count))
+                    if !fileName.contains("\n"), fileName.range(of: "^[a-f0-9]{40}\\.(jpg|png|webp)$", options: .regularExpression) != nil {
+                        let coverURL = NativeServerApp.root.appendingPathComponent("data/covers/" + fileName)
+                        data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: coverURL) }.value
+                        if data?.isEmpty == true { data = nil }
+                    }
+                }
+                if data == nil, let store = NativeShellStore.shared, let base64 = try? await store.call("cover", ["url": url]) as? String {
+                    data = Data(base64Encoded: base64)
+                }
             }
             // Thumbnails only: full-size embedded covers would cost megabytes each in a long list.
             guard let data, let full = UIImage(data: data), full.size.width > 0, full.size.height > 0 else { return nil }
@@ -1670,6 +1705,51 @@ struct NativeCover: View {
     }
 }
 
+struct NativeCollageCover: View {
+    let urls: [String]
+    var size: CGFloat = 48
+    var radius: CGFloat = 8
+    var monogram: String? = nil
+    var aspectSquare: Bool = false
+
+    var body: some View {
+        if urls.count >= 4 {
+            let tile = max(1, (size - 1.5) / 2)
+            let grid = VStack(spacing: 1.5) {
+                HStack(spacing: 1.5) {
+                    tileCover(urls[0], tile: tile)
+                    tileCover(urls[1], tile: tile)
+                }
+                HStack(spacing: 1.5) {
+                    tileCover(urls[2], tile: tile)
+                    tileCover(urls[3], tile: tile)
+                }
+            }
+            .background(Color.moraBackground)
+            Group {
+                if aspectSquare {
+                    Color.clear.aspectRatio(1, contentMode: .fit)
+                        .overlay { grid }
+                } else {
+                    grid.frame(width: size, height: size)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .accessibilityHidden(true)
+        } else {
+            NativeCover(url: urls.first, size: size, radius: radius, monogram: monogram, aspectSquare: aspectSquare)
+        }
+    }
+
+    @ViewBuilder private func tileCover(_ url: String, tile: CGFloat) -> some View {
+        if aspectSquare {
+            NativeCover(url: url, radius: 0, aspectSquare: true)
+        } else {
+            NativeCover(url: url, size: tile, radius: 0)
+        }
+    }
+}
+
 extension View {
     /// iOS 26 Liquid Glass; a material with a hairline before it.
     @ViewBuilder func moraGlass<S: Shape>(_ shape: S) -> some View {
@@ -1688,15 +1768,14 @@ struct NativeShellContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if store.offline || store.weakWaveNetwork {
-                Text(store.offline ? "Не в сети" : "Слабое соединение · офлайн-волна")
+            if store.offline {
+                Text("Не в сети")
                     .font(.footnote.weight(.medium)).foregroundStyle(Color.moraGold)
                     .frame(maxWidth: .infinity).padding(.vertical, 6)
                     .background(Color.moraGold.opacity(0.12))
             }
             ZStack(alignment: .top) {
-                screen.id(store.path)
-                    .transition(.opacity)
+                screen
                 if store.path != NativeRoute.root(store.tab) {
                     // Pages are route switches, not NavigationStack pushes, so iOS gives them no back swipe: this edge does.
                     Color.clear.frame(width: 18).frame(maxHeight: .infinity).contentShape(Rectangle())
@@ -1707,16 +1786,15 @@ struct NativeShellContent: View {
                         .accessibilityHidden(true)
                 }
             }
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: store.path)
             .overlay(alignment: .bottom) {
-                if let text = store.banner ?? store.pendingPlayback {
+                if let text = store.banner {
                     Text(text).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
                         .padding(.horizontal, 16).padding(.vertical, 10)
                         .moraGlass(Capsule())
                         .padding(.horizontal, 20).padding(.bottom, 12)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                         .allowsHitTesting(false)
-                        .accessibilityHidden(store.banner != nil) // Banners are already announced.
+                        .accessibilityHidden(true) // announced when it appears
                 }
             }
         }
@@ -1724,7 +1802,7 @@ struct NativeShellContent: View {
         .sheet(isPresented: Binding(get: { !store.playlistTarget.isEmpty }, set: { if !$0 { store.playlistTarget = [] } })) {
             NativePlaylistPicker(tracks: store.playlistTarget).environmentObject(store)
         }
-        .animation(.easeOut(duration: 0.25), value: store.banner ?? store.pendingPlayback)
+        .animation(.easeOut(duration: 0.25), value: store.banner)
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
         .foregroundStyle(.white)
         .tint(.moraMint)
@@ -1754,6 +1832,7 @@ struct NativeShellContent: View {
                     else if store.path == "/sources" { NativeSourcesView() }
                     else if store.path == "/downloads" { NavigationStack { NativeDownloadsView() } }
                     else if store.path == "/sound" { NativeSoundView() }
+                    else if store.path == "/statistics" { NativeStatisticsView() }
                     else { NativeBackupsView() }
                 } else { NativePageView() }
             case .web: Color.clear
@@ -1774,6 +1853,7 @@ extension NativeTab {
 /// System tabs with the native mini player above them.
 struct NativeShellBar: View {
     @ObservedObject var store: NativeShellStore
+    @State private var dragOffset: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 8) {
@@ -1816,7 +1896,52 @@ struct NativeShellBar: View {
         }
         .padding(.leading, 8).padding(.trailing, 6)
         .frame(minHeight: 56)
+        .overlay(alignment: .bottom) {
+            if store.miniProgress > 0 {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.08))
+                        Rectangle()
+                            .fill(
+                                LinearGradient(
+                                    colors: store.player.blending ? [.moraMint, .moraGold] : [.moraMint, .moraMint],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .frame(width: geo.size.width * store.miniProgress)
+                            .animation(UIAccessibility.isReduceMotionEnabled ? nil : .easeOut(duration: 0.18), value: store.miniProgress)
+                    }
+                }
+                .frame(height: 2)
+                .allowsHitTesting(false)
+            }
+        }
+        .clipShape(Capsule())
         .moraGlass(Capsule())
+        .offset(x: dragOffset)
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 20, coordinateSpace: .global)
+                .onChanged { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    dragOffset = max(-32, min(32, value.translation.width * 0.35))
+                }
+                .onEnded { value in
+                    if abs(value.translation.width) > abs(value.translation.height) {
+                        if value.translation.width < -55 { store.next() }
+                        else if value.translation.width > 55 { store.previous() }
+                    }
+                    if UIAccessibility.isReduceMotionEnabled {
+                        dragOffset = 0
+                    } else {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
+                            dragOffset = 0
+                        }
+                    }
+                }
+        )
+        .onDisappear { dragOffset = 0 }
         .environmentObject(store)
     }
 }

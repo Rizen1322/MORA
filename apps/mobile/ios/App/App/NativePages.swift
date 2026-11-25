@@ -66,9 +66,11 @@ struct NativePageView: View {
     @State private var documentPicker: NativeDocumentPicker?
     @State private var importingFile: String?
     @State private var importPick: NativeImportPick?
+    @State private var heroVisible = true
 
     var body: some View {
-        NavigationStack { dialogs(pageList) }
+        let current = resolvePage()
+        NavigationStack { dialogs(pageList(current), refresh: current?.refresh) }
             .sheet(item: $importPick, onDismiss: { reload &+= 1 }) { target in
                 NativeImportPicker(target: target) { choice in
                     if let act = NativePageAct(["name": "resolveImport", "args": ["job": target.job, "position": target.position, "choice": choice]]) { run(act) }
@@ -77,10 +79,27 @@ struct NativePageView: View {
     }
 
     // Split out of body: as one expression it exceeds the Swift type checker's time limit.
-    private var catalog: Bool { page?.style == "catalog" }
-    private var hasHero: Bool {
-        if case .hero = page?.sections.first?.rows.first { return true }
+    private func resolvePage() -> NativePage? {
+        if let page { return page }
+        guard failure == nil, waveSource == nil else { return nil }
+        return (try? store.libraryPage()).flatMap(NativePage.init)
+    }
+    private func isCatalog(_ current: NativePage?) -> Bool { current?.style == "catalog" }
+    private func hasHero(_ current: NativePage?) -> Bool {
+        if case .hero = current?.sections.first?.rows.first { return true }
         return false
+    }
+    private var currentPlaylistId: String? {
+        guard store.path.hasPrefix("/playlist/") else { return nil }
+        let raw = String(store.path.dropFirst("/playlist/".count))
+        guard !raw.isEmpty, !raw.contains("/") else { return nil }
+        let decoded = raw.removingPercentEncoding ?? raw
+        return decoded.isEmpty ? nil : decoded
+    }
+    private func setHeroVisible(_ visible: Bool) {
+        guard heroVisible != visible else { return }
+        if reduceMotion { heroVisible = visible }
+        else { withAnimation(.easeInOut(duration: 0.18)) { heroVisible = visible } }
     }
     private var nativeImport: Bool { waveSource == nil && store.sharedLibrary && NativeImportState.handles(store.path) }
     /// Smart playlists, duplicates and statistics are native data screens: a shell snapshot must not reload them.
@@ -88,19 +107,21 @@ struct NativePageView: View {
     /// AutoMix diagnostics reads the JSC API directly: a shell snapshot must not reload and reset its selection.
     private var nativeDiagnostics: Bool { waveSource == nil && store.sharedLibrary && NativeDiagnosticsState.handles(store.path) }
 
-    private var pageList: some View {
-        styled(List {
+    private func pageList(_ current: NativePage?) -> some View {
+        let catalog = isCatalog(current)
+        let hero = hasHero(current)
+        return styled(List {
             if let name = importingFile { ProgressView("Добавляем «" + name + "»…").frame(maxWidth: .infinity).listRowBackground(Color.clear) }
             if let waveSource { waveHeader(waveSource) }
-            if let page {
+            if let current {
                 if let failure { Text(failure).foregroundStyle(.red) }
-                if !hasHero, let prompt = page.search, !prompt.isEmpty { pageSearchField(prompt) }
-                ForEach(Array(page.sections.enumerated()), id: \.offset) { index, section in
-                    if hasHero, index == page.sections.count - 1, let prompt = page.search, !prompt.isEmpty,
+                if !hero, let prompt = current.search, !prompt.isEmpty { pageSearchField(prompt) }
+                ForEach(Array(current.sections.enumerated()), id: \.offset) { index, section in
+                    if hero, index == current.sections.count - 1, let prompt = current.search, !prompt.isEmpty,
                        (section.rows.count >= 6 || !query.isEmpty) {
                         pageSearchField(prompt)
                     }
-                    sectionView(section)
+                    sectionView(section, catalog: catalog, pageTitle: current.title)
                 }
             } else if let failure {
                 ContentUnavailableView("Не удалось открыть", systemImage: "exclamationmark.triangle", description: Text(failure))
@@ -109,13 +130,13 @@ struct NativePageView: View {
             } else {
                 ProgressView(waveSource == nil ? "Загрузка…" : "Загружаем настройки…").frame(maxWidth: .infinity).listRowBackground(Color.clear)
             }
-        })
+        }, catalog: catalog)
         .scrollContentBackground(.hidden)
         .background(Color.moraBackground)
         // Only full-bleed hero pages carry their title inside the scroll header; library lists keep navigation titles.
-        .navigationTitle(hasHero ? "" : page?.title ?? "")
-        .navigationBarTitleDisplayMode(waveSource == nil && !hasHero ? .automatic : .inline)
-        .toolbar { toolbar }
+        .navigationTitle(hero ? "" : current?.title ?? "")
+        .navigationBarTitleDisplayMode(waveSource == nil && !hero ? .automatic : .inline)
+        .toolbar { toolbar(current) }
     }
 
     private func waveHeader(_ source: Binding<NativeWaveSource>) -> some View {
@@ -145,7 +166,7 @@ struct NativePageView: View {
         } footer: { Text("Изменения сохраняются автоматически.") }
     }
 
-    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+    @ToolbarContentBuilder private func toolbar(_ current: NativePage?) -> some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             if waveSource == nil {
                 Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") }
@@ -153,12 +174,35 @@ struct NativePageView: View {
                 Button { reload &+= 1 } label: { Label("Обновить", systemImage: "arrow.clockwise") }.disabled(running)
             }
         }
+        if hasHero(current), !heroVisible, let current {
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 8) {
+                    Text(current.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .foregroundStyle(.white)
+                    if case .hero(_, _, _, _, _, let play, _) = current.sections.first?.rows.first, let play {
+                        Button { run(play) } label: {
+                            Image(systemName: "play.fill")
+                                .font(.caption.bold())
+                                .foregroundStyle(Color.moraBackground)
+                                .frame(width: 28, height: 28)
+                                .background(Color.moraMint, in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Слушать")
+                        .disabled(running)
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
         if running { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
         if waveSource != nil { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } } }
-        if page?.sections.contains(where: { $0.reorder != nil }) == true && query.isEmpty {
+        if current?.sections.contains(where: { $0.reorder != nil }) == true && query.isEmpty {
             ToolbarItem(placement: .topBarTrailing) { EditButton() }
         }
-        if let menuItems = page?.menu, !menuItems.isEmpty {
+        if let menuItems = current?.menu, !menuItems.isEmpty {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     ForEach(menuItems.indices, id: \.self) { index in
@@ -216,7 +260,7 @@ struct NativePageView: View {
         }
     }
 
-    private func dialogs(_ list: some View) -> some View {
+    private func dialogs(_ list: some View, refresh: Double?) -> some View {
         list
             .refreshable {
                 if ["/catalog/", "/public/", "/soundcloud/"].contains(where: { store.path.hasPrefix($0) }) {
@@ -226,8 +270,8 @@ struct NativePageView: View {
                 await load()
             }
             .task(id: "\(store.path)|\(nativeImport || nativeSmart || nativeDiagnostics ? 0 : store.revision)|\(reload)|\(waveSource?.wrappedValue.rawValue ?? "")") { await load() }
-            .task(id: page?.refresh) {
-                guard let seconds = page?.refresh else { return }
+            .task(id: refresh) {
+                guard let seconds = refresh else { return }
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(seconds))
                     if !Task.isCancelled { reload &+= 1 }
@@ -242,7 +286,21 @@ struct NativePageView: View {
                 Button("Готово") { run(p.act, ["value": promptText]) }
                 Button("Отмена", role: .cancel) {}
             }
-            .onChange(of: store.path) { page = nil; failure = nil; form = [:]; pendingToggles = [:]; pendingChoices = [:]; query = "" }
+            .onAppear {
+                heroVisible = true
+                if page == nil, waveSource == nil, let local = try? store.libraryPage(), let built = NativePage(local) {
+                    page = built
+                }
+            }
+            .onChange(of: store.path) {
+                heroVisible = true
+                if waveSource == nil, let local = try? store.libraryPage(), let built = NativePage(local) {
+                    page = built
+                } else {
+                    page = nil
+                }
+                failure = nil; form = [:]; pendingToggles = [:]; pendingChoices = [:]; query = ""
+            }
             .onChange(of: waveSource?.wrappedValue) { failure = nil; pendingToggles = [:]; pendingChoices = [:] }
             .safeAreaInset(edge: .bottom) {
                 if waveSource != nil, let text = store.banner {
@@ -252,7 +310,7 @@ struct NativePageView: View {
             }
     }
 
-    @ViewBuilder private func styled(_ list: some View) -> some View {
+    @ViewBuilder private func styled(_ list: some View, catalog: Bool) -> some View {
         if catalog { list.listStyle(.plain) } else { list.listStyle(.insetGrouped) }
     }
 
@@ -287,7 +345,7 @@ struct NativePageView: View {
 
     // MARK: rows
 
-    @ViewBuilder private func sectionView(_ section: NativePageSection) -> some View {
+    @ViewBuilder private func sectionView(_ section: NativePageSection, catalog: Bool, pageTitle: String) -> some View {
         let words = NativeSearchText.normalize(query).split(whereSeparator: \.isWhitespace)
         let rows = section.rows.enumerated().filter { _, row in
             if words.isEmpty { return true }
@@ -300,7 +358,7 @@ struct NativePageView: View {
         }
         if !rows.isEmpty || section.footer != nil {
             Section {
-                ForEach(rows, id: \.offset) { _, row in rowView(row, section: section, tracks: tracks) }
+                ForEach(rows, id: \.offset) { _, row in rowView(row, section: section, tracks: tracks, catalog: catalog, pageTitle: pageTitle) }
                     .onMove(perform: section.reorder.flatMap { act -> ((IndexSet, Int) -> Void)? in
                         guard query.isEmpty else { return nil }
                         return { from, to in if let first = from.first { run(act, ["from": first, "to": to]) } }
@@ -363,7 +421,7 @@ struct NativePageView: View {
         .disabled(running)
     }
 
-    @ViewBuilder private func rowView(_ row: NativePageRow, section: NativePageSection, tracks: [NativeTrack]) -> some View {
+    @ViewBuilder private func rowView(_ row: NativePageRow, section: NativePageSection, tracks: [NativeTrack], catalog: Bool, pageTitle: String) -> some View {
         switch row {
         case .text(let title, let detail, let value, let tone):
             HStack(alignment: .firstTextBaseline, spacing: 12) {
@@ -542,6 +600,8 @@ struct NativePageView: View {
                             .multilineTextAlignment(.center)
                             .lineLimit(2)
                             .minimumScaleFactor(0.65)
+                            .onAppear { setHeroVisible(true) }
+                            .onDisappear { setHeroVisible(false) }
                         if let subtitle, !subtitle.isEmpty {
                             Text(subtitle)
                                 .font(.subheadline)
@@ -557,9 +617,12 @@ struct NativePageView: View {
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.moraBackground)
             } else {
+                let playlistId = currentPlaylistId
+                let collage = playlistId.map { store.playlistCovers(for: $0) } ?? []
+                let showCollage = playlistId != nil && collage.count >= 4
                 ZStack(alignment: .top) {
                     ZStack(alignment: .bottom) {
-                        NativeCover(url: cover, size: width, radius: 0, monogram: title)
+                        NativeCover(url: cover ?? collage.first, size: width, radius: 0, monogram: title)
                             .frame(width: width, height: 320)
                             .clipped()
                             .blur(radius: 44)
@@ -572,14 +635,22 @@ struct NativePageView: View {
                         .frame(height: 320)
                     }
                     VStack(spacing: 8) {
-                        NativeCover(url: cover, size: 220, radius: 14, monogram: title)
-                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(0.12), lineWidth: 0.75))
-                            .shadow(color: .black.opacity(0.52), radius: 20, y: 10)
-                            .padding(.bottom, 8)
+                        Group {
+                            if showCollage {
+                                NativeCollageCover(urls: collage, size: 220, radius: 14, monogram: title)
+                            } else {
+                                NativeCover(url: cover, size: 220, radius: 14, monogram: title)
+                            }
+                        }
+                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(0.12), lineWidth: 0.75))
+                        .shadow(color: .black.opacity(0.52), radius: 20, y: 10)
+                        .padding(.bottom, 8)
                         Text(title)
                             .font(.title2.bold())
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 16)
+                            .onAppear { setHeroVisible(true) }
+                            .onDisappear { setHeroVisible(false) }
                         if let subtitle, !subtitle.isEmpty {
                             Text(subtitle)
                                 .font(.subheadline.weight(.medium))
@@ -698,7 +769,7 @@ struct NativePageView: View {
                 NativeTrackRow(track: track, play: {
                     guard let i = tracks.firstIndex(where: { $0.id == id }) else { return }
                     let ctx = section.play ?? [:]
-                    store.play(tracks, at: i, type: ctx["type"] as? String ?? "library", label: ctx["label"] as? String ?? page?.title ?? "", id: ctx["id"] as? String)
+                    store.play(tracks, at: i, type: ctx["type"] as? String ?? "library", label: ctx["label"] as? String ?? pageTitle, id: ctx["id"] as? String)
                 }, remove: remove.map { r in (r.title, r.symbol, { run(r.act) }) })
             }
         }
@@ -953,5 +1024,265 @@ private struct NativePageSlider: View {
             if let detail { Text(detail).font(.footnote).foregroundStyle(.white.opacity(0.6)) }
         }
         .padding(.vertical, 4)
+    }
+}
+
+struct NativeStatisticsView: View {
+    @EnvironmentObject private var store: NativeShellStore
+    @State private var loaded = false
+    @State private var failure: String?
+    @State private var plays = 0
+    @State private var playedMs = 0.0
+    @State private var longestStreak = 0
+    @State private var topTracks: [TrackRow] = []
+    @State private var topArtists: [ArtistRow] = []
+
+    private struct TrackRow: Identifiable {
+        let id: String
+        let title: String
+        let artist: String
+        let plays: Int
+    }
+
+    private struct ArtistRow: Identifiable {
+        var id: String { artist }
+        let artist: String
+        let plays: Int
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    if let failure {
+                        VStack(spacing: 12) {
+                            Text(failure).font(.subheadline).foregroundStyle(.white.opacity(0.75)).multilineTextAlignment(.center)
+                            Button("Повторить") { Task { await load() } }
+                                .buttonStyle(.borderedProminent).tint(.moraMint).foregroundStyle(Color.moraBackground)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(24)
+                        .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    } else if !loaded {
+                        ProgressView("Загружаем статистику…")
+                            .tint(.moraMint)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 72)
+                    } else if plays == 0 && topTracks.isEmpty && topArtists.isEmpty {
+                        ContentUnavailableView(
+                            "Пока нет прослушиваний",
+                            systemImage: "chart.bar",
+                            description: Text("Включите волну или любимую музыку — итоги за 30 дней появятся здесь.")
+                        )
+                        .padding(.top, 48)
+                    } else {
+                        summaryCards
+                        if !topArtists.isEmpty { artistsSection }
+                        if !topTracks.isEmpty { tracksSection }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.moraBackground)
+            .navigationTitle("Статистика")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") }
+                }
+            }
+            .refreshable { await load() }
+            .task { await load() }
+        }
+        .accessibilityIdentifier("native-statistics-screen")
+    }
+
+    private var summaryCards: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("За последние 30 дней")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.55))
+            HStack(spacing: 10) {
+                statCard(title: "Треков", value: "\(plays)", symbol: "play.circle.fill", tint: .moraMint)
+                statCard(title: "Время", value: Self.durationText(playedMs), symbol: "clock.fill", tint: .moraGold)
+                statCard(title: "Серия", value: "\(longestStreak) \(Self.daysWord(longestStreak))", symbol: "flame.fill", tint: .moraMint)
+            }
+        }
+    }
+
+    private func statCard(title: String, value: String, symbol: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: symbol)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(tint)
+                .frame(width: 28, height: 28)
+                .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Text(value)
+                .font(.headline.monospacedDigit().weight(.bold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.58))
+                .lineLimit(1)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 1))
+    }
+
+    private var artistsSection: some View {
+        let maxPlays = max(1, topArtists.map(\.plays).max() ?? 1)
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Топ исполнителей").font(.title3.bold())
+            VStack(spacing: 10) {
+                ForEach(Array(topArtists.enumerated()), id: \.element.id) { idx, row in
+                    let name = row.artist.isEmpty ? "Неизвестный исполнитель" : row.artist
+                    let ratio = CGFloat(row.plays) / CGFloat(maxPlays)
+                    Button { openArtist(name) } label: {
+                        HStack(spacing: 12) {
+                            Text("\(idx + 1)")
+                                .font(.caption.monospacedDigit().weight(.bold))
+                                .foregroundStyle(idx == 0 ? Color.moraMint : .white.opacity(0.5))
+                                .frame(width: 20, alignment: .leading)
+                            NativeCover(url: coverForArtist(name), size: 42, radius: 21, monogram: name)
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack {
+                                    Text(name).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(1)
+                                    Spacer(minLength: 8)
+                                    Text("\(row.plays)").font(.caption.monospacedDigit().weight(.semibold)).foregroundStyle(Color.moraMint)
+                                }
+                                GeometryReader { geo in
+                                    ZStack(alignment: .leading) {
+                                        Capsule().fill(Color.white.opacity(0.08))
+                                        Capsule()
+                                            .fill(LinearGradient(colors: [.moraMint, .moraMint.opacity(0.5)], startPoint: .leading, endPoint: .trailing))
+                                            .frame(width: max(8, geo.size.width * ratio))
+                                    }
+                                }
+                                .frame(height: 5)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.07), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var tracksSection: some View {
+        let queueTracks = topTracks.compactMap { store.byId[$0.id] }
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Топ треков").font(.title3.bold())
+            VStack(spacing: 8) {
+                ForEach(Array(topTracks.enumerated()), id: \.element.id) { idx, row in
+                    let track = store.byId[row.id]
+                    Button {
+                        if let track {
+                            let start = queueTracks.firstIndex(where: { $0.id == track.id }) ?? 0
+                            store.play(queueTracks, at: start, type: "library", label: "Топ треков")
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
+                            Text("\(idx + 1)")
+                                .font(.caption.monospacedDigit().weight(.bold))
+                                .foregroundStyle(idx == 0 ? Color.moraGold : .white.opacity(0.5))
+                                .frame(width: 20, alignment: .leading)
+                            NativeCover(url: track?.cover, size: 46, radius: 10, monogram: row.title)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(row.title.isEmpty ? "Без названия" : row.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                                Text(row.artist)
+                                    .font(.caption)
+                                    .foregroundStyle(.white.opacity(0.6))
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 8)
+                            Text("\(row.plays)")
+                                .font(.caption.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(Color.moraGold)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .background(Color.moraGold.opacity(0.14), in: Capsule())
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.07), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(track == nil)
+                }
+            }
+        }
+    }
+
+    private func coverForArtist(_ name: String) -> String? {
+        let needle = NativeSearchText.normalize(name)
+        return store.library.first(where: { $0.cover != nil && NativeSearchText.normalize($0.artist).contains(needle) })?.cover
+    }
+
+    private func openArtist(_ name: String) {
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        let encoded = name.addingPercentEncoding(withAllowedCharacters: allowed) ?? name
+        store.go("/artist/\(encoded)")
+    }
+
+    @MainActor private func load() async {
+        do {
+            let data = try await NativeServerApp.request("GET", "/api/library/statistics")
+            plays = (data["plays"] as? NSNumber)?.intValue ?? 0
+            playedMs = (data["playedMs"] as? NSNumber)?.doubleValue ?? 0
+            longestStreak = (data["longestStreak"] as? NSNumber)?.intValue ?? 0
+            topTracks = (data["topTracks"] as? [[String: Any]] ?? []).compactMap { row in
+                guard let id = row["id"] as? String else { return nil }
+                return TrackRow(
+                    id: id,
+                    title: row["title"] as? String ?? "",
+                    artist: row["artist"] as? String ?? "",
+                    plays: (row["plays"] as? NSNumber)?.intValue ?? 0
+                )
+            }
+            topArtists = (data["topArtists"] as? [[String: Any]] ?? []).map { row in
+                ArtistRow(
+                    artist: row["artist"] as? String ?? "",
+                    plays: (row["plays"] as? NSNumber)?.intValue ?? 0
+                )
+            }
+            failure = nil
+            loaded = true
+        } catch is CancellationError {
+        } catch {
+            failure = error.localizedDescription
+            loaded = true
+        }
+    }
+
+    private static func durationText(_ ms: Double) -> String {
+        let minutes = Int((ms / 60000).rounded())
+        if minutes < 60 { return "\(max(0, minutes)) мин" }
+        let hours = minutes / 60
+        let rest = minutes % 60
+        return rest == 0 ? "\(hours) ч" : "\(hours) ч \(rest) м"
+    }
+
+    private static func daysWord(_ n: Int) -> String {
+        let m = n % 100
+        if (11...14).contains(m) { return "дн." }
+        switch n % 10 {
+        case 1: return "день"
+        case 2, 3, 4: return "дня"
+        default: return "дн."
+        }
     }
 }

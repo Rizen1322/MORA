@@ -35,6 +35,7 @@ final class NativePlayerModel: ObservableObject {
     @Published var actionError: String?
     @Published private(set) var banner: String?
     @Published private(set) var offline = false
+    @Published private(set) var automixStyle = "auto"
     @Published var playlistTarget: [NativeTrack] = []
     /// When `state.position` was read: the scrubber runs the clock on from there between polls.
     private(set) var receivedAt = Date()
@@ -75,6 +76,16 @@ final class NativePlayerModel: ObservableObject {
         #if DEBUG
         if visualCheck { return }
         #endif
+        if NativeShellStore.shared?.sharedLibrary == true {
+            Task { @MainActor in
+                if let settings = try? await NativeServerApp.request("GET", "/api/settings"),
+                   let automix = settings["automix"] as? [String: Any] {
+                    let enabled = automix["enabled"] as? Bool ?? true
+                    let style = automix["style"] as? String ?? "auto"
+                    self.automixStyle = enabled ? style : "off"
+                }
+            }
+        }
         guard timer == nil else { return }
         refresh()
         let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in self?.refresh() }
@@ -88,7 +99,7 @@ final class NativePlayerModel: ObservableObject {
             defer { then?() }
             guard let self, case .success(let value) = result else { return }
             var next = NativePlayerState(value)
-            let restored = next.entryId.isEmpty ? NativeShellStore.shared?.ui.now : nil
+            let restored = !next.active ? NativeShellStore.shared?.ui.now : nil
             if let restored {
                 next = NativePlayerState(["active": true, "playing": restored.playing, "entryId": restored.entryId,
                     "position": restored.position, "duration": restored.duration,
@@ -127,27 +138,28 @@ final class NativePlayerModel: ObservableObject {
     /// The same command path as the lock screen.
     private func send(_ action: String, time: Double? = nil, then: (() -> Void)? = nil) {
         // `then` runs once the post-command state is shown, so a seek target never flashes back to the old position.
-        Task { @MainActor in
-            let queue = NativeQueueController.shared
-            if let store = NativeShellStore.shared,
-               !host.active || (store.sharedLibrary && queue.ownsQueue) {
+        if !host.active, let store = NativeShellStore.shared {
+            Task { @MainActor in
                 do {
                     if store.sharedLibrary {
-                        try await queue.command(action, seekTime: time)
+                        try await NativeQueueController.shared.command(action, seekTime: time)
                     } else {
                         var args: [String: Any] = ["action": action]
                         if let time { args["time"] = time }
                         _ = try await store.call("playerCommand", args)
                     }
-                } catch {
-                    if !NativeShellStore.isCancelled(error) { self.actionError = error.localizedDescription }
+                } catch { self.actionError = error.localizedDescription }
+                self.refresh(then: then)
+            }
+            return
+        }
+        host.command(action, time: time, source: "player") { [weak self] _ in
+            if let self {
+                if action == "pause" || action == "seekto" {
+                    Task { @MainActor in NativeQueueController.shared.saveCurrentPosition() }
                 }
                 self.refresh(then: then)
-                return
-            }
-            host.command(action, time: time, source: "player") { [weak self] _ in
-                if let self { self.refresh(then: then) } else { then?() }
-            }
+            } else { then?() }
         }
     }
     func transport(_ action: String) {
@@ -187,10 +199,55 @@ final class NativePlayerModel: ObservableObject {
         }
     }
 
+    func setAutomixStyle(_ style: String) {
+        guard !changingMode, let store = NativeShellStore.shared else { return }
+        changingMode = true
+        UISelectionFeedbackGenerator().selectionChanged()
+        var automix: [String: Any] = ["enabled": style != "off"]
+        if style != "off" { automix["style"] = style }
+        let body: [String: Any] = ["automix": automix]
+        let labels = ["auto": "Авто", "smooth": "Плавное сведение", "tight": "Короткое сведение", "off": "Выключен"]
+        let label = labels[style] ?? style
+        Task<Void, Never> { @MainActor in
+            defer { changingMode = false }
+            do {
+                if store.sharedLibrary {
+                    try await NativeQueueController.shared.setAutomixStyle(style)
+                } else {
+                    _ = try await NativeServerApp.request("PUT", "/api/settings", body: body)
+                }
+                automixStyle = style
+                modes.automix = style != "off"
+                store.show("AutoMix: \(label)")
+            } catch {
+                if !NativeShellStore.isCancelled(error) { actionError = error.localizedDescription }
+            }
+        }
+    }
+
+    private static func unpackTrackLinks(_ value: ([NativeCatalogLink], String?)) -> (artists: [NativeCatalogLink], albumPath: String?) {
+        (value.0, value.1)
+    }
+    private static func unpackTrackLinks(_ value: (String?, [NativeCatalogLink])) -> (artists: [NativeCatalogLink], albumPath: String?) {
+        (value.1, value.0)
+    }
+    private static func unpackTrackLinks(_ value: [String: Any]) -> (artists: [NativeCatalogLink], albumPath: String?) {
+        let artists = (value["artists"] as? [[String: Any]] ?? []).compactMap(NativeCatalogLink.init)
+        let albumPath = (value["album"] as? String) ?? (value["albumPath"] as? String)
+        return (artists, albumPath)
+    }
+
     private func loadNavigation(_ id: String) {
         guard !id.isEmpty, let store = NativeShellStore.shared else { return }
         navigationTrack = id; artists = []; albumPath = nil
         Task { @MainActor in
+            if store.sharedLibrary, let raw = store.localTrackLinks(id: id) {
+                guard state.trackId == id else { return }
+                let links = Self.unpackTrackLinks(raw)
+                artists = links.artists
+                albumPath = links.albumPath
+                return
+            }
             do {
                 let value = try await store.call("trackLinks", ["id": id]) as? [String: Any]
                 guard state.trackId == id else { return }
@@ -210,6 +267,18 @@ final class NativePlayerModel: ObservableObject {
         let id = state.trackId
         guard let store = NativeShellStore.shared else { return }
         Task { @MainActor in
+            if store.sharedLibrary, let raw = store.localTrackLinks(id: id) {
+                guard state.trackId == id else { return }
+                let links = Self.unpackTrackLinks(raw)
+                artists = links.artists
+                albumPath = links.albumPath
+                if let path = destination == "album" ? links.albumPath : links.artists.first?.path {
+                    navigate(path)
+                } else {
+                    actionError = NativeShellError.page.localizedDescription
+                }
+                return
+            }
             do {
                 let value = try await store.call("trackLinks", ["id": id]) as? [String: Any]
                 guard state.trackId == id else { return }
@@ -341,6 +410,137 @@ extension Color {
     static let moraGold = Color(red: 245 / 255, green: 200 / 255, blue: 110 / 255)
 }
 
+private enum NativeCoverPalette {
+    struct Colors: Equatable {
+        let primary: Color
+        let secondary: Color
+
+        static let fallback = Colors(
+            primary: Color(red: 0.08, green: 0.22, blue: 0.16),
+            secondary: Color(red: 0.04, green: 0.14, blue: 0.10)
+        )
+    }
+
+    private final class Entry {
+        weak var image: UIImage?
+        let colors: Colors
+
+        init(image: UIImage, colors: Colors) {
+            self.image = image
+            self.colors = colors
+        }
+    }
+
+    private static let lock = NSLock()
+    private static var cache: [ObjectIdentifier: Entry] = [:]
+    private static var order: [ObjectIdentifier] = []
+    private static let maxEntries = 24
+
+    static func colors(for image: UIImage?) -> Colors {
+        guard let image else { return .fallback }
+        let key = ObjectIdentifier(image)
+        lock.lock()
+        if let entry = cache[key], entry.image === image {
+            if order.last != key {
+                order.removeAll { $0 == key }
+                order.append(key)
+            }
+            lock.unlock()
+            return entry.colors
+        }
+        lock.unlock()
+
+        let computed = extract(from: image)
+
+        lock.lock()
+        cache[key] = Entry(image: image, colors: computed)
+        order.removeAll { $0 == key }
+        order.append(key)
+        while order.count > maxEntries {
+            let evicted = order.removeFirst()
+            cache.removeValue(forKey: evicted)
+        }
+        lock.unlock()
+        return computed
+    }
+
+    private static func extract(from image: UIImage) -> Colors {
+        guard let cgImage = image.cgImage else { return .fallback }
+        var pixels = [UInt8](repeating: 0, count: 64)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let base = buffer.baseAddress,
+                  let context = CGContext(
+                      data: base,
+                      width: 4,
+                      height: 4,
+                      bitsPerComponent: 8,
+                      bytesPerRow: 16,
+                      space: CGColorSpaceCreateDeviceRGB(),
+                      bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+                  ) else { return false }
+            context.interpolationQuality = .medium
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 4, height: 4))
+            return true
+        }
+        guard drawn else { return .fallback }
+
+        struct Sample {
+            let hue: CGFloat
+            let saturation: CGFloat
+            let brightness: CGFloat
+            var score: CGFloat { saturation * (0.45 + 0.55 * brightness) }
+        }
+
+        var samples: [Sample] = []
+        samples.reserveCapacity(16)
+
+        for i in 0..<16 {
+            let offset = i * 4
+            let a = CGFloat(pixels[offset + 3]) / 255.0
+            guard a >= 0.08 else { continue }
+            let r = min(1.0, CGFloat(pixels[offset]) / 255.0 / a)
+            let g = min(1.0, CGFloat(pixels[offset + 1]) / 255.0 / a)
+            let b = min(1.0, CGFloat(pixels[offset + 2]) / 255.0 / a)
+
+            var h: CGFloat = 0
+            var s: CGFloat = 0
+            var v: CGFloat = 0
+            var alpha: CGFloat = 0
+            guard UIColor(red: r, green: g, blue: b, alpha: 1).getHue(&h, saturation: &s, brightness: &v, alpha: &alpha) else {
+                continue
+            }
+            guard v >= 0.08, s >= 0.08 else { continue }
+            samples.append(Sample(hue: h, saturation: s, brightness: v))
+        }
+
+        guard !samples.isEmpty else { return .fallback }
+        samples.sort { $0.score > $1.score }
+
+        let first = samples[0]
+        let primaryS = min(0.72, max(0.25, first.saturation))
+        let primaryB = min(0.30, max(0.12, first.brightness))
+        let primary = Color(hue: Double(first.hue), saturation: Double(primaryS), brightness: Double(primaryB))
+
+        let distinct = samples.dropFirst().first { candidate in
+            let diff = abs(candidate.hue - first.hue)
+            return min(diff, 1.0 - diff) >= 0.08
+        }
+
+        let secondary: Color
+        if let second = distinct {
+            let secondaryS = min(0.72, max(0.25, second.saturation))
+            let secondaryB = min(0.30, max(0.12, second.brightness))
+            secondary = Color(hue: Double(second.hue), saturation: Double(secondaryS), brightness: Double(secondaryB))
+        } else {
+            let secondaryS = min(0.72, max(0.25, primaryS * 0.78))
+            let secondaryB = min(0.30, max(0.12, primaryB * 0.62))
+            secondary = Color(hue: Double(first.hue), saturation: Double(secondaryS), brightness: Double(secondaryB))
+        }
+
+        return Colors(primary: primary, secondary: secondary)
+    }
+}
+
 private struct IconButton: View {
     let symbol: String
     let label: String
@@ -366,6 +566,66 @@ private struct RoutePicker: UIViewRepresentable {
     func updateUIView(_ view: AVRoutePickerView, context: Context) {}
 }
 
+private struct HorizontalCoverSwipe: UIViewRepresentable {
+    var enabled: Bool
+    var onDrag: (CGFloat) -> Void
+    var onEnd: (CGFloat, CGFloat) -> Void
+    var onDoubleTap: (() -> Void)? = nil
+
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
+        pan.delegate = context.coordinator
+        pan.maximumNumberOfTouches = 1
+        view.addGestureRecognizer(pan)
+        let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        doubleTap.delegate = context.coordinator
+        view.addGestureRecognizer(doubleTap)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.parent = self
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var parent: HorizontalCoverSwipe
+        init(parent: HorizontalCoverSwipe) { self.parent = parent }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard parent.enabled else { return false }
+            if let pan = gestureRecognizer as? UIPanGestureRecognizer {
+                let v = pan.velocity(in: pan.view)
+                return abs(v.x) > abs(v.y) * 1.15
+            }
+            return true
+        }
+
+        @objc func handlePan(_ pan: UIPanGestureRecognizer) {
+            let translation = pan.translation(in: pan.view)
+            let velocity = pan.velocity(in: pan.view)
+            switch pan.state {
+            case .began, .changed:
+                parent.onDrag(translation.x)
+            case .ended, .cancelled, .failed:
+                parent.onEnd(translation.x, velocity.x)
+            default:
+                break
+            }
+        }
+
+        @objc func handleDoubleTap(_ tap: UITapGestureRecognizer) {
+            if tap.state == .ended, parent.enabled {
+                parent.onDoubleTap?()
+            }
+        }
+    }
+}
+
 struct NativePlayerView: View {
     @ObservedObject var model: NativePlayerModel
     @ObservedObject private var sleep = NativeSleepTimer.shared
@@ -373,6 +633,9 @@ struct NativePlayerView: View {
     @State private var queueOpen = false
     @State private var showLyrics = false
     @State private var lyricsRefreshToken = 0
+    @State private var coverDragOffset: CGFloat = 0
+    @State private var showLikeBurst = false
+    @State private var likeBurstGeneration = 0
     @Namespace private var playerLayout
 
     var body: some View {
@@ -382,8 +645,25 @@ struct NativePlayerView: View {
                 HStack {
                     IconButton(symbol: "chevron.down", label: "Свернуть плеер") { model.close("close") }
                     Spacer()
-                    Text(model.offline ? "Нет сети" : "Сейчас играет").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
-                        .accessibilityHidden(true)
+                    VStack(spacing: 3) {
+                        Text(model.offline ? "Нет сети" : "Сейчас играет").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
+                            .accessibilityHidden(true)
+                        if let badge = sourceBadge(for: s.trackId) {
+                            Button { model.versions() } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: badge.icon).font(.system(size: 9, weight: .semibold))
+                                    Text(badge.text).font(.caption2.weight(.semibold))
+                                }
+                                .foregroundStyle(Color.moraMint.opacity(0.92))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(Color.moraMint.opacity(0.14), in: Capsule())
+                                .overlay(Capsule().stroke(Color.moraMint.opacity(0.24), lineWidth: 0.6))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Источник: \(badge.text). Выбрать другую версию")
+                        }
+                    }
                     Spacer()
                     Menu {
                         trackMenuItems(s)
@@ -411,7 +691,7 @@ struct NativePlayerView: View {
             } else {
                 Spacer(minLength: 12)
                 cover(playing: s.playing).matchedGeometryEffect(id: "cover", in: playerLayout)
-                Spacer(minLength: 16)
+                Spacer(minLength: 14)
                 metadata.matchedGeometryEffect(id: "metadata", in: playerLayout)
             }
             NativeScrubber(state: s, receivedAt: model.receivedAt, pending: model.scrub) { model.seek(to: $0) }
@@ -454,6 +734,9 @@ struct NativePlayerView: View {
         .animation(.easeOut(duration: 0.25), value: model.banner)
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.48, dampingFraction: 0.86), value: queueOpen)
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.46, dampingFraction: 0.86), value: showLyrics)
+        .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.84), value: s.blending)
+        .onChange(of: queueOpen) { _, open in if open { coverDragOffset = 0 } }
+        .onChange(of: showLyrics) { _, open in if open { coverDragOffset = 0 } }
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
         .alert("Не удалось выполнить действие", isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(model.actionError ?? "") }
         .sheet(isPresented: Binding(get: { !model.playlistTarget.isEmpty }, set: { if !$0 { model.playlistTarget = [] } })) {
@@ -484,11 +767,44 @@ struct NativePlayerView: View {
 
     }
 
+    private func sourceBadge(for trackId: String) -> (text: String, icon: String)? {
+        guard !trackId.isEmpty, let track = NativeShellStore.shared?.byId[trackId] else { return nil }
+        let isOfflineCopy = track.offline || NativeDownloadManager.shared.localFile(trackId) != nil
+        switch track.provider {
+        case "yandex":
+            return (isOfflineCopy ? "Яндекс · Офлайн" : "Яндекс", isOfflineCopy ? "arrow.down.circle.fill" : "music.note")
+        case "youtube", "ytmusic":
+            return (isOfflineCopy ? "YouTube · Офлайн" : "YouTube", isOfflineCopy ? "arrow.down.circle.fill" : "play.circle")
+        case "soundcloud":
+            return (isOfflineCopy ? "SoundCloud · Офлайн" : "SoundCloud", isOfflineCopy ? "arrow.down.circle.fill" : "cloud")
+        default:
+            return ("Медиатека", "internaldrive")
+        }
+    }
+
     @ViewBuilder private func trackMenuItems(_ s: NativePlayerState) -> some View {
         Button("Добавить в плейлист", systemImage: "text.badge.plus") { model.addToPlaylist() }.disabled(s.trackId.isEmpty)
         Button("Другая версия", systemImage: "arrow.triangle.swap") { model.versions() }
         if showLyrics {
             Button("Обновить текст", systemImage: "arrow.clockwise") { lyricsRefreshToken &+= 1 }
+        }
+        Menu("Стиль AutoMix", systemImage: "waveform.path") {
+            ForEach([
+                ("auto", "Авто"),
+                ("smooth", "Длинные и плавные"),
+                ("tight", "Короткие, по фразе"),
+                ("off", "Выключен")
+            ], id: \.0) { value, label in
+                Button {
+                    model.setAutomixStyle(value)
+                } label: {
+                    if model.automixStyle == value {
+                        Label(label, systemImage: "checkmark")
+                    } else {
+                        Text(label)
+                    }
+                }
+            }
         }
         Button("Перейти к исполнителю", systemImage: "music.mic") { model.open("artist") }
         Button("Перейти к альбому", systemImage: "square.stack") { model.open("album") }.disabled(model.albumPath == nil)
@@ -611,21 +927,65 @@ struct NativePlayerView: View {
     }
 
     private var backdrop: some View {
-        ZStack {
-            LinearGradient(colors: [Color(red: 0.10, green: 0.24, blue: 0.17), .moraBackground], startPoint: .top, endPoint: .bottom)
-            if let image = model.artwork {
-                Image(uiImage: image).resizable().scaledToFill()
-                    .saturation(showLyrics ? 1.25 : 1.0)
-                    .blur(radius: showLyrics ? 80 : 60)
-                    .opacity(showLyrics ? 0.45 : 0.35)
-                    .transition(.opacity)
+        let palette = NativeCoverPalette.colors(for: model.artwork)
+        let emeraldHint = Color(red: 0.05, green: 0.16, blue: 0.11)
+        return ZStack {
+            Group {
+                if #available(iOS 18.0, *) {
+                    MeshGradient(
+                        width: 3,
+                        height: 3,
+                        points: [
+                            SIMD2<Float>(0.0, 0.0), SIMD2<Float>(0.5, 0.0), SIMD2<Float>(1.0, 0.0),
+                            SIMD2<Float>(0.0, 0.5), SIMD2<Float>(0.5, 0.46), SIMD2<Float>(1.0, 0.5),
+                            SIMD2<Float>(0.0, 1.0), SIMD2<Float>(0.5, 1.0), SIMD2<Float>(1.0, 1.0)
+                        ],
+                        colors: [
+                            palette.primary, emeraldHint, palette.secondary,
+                            palette.secondary, palette.primary, .moraBackground,
+                            .moraBackground, emeraldHint, .moraBackground
+                        ],
+                        background: .moraBackground
+                    )
+                } else {
+                    ZStack {
+                        LinearGradient(
+                            colors: [palette.primary, palette.secondary, .moraBackground],
+                            startPoint: .topLeading,
+                            endPoint: .bottom
+                        )
+                        RadialGradient(
+                            colors: [palette.primary.opacity(0.65), emeraldHint.opacity(0.45), .clear],
+                            center: .topTrailing,
+                            startRadius: 20,
+                            endRadius: 460
+                        )
+                    }
+                }
             }
+            .overlay {
+                if let image = model.artwork {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .saturation(showLyrics ? 1.2 : 1.0)
+                        .blur(radius: showLyrics ? 80 : 60)
+                        .opacity(showLyrics ? 0.36 : 0.28)
+                        .id(ObjectIdentifier(image))
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .clipped()
             if showLyrics {
-                RadialGradient(colors: [Color.moraMint.opacity(0.14), .clear], center: .topTrailing, startRadius: 20, endRadius: 420)
-                LinearGradient(colors: [Color.black.opacity(0.32), Color.black.opacity(0.56)], startPoint: .top, endPoint: .bottom)
+                RadialGradient(colors: [Color.moraMint.opacity(0.12), .clear], center: .topTrailing, startRadius: 20, endRadius: 420)
+                LinearGradient(colors: [Color.black.opacity(0.34), Color.black.opacity(0.58)], startPoint: .top, endPoint: .bottom)
+            } else {
+                LinearGradient(colors: [Color.black.opacity(0.14), Color.black.opacity(0.40)], startPoint: .top, endPoint: .bottom)
             }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: model.artwork.map(ObjectIdentifier.init))
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: model.artwork.map(ObjectIdentifier.init))
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: showLyrics)
     }
 
@@ -647,8 +1007,59 @@ struct NativePlayerView: View {
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: model.artwork.map(ObjectIdentifier.init))
             }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(0.6), radius: playing ? 30 : 14, y: playing ? 20 : 10)
             .scaleEffect(playing || reduceMotion ? 1 : 0.94)
+            .offset(x: reduceMotion ? 0 : coverDragOffset)
+            .overlay {
+                ZStack {
+                    HorizontalCoverSwipe(
+                        enabled: !queueOpen && !showLyrics,
+                        onDrag: { dx in
+                            guard !reduceMotion else { return }
+                            coverDragOffset = max(-48, min(48, dx * 0.45))
+                        },
+                        onEnd: { dx, vx in
+                            if dx < -60 || vx < -420 {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                model.transport("nexttrack")
+                            } else if dx > 60 || vx > 420 {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                model.transport("previoustrack")
+                            }
+                            withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.78)) {
+                                coverDragOffset = 0
+                            }
+                        },
+                        onDoubleTap: {
+                            if model.reaction <= 0 { model.react(1) }
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            likeBurstGeneration &+= 1
+                            let gen = likeBurstGeneration
+                            withAnimation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.65)) {
+                                showLikeBurst = true
+                            }
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(650))
+                                guard gen == likeBurstGeneration else { return }
+                                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
+                                    showLikeBurst = false
+                                }
+                            }
+                        }
+                    )
+                    if showLikeBurst {
+                        Image(systemName: "heart.fill")
+                            .font(.system(size: 72, weight: .bold))
+                            .foregroundStyle(Color.moraMint)
+                            .shadow(color: Color.moraMint.opacity(0.55), radius: 22)
+                            .scaleEffect(showLikeBurst ? 1.0 : 0.6)
+                            .transition(.scale(scale: 0.55).combined(with: .opacity))
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
+            }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: playing)
             .layoutPriority(-1)
     }
@@ -925,6 +1336,7 @@ private struct NativeLyricsView: View {
         }()
 
         return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
             follow = true
             model.seek(to: max(0, line.time - activeOffset))
         } label: {
@@ -1133,13 +1545,22 @@ private struct NativeScrubber: View {
 
     var body: some View {
         let duration = max(state.duration, 1)
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: !state.playing || drag != nil || pending != nil)) { context in
+        let isDragging = drag != nil
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !state.playing || isDragging || pending != nil)) { context in
             let live = min(state.duration, state.position + (state.playing ? max(0, context.date.timeIntervalSince(receivedAt)) : 0))
             let shown = drag ?? pending ?? live
+            let inMixZone = state.blending || (state.mixStart.map { shown >= $0 } ?? false)
+            let activeFill = inMixZone
+                ? LinearGradient(colors: [.moraMint, .moraGold], startPoint: .leading, endPoint: .trailing)
+                : LinearGradient(
+                    colors: [.white.opacity(isDragging ? 1.0 : 0.90), .moraMint.opacity(isDragging ? 0.95 : 0.72)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
             VStack(spacing: 6) {
                 GeometryReader { geo in
                     let width = geo.size.width
-                    let barHeight: CGFloat = drag == nil ? 6 : 10
+                    let barHeight: CGFloat = isDragging ? 9 : 5
                     let x = width * min(1, max(0, shown / duration))
                     let mixX = state.mixStart.map { width * min(1, max(0, $0 / duration)) }
                     let mixW = state.mixStart.map { start -> CGFloat in
@@ -1151,55 +1572,70 @@ private struct NativeScrubber: View {
                             Capsule().fill(.white.opacity(0.18)).frame(height: barHeight)
                             if let mixX, let mixW {
                                 Rectangle()
-                                    .fill(Color.moraMint.opacity(state.blending ? 0.75 : 0.35))
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                Color.moraMint.opacity(state.blending ? 0.80 : 0.35),
+                                                Color.moraGold.opacity(state.blending ? 0.65 : 0.25)
+                                            ],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
                                     .frame(width: mixW, height: barHeight)
                                     .offset(x: mixX)
                             }
-                            Capsule().fill(.white.opacity(state.blending ? 0.95 : 0.65))
-                                .frame(width: x, height: barHeight)
-                                .shadow(color: .white.opacity(state.blending ? 0.65 : 0), radius: 5)
                         }
                         .frame(width: width, height: barHeight)
                         .clipShape(Capsule())
+                        Capsule()
+                            .fill(activeFill)
+                            .frame(width: x, height: barHeight)
+                            .shadow(color: inMixZone ? Color.moraMint.opacity(0.35) : .clear, radius: 6)
                         if let mixX {
                             Capsule()
                                 .fill(Color.moraMint)
-                                .frame(width: 2.5, height: drag == nil ? 11 : 15)
+                                .frame(width: 2.5, height: isDragging ? 14 : 10)
                                 .offset(x: min(max(0, mixX - 1.25), max(0, width - 2.5)))
                                 .shadow(color: Color.moraMint.opacity(0.5), radius: 3)
                         }
-                        if drag != nil {
-                            Circle().fill(.white).frame(width: 20, height: 20).offset(x: x - 10)
+                        if isDragging {
+                            Circle()
+                                .fill(.white)
+                                .frame(width: 18, height: 18)
+                                .shadow(color: .black.opacity(0.35), radius: 4, y: 1)
+                                .offset(x: min(max(0, x - 9), max(0, width - 18)))
                         }
                     }
                     .frame(width: width, height: 44)
                     .contentShape(Rectangle())
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: drag == nil)
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: state.blending)
+                    .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.8), value: isDragging)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: inMixZone)
                     // GestureState resets when the sheet's own pan cancels the drag; a @State value stayed stuck there.
                     .gesture(DragGesture(minimumDistance: 4)
                         .updating($drag) { g, value, _ in
-                            guard state.duration > 0 else { return }
+                            guard state.duration > 0, width > 0 else { return }
                             if value == nil { UISelectionFeedbackGenerator().selectionChanged() }
                             value = min(state.duration, max(0, g.location.x / width * state.duration))
                         }
                         .onEnded { g in
-                            guard state.duration > 0 else { return }
+                            guard state.duration > 0, width > 0 else { return }
                             seek(min(state.duration, max(0, g.location.x / width * state.duration)))
                         })
                 }
                 .frame(height: 44)
-                HStack {
-                    Text(NativePlayerTime.text(shown))
-                    Spacer()
+                ZStack {
+                    HStack {
+                        Text(NativePlayerTime.text(shown))
+                        Spacer()
+                        Text("−" + NativePlayerTime.text(max(0, state.duration - shown)))
+                    }
                     if state.blending {
                         Text("Микширование").font(.caption2.weight(.medium))
                             .foregroundStyle(.white.opacity(reduceMotion || !state.playing ? 0.8 : 0.65 + 0.35 * sin(context.date.timeIntervalSinceReferenceDate * 3)))
                             .shadow(color: .white.opacity(0.25), radius: 3)
                             .transition(.opacity)
-                        Spacer()
                     }
-                    Text("−" + NativePlayerTime.text(max(0, state.duration - shown)))
                 }
                 .font(.caption.monospacedDigit().weight(.medium))
                 .foregroundStyle(.white.opacity(0.55))
