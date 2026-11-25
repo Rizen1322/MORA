@@ -1026,3 +1026,263 @@ private struct NativePageSlider: View {
         .padding(.vertical, 4)
     }
 }
+
+struct NativeStatisticsView: View {
+    @EnvironmentObject private var store: NativeShellStore
+    @State private var loaded = false
+    @State private var failure: String?
+    @State private var plays = 0
+    @State private var playedMs = 0.0
+    @State private var longestStreak = 0
+    @State private var topTracks: [TrackRow] = []
+    @State private var topArtists: [ArtistRow] = []
+
+    private struct TrackRow: Identifiable {
+        let id: String
+        let title: String
+        let artist: String
+        let plays: Int
+    }
+
+    private struct ArtistRow: Identifiable {
+        var id: String { artist }
+        let artist: String
+        let plays: Int
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    if let failure {
+                        VStack(spacing: 12) {
+                            Text(failure).font(.subheadline).foregroundStyle(.white.opacity(0.75)).multilineTextAlignment(.center)
+                            Button("Повторить") { Task { await load() } }
+                                .buttonStyle(.borderedProminent).tint(.moraMint).foregroundStyle(Color.moraBackground)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(24)
+                        .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    } else if !loaded {
+                        ProgressView("Загружаем статистику…")
+                            .tint(.moraMint)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 72)
+                    } else if plays == 0 && topTracks.isEmpty && topArtists.isEmpty {
+                        ContentUnavailableView(
+                            "Пока нет прослушиваний",
+                            systemImage: "chart.bar",
+                            description: Text("Включите волну или любимую музыку — итоги за 30 дней появятся здесь.")
+                        )
+                        .padding(.top, 48)
+                    } else {
+                        summaryCards
+                        if !topArtists.isEmpty { artistsSection }
+                        if !topTracks.isEmpty { tracksSection }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.moraBackground)
+            .navigationTitle("Статистика")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") }
+                }
+            }
+            .refreshable { await load() }
+            .task { await load() }
+        }
+        .accessibilityIdentifier("native-statistics-screen")
+    }
+
+    private var summaryCards: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("За последние 30 дней")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.55))
+            HStack(spacing: 10) {
+                statCard(title: "Треков", value: "\(plays)", symbol: "play.circle.fill", tint: .moraMint)
+                statCard(title: "Время", value: Self.durationText(playedMs), symbol: "clock.fill", tint: .moraGold)
+                statCard(title: "Серия", value: "\(longestStreak) \(Self.daysWord(longestStreak))", symbol: "flame.fill", tint: .moraMint)
+            }
+        }
+    }
+
+    private func statCard(title: String, value: String, symbol: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: symbol)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(tint)
+                .frame(width: 28, height: 28)
+                .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Text(value)
+                .font(.headline.monospacedDigit().weight(.bold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.58))
+                .lineLimit(1)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 1))
+    }
+
+    private var artistsSection: some View {
+        let maxPlays = max(1, topArtists.map(\.plays).max() ?? 1)
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Топ исполнителей").font(.title3.bold())
+            VStack(spacing: 10) {
+                ForEach(Array(topArtists.enumerated()), id: \.element.id) { idx, row in
+                    let name = row.artist.isEmpty ? "Неизвестный исполнитель" : row.artist
+                    let ratio = CGFloat(row.plays) / CGFloat(maxPlays)
+                    Button { openArtist(name) } label: {
+                        HStack(spacing: 12) {
+                            Text("\(idx + 1)")
+                                .font(.caption.monospacedDigit().weight(.bold))
+                                .foregroundStyle(idx == 0 ? Color.moraMint : .white.opacity(0.5))
+                                .frame(width: 20, alignment: .leading)
+                            NativeCover(url: coverForArtist(name), size: 42, radius: 21, monogram: name)
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack {
+                                    Text(name).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(1)
+                                    Spacer(minLength: 8)
+                                    Text("\(row.plays)").font(.caption.monospacedDigit().weight(.semibold)).foregroundStyle(Color.moraMint)
+                                }
+                                GeometryReader { geo in
+                                    ZStack(alignment: .leading) {
+                                        Capsule().fill(Color.white.opacity(0.08))
+                                        Capsule()
+                                            .fill(LinearGradient(colors: [.moraMint, .moraMint.opacity(0.5)], startPoint: .leading, endPoint: .trailing))
+                                            .frame(width: max(8, geo.size.width * ratio))
+                                    }
+                                }
+                                .frame(height: 5)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.07), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var tracksSection: some View {
+        let queueTracks = topTracks.compactMap { store.byId[$0.id] }
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Топ треков").font(.title3.bold())
+            VStack(spacing: 8) {
+                ForEach(Array(topTracks.enumerated()), id: \.element.id) { idx, row in
+                    let track = store.byId[row.id]
+                    Button {
+                        if let track {
+                            let start = queueTracks.firstIndex(where: { $0.id == track.id }) ?? 0
+                            store.play(queueTracks, at: start, type: "library", label: "Топ треков")
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
+                            Text("\(idx + 1)")
+                                .font(.caption.monospacedDigit().weight(.bold))
+                                .foregroundStyle(idx == 0 ? Color.moraGold : .white.opacity(0.5))
+                                .frame(width: 20, alignment: .leading)
+                            NativeCover(url: track?.cover, size: 46, radius: 10, monogram: row.title)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(row.title.isEmpty ? "Без названия" : row.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                                Text(row.artist)
+                                    .font(.caption)
+                                    .foregroundStyle(.white.opacity(0.6))
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 8)
+                            Text("\(row.plays)")
+                                .font(.caption.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(Color.moraGold)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .background(Color.moraGold.opacity(0.14), in: Capsule())
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.07), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(track == nil)
+                }
+            }
+        }
+    }
+
+    private func coverForArtist(_ name: String) -> String? {
+        let needle = NativeSearchText.normalize(name)
+        return store.library.first(where: { $0.cover != nil && NativeSearchText.normalize($0.artist).contains(needle) })?.cover
+    }
+
+    private func openArtist(_ name: String) {
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        let encoded = name.addingPercentEncoding(withAllowedCharacters: allowed) ?? name
+        store.go("/artist/\(encoded)")
+    }
+
+    @MainActor private func load() async {
+        do {
+            let data = try await NativeServerApp.request("GET", "/api/library/statistics")
+            plays = (data["plays"] as? NSNumber)?.intValue ?? 0
+            playedMs = (data["playedMs"] as? NSNumber)?.doubleValue ?? 0
+            longestStreak = (data["longestStreak"] as? NSNumber)?.intValue ?? 0
+            topTracks = (data["topTracks"] as? [[String: Any]] ?? []).compactMap { row in
+                guard let id = row["id"] as? String else { return nil }
+                return TrackRow(
+                    id: id,
+                    title: row["title"] as? String ?? "",
+                    artist: row["artist"] as? String ?? "",
+                    plays: (row["plays"] as? NSNumber)?.intValue ?? 0
+                )
+            }
+            topArtists = (data["topArtists"] as? [[String: Any]] ?? []).map { row in
+                ArtistRow(
+                    artist: row["artist"] as? String ?? "",
+                    plays: (row["plays"] as? NSNumber)?.intValue ?? 0
+                )
+            }
+            failure = nil
+            loaded = true
+        } catch is CancellationError {
+        } catch {
+            failure = error.localizedDescription
+            loaded = true
+        }
+    }
+
+    private static func durationText(_ ms: Double) -> String {
+        let minutes = Int((ms / 60000).rounded())
+        if minutes < 60 { return "\(max(0, minutes)) мин" }
+        let hours = minutes / 60
+        let rest = minutes % 60
+        return rest == 0 ? "\(hours) ч" : "\(hours) ч \(rest) м"
+    }
+
+    private static func daysWord(_ n: Int) -> String {
+        let m = n % 100
+        if (11...14).contains(m) { return "дн." }
+        switch n % 10 {
+        case 1: return "день"
+        case 2, 3, 4: return "дня"
+        default: return "дн."
+        }
+    }
+}

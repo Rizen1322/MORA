@@ -592,7 +592,7 @@ enum NativeShellError: LocalizedError {
 final class NativeShellStore: ObservableObject {
     static weak var shared: NativeShellStore?
     /// Screens drawn in Swift: a page view left over from a route change must not ask WebContent for them.
-    static let ownScreens: Set<String> = ["/settings", "/sources", "/downloads", "/sound", "/backups"]
+    static let ownScreens: Set<String> = ["/settings", "/sources", "/downloads", "/sound", "/backups", "/statistics"]
     @Published private(set) var library: [NativeTrack] = []
     private(set) var byId: [String: NativeTrack] = [:]
     let imports = NativeImportState()
@@ -765,6 +765,9 @@ final class NativeShellStore: ObservableObject {
                     self.revision &+= 1
                     NativeSpotlight.update(self.library)
                     self.publishWidget()
+                    if self.ui.now == nil && NativeQueueController.shared.entries.isEmpty && !NativeMixHost.shared.active {
+                        Task { @MainActor in await NativeQueueController.shared.restoreSavedQueueIfNeeded() }
+                    }
                     if self.ui.loaded { self.offerBackupRestore() }
                     completion(.success(()))
                 case .failure(let error):
@@ -806,9 +809,15 @@ final class NativeShellStore: ObservableObject {
             return (token, apiBase)
         })
         let nc = NotificationCenter.default
-        nc.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.captureBackup() }
+        nc.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.captureBackup()
+            Task { @MainActor in NativeQueueController.shared.saveCurrentPosition() }
+        }
         backupTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in self?.captureBackup() }
-        nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.stopPolling() }
+        nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.stopPolling()
+            Task { @MainActor in NativeQueueController.shared.saveCurrentPosition() }
+        }
         nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in self?.startPolling(); self?.flushReactions(); self?.sendNetwork() }
         nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.flushReactions() }
         network.pathUpdateHandler = { [weak self] path in
@@ -846,9 +855,10 @@ final class NativeShellStore: ObservableObject {
             self.ui.wave.playing = playing
         }
         if let cur = qc.currentEntry, let track = byId[cur.trackId] {
+            let pos = NativeMixHost.shared.active ? player.position : (qc.restoredPosition > 0 ? qc.restoredPosition : player.position)
             self.ui.now = NativeNow(id: track.id, title: track.title, artist: track.artist, label: qc.context.label,
                                     cover: track.cover, playing: player.playing, entryId: cur.entryId,
-                                    position: player.position, duration: track.duration)
+                                    position: pos, duration: track.duration)
         }
     }
 
@@ -1557,6 +1567,7 @@ final class NativeShellStore: ObservableObject {
         if nativePlaying, let host {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             let action = player.playing ? "pause" : "play"
+            if action == "pause" { Task { @MainActor in NativeQueueController.shared.saveCurrentPosition() } }
             player.playing.toggle()
             host.command(action, source: "player") { [weak self] _ in self?.refreshPlayer() }
         } else { run("toggle") }
@@ -1820,6 +1831,7 @@ struct NativeShellContent: View {
                     else if store.path == "/sources" { NativeSourcesView() }
                     else if store.path == "/downloads" { NavigationStack { NativeDownloadsView() } }
                     else if store.path == "/sound" { NativeSoundView() }
+                    else if store.path == "/statistics" { NativeStatisticsView() }
                     else { NativeBackupsView() }
                 } else { NativePageView() }
             case .web: Color.clear

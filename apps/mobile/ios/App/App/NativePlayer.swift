@@ -35,6 +35,7 @@ final class NativePlayerModel: ObservableObject {
     @Published var actionError: String?
     @Published private(set) var banner: String?
     @Published private(set) var offline = false
+    @Published private(set) var automixStyle = "auto"
     @Published var playlistTarget: [NativeTrack] = []
     /// When `state.position` was read: the scrubber runs the clock on from there between polls.
     private(set) var receivedAt = Date()
@@ -75,6 +76,16 @@ final class NativePlayerModel: ObservableObject {
         #if DEBUG
         if visualCheck { return }
         #endif
+        if NativeShellStore.shared?.sharedLibrary == true {
+            Task { @MainActor in
+                if let settings = try? await NativeServerApp.request("GET", "/api/settings"),
+                   let automix = settings["automix"] as? [String: Any] {
+                    let enabled = automix["enabled"] as? Bool ?? true
+                    let style = automix["style"] as? String ?? "auto"
+                    self.automixStyle = enabled ? style : "off"
+                }
+            }
+        }
         guard timer == nil else { return }
         refresh()
         let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in self?.refresh() }
@@ -143,7 +154,12 @@ final class NativePlayerModel: ObservableObject {
             return
         }
         host.command(action, time: time, source: "player") { [weak self] _ in
-            if let self { self.refresh(then: then) } else { then?() }
+            if let self {
+                if action == "pause" || action == "seekto" {
+                    Task { @MainActor in NativeQueueController.shared.saveCurrentPosition() }
+                }
+                self.refresh(then: then)
+            } else { then?() }
         }
     }
     func transport(_ action: String) {
@@ -180,6 +196,30 @@ final class NativePlayerModel: ObservableObject {
                 }
             }
             catch { if !NativeShellStore.isCancelled(error) { actionError = error.localizedDescription } }
+        }
+    }
+
+    func setAutomixStyle(_ style: String) {
+        guard !changingMode, let store = NativeShellStore.shared else { return }
+        changingMode = true
+        UISelectionFeedbackGenerator().selectionChanged()
+        Task { @MainActor in
+            defer { changingMode = false }
+            do {
+                if store.sharedLibrary {
+                    try await NativeQueueController.shared.setAutomixStyle(style)
+                } else {
+                    _ = try await NativeServerApp.request("PUT", "/api/settings", body: [
+                        "automix": style == "off" ? ["enabled": false] : ["enabled": true, "style": style]
+                    ])
+                }
+                automixStyle = style
+                modes.automix = style != "off"
+                let labels = ["auto": "Авто", "smooth": "Плавное сведение", "tight": "Короткое сведение", "off": "Выключен"]
+                store.show("AutoMix: \(labels[style] ?? style)")
+            } catch {
+                if !NativeShellStore.isCancelled(error) { actionError = error.localizedDescription }
+            }
         }
     }
 
@@ -528,6 +568,7 @@ private struct HorizontalCoverSwipe: UIViewRepresentable {
     var enabled: Bool
     var onDrag: (CGFloat) -> Void
     var onEnd: (CGFloat, CGFloat) -> Void
+    var onDoubleTap: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -538,6 +579,10 @@ private struct HorizontalCoverSwipe: UIViewRepresentable {
         pan.delegate = context.coordinator
         pan.maximumNumberOfTouches = 1
         view.addGestureRecognizer(pan)
+        let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        doubleTap.delegate = context.coordinator
+        view.addGestureRecognizer(doubleTap)
         return view
     }
 
@@ -550,9 +595,12 @@ private struct HorizontalCoverSwipe: UIViewRepresentable {
         init(parent: HorizontalCoverSwipe) { self.parent = parent }
 
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            guard parent.enabled, let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
-            let v = pan.velocity(in: pan.view)
-            return abs(v.x) > abs(v.y) * 1.15
+            guard parent.enabled else { return false }
+            if let pan = gestureRecognizer as? UIPanGestureRecognizer {
+                let v = pan.velocity(in: pan.view)
+                return abs(v.x) > abs(v.y) * 1.15
+            }
+            return true
         }
 
         @objc func handlePan(_ pan: UIPanGestureRecognizer) {
@@ -567,6 +615,12 @@ private struct HorizontalCoverSwipe: UIViewRepresentable {
                 break
             }
         }
+
+        @objc func handleDoubleTap(_ tap: UITapGestureRecognizer) {
+            if tap.state == .ended, parent.enabled {
+                parent.onDoubleTap?()
+            }
+        }
     }
 }
 
@@ -578,6 +632,8 @@ struct NativePlayerView: View {
     @State private var showLyrics = false
     @State private var lyricsRefreshToken = 0
     @State private var coverDragOffset: CGFloat = 0
+    @State private var showLikeBurst = false
+    @State private var likeBurstGeneration = 0
     @Namespace private var playerLayout
 
     var body: some View {
@@ -587,8 +643,25 @@ struct NativePlayerView: View {
                 HStack {
                     IconButton(symbol: "chevron.down", label: "Свернуть плеер") { model.close("close") }
                     Spacer()
-                    Text(model.offline ? "Нет сети" : "Сейчас играет").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
-                        .accessibilityHidden(true)
+                    VStack(spacing: 3) {
+                        Text(model.offline ? "Нет сети" : "Сейчас играет").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
+                            .accessibilityHidden(true)
+                        if let badge = sourceBadge(for: s.trackId) {
+                            Button { model.versions() } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: badge.icon).font(.system(size: 9, weight: .semibold))
+                                    Text(badge.text).font(.caption2.weight(.semibold))
+                                }
+                                .foregroundStyle(Color.moraMint.opacity(0.92))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(Color.moraMint.opacity(0.14), in: Capsule())
+                                .overlay(Capsule().stroke(Color.moraMint.opacity(0.24), lineWidth: 0.6))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Источник: \(badge.text). Выбрать другую версию")
+                        }
+                    }
                     Spacer()
                     Menu {
                         trackMenuItems(s)
@@ -692,11 +765,44 @@ struct NativePlayerView: View {
 
     }
 
+    private func sourceBadge(for trackId: String) -> (text: String, icon: String)? {
+        guard !trackId.isEmpty, let track = NativeShellStore.shared?.byId[trackId] else { return nil }
+        let isOfflineCopy = track.offline || NativeDownloadManager.shared.localFile(trackId) != nil
+        switch track.provider {
+        case "yandex":
+            return (isOfflineCopy ? "Яндекс · Офлайн" : "Яндекс", isOfflineCopy ? "arrow.down.circle.fill" : "music.note")
+        case "youtube", "ytmusic":
+            return (isOfflineCopy ? "YouTube · Офлайн" : "YouTube", isOfflineCopy ? "arrow.down.circle.fill" : "play.circle")
+        case "soundcloud":
+            return (isOfflineCopy ? "SoundCloud · Офлайн" : "SoundCloud", isOfflineCopy ? "arrow.down.circle.fill" : "cloud")
+        default:
+            return ("Медиатека", "internaldrive")
+        }
+    }
+
     @ViewBuilder private func trackMenuItems(_ s: NativePlayerState) -> some View {
         Button("Добавить в плейлист", systemImage: "text.badge.plus") { model.addToPlaylist() }.disabled(s.trackId.isEmpty)
         Button("Другая версия", systemImage: "arrow.triangle.swap") { model.versions() }
         if showLyrics {
             Button("Обновить текст", systemImage: "arrow.clockwise") { lyricsRefreshToken &+= 1 }
+        }
+        Menu("Стиль AutoMix", systemImage: "waveform.path") {
+            ForEach([
+                ("auto", "Авто"),
+                ("smooth", "Длинные и плавные"),
+                ("tight", "Короткие, по фразе"),
+                ("off", "Выключен")
+            ], id: \.0) { value, label in
+                Button {
+                    model.setAutomixStyle(value)
+                } label: {
+                    if model.automixStyle == value {
+                        Label(label, systemImage: "checkmark")
+                    } else {
+                        Text(label)
+                    }
+                }
+            }
         }
         Button("Перейти к исполнителю", systemImage: "music.mic") { model.open("artist") }
         Button("Перейти к альбому", systemImage: "square.stack") { model.open("album") }.disabled(model.albumPath == nil)
@@ -904,25 +1010,53 @@ struct NativePlayerView: View {
             .scaleEffect(playing || reduceMotion ? 1 : 0.94)
             .offset(x: reduceMotion ? 0 : coverDragOffset)
             .overlay {
-                HorizontalCoverSwipe(
-                    enabled: !queueOpen && !showLyrics,
-                    onDrag: { dx in
-                        guard !reduceMotion else { return }
-                        coverDragOffset = max(-48, min(48, dx * 0.45))
-                    },
-                    onEnd: { dx, vx in
-                        if dx < -60 || vx < -420 {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            model.transport("nexttrack")
-                        } else if dx > 60 || vx > 420 {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            model.transport("previoustrack")
+                ZStack {
+                    HorizontalCoverSwipe(
+                        enabled: !queueOpen && !showLyrics,
+                        onDrag: { dx in
+                            guard !reduceMotion else { return }
+                            coverDragOffset = max(-48, min(48, dx * 0.45))
+                        },
+                        onEnd: { dx, vx in
+                            if dx < -60 || vx < -420 {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                model.transport("nexttrack")
+                            } else if dx > 60 || vx > 420 {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                model.transport("previoustrack")
+                            }
+                            withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.78)) {
+                                coverDragOffset = 0
+                            }
+                        },
+                        onDoubleTap: {
+                            if model.reaction <= 0 { model.react(1) }
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            likeBurstGeneration &+= 1
+                            let gen = likeBurstGeneration
+                            withAnimation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.65)) {
+                                showLikeBurst = true
+                            }
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(650))
+                                guard gen == likeBurstGeneration else { return }
+                                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
+                                    showLikeBurst = false
+                                }
+                            }
                         }
-                        withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.78)) {
-                            coverDragOffset = 0
-                        }
+                    )
+                    if showLikeBurst {
+                        Image(systemName: "heart.fill")
+                            .font(.system(size: 72, weight: .bold))
+                            .foregroundStyle(Color.moraMint)
+                            .shadow(color: Color.moraMint.opacity(0.55), radius: 22)
+                            .scaleEffect(showLikeBurst ? 1.0 : 0.6)
+                            .transition(.scale(scale: 0.55).combined(with: .opacity))
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
                     }
-                )
+                }
             }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: playing)
             .layoutPriority(-1)

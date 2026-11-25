@@ -28,6 +28,8 @@ struct NativeDownloadsView: View {
             Section {
                 Button { perform { try await downloadLiked() } } label: { Label("Скачать всё любимое", systemImage: "heart.fill") }
                     .accessibilityIdentifier("native-downloads-liked")
+                Button { perform { try await downloadWaveForTrip() } } label: { Label("Скачать волну в дорогу (20 треков)", systemImage: "waveform.badge.plus") }
+                    .accessibilityIdentifier("native-downloads-wave")
             } footer: { Text("Скачанные треки играют без интернета. Настройка Wi-Fi применяется к системным фоновым загрузкам.") }
             if !downloads.active.isEmpty {
                 Section("Скачивается") {
@@ -178,6 +180,63 @@ struct NativeDownloadsView: View {
         }
         if failed > 0 { throw NativeDownloadsState.Failure(message: "Не удалось добавить загрузки: \(failed). \(lastError)") }
         store.show(ids.isEmpty ? "Эти треки уже на iPhone или не скачиваются" : "Добавлено загрузок: \(ids.count)")
+    }
+    @MainActor private func downloadWaveForTrip() async throws {
+        var candidateIds: [String] = []
+        var seen = Set<String>()
+        func appendId(_ id: String) {
+            guard !id.isEmpty, seen.insert(id).inserted else { return }
+            candidateIds.append(id)
+        }
+
+        let qc = NativeQueueController.shared
+        if qc.isWave {
+            for entry in qc.entries.dropFirst(qc.index + 1) {
+                appendId(entry.trackId)
+            }
+        }
+        if let waveRes = try? await NativeServerApp.request("POST", "/api/wave/next", body: ["count": 20, "offline": false]),
+           let picks = waveRes["picks"] as? [[String: Any]] {
+            for pick in picks {
+                if let id = pick["id"] as? String { appendId(id) }
+            }
+        }
+        if store.ui.wave.yandex && !store.offline && candidateIds.count < 20 {
+            if let yRes = try? await NativeServerApp.request("POST", "/api/providers/yandex/wave", body: ["count": 10]),
+               let items = yRes["items"] as? [[String: Any]] {
+                for item in items {
+                    guard candidateIds.count < 20 else { break }
+                    if let id = item["trackId"] as? String, !id.isEmpty {
+                        appendId(id)
+                    } else if let track = item["track"] as? [String: Any],
+                              let imp = try? await NativeServerApp.request("POST", "/api/providers/yandex/import", body: ["track": track]),
+                              let id = imp["trackId"] as? String {
+                        appendId(id)
+                    }
+                }
+            }
+        }
+
+        let alreadyDownloaded = Set(pinned.map(\.id))
+            .union(Set(downloads.active.compactMap(\.trackId)))
+        let targets = candidateIds.filter { id in
+            guard !alreadyDownloaded.contains(id) else { return false }
+            if let track = store.byId[id] { return track.ok && !track.offline }
+            return true
+        }.prefix(20)
+
+        var added = 0
+        for id in targets {
+            do {
+                try await add(id)
+                added += 1
+            } catch {
+                if (try? await NativeServerApp.request("POST", "/api/downloads", body: ["trackId": id])) != nil {
+                    added += 1
+                }
+            }
+        }
+        store.show(added > 0 ? "В загрузку добавлено треков: \(added)" : "Треки волны уже скачаны")
     }
     @MainActor private func add(_ id: String) async throws {
         let response = try await NativeServerApp.request("POST", "/api/mobile/native-sources", body: [

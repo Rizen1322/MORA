@@ -155,6 +155,10 @@ struct MoraShortcuts: AppShortcutsProvider {
         AppShortcut(intent: PlayPlaylistIntent(), phrases: ["Включи плейлист \(\.$playlist) в \(.applicationName)"], shortTitle: "Включить плейлист", systemImageName: "music.note.list")
         AppShortcut(intent: SetSleepTimerIntent(), phrases: ["Таймер сна в \(.applicationName)"], shortTitle: "Таймер сна", systemImageName: "moon.zzz")
         AppShortcut(intent: DownloadCurrentIntent(), phrases: ["Скачай текущий трек в \(.applicationName)"], shortTitle: "Скачать трек", systemImageName: "arrow.down.circle")
+        AppShortcut(intent: StartOfflineWaveIntent(), phrases: ["Включи офлайн-волну в \(.applicationName)", "Офлайн-волна в \(.applicationName)"],
+                    shortTitle: "Офлайн-волна", systemImageName: "waveform.circle")
+        AppShortcut(intent: NextTrackIntent(), phrases: ["Следующий трек в \(.applicationName)", "Переключи трек в \(.applicationName)"],
+                    shortTitle: "Следующий трек", systemImageName: "forward.fill")
     }
 }
 
@@ -237,5 +241,43 @@ struct DownloadCurrentIntent: AppIntent {
             _ = try await store.call("downloadCurrent", timeout: 60)
         }
         return .result(dialog: "Трек добавлен в очередь загрузок")
+    }
+}
+
+struct StartOfflineWaveIntent: AppIntent {
+    static let title: LocalizedStringResource = "Включить офлайн-волну"
+    static let description = IntentDescription("Запускает волну только из скачанных треков без интернета.")
+    static let openAppWhenRun = false
+
+    @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+        if UIApplication.shared.applicationState == .background { AppDelegate.backgroundLaunch = true }
+        do {
+            if let store = NativeShellStore.shared, store.sharedLibrary {
+                try await NativeQueueController.shared.startWave(source: "own", offline: true)
+            } else {
+                try await StationStarter.start(source: "own", waveOnly: true)
+            }
+            return .result(dialog: "Включаю офлайн-волну")
+        } catch {
+            return .result(dialog: "\(error.localizedDescription)")
+        }
+    }
+}
+
+struct NextTrackIntent: AppIntent {
+    static let title: LocalizedStringResource = "Следующий трек"
+    static let description = IntentDescription("Переключает воспроизведение на следующий трек в MORA.")
+    static let openAppWhenRun = false
+
+    @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+        if NativeMixHost.shared.active {
+            try await NativeQueueController.shared.command("nexttrack")
+            return .result(dialog: "Переключаю трек")
+        }
+        if let store = NativeShellStore.shared, store.ui.loaded {
+            store.next()
+            return .result(dialog: "Переключаю трек")
+        }
+        return .result(dialog: "Сейчас ничего не играет")
     }
 }

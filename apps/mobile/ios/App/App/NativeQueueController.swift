@@ -42,6 +42,10 @@ import Foundation
     private var yandexQueueIds: [String] = []
     private var toppingUpWave = false
     private var syncTask: Task<Void, Never>?
+    private(set) var restoredPosition: Double = 0
+    private var didRestoreQueue = false
+    private var prefetchedIds = Set<String>()
+    private var cachedKeepWave: (count: Int, at: Date)?
 
     var onStateChange: (() -> Void)?
 
@@ -77,6 +81,7 @@ import Foundation
         self.entries = queue
         self.index = targetIndex
         self.context = context
+        self.restoredPosition = 0
         onStateChange?()
         try await startAt(targetIndex, paused: startPaused)
     }
@@ -156,19 +161,100 @@ import Foundation
         if action == "toggle" {
             if host.active {
                 let playing = host.snapshot["playing"] as? Bool == true
+                if playing { saveCurrentPosition() }
                 _ = try await hostReply { host.command(playing ? "pause" : "play", source: "native", completion: $0) }
             } else if entries.indices.contains(index) {
-                try await startAt(index, paused: false)
+                let pos = restoredPosition
+                restoredPosition = 0
+                try await startAt(index, paused: false, startPosition: pos)
             }
             return
         }
         guard host.active else {
             if action == "play", entries.indices.contains(index) {
-                try await startAt(index, paused: false)
+                let pos = restoredPosition
+                restoredPosition = 0
+                try await startAt(index, paused: false, startPosition: pos)
+            } else if (action == "seek" || action == "seekto"), let seekTime {
+                restoredPosition = max(0, seekTime)
+                saveQueueState(position: restoredPosition)
+                onStateChange?()
             }
             return
         }
+        if action == "pause" {
+            saveCurrentPosition()
+        } else if (action == "seek" || action == "seekto"), let seekTime {
+            saveQueueState(position: max(0, seekTime))
+        }
         _ = try await hostReply { host.command(action, time: seekTime, source: "native", completion: $0) }
+    }
+
+    func setAutomixStyle(_ style: String) async throws {
+        guard ["auto", "smooth", "tight", "off"].contains(style) else {
+            throw NSError(domain: "NativeQueue", code: 6, userInfo: [NSLocalizedDescriptionKey: "Неизвестный стиль AutoMix"])
+        }
+        let settings = try await NativeServerApp.request("GET", "/api/settings", body: nil)
+        var automix = settings["automix"] as? [String: Any] ?? [:]
+        let enabled = style != "off"
+        automix["enabled"] = enabled
+        if enabled { automix["style"] = style }
+        automixEnabled = enabled
+        _ = try await NativeServerApp.request("PUT", "/api/settings", body: ["automix": automix])
+        if NativeMixHost.shared.active {
+            _ = try? await hostReply { NativeMixHost.shared.settings(["automix": automix], completion: $0) }
+        }
+        onStateChange?()
+    }
+
+    func restoreSavedQueueIfNeeded() async {
+        guard !didRestoreQueue, entries.isEmpty, !NativeMixHost.shared.active else { return }
+        didRestoreQueue = true
+        guard let saved = try? await NativeServerApp.request("GET", "/api/queue", body: nil),
+              let rawItems = saved["items"] as? [[String: Any]], !rawItems.isEmpty,
+              entries.isEmpty, !NativeMixHost.shared.active else { return }
+
+        let byId = NativeShellStore.shared?.byId ?? [:]
+        let rawIndex = (saved["index"] as? NSNumber)?.intValue ?? 0
+        var restored: [Entry] = []
+        var mappedIndex = 0
+        for (offset, item) in rawItems.enumerated() {
+            guard let tid = item["trackId"] as? String, !tid.isEmpty, byId[tid] != nil else { continue }
+            if offset <= rawIndex { mappedIndex = restored.count }
+            let eid = (item["entryId"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
+            restored.append(Entry(entryId: eid, trackId: tid))
+        }
+        guard !restored.isEmpty else { return }
+
+        let ctxRaw = saved["context"] as? [String: Any]
+        let ctxType = ctxRaw?["type"] as? String ?? "library"
+        let ctxId = ctxRaw?["id"] as? String
+        let ctxLabel = ctxRaw?["label"] as? String ?? "Медиатека"
+        let restoredPos = max(0.0, (saved["position"] as? NSNumber)?.doubleValue ?? 0)
+
+        entries = restored
+        index = max(0, min(restored.count - 1, mappedIndex))
+        context = Context(type: ctxType, id: ctxId, label: ctxLabel)
+        shuffle = saved["shuffle"] as? Bool == true
+        if let rep = saved["repeat"] as? String, ["off", "all", "one"].contains(rep) {
+            repeatMode = rep
+        }
+        restoredPosition = restoredPos
+        if ctxType == "yandex-wave" { waveSource = "yandex" }
+        else if ctxType == "online-radio" { waveSource = "online" }
+        else if ctxType == "wave" { waveSource = "own" }
+        onStateChange?()
+    }
+
+    func saveCurrentPosition() {
+        guard !entries.isEmpty else { return }
+        let pos: Double
+        if NativeMixHost.shared.active {
+            pos = max(0.0, (NativeMixHost.shared.snapshot["position"] as? NSNumber)?.doubleValue ?? 0)
+        } else {
+            pos = max(0.0, restoredPosition)
+        }
+        saveQueueState(position: pos)
     }
 
     func setMode(_ mode: String) async throws {
@@ -210,7 +296,7 @@ import Foundation
 
     func startWave(source: String, offline: Bool) async throws {
         let chosen = (source == "yandex" || source == "online") ? source : "own"
-        if waveSource == chosen && NativeMixHost.shared.active && !(waveFallbackActive && !offline) {
+        if waveSource == chosen && (NativeMixHost.shared.active || !entries.isEmpty) && !(waveFallbackActive && !offline) {
             try await command("toggle")
             return
         }
@@ -398,6 +484,7 @@ import Foundation
         yandexSessionId = nil
         waveError = nil
         waveLoading = false
+        restoredPosition = 0
         entries = []
         index = 0
         originalEntries = nil
@@ -408,7 +495,7 @@ import Foundation
 
     // MARK: - Private
 
-    private func startAt(_ targetIndex: Int, paused: Bool) async throws {
+    private func startAt(_ targetIndex: Int, paused: Bool, startPosition: Double = 0) async throws {
         guard entries.indices.contains(targetIndex) else { return }
         revision &+= 1
         let rev = revision
@@ -437,16 +524,18 @@ import Foundation
         guard let preparedItem = resolved.first, rev == revision else {
             throw NSError(domain: "NativeQueue", code: 5, userInfo: [NSLocalizedDescriptionKey: "Файл трека недоступен"])
         }
-        let config: [String: Any] = ["sampleRate": 48000.0, "position": 0.0, "paused": paused, "gainDb": 0.0]
+        let config: [String: Any] = ["sampleRate": 48000.0, "position": max(0.0, startPosition), "paused": paused, "gainDb": 0.0]
         let state = try await hostReply { host.prepareStart(id: sid, item: preparedItem, config: config, completion: $0) }
         guard rev == revision else { return }
         hostIndex = state["index"] as? Int ?? 0
+        restoredPosition = 0
 
         beginPlay(entry)
-        saveQueueState()
+        saveQueueState(position: max(0.0, startPosition))
         onStateChange?()
         scheduleSync()
         if isWave { Task { @MainActor in await topUpWaveIfNeeded() } }
+        Task { @MainActor in await prefetchUpcomingIfNeeded() }
     }
 
     private func scheduleSync(replaceFuture: Bool = false) {
@@ -633,6 +722,7 @@ import Foundation
                         entries.append(contentsOf: newEntries)
                         onStateChange?()
                         scheduleSync(replaceFuture: force)
+                        Task { @MainActor in await prefetchUpcomingIfNeeded() }
                         return
                     }
                 }
@@ -658,6 +748,7 @@ import Foundation
                 entries.append(contentsOf: radioEntries)
                 onStateChange?()
                 scheduleSync(replaceFuture: force)
+                Task { @MainActor in await prefetchUpcomingIfNeeded() }
                 return
             }
             let fallback = await fetchOfflineWaveTrackIds(count: 3, excluding: existing)
@@ -694,6 +785,32 @@ import Foundation
             entries.append(contentsOf: picks.map { Entry(entryId: UUID().uuidString, trackId: $0) })
             onStateChange?()
             scheduleSync(replaceFuture: force)
+            Task { @MainActor in await prefetchUpcomingIfNeeded() }
+        }
+    }
+
+    private func prefetchUpcomingIfNeeded() async {
+        guard !(NativeShellStore.shared?.offline ?? waveOffline) else { return }
+        let store = NativeShellStore.shared
+        let keepWave: Int
+        if let cached = cachedKeepWave, Date().timeIntervalSince(cached.at) < 60 {
+            keepWave = cached.count
+        } else {
+            let settings = try? await NativeServerApp.request("GET", "/api/settings", body: nil)
+            let downloads = settings?["downloads"] as? [String: Any]
+            let count = (downloads?["keepWave"] as? NSNumber)?.intValue ?? 0
+            cachedKeepWave = (count, Date())
+            keepWave = count
+        }
+        guard isWave, keepWave > 0 else { return }
+        let upcoming = entries.dropFirst(index + 1).prefix(min(keepWave, 6))
+        for entry in upcoming {
+            let tid = entry.trackId
+            guard !tid.isEmpty,
+                  NativeDownloadManager.shared.localFile(tid) == nil,
+                  store?.byId[tid]?.offline != true,
+                  prefetchedIds.insert(tid).inserted else { continue }
+            _ = try? await NativeServerApp.request("POST", "/api/downloads", body: ["trackId": tid])
         }
     }
 
@@ -773,11 +890,27 @@ import Foundation
         }
     }
 
-    private func saveQueueState() {
-        let q = entries.map { ["entryId": $0.entryId, "trackId": $0.trackId] }
+    private func saveQueueState(position: Double? = nil) {
+        guard !entries.isEmpty else { return }
+        let items: [[String: Any]] = entries.prefix(5000).map { [
+            "entryId": $0.entryId,
+            "trackId": $0.trackId,
+            "origin": isWave ? "wave" : "user",
+        ] }
         var ctx: [String: Any] = ["type": context.type, "label": context.label]
         if let cid = context.id { ctx["id"] = cid }
-        let body: [String: Any] = ["queue": q, "index": index, "context": ctx]
+        let currentPos = position ?? (NativeMixHost.shared.active
+            ? max(0.0, (NativeMixHost.shared.snapshot["position"] as? NSNumber)?.doubleValue ?? 0)
+            : max(0.0, restoredPosition))
+        let body: [String: Any] = [
+            "items": items,
+            "index": max(0, min(items.count - 1, index)),
+            "position": currentPos,
+            "context": ctx,
+            "shuffle": shuffle,
+            "repeat": repeatMode,
+            "volume": 1.0,
+        ]
         Task { _ = try? await NativeServerApp.request("PUT", "/api/queue", body: body) }
     }
 
