@@ -92,3 +92,13 @@ it('persists the listener slider separately from mute and transient fade volume'
   expect(soundSettings({ volume: .14, userVolume: .7, muted: false })).toEqual({ volume: .14, userVolume: .7, muted: false });
   expect(audioPreferences({ volume: .4, userVolume: NaN, muted: 'true' })).toEqual({ volume: .4 });
 });
+
+it('coalesces concurrent async checkpoints and writes the latest snapshot', async () => {
+  const file = profile(), recovery = new PlaybackRecovery(file);
+  recovery.begin();
+  const s1 = { ...snapshot(), position: 1 };
+  const s2 = { ...snapshot(), position: 2 };
+  const s3 = { ...snapshot(), position: 3 };
+  await Promise.all([recovery.checkpointAsync(s1), recovery.checkpointAsync(s2), recovery.checkpointAsync(s3)]);
+  expect(new PlaybackRecovery(file).begin()).toEqual(s3);
+});

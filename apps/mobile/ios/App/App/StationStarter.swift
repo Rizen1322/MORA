@@ -24,7 +24,7 @@ import Foundation
         let session = try await reply { host.begin($0) }
         guard let id = session["id"] as? String else { throw NativeStationSnapshot.Failure.invalid }
         func item(_ track: NativeStationSnapshot.Track, _ index: Int) -> [String: Any] {
-            ["trackId": track.trackId, "entryId": "station-\(index)-\(track.trackId)", "file": index,
+            ["trackId": track.trackId, "entryId": track.entryId ?? "station-\(index)-\(track.trackId)", "file": index,
              "title": track.title, "artist": track.artist, "duration": track.duration, "mixingAllowed": false,
              "source": ["kind": "station", "file": track.localFile!]]
         }

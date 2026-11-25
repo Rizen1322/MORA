@@ -1,7 +1,8 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use mora_audio::mixer::Mixer;
+use mora_audio::mixer::{Mixer, PreparedCommand};
 use serde_json::{Value, json};
 use std::{
+    collections::VecDeque,
     fs::File,
     io::{self, BufRead, BufReader, BufWriter, Read, Write},
     sync::{
@@ -78,7 +79,7 @@ fn output(device: &cpal::Device, c: &cpal::SupportedStreamConfig) -> Result<Outp
     let error = Arc::new(std::sync::Mutex::new(None));
     let err = error.clone();
     let channels = c.channels() as usize;
-    // The device callback only moves fixed-size frames. DSP, JSON, I/O and allocations run on the producer.
+    // The device callback only moves fixed-size frames. DSP runs on the producer, file I/O on the reader.
     let stream = device
         .build_output_stream(
             &c.config(),
@@ -173,15 +174,29 @@ fn offline(input: &str, pcm: &str, report: &str) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())
 }
+fn flush_control(pending: &mut VecDeque<Value>, wire: &mpsc::SyncSender<Value>) -> Result<(), String> {
+    while let Some(message) = pending.pop_front() {
+        match wire.try_send(message) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(message)) => {
+                pending.push_front(message);
+                break;
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => return Err("Audio output pipe closed".into()),
+        }
+    }
+    Ok(())
+}
+
 fn realtime(id: &str) -> Result<(), String> {
     let device = select(id)?;
     let c = config(&device, None)?;
     let sr = c.sample_rate().0;
     let mut sink = output(&device, &c)?;
     let mut mixer = Mixer::new(sr)?;
-    let (send, receive) = mpsc::sync_channel::<Value>(256);
-    let (wire, out) = mpsc::sync_channel::<Value>(256);
-    let writer = thread::spawn(move || {
+    let (send, receive) = mpsc::sync_channel::<PreparedCommand>(32);
+    let (wire, out) = mpsc::sync_channel::<Value>(32);
+    thread::spawn(move || {
         let mut stdout = BufWriter::new(io::stdout().lock());
         for v in out {
             if serde_json::to_writer(&mut stdout, &v).is_err()
@@ -206,35 +221,44 @@ fn realtime(id: &str) -> Result<(), String> {
             }
             match serde_json::from_str::<Value>(&line) {
                 Ok(v) => {
-                    if send.send(v).is_err() {
+                    if send.send(PreparedCommand::new(v)).is_err() {
                         return;
                     }
                 }
                 Err(_) => break,
             }
         }
-        let _ = send.send(json!({"cmd":"quit"}));
+        let _ = send.send(PreparedCommand::new(json!({"cmd":"quit"})));
     });
     let mut last = Instant::now();
     let mut times = Vec::with_capacity(sr as usize / 128 + 32);
     let mut rendered = 0u64;
     let mut waveform = Vec::with_capacity(2048);
+    let mut control = VecDeque::with_capacity(64);
+    let mut tick = None;
     let mut quitting = false;
     let mut suspended = false;
     while !quitting {
-        for _ in 0..64 {
-            let v = match receive.try_recv() {
-                Ok(v) => v,
+        flush_control(&mut control, &wire)?;
+        for _ in 0..16 {
+            // Leave room for mixer events while the UI is slow, without delaying the audio producer.
+            if control.len() >= 64 {
+                break;
+            }
+            let command = match receive.try_recv() {
+                Ok(command) => command,
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(_) => {
                     quitting = true;
                     break;
                 }
             };
+            let v = command.value();
             if v["cmd"] == "quit" {
                 quitting = true;
                 break;
             }
+            let request = v["request"].clone();
             let result = match v["cmd"].as_str() {
                 Some("suspend") => sink
                     ._stream
@@ -255,13 +279,12 @@ fn realtime(id: &str) -> Result<(), String> {
                             suspended = false;
                         })
                 }
-                _ => mixer.command(&v),
+                _ => mixer.prepared_command(command),
             };
-            wire.send(match result {
-                Ok(()) => json!({"type":"ack","request":v["request"]}),
-                Err(e) => json!({"type":"error","request":v["request"],"error":e}),
-            })
-            .map_err(|e| e.to_string())?;
+            control.push_back(match result {
+                Ok(()) => json!({"type":"ack","request":request}),
+                Err(e) => json!({"type":"error","request":request,"error":e}),
+            });
         }
         if quitting {
             break;
@@ -282,29 +305,68 @@ fn realtime(id: &str) -> Result<(), String> {
             }
         }
         for event in mixer.take_events() {
-            wire.send(event).map_err(|e| e.to_string())?;
+            if event["type"] == "tick" {
+                tick = Some(event);
+            } else {
+                control.push_back(event);
+            }
+        }
+        if control.len() > 512 {
+            return Err("Audio output pipe stalled".into());
+        }
+        flush_control(&mut control, &wire)?;
+        if control.is_empty() {
+            if let Some(event) = tick.take() {
+                match wire.try_send(event) {
+                    Ok(()) => {}
+                    Err(mpsc::TrySendError::Full(event)) => tick = Some(event),
+                    Err(mpsc::TrySendError::Disconnected(_)) => return Err("Audio output pipe closed".into()),
+                }
+            }
         }
         while let Ok(frame) = sink.capture.pop() {
             if waveform.len() == 2048 {
-                let _ = wire.try_send(json!({"type":"waveform","samples":waveform}));
+                if control.is_empty() && tick.is_none() {
+                    let _ = wire.try_send(json!({"type":"waveform","samples":waveform}));
+                }
                 waveform.clear();
             }
             waveform.push((frame[0] as f64 + frame[1] as f64) * 0.5);
         }
         if last.elapsed() >= Duration::from_secs(1) {
             let metrics = stats(&mut times, rendered, sr);
-            wire.send(json!({"type":"audioHealth","maxRenderMs":metrics["maxMs"],"slowBlocks":times.iter().filter(|t|**t>128000./sr as f64).count(),"p95Ms":metrics["p95Ms"],"p99Ms":metrics["p99Ms"],"deviceUnderruns":sink.underruns.load(Ordering::Relaxed),"presentedFrames":sink.presented.load(Ordering::Relaxed)})).map_err(|e|e.to_string())?;
+            if control.is_empty() && tick.is_none() {
+                let _ = wire.try_send(json!({"type":"audioHealth","maxRenderMs":metrics["maxMs"],"slowBlocks":times.iter().filter(|t|**t>128000./sr as f64).count(),"p95Ms":metrics["p95Ms"],"p99Ms":metrics["p99Ms"],"deviceUnderruns":sink.underruns.load(Ordering::Relaxed),"presentedFrames":sink.presented.load(Ordering::Relaxed)}));
+            }
             times.clear();
             rendered = 0;
             last = Instant::now();
         }
         thread::sleep(Duration::from_millis(1));
     }
-    drop(sink);
-    drop(wire);
-    let _ = writer.join();
     Ok(())
 }
+
+#[cfg(test)]
+mod realtime_tests {
+    use super::*;
+
+    #[test]
+    fn full_output_pipe_keeps_control_events_in_order_without_waiting() {
+        let (wire, out) = mpsc::sync_channel(1);
+        wire.try_send(json!("occupied")).unwrap();
+        let mut pending = VecDeque::from([json!("first"), json!("second")]);
+        flush_control(&mut pending, &wire).unwrap();
+        assert_eq!(pending.len(), 2);
+        assert_eq!(out.try_recv().unwrap(), "occupied");
+        flush_control(&mut pending, &wire).unwrap();
+        assert_eq!(out.try_recv().unwrap(), "first");
+        flush_control(&mut pending, &wire).unwrap();
+        assert_eq!(out.try_recv().unwrap(), "second");
+        assert!(pending.is_empty());
+    }
+}
+
 fn analyze(input: &str, output: &str, expected_seconds: f64) -> Result<(), String> {
     let mut reader: Box<dyn Read> = if input == "-" {
         Box::new(io::stdin().lock())

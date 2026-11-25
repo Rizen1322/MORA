@@ -122,6 +122,49 @@ final class HostCheck: UIResponder, UIApplicationDelegate {
         _ = try await call { host.command("previoustrack", source: "fixture", completion: $0) }
         last = try await call { host.state($0) }
         try require((last["currentTrack"] as? [String: Any])?["entryId"] as? String == "first", "Previous lost native PCM")
+        let wrappedFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        defer { try? FileManager.default.removeItem(at: wrappedFile) }
+        try NativeProbeWave.make(track: 1, seconds: 2).write(to: wrappedFile)
+        let linked = try await call { host.sourceFromDownload(id: id, file: wrappedFile, completion: $0) }
+        let reused = try await call { host.sourceFromDownload(id: id, file: wrappedFile, completion: $0) }
+        let key = linked["key"] as! Int
+        try require(reused["key"] as? Int == key, "Sliding queue created another lease for the same download")
+        let wrap: [String: Any] = ["file": key, "entryId": "first", "trackId": "second",
+            "title": "Wrapped first", "duration": 2.0, "mixingAllowed": false, "source": ["kind": "local", "file": key]]
+        func handoff(from: Int) async throws -> [String: Any] {
+            try await call { host.prepareQueue(id: id, manifest: ["from": from, "queueEntryId": "second", "items": [wrap],
+                "replaceFuture": true, "settings": ["enabled": false],
+                "previous": ["trackId": "second", "duration": 2.0, "mixingAllowed": false]], completion: $0) }
+        }
+        let stale = try? await handoff(from: 1)
+        try require(stale == nil, "A stale queue anchor replaced the audible entry's future")
+        _ = try await call { host.command("nexttrack", source: "fixture", completion: $0) }
+        _ = try await handoff(from: 2)
+        for _ in 0..<100 {
+            last = try await call { host.state($0) }
+            if last["count"] as? Int == 3 { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        try require(last["count"] as? Int == 3, "The next repeat occurrence did not prepare")
+        last = try await call { host.command("nexttrack", source: "fixture", completion: $0) }
+        try require(last["index"] as? Int == 2 && last["entryId"] as? String == "first", "Repeat All skipped the first occurrence")
+        last = try await call { host.command("seekto", time: 0.45, source: "fixture", completion: $0) }
+        try require(last["index"] as? Int == 2 && abs((last["position"] as? Double ?? 0) - 0.45) < 0.02,
+                    "Seek switched between duplicate occurrences")
+        last = try await call { host.command("previoustrack", source: "fixture", completion: $0) }
+        try require(last["index"] as? Int == 1 && last["entryId"] as? String == "second", "Previous across repeat wrap lost the predecessor")
+        _ = try await call { host.command("nexttrack", source: "fixture", completion: $0) }
+        do {
+            _ = try await call { host.prepareStart(id: id, item: item("stalled"),
+                config: ["sampleRate": 48000.0, "position": 0.0], networkTimeout: 1, completion: $0) }
+            throw Failure.check("Stalled network request ignored the startup deadline")
+        } catch NativeMediaHTTP.Failure.transport(let code) {
+            try require(code == URLError.timedOut.rawValue, "Wrong error for an expired startup deadline")
+            try require(NativeMediaHTTP.Failure.isConnectionLoss(URLError(.timedOut)), "Timeout did not qualify for offline Wave")
+            try require(!NativeMediaHTTP.Failure.isConnectionLoss(NativeMediaHTTP.Failure.http(404)), "Missing track qualified for offline Wave")
+        }
+        last = try await call { host.state($0) }
+        try require((last["currentTrack"] as? [String: Any])?["entryId"] as? String == "first", "Stalled replacement changed the current track")
         let cancelled = Task { try await call { host.prepareStart(id: id, item: item("obsolete"),
             config: ["sampleRate": 48000.0, "position": 0.0], completion: $0) } }
         try await pending()

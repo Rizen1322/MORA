@@ -20,39 +20,65 @@ enum NativePCMDecoder {
                        cancelled: @escaping () -> Bool = { false }) throws -> Int {
         let file = try AVAudioFile(forReading: source)
         guard let input = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 32768) else { throw Failure.invalid }
-        return try convert(from: file.processingFormat, to: destination, sampleRate: sampleRate, cancelled: cancelled) { requested in
-            if file.framePosition >= file.length { return nil }
-            try file.read(into: input, frameCount: min(requested, input.frameCapacity))
-            return input.frameLength > 0 ? input : nil
+        return try write(to: destination) { consume in
+            try convert(from: file.processingFormat, sampleRate: sampleRate, cancelled: cancelled, read: { requested in
+                if file.framePosition >= file.length { return nil }
+                try file.read(into: input, frameCount: min(requested, input.frameCapacity))
+                return input.frameLength > 0 ? input : nil
+            }, consume: consume)
         }
     }
+
     static func resample(_ source: URL, from sourceRate: Double, to destination: URL, sampleRate: Double,
                          cancelled: @escaping () -> Bool = { false }) throws -> Int {
+        try write(to: destination) { consume in
+            try resample(source, from: sourceRate, sampleRate: sampleRate, cancelled: cancelled, consume: consume)
+        }
+    }
+
+    /// Delivers each converted block synchronously. The buffer is reused after the call returns.
+    static func resample(_ source: URL, from sourceRate: Double, sampleRate: Double,
+                         cancelled: @escaping () -> Bool,
+                         consume: (UnsafeRawPointer, Int) throws -> Void) throws -> Int {
         guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sourceRate, channels: 2, interleaved: true),
               let input = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 32768) else { throw Failure.invalid }
         let file = try FileHandle(forReadingFrom: source)
         defer { try? file.close() }
-        return try convert(from: format, to: destination, sampleRate: sampleRate, cancelled: cancelled) { requested in
+        return try convert(from: format, sampleRate: sampleRate, cancelled: cancelled, read: { requested in
             let data = try file.read(upToCount: Int(min(requested, input.frameCapacity)) * 8) ?? Data()
             guard !data.isEmpty else { return nil }
             guard data.count % 8 == 0, let output = input.mutableAudioBufferList.pointee.mBuffers.mData else { throw Failure.invalid }
             data.withUnsafeBytes { if let bytes = $0.baseAddress { memcpy(output, bytes, $0.count) } }
             input.frameLength = AVAudioFrameCount(data.count / 8)
             return input
-        }
+        }, consume: consume)
     }
-    private static func convert(from source: AVAudioFormat, to destination: URL, sampleRate: Double,
+
+    private static func write(to destination: URL,
+                              produce: ((UnsafeRawPointer, Int) throws -> Void) throws -> Int) throws -> Int {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: destination.path) else { throw Failure.invalid }
+        let partial = destination.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).partial")
+        guard fm.createFile(atPath: partial.path, contents: nil, attributes: NativePreparationFiles.attributes) else { throw Failure.invalid }
+        defer { try? fm.removeItem(at: partial) }
+        let file = try FileHandle(forWritingTo: partial)
+        defer { try? file.close() }
+        let frames = try produce { buffer, count in try file.write(contentsOf: Data(bytes: buffer, count: count * 8)) }
+        try file.synchronize()
+        try file.close()
+        // Never replace a file already used by the native mixer.
+        try fm.moveItem(at: partial, to: destination)
+        return frames
+    }
+
+    private static func convert(from source: AVAudioFormat, sampleRate: Double,
                                 cancelled: @escaping () -> Bool,
-                                read: @escaping (AVAudioFrameCount) throws -> AVAudioPCMBuffer?) throws -> Int {
-        guard [44100.0, 48000.0].contains(sampleRate), !FileManager.default.fileExists(atPath: destination.path),
+                                read: @escaping (AVAudioFrameCount) throws -> AVAudioPCMBuffer?,
+                                consume: (UnsafeRawPointer, Int) throws -> Void) throws -> Int {
+        guard [44100.0, 48000.0].contains(sampleRate),
               let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 2, interleaved: true),
               let converter = AVAudioConverter(from: source, to: format),
               let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8192) else { throw Failure.invalid }
-        let partial = destination.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).partial")
-        guard FileManager.default.createFile(atPath: partial.path, contents: nil, attributes: NativePreparationFiles.attributes) else { throw Failure.invalid }
-        defer { try? FileManager.default.removeItem(at: partial) }
-        let file = try FileHandle(forWritingTo: partial)
-        defer { try? file.close() }
         var frames = 0, idle = 0
         while true {
             if cancelled() { throw Failure.cancelled }
@@ -73,15 +99,12 @@ enum NativePCMDecoder {
                       let data = output.audioBufferList.pointee.mBuffers.mData else { throw Failure.limit }
                 let floats = data.bindMemory(to: Float.self, capacity: count * 2)
                 for i in 0..<count * 2 { guard floats[i].isFinite else { throw Failure.invalid } }
-                try file.write(contentsOf: Data(bytes: data, count: count * 8)); frames += count; idle = 0
+                try consume(data, count); frames += count; idle = 0
             } else { idle += 1 }
             if result == .endOfStream { break }
             guard idle < 8 else { throw Failure.invalid }
         }
         guard frames > 0, !cancelled() else { if cancelled() { throw Failure.cancelled }; throw Failure.invalid }
-        try file.synchronize(); try file.close()
-        // Never replace a file already used by the native mixer.
-        try FileManager.default.moveItem(at: partial, to: destination)
         return frames
     }
     /// AudioFileStream hint for a download's first bytes (0: let it guess); nil when it needs the
@@ -91,6 +114,7 @@ enum NativePCMDecoder {
         guard b.count == 12, !b[4..<8].elementsEqual("ftyp".utf8), !b[0..<4].elementsEqual([0x1A, 0x45, 0xDF, 0xA3]) else { return nil }
         if b[0] == 0xFF && b[1] & 0xF6 == 0xF0 { return kAudioFileAAC_ADTSType } // MPEG sync, layer 0
         if b[0] == 0xFF && b[1] & 0xE0 == 0xE0 || b[0..<3].elementsEqual("ID3".utf8) { return kAudioFileMP3Type }
+        if b[0..<4].elementsEqual("RIFF".utf8), b[8..<12].elementsEqual("WAVE".utf8) { return kAudioFileWAVEType }
         return 0
     }
 }
@@ -107,20 +131,30 @@ final class NativeStreamDecoder: @unchecked Sendable {
     private var converter: AVAudioConverter?
     private let output = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 2, interleaved: true)!
     private var file: FileHandle?
+    private var prefix = Data()
     private var written = 0, parsed = 0
     private var failed = false, ended = false, refusedStream = false
     init(destination: URL, cancelled: @escaping () -> Bool) { self.destination = destination; self.cancelled = cancelled }
     deinit { if let stream { AudioFileStreamClose(stream) }; try? file?.close() }
     var frames: Int { lock.lock(); defer { lock.unlock() }; return written }
-    var receiving: Bool { lock.lock(); defer { lock.unlock() }; return !ended }
+    var receiving: Bool { lock.lock(); defer { lock.unlock() }; return !ended && !failed && !refusedStream }
+    var growingFrames: Int? {
+        lock.lock(); defer { lock.unlock() }
+        return !ended && !failed && !refusedStream ? written : nil
+    }
     var refused: Bool { lock.lock(); defer { lock.unlock() }; return refusedStream }
     func endInput() { lock.lock(); ended = true; lock.unlock() }
     func feed(_ data: Data) {
         lock.lock(); defer { lock.unlock() }
         guard !refusedStream, !failed, !data.isEmpty else { return }
         if cancelled() { fail(); return }
+        var inputData = data
         if stream == nil {
-            guard let type = NativePCMDecoder.streamType(data) else { refusedStream = true; return }
+            if prefix.count + data.count < 12 { prefix.append(data); return }
+            if !prefix.isEmpty {
+                prefix.append(data); inputData = prefix; prefix = Data()
+            }
+            guard let type = NativePCMDecoder.streamType(inputData) else { refusedStream = true; return }
             let client = Unmanaged.passUnretained(self).toOpaque()
             guard AudioFileStreamOpen(client, { client, stream, property, _ in
                 guard property == kAudioFileStreamProperty_ReadyToProducePackets else { return }
@@ -132,8 +166,8 @@ final class NativeStreamDecoder: @unchecked Sendable {
                 if let client { Unmanaged<NativeStreamDecoder>.fromOpaque(client).takeUnretainedValue().packets(bytes, count, data, descriptions) }
             }, type, &stream) == noErr else { refusedStream = true; return }
         }
-        parsed += data.count
-        let status = data.withUnsafeBytes { AudioFileStreamParseBytes(stream!, UInt32($0.count), $0.baseAddress!, []) }
+        parsed += inputData.count
+        let status = inputData.withUnsafeBytes { AudioFileStreamParseBytes(stream!, UInt32($0.count), $0.baseAddress!, []) }
         // No playable format within 1 MB: leave it to the whole-file decoder.
         if status != noErr || (converter == nil && parsed > 1 << 20) { fail() }
     }

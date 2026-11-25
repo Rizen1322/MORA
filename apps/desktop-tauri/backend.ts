@@ -55,10 +55,12 @@ try {
   const profile = process.env.AUTOMIX_PROFILE_DIR;
   const resources = process.env.AUTOMIX_ROOT;
   if (!profile || !resources) throw new Error('desktop profile or resources missing');
-  await backupBeforeUpgrade(profile, process.env.AUTOMIX_DATA_DIR || path.join(profile, 'data'), process.env.AUTOMIX_VERSION || 'unknown');
+  await backupBeforeUpgrade(profile, process.env.AUTOMIX_DATA_DIR || path.join(profile, 'data'), process.env.AUTOMIX_VERSION || 'unknown',
+    () => send({ type: 'backup' }));
+  send({ type: 'starting' });
   const resolver = new ResolverUpdater({ directory: path.join(profile, 'resolver-updates'), bundled: path.join(resources, 'yt-dlp/yt-dlp.exe'), fetcher: network.fetch });
   process.env.YTDLP_PATH = resolver.executable();
-  const created = await createApp({ host: '127.0.0.1', port: wanted, accessToken: token, desktopPlaybackToken });
+  const created = await createApp({ host: '127.0.0.1', port: wanted, accessToken: token, desktopPlaybackToken }, { deferVerifySources: true });
   close = created.close;
   created.app.addHook('onSend', async (_request, reply, payload) => {
     reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
@@ -94,6 +96,9 @@ try {
   }
   port = (created.app.server.address() as AddressInfo).port;
   send({ type: 'ready', port, ffmpeg: created.services.ffmpegVersion, recovery: playback.hasRecovery() });
+  // The shell opens the window on "ready": verify local files afterwards so a large
+  // library does not sit between the user and the first paint.
+  void created.services.lib.verifySources().catch(error => console.error('verify sources', error));
 } catch (e) {
   console.error('backend start failed', e);
   send({ type: 'error', message: (e as Error).message });

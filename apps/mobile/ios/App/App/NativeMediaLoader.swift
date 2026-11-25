@@ -128,7 +128,8 @@ final class NativeMediaLoader {
                 let parts = range.split(separator: "@")
                 guard let first = parts.first, let count = Int(first) else { throw Failure.playlist }
                 if parts.count > 1 { byteOffset = Int(parts[1]) ?? -1 }
-                guard count > 0, byteOffset >= 0, count <= 128 * 1024 * 1024 else { throw Failure.playlist }
+                guard parts.count <= 2, count > 0, byteOffset >= 0, count <= 16 * 1024 * 1024,
+                      byteOffset <= Int.max - count else { throw Failure.playlist }
                 requestHeaders["Range"] = "bytes=\(byteOffset)-\(byteOffset + count - 1)"; expected = count; byteOffset += count
             }
             return Part(url: segmentURL, headers: requestHeaders, expected: expected, packed: packed)
@@ -140,29 +141,33 @@ final class NativeMediaLoader {
             else if !line.hasPrefix("#") { parts.append(try part(line, range: range, packed: map == nil)); range = nil }
         }
         // A YouTube track is ~35 short segments: one at a time that was 7–21 s of round trips on a phone.
-        // Up to six download at once; they are written strictly in playlist order.
+        // Keep a six-segment window on disk so one slow segment cannot queue the rest of the track in memory.
         let http = self.http, width = 6
-        try await withThrowingTaskGroup(of: (Int, Data).self) { group in
+        let scratch = destination.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).segments", isDirectory: true)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: false, attributes: NativePreparationFiles.attributes)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try await withThrowingTaskGroup(of: Int.self) { group in
             var launched = 0, written = 0
-            var ready: [Int: Data] = [:]
-            while launched < min(width, parts.count) {
-                let i = launched, p = parts[i]; launched += 1
-                group.addTask { (i, try await http.data(p.url, headers: p.headers, limit: 16 * 1024 * 1024, ticket: ticket)) }
-            }
-            while let (i, data) = try await group.next() {
-                if ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
-                ready[i] = data
-                while let data = ready.removeValue(forKey: written) {
-                    let p = parts[written]
+            var ready = Set<Int>()
+            while written < parts.count {
+                while launched < min(parts.count, written + width) {
+                    let i = launched, p = parts[i], segment = scratch.appendingPathComponent(String(i)); launched += 1
+                    group.addTask {
+                        try await http.download(p.url, to: segment, headers: p.headers, limit: p.expected ?? 16 * 1024 * 1024, ticket: ticket)
+                        return i
+                    }
+                }
+                guard let i = try await group.next(), !ticket.cancelled else { throw NativeMediaHTTP.Failure.cancelled }
+                ready.insert(i)
+                while ready.remove(written) != nil {
+                    let p = parts[written], segment = scratch.appendingPathComponent(String(written))
+                    let data = try Data(contentsOf: segment)
+                    try FileManager.default.removeItem(at: segment)
                     if let expected = p.expected, data.count != expected { throw Failure.playlist }
                     let audio = p.packed ? try Self.packedAudio(data) : data
                     total += audio.count; guard total <= 128 * 1024 * 1024 else { throw NativeMediaHTTP.Failure.tooLarge }
                     try file.write(contentsOf: audio); sink?(audio)
                     written += 1
-                }
-                if launched < parts.count {
-                    let i = launched, p = parts[i]; launched += 1
-                    group.addTask { (i, try await http.data(p.url, headers: p.headers, limit: 16 * 1024 * 1024, ticket: ticket)) }
                 }
             }
         }

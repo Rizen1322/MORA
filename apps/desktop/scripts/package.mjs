@@ -6,7 +6,7 @@ const cwd = fileURLToPath(new URL('../', import.meta.url));
 const env = { ...workspaceTempEnv(), VITE_TRANSITION_EDITOR: '0' };
 for (const args of [
   [fileURLToPath(new URL('./build.mjs', import.meta.url))],
-  [fileURLToPath(new URL('../../../node_modules/electron-builder/cli.js', import.meta.url)), '--win', ...(process.argv.includes('--dir') ? ['--dir'] : []), '--config', 'electron-builder.json', '--publish', 'never'],
+  ['-r', fileURLToPath(new URL('../../../tools/electron-builder-win-env.cjs', import.meta.url)), fileURLToPath(new URL('../../../node_modules/electron-builder/cli.js', import.meta.url)), '--win', ...(process.argv.includes('--dir') ? ['--dir'] : []), '--config', 'electron-builder.json', '--publish', 'never'],
   ...(process.argv.includes('--dir') ? [] : [[fileURLToPath(new URL('./verify-release.mjs', import.meta.url))]]),
 ]) {
   const result = spawnSync(process.execPath, args, { cwd, env, stdio: 'inherit', windowsHide: true });

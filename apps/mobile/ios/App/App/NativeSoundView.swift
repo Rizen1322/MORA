@@ -19,14 +19,15 @@ struct NativeSoundView: View {
                     Section {
                         Text(failure).foregroundStyle(.red)
                         Button("Обновить настройки") { Task { await load() } }.disabled(busy || editing)
-                    }
+                    }.listRowBackground(Color.moraSurface)
                 }
                 if let sound {
                     controls(sound)
                     Section("Полосы") {
                         ForEach(NativeSoundState.bands.indices, id: \.self) { index in band(index, sound) }
-                    }
-                } else if failure == nil { ProgressView("Загружаем настройки звука…") }
+                    }.listRowBackground(Color.moraSurface)
+                } else if failure == nil { ProgressView("Загружаем настройки звука…").listRowBackground(Color.clear) }
+                Section { Color.clear.frame(height: 56).listRowBackground(Color.clear) }
             }
             .scrollContentBackground(.hidden)
             .background(Color.moraBackground)
@@ -62,6 +63,7 @@ struct NativeSoundView: View {
                 ForEach(sound.presets.indices, id: \.self) { Text(sound.presets[$0].name).tag($0) }
             }.pickerStyle(.menu).accessibilityIdentifier("native-sound-preset")
         } footer: { Text("Вывод звука (AirPlay, Bluetooth) выбирается кнопкой в плеере.") }
+            .listRowBackground(Color.moraSurface)
             .disabled(busy || editing)
     }
     private func band(_ index: Int, _ sound: NativeSoundState) -> some View {
@@ -103,6 +105,9 @@ struct NativeSoundView: View {
                 let latest = try await NativeServerApp.request("GET", "/api/settings")
                 let state = try NativeSoundState(latest)
                 let response = try await NativeServerApp.request("PUT", "/api/settings", body: state.patch(edit))
+                if let sound = response["sound"] as? [String: Any], let tone = sound["tone"] {
+                    NativeMixHost.shared.settings(["tone": tone]) { _ in }
+                }
                 sound = try NativeSoundState(response)
             } catch {
                 let saveError = error.localizedDescription

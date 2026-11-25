@@ -162,3 +162,8 @@ precondition(NativeUiState(["search": ["type": "wrong"]]).searchScope == nil)
 let artistPath = "/artist/Artist%20One"
 let internalArtistURL = URL(string: "mora-native:" + artistPath)!
 precondition(internalArtistURL.scheme == "mora-native" && String(internalArtistURL.absoluteString.dropFirst("mora-native:".count)) == artistPath)
+let parsedMenuPage = NativePage(["title": "Playlist", "style": "catalog",
+    "menu": [["kind": "button", "title": "Rename", "symbol": "pencil", "act": ["name": "renamePlaylist"]],
+             ["kind": "link", "title": "Mix", "symbol": "wand.and.stars", "path": "/playlist/1/mix"]],
+    "sections": []])!
+precondition(parsedMenuPage.style == "catalog" && parsedMenuPage.menu.count == 2)

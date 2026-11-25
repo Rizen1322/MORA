@@ -121,6 +121,94 @@ it('does not start a late station response after the listener starts a playlist'
   } finally { await host.stop(); }
 });
 
+it('ignores a station sync that arrives while a start is still choosing its first track', async () => {
+  const { host, fetcher } = setup();
+  const original = fetcher.getMockImplementation()!;
+  let release!: (response: Response) => void;
+  let asked = false;
+  // fetch() rejects a cancelled request with the signal's reason, so a cancel here is visible as an error.
+  fetcher.mockImplementation((url, init) => {
+    if (!asked && String(url).endsWith('/internal/desktop/station-next')) {
+      asked = true;
+      return new Promise<Response>((resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject((init.signal as AbortSignal).reason), { once: true });
+        release = resolve;
+      });
+    }
+    return original(url, init);
+  });
+  try {
+    const started = host.startStation({ kind: 'yandex' }, { position: 0, sampleRate: 48000 });
+    const failure = started.then(() => null, (error: Error) => error);
+    await vi.waitFor(() => expect(asked).toBe(true));
+    // The station the page knew before the switch restores itself while Yandex's first track is imported.
+    await host.setStation({ kind: 'online' }, { type: 'online-radio', label: 'Моя волна' });
+    release(Response.json({ entries: [{ trackId: 'yandex-1', entryId: 'yandex-entry', origin: 'yandex' }],
+      context: { type: 'yandex-wave', label: 'Моя волна Яндекса' }, yandexSessionId: 'session-1' }));
+    expect(await failure).toBeNull();
+    expect(host.state().currentTrack?.trackId).toBe('yandex-1');
+    expect(host.state().station).toEqual({ kind: 'yandex', yandexSessionId: 'session-1' });
+  } finally { await host.stop(); }
+});
+
+it('keeps a similar station anchored to its seed when the page syncs the plain station', async () => {
+  const { host, requests } = setup();
+  const station = { kind: 'online' as const, seed: { title: 'anchor', artist: 'anchor' }, anchor: 'seed' as const };
+  try {
+    await host.startStation(station, { position: 0, sampleRate: 48000 });
+    // The page only knows "online radio": its periodic sync must not strip the seed the station is anchored to.
+    await host.setStation({ kind: 'online' }, { type: 'online-radio', label: 'Похожее на «anchor»' });
+    expect(host.state().station).toMatchObject(station);
+    await vi.waitFor(() => expect(requests.filter(r => r.path === '/internal/desktop/station-next')
+      .some(r => r.body.anchor === 'seed' && r.body.seed?.title === 'anchor')).toBe(true));
+  } finally { await host.stop(); }
+});
+
+it('anchors an already playing online station without restarting its current track', async () => {
+  const { host, requests } = setup();
+  const station = { kind: 'online' as const, seed: { title: 'anchor', artist: '' }, anchor: 'seed' as const };
+  try {
+    await host.startStation({ kind: 'online' }, { position: 0, sampleRate: 48000 });
+    const trackId = host.state().currentTrack!.trackId!;
+    await host.setStation(station);
+    await host.prepareQueue(1, [], trackId, [], true);
+    expect(host.state().station).toMatchObject(station);
+    expect(host.state().currentTrack?.trackId).toBe(trackId);
+    await vi.waitFor(() => expect(requests.some(r => r.path === '/internal/desktop/station-next' &&
+      r.body.anchor === 'seed' && r.body.seed?.title === 'anchor')).toBe(true));
+  } finally { await host.stop(); }
+});
+
+it('drops a stale seed anchor when switching an online station to a new unanchored seed', async () => {
+  const { host, requests } = setup();
+  try {
+    await host.startStation({ kind: 'online', seed: { title: 'first', artist: '' }, anchor: 'seed' }, { position: 0, sampleRate: 48000 });
+    await host.setStation({ kind: 'online', seed: { title: 'second', artist: 'Artist' }, yandexSessionId: undefined });
+    await host.prepareQueue(1, [], host.state().currentTrack!.trackId!, [], true);
+    expect(host.state().station).toEqual({ kind: 'online', seed: { title: 'second', artist: 'Artist' } });
+    expect(host.state().station?.anchor).toBeUndefined();
+    await vi.waitFor(() => expect(requests.some(r => r.path === '/internal/desktop/station-next' &&
+      r.body.seed?.title === 'second' && r.body.anchor === undefined)).toBe(true));
+  } finally { await host.stop(); }
+});
+
+it('clears a station wait when the listener starts another track', async () => {
+  const { host, fetcher, audio } = setup();
+  const original = fetcher.getMockImplementation()!;
+  fetcher.mockImplementation((url, init) => new URL(String(url)).pathname === '/internal/desktop/station-next'
+    ? Promise.resolve(Response.json({ entries: [] })) : original(url, init));
+  try {
+    const config = { position: 0, sampleRate: 48000 };
+    await host.startSource({ trackId: 'a', entryId: 'a' }, config);
+    await host.setStation({ kind: 'online' });
+    const start = audio.command.mock.calls.map(([value]) => value).find(value => value.cmd === 'start');
+    host.onEvent({ type: 'ended', token: start.token });
+    expect(host.state().waitingForPreparation).toBe(true);
+    const next = await host.startSource({ trackId: 'b', entryId: 'b' }, config);
+    expect(next).toMatchObject({ entryId: 'b', playing: true, waitingForPreparation: false });
+  } finally { await host.stop(); }
+});
+
 it('keeps long-running radio history bounded and its recovery cursor valid', async () => {
   const { host } = setup();
   try {

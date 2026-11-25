@@ -8,16 +8,15 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 fs.mkdirSync(path.join(here, 'probe-profile'), { recursive: true });
-const root = path.resolve(here, '../..');
 const profile = fs.mkdtempSync(path.join(here, 'probe-profile', 'backend-'));
 fs.writeFileSync(path.join(profile, 'playback-recovery.json'), JSON.stringify({ version: 1, clean: false,
   snapshot: { queue: [{ trackId: 'test-track', entryId: 'test-entry' }], index: 0, position: 1, settings: {}, device: '' } }));
-const resources = path.join(root, 'apps/desktop/build');
+const resources = path.join(here, 'build');
 const token = randomBytes(32).toString('hex');
-const child = spawn(process.execPath, [path.join(here, 'probe-backend.mjs')], { windowsHide: true, stdio: ['pipe', 'pipe', 'inherit'], env: {
-  ...process.env, AUTOMIX_PROFILE_DIR: profile, AUTOMIX_DATA_DIR: path.join(profile, 'data'), AUTOMIX_DESKTOP: '1',
+const child = spawn(path.join(resources, 'node/node.exe'), [path.join(resources, 'backend/tauri-backend.mjs')], { windowsHide: true, stdio: ['pipe', 'pipe', 'inherit'], env: {
+  ...process.env, AUTOMIX_TEST: '1', AUTOMIX_PROFILE_DIR: profile, AUTOMIX_DATA_DIR: path.join(profile, 'data'), AUTOMIX_DESKTOP: '1',
   AUTOMIX_ROOT: resources, AUTOMIX_WEB_DIST: path.join(resources, 'web'), AUTOMIX_ANALYSIS_WORKER: path.join(resources, 'backend/analysisWorker.mjs'),
-  AUTOMIX_RUST_CORE: path.join(resources, 'audio/mora-audio.exe'), AUTOMIX_NETWORK_RUST: path.join(root, 'packages/network-rust/target/release/mora-network.exe'),
+  AUTOMIX_RUST_CORE: path.join(resources, 'audio/mora-audio.exe'), AUTOMIX_NETWORK_RUST: path.join(resources, 'network/mora-network.exe'),
   AUTOMIX_DECODER_RUST: path.join(resources, 'decoder/mora-decode.exe'),
   FFMPEG_PATH: path.join(resources, 'ffmpeg/ffmpeg.exe'), FFPROBE_PATH: path.join(resources, 'ffmpeg/ffprobe.exe'),
   YTDLP_PATH: path.join(resources, 'yt-dlp/yt-dlp.exe'), STEMS_PYTHON: '', AUTOMIX_LAUNCH_TOKEN: token,

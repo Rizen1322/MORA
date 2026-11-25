@@ -6,6 +6,18 @@ const MAX_CHECKPOINT_BYTES = 32 * 1024 * 1024;
 const number = (value, min, max) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
 const text = (value, max = 256) => typeof value === 'string' && value.length > 0 && value.length <= max;
 
+function checkpointData(raw) {
+  const snapshot = recoverySnapshot(raw);
+  if (raw != null && !snapshot) throw Error('Некорректная контрольная точка воспроизведения');
+  return snapshot;
+}
+
+function encode(clean, snapshot) {
+  const json = JSON.stringify({ version: 1, clean, snapshot });
+  if (Buffer.byteLength(json) > MAX_CHECKPOINT_BYTES) throw Error('Контрольная точка воспроизведения превышает 32 МБ');
+  return json;
+}
+
 /** Keep only sound values accepted by the player; never persist native commands or paths. */
 export function soundSettings(raw) {
   const result = {};
@@ -74,15 +86,21 @@ export function recoverySnapshot(raw) {
   if (raw.station && ['own', 'yandex', 'online'].includes(raw.station.kind)) {
     result.station = { kind: raw.station.kind };
     if (text(raw.station.yandexSessionId, 4096)) result.station.yandexSessionId = raw.station.yandexSessionId;
-    if (raw.station.seed && text(raw.station.seed.title, 1000) && typeof raw.station.seed.artist === 'string' && raw.station.seed.artist.length <= 1000)
+    if (raw.station.seed && text(raw.station.seed.title, 1000) && typeof raw.station.seed.artist === 'string' && raw.station.seed.artist.length <= 1000) {
       result.station.seed = { title: raw.station.seed.title, artist: raw.station.seed.artist };
+      if (raw.station.anchor === 'seed') result.station.anchor = 'seed';
+    }
   }
   return result;
 }
 
 /** One atomic file is both the last playback checkpoint and the unclean-exit marker. */
 export class PlaybackRecovery {
-  constructor(file) { this.file = file; }
+  constructor(file) {
+    this.file = file;
+    this._pendingJson = null;
+    this._drainPromise = null;
+  }
 
   begin() {
     let previous;
@@ -95,15 +113,44 @@ export class PlaybackRecovery {
   }
 
   checkpoint(raw) {
-    const snapshot = recoverySnapshot(raw);
-    if (raw != null && !snapshot) throw Error('Некорректная контрольная точка воспроизведения');
-    this.write(false, snapshot);
+    this._pendingJson = null;
+    this.write(false, checkpointData(raw));
   }
-  clean() { this.write(true, null); }
+  clean() {
+    this._pendingJson = null;
+    this.write(true, null);
+  }
+
+  checkpointAsync(raw) {
+    const json = encode(false, checkpointData(raw));
+    this._pendingJson = json;
+    this._drainPromise ??= this._drainAsync();
+    return this._drainPromise;
+  }
+
+  async _drainAsync() {
+    try {
+      await fs.promises.mkdir(path.dirname(this.file), { recursive: true });
+      const temporary = `${this.file}.tmp`;
+      while (this._pendingJson !== null) {
+        const json = this._pendingJson;
+        this._pendingJson = null;
+        try {
+          const fd = await fs.promises.open(temporary, 'w');
+          try { await fd.writeFile(json); await fd.sync(); }
+          finally { await fd.close(); }
+          await fs.promises.rename(temporary, this.file);
+        } finally {
+          await fs.promises.unlink(temporary).catch(() => {});
+        }
+      }
+    } finally {
+      this._drainPromise = null;
+    }
+  }
 
   write(clean, snapshot) {
-    const json = JSON.stringify({ version: 1, clean, snapshot });
-    if (Buffer.byteLength(json) > MAX_CHECKPOINT_BYTES) throw Error('Контрольная точка воспроизведения превышает 32 МБ');
+    const json = encode(clean, snapshot);
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const temporary = `${this.file}.tmp`;
     try {

@@ -3,6 +3,8 @@ import JavaScriptCore
 
 /// Analysis/planning only. The real-time mixer and its producer remain Swift.
 final class NativePreparationCore {
+    // App startup installs the Rust planner. Standalone Swift fixtures can keep using JavaScript.
+    static var compiledPlan: ((String) -> String?)?
     private let context: JSContext
     private var api: JSValue!
     private var transforms: [Int: NativeAnalysisFFT] = [:]
@@ -108,6 +110,10 @@ final class NativePreparationCore {
             return result
         }
         context.setObject(decimate, forKeyedSubscript: "moraPreparationDecimate" as NSString)
+        if let compiledPlan = Self.compiledPlan {
+            let plan: @convention(block) (String) -> String? = { compiledPlan($0) }
+            context.setObject(plan, forKeyedSubscript: "moraPreparationPlan" as NSString)
+        }
         context.evaluateScript(script)
         guard exception == nil else { throw Failure.script }
         api = context.objectForKeyedSubscript("MoraPreparation")

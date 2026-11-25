@@ -9,6 +9,17 @@ private func moraAnalyze(_ path: UnsafePointer<CChar>, _ frames: UInt64,
 @_silgen_name("mora_free_string")
 private func moraFreeString(_ value: UnsafeMutablePointer<CChar>?)
 
+@_silgen_name("mora_plan_json")
+private func moraPlan(_ bytes: UnsafePointer<UInt8>?, _ length: Int) -> UnsafeMutablePointer<CChar>?
+@_silgen_name("mora_analysis_new")
+private func moraAnalysisNew(_ expectedFrames: Int) -> UnsafeMutableRawPointer?
+@_silgen_name("mora_analysis_push")
+private func moraAnalysisPush(_ handle: UnsafeMutableRawPointer, _ pcm: UnsafePointer<Float>, _ frames: Int) -> Bool
+@_silgen_name("mora_analysis_finish")
+private func moraAnalysisFinish(_ handle: UnsafeMutableRawPointer) -> UnsafeMutablePointer<CChar>?
+@_silgen_name("mora_analysis_free")
+private func moraAnalysisFree(_ handle: UnsafeMutableRawPointer)
+
 /// Compiled MIR with the bundled script's output: JavaScriptCore has no JIT in apps,
 /// so the script analyzer needs minutes per track on an iPhone.
 enum NativeRustAnalysis {
@@ -27,6 +38,29 @@ enum NativeRustAnalysis {
                 }, Unmanaged.passUnretained(cancel).toOpaque())
             }
         }
+        return Self.object(raw)
+    }
+
+    static func analyzePCM(expectedFrames: Int, produce: ((UnsafeRawPointer, Int) throws -> Void) throws -> Void) throws -> [String: Any]? {
+        guard expectedFrames > 0, let handle = moraAnalysisNew(expectedFrames) else { return nil }
+        defer { moraAnalysisFree(handle) }
+        try produce { buffer, count in
+            guard moraAnalysisPush(handle, buffer.assumingMemoryBound(to: Float.self), count) else { throw Failure.invalidPCM }
+        }
+        return object(moraAnalysisFinish(handle))
+    }
+
+    static func plan(_ input: String) -> String? {
+        let bytes = Array(input.utf8)
+        return bytes.withUnsafeBufferPointer { buffer in
+            guard let raw = moraPlan(buffer.baseAddress, buffer.count) else { return nil }
+            defer { moraFreeString(raw) }
+            return String(validatingCString: raw)
+        }
+    }
+
+    private enum Failure: Error { case invalidPCM }
+    private static func object(_ raw: UnsafeMutablePointer<CChar>?) -> [String: Any]? {
         guard let raw else { return nil }
         defer { moraFreeString(raw) }
         return (try? JSONSerialization.jsonObject(with: Data(bytes: raw, count: strlen(raw)))) as? [String: Any]

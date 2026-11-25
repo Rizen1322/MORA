@@ -3,13 +3,14 @@ import { planTransition } from '../../../packages/core/src/plan/planner.ts';
 import { creativeFinalists } from '../../../packages/core/src/plan/creative-selection.ts';
 import { fallbackWithoutVocalStems } from '../../../packages/core/src/plan/first-words.ts';
 import { planToArmed } from '../../../packages/core/src/engine/arm.ts';
-import { ANALYZER_VERSION, DEFAULT_AUTOMIX_SETTINGS, type AutoMixSettings, type PlannerTrack } from '../../../packages/core/src/types.ts';
+import { ANALYZER_VERSION, DEFAULT_AUTOMIX_SETTINGS, type AutoMixSettings, type PlannerTrack, type TransitionPlan } from '../../../packages/core/src/types.ts';
 
 // Runs on the native preparation queue in app-process JavaScriptCore, never in
 // WebContent and never in the Swift audio producer. DSP playback remains Swift.
 declare const moraPreparationRead: (offset: number, frames: number) => Float32Array | string | undefined;
 declare const moraPreparationCancelled: () => boolean;
 declare const moraPreparationProgress: (stage: string) => void;
+declare const moraPreparationPlan: ((input: string) => string | null) | undefined;
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const values = new Uint8Array(128);
 for (let i = 0; i < alphabet.length; i++) values[alphabet.charCodeAt(i)] = i;
@@ -48,7 +49,16 @@ export function analyzeJSON(input: string): string {
 export function planJSON(input: string): string {
   const request = JSON.parse(input) as { a: PlannerTrack; b: PlannerTrack; settings?: AutoMixSettings; sampleRate: number };
   const settings = { ...DEFAULT_AUTOMIX_SETTINGS, ...request.settings };
-  const base = fallbackWithoutVocalStems(planTransition(request.a, request.b, settings));
-  const plan = creativeFinalists([base], request.a, request.b, settings, null)[0];
-  return JSON.stringify({ plan, transition: planToArmed(plan, request.sampleRate, 'A', 'B'), gainDb: plan.gainB });
+  function finish(candidate: TransitionPlan): string {
+    const base = fallbackWithoutVocalStems(candidate);
+    const plan = creativeFinalists([base], request.a, request.b, settings, null)[0];
+    return JSON.stringify({ plan, transition: planToArmed(plan, request.sampleRate, 'A', 'B'), gainDb: plan.gainB });
+  }
+  if (typeof moraPreparationPlan === 'function') {
+    try {
+      const result = moraPreparationPlan(JSON.stringify({ from: request.a, to: request.b, settings }));
+      if (result) return finish(JSON.parse(result));
+    } catch { /* Use the reference planner if its compiled counterpart cannot arm this pair. */ }
+  }
+  return finish(planTransition(request.a, request.b, settings));
 }

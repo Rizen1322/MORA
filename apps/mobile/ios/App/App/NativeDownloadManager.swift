@@ -91,11 +91,39 @@ import Network
         let url = root.appendingPathComponent(job.id + ".media")
         return FileManager.default.isReadableFile(atPath: url.path) ? url : nil
     }
+    func enqueue(trackId: String, album: String) async throws {
+        if localFile(trackId) != nil || jobs.contains(where: { $0.trackId == trackId && tasks[$0.id] != nil }) { return }
+        if Self.root != nil {
+            let response = try await NativeServerApp.request("POST", "/api/mobile/native-sources", body: [
+                "entries": [["trackId": trackId, "entryId": UUID().uuidString, "file": 0]], "previousId": trackId])
+            if let item = (response["items"] as? [[String: Any]])?.first,
+               let source = item["source"] as? [String: Any],
+               NativeDownloadJob.Transfer(sourceKind: source["kind"] as? String, supportsBackground: true) == .background {
+                let downloads = try await NativeServerApp.request("GET", "/api/downloads")
+                if (downloads["jobs"] as? [[String: Any]])?.contains(where: {
+                    $0["trackId"] as? String == trackId && ["queued", "downloading", "waiting", "paused"].contains($0["state"] as? String ?? "")
+                }) == true { return }
+                guard let raw = downloads["usage"] as? [String: Any] else { throw failure("Не удалось проверить место для загрузки") }
+                let usage = try NativeDownloadsState.Usage(raw)
+                let http = NativeMediaHTTP(); defer { http.invalidate() }
+                let ticket = NativePreparationTicket()
+                let request = try await withTaskCancellationHandler {
+                    try await NativeMediaLoader(http: http).backgroundRequest(source, ticket: ticket)
+                } onCancel: { ticket.cancel() }
+                try Task.checkCancellation()
+                _ = try add(trackId: trackId, title: item["title"] as? String ?? "Трек", artist: item["artist"] as? String ?? "",
+                            album: album, duration: (item["duration"] as? NSNumber)?.doubleValue ?? 0,
+                            request: request, limit: Int64(min(1e12, usage.availableForNative)))
+                return
+            }
+        }
+        try Task.checkCancellation()
+        _ = try await NativeServerApp.request("POST", "/api/downloads", body: ["trackId": trackId])
+    }
     func add(trackId: String, title: String, artist: String, album: String, duration: Double, request: URLRequest, limit: Int64) throws -> NativeDownloadJob {
         guard let root = Self.root, !trackId.isEmpty, trackId.utf8.count <= 512, duration.isFinite, duration > 0, duration <= 86400,
               request.url?.scheme == "https", request.url?.user == nil, request.url?.password == nil else { throw failure("Источник фоновой загрузки недоступен") }
-        if let i = jobs.firstIndex(where: { $0.trackId == trackId && $0.state == .paused && tasks[$0.id] == nil }) { jobs[i].state = .failed }
-        if let existing = jobs.first(where: { $0.trackId == trackId && ![.cancelled, .failed].contains($0.state) }) { return existing }
+        if let existing = jobs.first(where: { $0.trackId == trackId && (tasks[$0.id] != nil || ($0.state == .done && localFile(trackId) != nil)) }) { return existing }
         limitBytes = max(0, limit)
         UserDefaults.standard.set(limitBytes, forKey: "mora.downloads.limitBytes")
         let estimate = Int64(min(duration, 86400) * 40000)
@@ -109,9 +137,10 @@ import Network
         let task = session.downloadTask(with: request)
         task.taskDescription = job.id
         job.state = wifiOnly && !wifi ? .queued : .downloading
-        jobs.removeAll { $0.trackId == trackId && [.cancelled, .failed].contains($0.state) }
+        let previous = jobs
+        jobs.removeAll { $0.trackId == trackId }
         jobs.append(job)
-        do { try save() } catch { jobs.removeAll { $0.id == job.id }; task.cancel(); throw error }
+        do { try save() } catch { jobs = previous; task.cancel(); throw error }
         tasks[job.id] = task; started[job.id] = .now
         task.resume(); publish(force: true)
         return job
@@ -172,8 +201,7 @@ import Network
         // A diagnostic row must not survive a real background callback saving the queue.
         if let id = visualFixtureId { savedJobs.removeAll { $0.id == id } }
         #endif
-        try JSONEncoder().encode(savedJobs).write(to: file, options: .atomic)
-        try FileManager.default.setAttributes(NativePreparationFiles.attributes, ofItemAtPath: file.path)
+        try JSONEncoder().encode(savedJobs).write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
     private func publish(force: Bool = false) {
         guard force || Date().timeIntervalSince(lastSave) >= 0.5 else { return }
@@ -193,33 +221,52 @@ import Network
         }
     }
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        guard let root = Self.root else { return }
-        let staged = root.appendingPathComponent(UUID().uuidString + ".partial")
-        do { try FileManager.default.moveItem(at: location, to: staged) }
-        catch { DispatchQueue.main.async { NativeShellStore.shared?.show("Не удалось сохранить аудио: \(error.localizedDescription)") }; return }
+        let staged = Result { () throws -> URL in
+            guard let root = Self.root else { throw NativeDownloadsState.Failure(message: "Общая папка MORA недоступна") }
+            let file = root.appendingPathComponent(UUID().uuidString + ".partial")
+            try FileManager.default.moveItem(at: location, to: file)
+            return file
+        }
         DispatchQueue.main.async {
-            defer { try? FileManager.default.removeItem(at: staged) }
+            let temporaryFile = try? staged.get()
+            defer { if let temporaryFile { try? FileManager.default.removeItem(at: temporaryFile) } }
             guard let id = downloadTask.taskDescription, self.tasks[id] === downloadTask, let i = self.jobs.firstIndex(where: { $0.id == id }) else { return }
-            guard let response = downloadTask.response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
-                self.jobs[i].state = .failed; self.jobs[i].error = "Сервис отклонил загрузку — обновите адрес в MORA"; self.publish(force: true); return
-            }
             do {
-                let bytes = try staged.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                let file = try staged.get()
+                guard let response = downloadTask.response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
+                    throw self.failure("Сервис отклонил загрузку — обновите адрес в MORA")
+                }
+                let bytes = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                 let other = self.jobs.filter { $0.id != id && ![.cancelled, .failed].contains($0.state) }.reduce(Int64(0)) { $0 + $1.reservedBytes }
                 guard bytes > 0, Int64(bytes) + other <= self.limitBytes else { throw self.failure("Пустой файл или превышен лимит кэша") }
-                let destination = root.appendingPathComponent(id + ".media")
-                try FileManager.default.moveItem(at: staged, to: destination)
-                try FileManager.default.setAttributes(NativePreparationFiles.attributes, ofItemAtPath: destination.path)
-                self.jobs[i].receivedBytes = Int64(bytes); self.jobs[i].expectedBytes = Int64(bytes); self.jobs[i].state = .done; self.jobs[i].error = nil
-            } catch { self.jobs[i].state = .failed; self.jobs[i].error = error.localizedDescription }
-            self.publish(force: true)
+                let destination = file.deletingLastPathComponent().appendingPathComponent(id + ".media")
+                try FileManager.default.setAttributes(NativePreparationFiles.attributes, ofItemAtPath: file.path)
+                try FileManager.default.moveItem(at: file, to: destination)
+                let previous = self.jobs[i]
+                self.jobs[i].finish(.success(Int64(bytes)))
+                do { try self.save() } catch {
+                    self.jobs[i] = previous
+                    try? FileManager.default.removeItem(at: destination)
+                    throw error
+                }
+                self.lastSave = .now
+                NotificationCenter.default.post(name: Self.changed, object: nil)
+            } catch {
+                self.jobs[i].finish(.failure(error))
+                self.publish(force: true)
+            }
         }
     }
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         DispatchQueue.main.async {
             guard let id = task.taskDescription, self.tasks[id] === task, let i = self.jobs.firstIndex(where: { $0.id == id }) else { return }
             self.tasks.removeValue(forKey: id)
-            guard let error, ![.cancelled, .done, .failed, .paused].contains(self.jobs[i].state) else { return }
+            guard ![.cancelled, .done, .failed, .paused].contains(self.jobs[i].state) else { return }
+            guard let error else {
+                self.jobs[i].finish(.failure(self.failure("Не удалось сохранить файл загрузки")))
+                self.publish(force: true)
+                return
+            }
             self.jobs[i].attempts += 1
             if self.jobs[i].attempts <= 3, let request = task.originalRequest {
                 let retry = self.session.downloadTask(with: request)

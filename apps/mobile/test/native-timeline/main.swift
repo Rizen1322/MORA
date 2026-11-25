@@ -1,5 +1,24 @@
 import Foundation
 
+let firstWindow = NativeMixTimeline.queueWindow(count: 5000, current: 0, repeats: false)
+precondition(firstWindow.indices == Array(1...8) && firstWindow.hasMore)
+let secondWindow = NativeMixTimeline.queueWindow(count: 5000, current: 0, repeats: false, offset: firstWindow.endOffset)
+precondition(secondWindow.indices == Array(9...16))
+let lastWindow = NativeMixTimeline.queueWindow(count: 5000, current: 4997, repeats: false)
+precondition(lastWindow.indices == [4998, 4999] && !lastWindow.hasMore)
+let repeatWindow = NativeMixTimeline.queueWindow(count: 5000, current: 4997, repeats: true)
+precondition(repeatWindow.indices == [4998, 4999, 0, 1, 2, 3, 4, 5] && repeatWindow.hasMore)
+for current in 0..<3 {
+    let window = NativeMixTimeline.queueWindow(count: 3, current: current, repeats: true)
+    let occurrences = [("A-1", "A"), ("B", "B"), ("A-2", "A")]
+    precondition(window.indices.map { occurrences[$0].0 } == [(current + 1) % 3, (current + 2) % 3].map { occurrences[$0].0 })
+    precondition(Set(window.indices).count == 2 && !window.indices.contains(current))
+}
+let oldOrder = ["A-1", "removed", "A-2", "B"]
+let edited = ["B", "A-2", "A-1", "added"]
+precondition(NativeMixTimeline.restoredOrder(oldOrder, available: edited) == ["A-1", "A-2", "B", "added"])
+print("Native queue windows: 5000 tracks, wrapped playback, duplicate-track occurrences and edited shuffle order")
+
 // Model the actual dataPlayedBack credit: the engine needs new audio before the car reports playback.
 func outputGaps(sampleRate: Double, latency: Double, count: Int) -> Int {
     let block = 8192.0 / sampleRate
@@ -49,6 +68,10 @@ precondition(NativeMixTimeline.reserve(before: previous, next: candidate, frames
 precondition(NativeMixTimeline.reserve(before: previous, next: ["mixingAllowed": false], frames: 48000, settings: [:]) == nil)
 precondition(NativeMixTimeline.reserve(before: ["duration": Double.nan, "mixingAllowed": true], next: candidate, frames: 48000, settings: [:]) == nil)
 precondition(NativeMixTimeline.reserve(before: previous, next: candidate, frames: 1, settings: [:]) == nil)
+let shortReserve = NativeMixTimeline.reserve(before: ["trackId": "S0", "duration": 3.0, "mixingAllowed": true],
+                                             next: ["trackId": "S1", "mixingAllowed": true],
+                                             frames: 3 * 48000, settings: ["enabled": true])
+precondition((shortReserve?["transition"] as? [String: Any]) != nil, "Short 3s fixture pair lost its reserve crossfade")
 print("Native reserve: timing, equal power, disabled/forbidden/invalid inputs passed")
 
 let full: [[String: Any]] = (1...74).map { ["entryId": "E\($0)", "trackId": "T\($0)"] }

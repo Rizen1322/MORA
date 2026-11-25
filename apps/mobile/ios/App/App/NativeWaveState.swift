@@ -7,6 +7,8 @@ final class NativeWaveState {
     typealias Request = (_ method: String, _ path: String, _ body: [String: Any]?) async throws -> [String: Any]
 
     private var cachedYandexGroups: [[String: Any]]?
+    /// A tuning write happened: the next dismissal must rebuild the wave with these values.
+    private var changed = false
 
     static func handles(_ path: String) -> Bool {
         path == "/wave"
@@ -140,6 +142,8 @@ final class NativeWaveState {
         return page
     }
 
+    func consumeChange() -> Bool { defer { changed = false }; return changed }
+
     func execute(_ name: String, _ args: [String: Any], request: Request) async throws -> String? {
         if name == "set" {
             guard let group = args["group"] as? String, group == "wave",
@@ -151,6 +155,7 @@ final class NativeWaveState {
                 value = mapped
             }
             _ = try await request("PUT", "/api/settings", ["wave": [key: value]])
+            changed = true
             return nil
         }
         if name == "yandexSeed" {
@@ -161,6 +166,7 @@ final class NativeWaveState {
             var seeds = (wave["yandexSeeds"] as? [String] ?? []).filter { !group.contains($0) }
             if !picked.isEmpty { seeds.append(picked) }
             _ = try await request("PUT", "/api/settings", ["wave": ["yandexSeeds": seeds]])
+            changed = true
             return nil
         }
         throw NSError(domain: "NativeWaveState", code: 3, userInfo: [NSLocalizedDescriptionKey: "Неизвестное действие волны"])

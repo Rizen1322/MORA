@@ -4,33 +4,80 @@ mod secrets;
 mod profile;
 mod power;
 use serde_json::{json, Value};
-use std::{env, fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc, Mutex}, time::{Duration, Instant}};
+use std::{env, fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc, Arc, Mutex}, time::{Duration, Instant}};
 use std::os::windows::process::CommandExt;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri::{menu::MenuBuilder, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
-struct Session { child: Mutex<Child>, close_to_tray: Mutex<bool>, compact: Mutex<Option<(tauri::PhysicalPosition<i32>, tauri::PhysicalSize<u32>)>>, profile: PathBuf, data_dir: PathBuf, resources: PathBuf, token: String, pcm: String, port: u16, quitting: AtomicBool, maintenance: AtomicBool, power: AtomicUsize, prefs: Mutex<Value> }
+struct Session {
+    child: Mutex<Child>,
+    transport: mpsc::SyncSender<&'static str>,
+    close_to_tray: Mutex<bool>,
+    compact: Mutex<Option<(tauri::PhysicalPosition<i32>, tauri::PhysicalSize<u32>)>>,
+    profile: PathBuf,
+    data_dir: PathBuf,
+    resources: PathBuf,
+    token: String,
+    pcm: String,
+    port: u16,
+    quitting: AtomicBool,
+    exit_ready: AtomicBool,
+    maintenance: AtomicBool,
+    power: AtomicUsize,
+    restart_generation: AtomicUsize,
+    prefs: Mutex<Value>,
+    window_bounds: Mutex<Option<(Instant, Value)>>,
+}
 struct Maintenance<'a>(&'a AtomicBool);
 impl Drop for Maintenance<'_> { fn drop(&mut self) { self.0.store(false, Ordering::Release); } }
 fn save_preferences(state: &Session, key: &str, value: Value) -> Result<(), String> {
     let mut prefs = state.prefs.lock().unwrap();
-    prefs[key] = value;
-    let target = state.profile.join("tauri-window.json");
-    let temporary = state.profile.join("tauri-window.json.tmp");
-    fs::write(&temporary, serde_json::to_vec(&*prefs).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let mut next = prefs.clone();
+    next[key] = value;
+    write_preferences(&state.profile, &next)?;
+    *prefs = next;
+    Ok(())
+}
+fn write_preferences(profile: &Path, prefs: &Value) -> Result<(), String> {
+    let target = profile.join("tauri-window.json");
+    let temporary = profile.join("tauri-window.json.tmp");
+    fs::write(&temporary, serde_json::to_vec(prefs).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     fs::rename(temporary, target).map_err(|e| e.to_string())
 }
-fn save_window(window: &tauri::WebviewWindow) {
+fn stage_window_bounds(window: &tauri::WebviewWindow) {
     let state = window.state::<Session>();
     if state.compact.lock().unwrap().is_some() || window.is_minimized().unwrap_or(true) { return; }
     let maximized = window.is_maximized().unwrap_or(false);
-    let bounds = if maximized { state.prefs.lock().unwrap()["window"].clone() } else {
+    let bounds = if maximized {
+        let pending = state.window_bounds.lock().unwrap().as_ref().map(|(_, bounds)| bounds.clone());
+        pending.unwrap_or_else(|| state.prefs.lock().unwrap()["window"].clone())
+    } else {
         match (window.outer_position(), window.outer_size()) {
             (Ok(p), Ok(s)) => json!({"x":p.x,"y":p.y,"width":s.width,"height":s.height}), _ => return,
         }
     };
-    if bounds.is_object() { let mut bounds = bounds; bounds["maximized"] = json!(maximized); let _ = save_preferences(&state, "window", bounds); }
+    if bounds.is_object() {
+        let mut bounds = bounds;
+        bounds["maximized"] = json!(maximized);
+        *state.window_bounds.lock().unwrap() = Some((Instant::now() + Duration::from_millis(250), bounds));
+    }
+}
+fn flush_window_bounds(state: &Session, force: bool) {
+    let mut prefs = state.prefs.lock().unwrap();
+    let mut pending = state.window_bounds.lock().unwrap();
+    if pending.as_ref().is_some_and(|(due, _)| force || *due <= Instant::now()) {
+        let (_, bounds) = pending.take().unwrap();
+        drop(pending);
+        if prefs["window"] != bounds {
+            let mut next = prefs.clone();
+            next["window"] = bounds;
+            match write_preferences(&state.profile, &next) {
+                Ok(()) => *prefs = next,
+                Err(error) => eprintln!("window preferences: {error}"),
+            }
+        }
+    }
 }
 fn random_hex() -> Result<String, String> {
     let mut bytes = [0u8; 32]; getrandom::fill(&mut bytes).map_err(|_| "random generator failed")?;
@@ -61,7 +108,7 @@ fn import_paths_overlap(source: &Path, data: &Path) -> Result<bool, String> {
     let source = future_path(source)?; let data = future_path(data)?; let staging = future_path(&PathBuf::from(name))?;
     Ok(source.starts_with(&data) || data.starts_with(&source) || source.starts_with(&staging) || staging.starts_with(&source))
 }
-fn spawn_backend(profile: &Path, resources: &Path, token: &str, pcm: &str, port: u16) -> Result<(Child, u16, bool), String> {
+fn spawn_backend(profile: &Path, resources: &Path, token: &str, pcm: &str, port: u16, startup: Option<&tauri::WebviewWindow>) -> Result<(Child, u16, bool), String> {
     let node = env::var_os("AUTOMIX_NODE_PATH").map(PathBuf::from).unwrap_or_else(|| resources.join("node/node.exe"));
     let entry = env::var_os("AUTOMIX_BACKEND_ENTRY").map(PathBuf::from).unwrap_or_else(|| resources.join("backend/tauri-backend.mjs"));
     let network = env::var_os("AUTOMIX_NETWORK_RUST").map(PathBuf::from).unwrap_or_else(|| resources.join("network/mora-network.exe"));
@@ -90,9 +137,34 @@ fn spawn_backend(profile: &Path, resources: &Path, token: &str, pcm: &str, port:
             if let Ok(message) = serde_json::from_str::<Value>(value) { let _ = tx.send(message); }
         }
     });
-    let message = match rx.recv_timeout(Duration::from_secs(90)) { Ok(v) => v, Err(_) => { let _ = child.kill(); return Err("backend startup timed out".into()); } };
+    let mut deadline = Instant::now() + Duration::from_secs(90);
+    let message = loop {
+        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(message) if message["type"] == "backup" => {
+                deadline = Instant::now() + Duration::from_secs(600);
+                startup_status(startup, "Резервное копирование медиатеки перед обновлением…");
+            }
+            Ok(message) if message["type"] == "starting" => {
+                deadline = Instant::now() + Duration::from_secs(90);
+                startup_status(startup, "Запуск локального сервиса…");
+            }
+            Ok(message) => break message,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(match error {
+                    mpsc::RecvTimeoutError::Timeout => "Локальный сервис превысил время запуска",
+                    mpsc::RecvTimeoutError::Disconnected => "Локальный сервис завершился при запуске",
+                }.into());
+            }
+        }
+    };
     let port = message["port"].as_u64().and_then(|n| u16::try_from(n).ok()).filter(|n| *n != 0);
-    if message["type"] != "ready" || port.is_none() { let _ = child.kill(); return Err(format!("backend startup failed: {}", message["message"])); }
+    if message["type"] != "ready" || port.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(message["message"].as_str().unwrap_or("Локальный сервис вернул неверный ответ").to_owned());
+    }
     Ok((child, port.unwrap(), message["recovery"].as_bool().unwrap_or(false)))
 }
 fn stop_child(child: &mut Child, preserve: bool) {
@@ -115,11 +187,13 @@ fn restart_child(state: &Session, stop: bool) -> Result<(), String> {
     if state.maintenance.load(Ordering::Acquire) { return Err("Дождитесь окончания переноса медиатеки".into()); }
     if stop { stop_child(&mut child, true); }
     else if !matches!(child.try_wait(), Ok(Some(_))) { return Ok(()); }
-    let (mut replacement, _, recovery) = spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port)?;
+    let (mut replacement, _, recovery) = spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port, None)?;
     if stop && recovery {
         if let Some(stdin) = replacement.stdin.as_mut() { let _ = writeln!(stdin, "{}", json!({"type":"recovery", "restore":true})); }
     } else { offer_recovery(&mut replacement, recovery); }
-    *child = replacement; Ok(())
+    *child = replacement;
+    if stop { state.restart_generation.fetch_add(1, Ordering::Release); }
+    Ok(())
 }
 fn offer_recovery(child: &mut Child, recovery: bool) {
     if recovery && env::var_os("AUTOMIX_TEST").is_none() {
@@ -181,12 +255,14 @@ async fn desktop_action(window: tauri::WebviewWindow, state: tauri::State<'_, Se
             if !installer.is_file() { return Err("Обновление не скачано".into()); }
             if state.maintenance.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() { return Err("Дождитесь окончания переноса медиатеки".into()); }
             let _guard = Maintenance(&state.maintenance);
+            flush_window_bounds(&state, true);
             launch_update(&mut state.child.lock().unwrap(), &installer, |child| {
-                let (mut replacement, _, recovery) = spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port)?;
+                let (mut replacement, _, recovery) = spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port, None)?;
                 if recovery { if let Some(stdin) = replacement.stdin.as_mut() { let _ = writeln!(stdin, "{}", json!({"type":"recovery", "restore":true})); } }
                 *child = replacement; Ok(())
             })?;
             state.quitting.store(true, Ordering::Release);
+            state.exit_ready.store(true, Ordering::Release);
             window.app_handle().exit(0); Ok(Value::Null)
         }
         "restart-backend" => { restart_child(&state, true)?; Ok(Value::Null) }
@@ -225,7 +301,7 @@ async fn desktop_action(window: tauri::WebviewWindow, state: tauri::State<'_, Se
                 }
                 if !matches!(worker.wait(), Ok(status) if status.success()) && result["status"] == "done" { result = json!({"status":"error", "message":"Импорт прерван"}); }
             }
-            match spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port) {
+            match spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port, None) {
                 Ok((replacement, _, _)) => *child = replacement,
                 Err(error) => return Err(format!("Импорт завершён, но сервис не запустился: {error}")),
             }
@@ -288,27 +364,23 @@ fn show_window(window: &tauri::WebviewWindow) {
     set_webview_visible(window, true);
     let _ = window.show(); let _ = window.unminimize(); let _ = window.set_focus();
 }
-fn main() {
-    let profile = env::var_os("AUTOMIX_PROFILE_DIR").map(PathBuf::from).unwrap_or_else(|| profile::choose(&PathBuf::from(env::var_os("LOCALAPPDATA").unwrap_or_default())).expect("existing profile unavailable"));
-    fs::create_dir_all(&profile).expect("profile unavailable");
-    let mut context = tauri::generate_context!();
-    if env::var_os("AUTOMIX_TEST").is_some() {
-        use std::hash::{Hash, Hasher};
-        let mut key = std::collections::hash_map::DefaultHasher::new();
-        profile.hash(&mut key);
-        // Disposable smoke profiles must not share the installed application's instance mutex.
-        context.config_mut().identifier.push_str(&format!(".test.{:x}", key.finish()));
+fn startup_status(window: Option<&tauri::WebviewWindow>, message: &str) {
+    if let Some(window) = window {
+        let _ = window.eval(format!("document.getElementById('startup-status').textContent = {}", json!(message)));
     }
-    let resources = env::var_os("AUTOMIX_RESOURCES_DIR").map(PathBuf::from).unwrap_or_else(|| env::current_exe().unwrap().parent().unwrap().join("resources"));
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            if env::var_os("AUTOMIX_TEST").is_none() { if let Some(w) = app.get_webview_window("main") { show_window(&w); } }
-        }))
-        .invoke_handler(tauri::generate_handler![desktop_action])
-        .setup(move |app| {
-    let token = random_hex().map_err(std::io::Error::other)?; let pcm = random_hex().map_err(std::io::Error::other)?;
-    let (mut child, port, recovery) = spawn_backend(&profile, &resources, &token, &pcm, 0).map_err(std::io::Error::other)?;
+}
+fn start_session(startup: Option<&tauri::WebviewWindow>) -> Result<(Session, Value, mpsc::Receiver<&'static str>), String> {
+    let profile = match env::var_os("AUTOMIX_PROFILE_DIR") {
+        Some(path) => PathBuf::from(path),
+        None => profile::choose(&PathBuf::from(env::var_os("LOCALAPPDATA").ok_or("Не найдена папка профиля Windows")?))?,
+    };
+    fs::create_dir_all(&profile).map_err(|e| format!("Не удалось открыть профиль MORA: {e}"))?;
+    let resources = match env::var_os("AUTOMIX_RESOURCES_DIR") {
+        Some(path) => PathBuf::from(path),
+        None => env::current_exe().map_err(|e| e.to_string())?.parent().ok_or("Не найдена папка MORA")?.join("resources"),
+    };
+    let token = random_hex()?; let pcm = random_hex()?;
+    let (mut child, port, recovery) = spawn_backend(&profile, &resources, &token, &pcm, 0, startup)?;
     offer_recovery(&mut child, recovery);
     let initial: Value = fs::read(profile.join("desktop.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
     let mut saved: Value = fs::read(profile.join("tauri-window.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_else(|| json!({}));
@@ -316,97 +388,213 @@ fn main() {
     if saved["window"].is_null() && initial["window"].is_object() { saved["window"] = initial["window"].clone(); }
     let close_to_tray = saved["closeToTray"].as_bool().or_else(|| initial["closeToTray"].as_bool()).unwrap_or(true);
     let data_dir = initial["dataDir"].as_str().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| profile.join("data"));
-    app.manage(Session { child: Mutex::new(child), close_to_tray: Mutex::new(close_to_tray), compact: Mutex::new(None), profile: profile.clone(), data_dir, resources: resources.clone(), token: token.clone(), pcm, port, quitting: AtomicBool::new(false), maintenance: AtomicBool::new(false), power: AtomicUsize::new(0), prefs: Mutex::new(saved.clone()) });
-    let power = power::start(app.handle().clone()); app.state::<Session>().power.store(power, Ordering::Relaxed);
-            let origin = format!("http://127.0.0.1:{port}");
-            let script = include_str!("../../bridge.js").replace("__MORA_ACCESS_TOKEN__", &token).replace("__MORA_PORT__", &port.to_string()).replace("__MORA_VERSION__", env!("CARGO_PKG_VERSION"));
-            let trusted = origin.clone();
-            let hidden = env::var_os("AUTOMIX_TEST").is_some();
-            let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(format!("{origin}/").parse()?))
-                .title("MORA").decorations(false).inner_size(1280.0, 820.0).min_inner_size(960.0, 680.0).visible(!hidden)
-                .data_directory(profile.join("webview2")).initialization_script(script)
-                // Tauri's native file-drop handler swallows HTML5 drag-and-drop in WebView2 (queue, playlists).
-                .disable_drag_drop_handler()
-                .on_navigation(move |url| url.origin().ascii_serialization() == trusted);
-            if hidden {
-                if let Ok(args) = env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") { builder = builder.additional_browser_args(&args); }
+    let (transport, commands) = mpsc::sync_channel(8);
+    Ok((Session { child: Mutex::new(child), transport, close_to_tray: Mutex::new(close_to_tray), compact: Mutex::new(None),
+        profile, data_dir, resources, token, pcm, port, quitting: AtomicBool::new(false), exit_ready: AtomicBool::new(false),
+        maintenance: AtomicBool::new(false), power: AtomicUsize::new(0), restart_generation: AtomicUsize::new(0), prefs: Mutex::new(saved.clone()),
+        window_bounds: Mutex::new(None) }, saved, commands))
+}
+fn open_main(app: &tauri::AppHandle, session: Session, saved: Value, commands: mpsc::Receiver<&'static str>) -> Result<(), Box<dyn std::error::Error>> {
+    let profile = session.profile.clone();
+    let token = session.token.clone();
+    let port = session.port;
+    app.manage(session);
+    let power = power::start(app.clone()); app.state::<Session>().power.store(power, Ordering::Relaxed);
+    let origin = format!("http://127.0.0.1:{port}");
+    let script = include_str!("../../bridge.js").replace("__MORA_ACCESS_TOKEN__", &token).replace("__MORA_PORT__", &port.to_string()).replace("__MORA_VERSION__", env!("CARGO_PKG_VERSION"));
+    let trusted = origin.clone();
+    let hidden = env::var_os("AUTOMIX_TEST").is_some();
+    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(format!("{origin}/").parse()?))
+        .title("MORA").decorations(false).inner_size(1280.0, 820.0).min_inner_size(960.0, 680.0).visible(false)
+        .data_directory(profile.join("webview2")).initialization_script(script)
+        // Tauri's native file-drop handler swallows HTML5 drag-and-drop in WebView2 (queue, playlists).
+        .disable_drag_drop_handler()
+        .on_navigation(move |url| url.origin().ascii_serialization() == trusted);
+    if hidden {
+        if let Ok(args) = env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") { builder = builder.additional_browser_args(&args); }
+    }
+    let window = builder.build()?;
+    // WebView2 defaults are browser-like: link preview in the corner, Back/Reload/Print menu and
+    // Ctrl+R/Ctrl+P/Alt+Left/F5. Editing keys (Ctrl+C/V) and the page's own menus are unaffected.
+    let _ = window.with_webview(|webview| unsafe {
+        if let Ok(settings) = webview.controller().CoreWebView2().and_then(|core| core.Settings()) {
+            let _ = settings.SetIsStatusBarEnabled(false);
+            let _ = settings.SetAreDefaultContextMenusEnabled(false);
+            if let Ok(settings) = windows_core::Interface::cast::<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3>(&settings) {
+                let _ = settings.SetAreBrowserAcceleratorKeysEnabled(false);
             }
-            let window = builder.build()?;
-            // WebView2 defaults are browser-like: link preview in the corner, Back/Reload/Print menu and
-            // Ctrl+R/Ctrl+P/Alt+Left/F5. Editing keys (Ctrl+C/V) and the page's own menus are unaffected.
-            let _ = window.with_webview(|webview| unsafe {
-                if let Ok(settings) = webview.controller().CoreWebView2().and_then(|core| core.Settings()) {
-                    let _ = settings.SetIsStatusBarEnabled(false);
-                    let _ = settings.SetAreDefaultContextMenusEnabled(false);
-                    if let Ok(settings) = windows_core::Interface::cast::<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3>(&settings) {
-                        let _ = settings.SetAreBrowserAcceleratorKeysEnabled(false);
+        }
+    });
+    if hidden { set_webview_visible(&window, false); }
+    let bounds = &saved["window"];
+    if let (Some(x), Some(y), Some(width), Some(height)) = (bounds["x"].as_i64(), bounds["y"].as_i64(), bounds["width"].as_u64(), bounds["height"].as_u64()) {
+        if (-100000..=100000).contains(&x) && (-100000..=100000).contains(&y) && (960..=8192).contains(&width) && (680..=8192).contains(&height) {
+            let visible = window.available_monitors().unwrap_or_default().iter().any(|m| {
+                let p = m.position(); let s = m.size();
+                x < i64::from(p.x) + i64::from(s.width) && y < i64::from(p.y) + i64::from(s.height) && x + width as i64 > i64::from(p.x) && y + height as i64 > i64::from(p.y)
+            });
+            if visible { let _ = window.set_position(tauri::PhysicalPosition::new(x as i32, y as i32)); let _ = window.set_size(tauri::PhysicalSize::new(width as u32, height as u32)); }
+        }
+    }
+    if bounds["maximized"].as_bool() == Some(true) { let _ = window.maximize(); }
+    // The window is built hidden and only then placed: building it visible made
+    // Windows show it at the default spot first and jump to the saved bounds later.
+    if !hidden { show_window(&window); }
+    if !hidden {
+        let menu = MenuBuilder::new(app).text("toggle", "Слушать / пауза").text("next", "Следующий трек")
+            .text("prev", "Предыдущий трек").separator().text("show", "Открыть MORA").text("quit", "Выйти").build()?;
+        let mut tray = TrayIconBuilder::with_id("mora").menu(&menu).show_menu_on_left_click(false).tooltip("MORA")
+            .on_menu_event(|app, event| match event.id().as_ref() {
+                "show" => { if let Some(w) = app.get_webview_window("main") { show_window(&w); } },
+                "quit" => app.exit(0),
+                action @ ("toggle" | "next" | "prev") => {
+                    let session = app.state::<Session>();
+                    if !session.maintenance.load(Ordering::Acquire) {
+                        let command = match action { "toggle" => "toggle", "next" => "next", _ => "prev" };
+                        let _ = session.transport.try_send(command);
                     }
+                }, _ => {}
+            }).on_tray_icon_event(|tray, event| {
+                if matches!(event, TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. }) {
+                    if let Some(w) = tray.app_handle().get_webview_window("main") { show_window(&w); }
                 }
             });
-            if hidden { set_webview_visible(&window, false); }
-            let bounds = &saved["window"];
-            if let (Some(x), Some(y), Some(width), Some(height)) = (bounds["x"].as_i64(), bounds["y"].as_i64(), bounds["width"].as_u64(), bounds["height"].as_u64()) {
-                if (-100000..=100000).contains(&x) && (-100000..=100000).contains(&y) && (960..=8192).contains(&width) && (680..=8192).contains(&height) {
-                    let visible = window.available_monitors().unwrap_or_default().iter().any(|m| {
-                        let p = m.position(); let s = m.size();
-                        x < i64::from(p.x) + i64::from(s.width) && y < i64::from(p.y) + i64::from(s.height) && x + width as i64 > i64::from(p.x) && y + height as i64 > i64::from(p.y)
-                    });
-                    if visible { let _ = window.set_position(tauri::PhysicalPosition::new(x as i32, y as i32)); let _ = window.set_size(tauri::PhysicalSize::new(width as u32, height as u32)); }
+        if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
+        tray.build(app)?;
+    }
+    let w = window.clone();
+    window.on_window_event(move |event| match event {
+        WindowEvent::CloseRequested { api, .. } => {
+            stage_window_bounds(&w);
+            if *w.state::<Session>().close_to_tray.lock().unwrap() { api.prevent_close(); set_webview_visible(&w, false); let _ = w.hide(); }
+        },
+        WindowEvent::Resized(_) => { set_webview_visible(&w, w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(true)); stage_window_bounds(&w); },
+        WindowEvent::Moved(_) => stage_window_bounds(&w), _ => {}
+    });
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let mut crashes: Vec<Instant> = Vec::new();
+        let mut generation = 0;
+        let mut scheduled = None;
+        let mut next_check = Instant::now();
+        loop {
+            let command = commands.recv_timeout(next_check.saturating_duration_since(Instant::now()));
+            let Some(state) = handle.try_state::<Session>() else { return };
+            if state.quitting.load(Ordering::Relaxed) { return; }
+            if let Ok(command) = command {
+                if let Ok(mut child) = state.child.try_lock() {
+                    if let Some(stdin) = child.stdin.as_mut() { let _ = writeln!(stdin, "{}", json!({"type":"transport","command":command})); }
+                }
+            } else if command == Err(mpsc::RecvTimeoutError::Disconnected) { return; }
+            let now = Instant::now();
+            if now < next_check { continue; }
+            next_check = now + Duration::from_secs(1);
+            flush_window_bounds(&state, false);
+            let current = state.restart_generation.load(Ordering::Acquire);
+            if generation != current { generation = current; crashes.clear(); scheduled = None; }
+            if state.maintenance.load(Ordering::Acquire) || crashes.len() > 3 { continue; }
+            let exited = state.child.try_lock().is_ok_and(|mut child| matches!(child.try_wait(), Ok(Some(_))));
+            if !exited { scheduled = None; continue; }
+            if let Some(at) = scheduled {
+                if now < at { continue; }
+                scheduled = None;
+                if let Err(error) = restart_child(&state, false) { eprintln!("backend restart: {error}"); }
+            } else {
+                crashes.retain(|at| now.duration_since(*at) < Duration::from_secs(300));
+                crashes.push(now);
+                scheduled = Some(now + Duration::from_secs(crashes.len() as u64));
+            }
+        }
+    });
+    println!("MORA_TAURI_READY {port}"); Ok(())
+}
+fn launch_session(app: tauri::AppHandle, startup: Option<tauri::WebviewWindow>, aborted: Arc<AtomicBool>) {
+    let (session, saved, commands) = loop {
+        if aborted.load(Ordering::Acquire) { return; }
+        startup_status(startup.as_ref(), "Запуск локального сервиса…");
+        match start_session(startup.as_ref()) {
+            Ok(ready) => break ready,
+            Err(error) => {
+                if aborted.load(Ordering::Acquire) { return; }
+                eprintln!("Tauri startup: {error}");
+                let Some(startup) = startup.as_ref() else { app.exit(1); return; };
+                startup_status(Some(startup), "Не удалось запустить локальный сервис");
+                if !app.dialog().message(error).parent(startup).title("Не удалось открыть MORA").kind(MessageDialogKind::Error)
+                    .buttons(MessageDialogButtons::OkCancelCustom("Повторить".into(), "Выйти".into())).blocking_show() {
+                    app.exit(1); return;
                 }
             }
-            if bounds["maximized"].as_bool() == Some(true) { let _ = window.maximize(); }
-            if !hidden {
-                let menu = MenuBuilder::new(app).text("toggle", "Слушать / пауза").text("next", "Следующий трек")
-                    .text("prev", "Предыдущий трек").separator().text("show", "Открыть MORA").text("quit", "Выйти").build()?;
-                let mut tray = TrayIconBuilder::with_id("mora").menu(&menu).show_menu_on_left_click(false).tooltip("MORA")
-                    .on_menu_event(|app, event| match event.id().as_ref() {
-                        "show" => { if let Some(w) = app.get_webview_window("main") { show_window(&w); } },
-                        "quit" => app.exit(0),
-                        action @ ("toggle" | "next" | "prev") => {
-                            let session = app.state::<Session>(); let mut child = session.child.lock().unwrap();
-                            if let Some(stdin) = child.stdin.as_mut() { let _ = writeln!(stdin, "{}", json!({"type":"transport","command":action})); }
-                        }, _ => {}
-                    }).on_tray_icon_event(|tray, event| {
-                        if matches!(event, TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. }) {
-                            if let Some(w) = tray.app_handle().get_webview_window("main") { show_window(&w); }
-                        }
-                    });
-                if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
-                tray.build(app)?;
+        }
+    };
+    if aborted.load(Ordering::Acquire) {
+        stop_child(&mut session.child.lock().unwrap(), false);
+        return;
+    }
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if aborted.load(Ordering::Acquire) {
+            stop_child(&mut session.child.lock().unwrap(), false);
+            return;
+        }
+        match open_main(&handle, session, saved, commands) {
+            Ok(()) => if let Some(window) = startup { let _ = window.destroy(); },
+            Err(error) => {
+                eprintln!("MORA window: {error}");
+                let exit = handle.clone();
+                handle.dialog().message(error.to_string()).title("Не удалось открыть окно MORA").kind(MessageDialogKind::Error)
+                    .show(move |_| exit.exit(1));
             }
-            let w = window.clone();
-            window.on_window_event(move |event| match event {
-                WindowEvent::CloseRequested { api, .. } => {
-                    save_window(&w);
-                    if *w.state::<Session>().close_to_tray.lock().unwrap() { api.prevent_close(); set_webview_visible(&w, false); let _ = w.hide(); }
-                },
-                WindowEvent::Resized(_) => { set_webview_visible(&w, w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(true)); save_window(&w); },
-                WindowEvent::Moved(_) => save_window(&w), _ => {}
-            });
+        }
+    });
+}
+fn main() {
+    let mut context = tauri::generate_context!();
+    if env::var_os("AUTOMIX_TEST").is_some() {
+        use std::hash::{Hash, Hasher};
+        let mut key = std::collections::hash_map::DefaultHasher::new();
+        env::var_os("AUTOMIX_PROFILE_DIR").hash(&mut key);
+        // Disposable smoke profiles must not share the installed application's instance mutex.
+        context.config_mut().identifier.push_str(&format!(".test.{:x}", key.finish()));
+    }
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            if env::var_os("AUTOMIX_TEST").is_none() {
+                if let Some(w) = app.get_webview_window("main").or_else(|| app.get_webview_window("startup")) { show_window(&w); }
+            }
+        }))
+        .invoke_handler(tauri::generate_handler![desktop_action])
+        .setup(|app| {
+            let startup_aborted = Arc::new(AtomicBool::new(false));
+            let startup = if env::var_os("AUTOMIX_TEST").is_some() { None } else {
+                let w = WebviewWindowBuilder::new(app, "startup", WebviewUrl::App("index.html".into()))
+                    .title("MORA").inner_size(440.0, 152.0).resizable(false).center().build()?;
+                let flag = Arc::clone(&startup_aborted);
+                w.on_window_event(move |event| {
+                    if matches!(event, WindowEvent::CloseRequested { .. }) {
+                        flag.store(true, Ordering::Release);
+                    }
+                });
+                Some(w)
+            };
             let handle = app.handle().clone();
-            std::thread::spawn(move || {
-                let mut crashes: Vec<Instant> = Vec::new();
-                loop {
-                    std::thread::sleep(Duration::from_secs(1));
-                    let Some(state) = handle.try_state::<Session>() else { return };
-                    if state.quitting.load(Ordering::Relaxed) { return; }
-                    if state.maintenance.load(Ordering::Acquire) { continue; }
-                    let exited = matches!(state.child.lock().unwrap().try_wait(), Ok(Some(_)));
-                    if !exited { continue; }
-                    let now = Instant::now(); crashes.retain(|at| now.duration_since(*at) < Duration::from_secs(300)); crashes.push(now);
-                    if crashes.len() > 3 { return; }
-                    std::thread::sleep(Duration::from_secs(crashes.len() as u64));
-                    if state.quitting.load(Ordering::Relaxed) { return; }
-                    if let Err(error) = restart_child(&state, false) { eprintln!("backend restart: {error}"); }
-                }
-            });
-            println!("MORA_TAURI_READY {port}"); Ok(())
+            std::thread::spawn(move || launch_session(handle, startup, startup_aborted));
+            Ok(())
         }).build(context).expect("Tauri startup failed");
-    app.run(|handle, event| if let tauri::RunEvent::ExitRequested { .. } = event {
-        if let Some(state) = handle.try_state::<Session>() { state.quitting.store(true, Ordering::Relaxed); }
+    app.run(|handle, event| if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+        let Some(state) = handle.try_state::<Session>() else { return };
+        if state.exit_ready.load(Ordering::Acquire) { return; }
+        api.prevent_exit();
+        if state.quitting.swap(true, Ordering::AcqRel) { return; }
+        let handle = handle.clone();
+        std::thread::spawn(move || {
+            let state = handle.state::<Session>();
+            flush_window_bounds(&state, true);
+            stop_child(&mut state.child.lock().unwrap(), false);
+            state.exit_ready.store(true, Ordering::Release);
+            handle.exit(code.unwrap_or(0));
+        });
     } else if let tauri::RunEvent::Exit = event {
-        let Some(state) = handle.try_state::<Session>() else { return }; let mut child = state.child.lock().unwrap();
-        power::stop(state.power.swap(0, Ordering::Relaxed));
-        stop_child(&mut child, false);
+        if let Some(state) = handle.try_state::<Session>() { power::stop(state.power.swap(0, Ordering::Relaxed)); }
     });
 }

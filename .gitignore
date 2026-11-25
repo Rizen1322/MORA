@@ -25,3 +25,4 @@ packages/audio-rust/target/
 # Local release artifacts (IPAs, installers) and build scratch, never published
 builds/
 .mora-merge/
+apps/desktop-tauri/dist-unified/

@@ -47,6 +47,7 @@ jobs:
 
   build:
     if: inputs.ui_only != true
+    needs: vitest
     runs-on: macos-15-intel
     timeout-minutes: 75
     env:
@@ -105,8 +106,24 @@ jobs:
           "$RUNNER_TEMP/mora-automix-diagnostics-check"
       - name: Test native catalog pages
         run: |
-          swiftc apps/mobile/ios/App/App/NativeCatalogState.swift apps/mobile/test/native-catalog/main.swift -o "$RUNNER_TEMP/mora-catalog-check"
+          swiftc apps/mobile/ios/App/App/NativeSoundCloud.swift apps/mobile/ios/App/App/NativePublicCatalog.swift apps/mobile/ios/App/App/NativeYandexCatalog.swift apps/mobile/ios/App/App/NativeCatalogState.swift apps/mobile/test/native-catalog/main.swift -o "$RUNNER_TEMP/mora-catalog-check"
           "$RUNNER_TEMP/mora-catalog-check"
+      - name: Test native SoundCloud provider
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeSoundCloud.swift apps/mobile/test/native-soundcloud/main.swift -o "$RUNNER_TEMP/mora-soundcloud-check"
+          "$RUNNER_TEMP/mora-soundcloud-check"
+      - name: Test native lyrics
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeLyrics.swift apps/mobile/test/native-lyrics/main.swift -o "$RUNNER_TEMP/mora-lyrics-check"
+          "$RUNNER_TEMP/mora-lyrics-check"
+      - name: Test native Yandex catalog provider
+        run: |
+          swiftc apps/mobile/ios/App/App/NativeYandexCatalog.swift apps/mobile/test/native-yandex-catalog/main.swift -o "$RUNNER_TEMP/mora-yandex-catalog-check"
+          "$RUNNER_TEMP/mora-yandex-catalog-check"
+      - name: Test native public catalog provider
+        run: |
+          swiftc apps/mobile/ios/App/App/NativePublicCatalog.swift apps/mobile/test/native-public-catalog/main.swift -o "$RUNNER_TEMP/mora-public-catalog-check"
+          "$RUNNER_TEMP/mora-public-catalog-check"
       - name: Test native wave page and settings
         run: |
           swiftc apps/mobile/ios/App/App/NativeShellState.swift apps/mobile/ios/App/App/NativeWaveState.swift apps/mobile/test/native-wave-settings/main.swift -o "$RUNNER_TEMP/mora-wave-settings-check"
@@ -163,16 +180,6 @@ jobs:
           MORA_CARPLAY: ${{ inputs.carplay && '1' || '0' }}
           MORA_ICLOUD: ${{ inputs.icloud && '1' || '0' }}
         run: node apps/mobile/scripts/verify-ipa.cjs apps/mobile/MORA-unsigned.ipa "$GITHUB_SHA" "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: MORA-unsigned-ipa${{ inputs.carplay && '-carplay' || '' }}${{ inputs.icloud && '-icloud' || '' }}
-          path: |
-            apps/mobile/MORA-unsigned.ipa
-            apps/mobile/MORA-unsigned.ipa.sha256
-            apps/mobile/MORA-unsigned.ipa.verification.json
-            apps/mobile/RELEASE-NOTES.md
-          if-no-files-found: error
-          retention-days: 14
       - name: Compare compiled Rust MIR with the bundled analyzer
         run: node apps/mobile/scripts/check-native-rust-analysis.mjs
       - name: Test native media preparation
@@ -200,6 +207,16 @@ jobs:
           sleep 20
           xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mora-native-home.png"
           kill -0 "$LAUNCH_PID" || { cat "$RUNNER_TEMP/mora-ui-console.log"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MORA-unsigned-ipa${{ inputs.carplay && '-carplay' || '' }}${{ inputs.icloud && '-icloud' || '' }}
+          path: |
+            apps/mobile/MORA-unsigned.ipa
+            apps/mobile/MORA-unsigned.ipa.sha256
+            apps/mobile/MORA-unsigned.ipa.verification.json
+            apps/mobile/RELEASE-NOTES.md
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: MORA-native-ui-check

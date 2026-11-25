@@ -35,6 +35,7 @@ export type NativeMixSettings = Pick<NativeMixConfig, 'tone' | 'preDb' | 'playba
 export interface NativeMixState {
   /** Entry IDs whose sources were unavailable during this queue handoff. */
   dropped?: string[];
+  queueRevision?: string;
   queue?: NativeQueueEntry[];
   context?: import('./queue-types.ts').PlayContext | null;
   station?: NativeRadioConfig | null;
@@ -85,7 +86,7 @@ export interface NativeMix {
   /** Live speed/pitch, tone and volume; later tracks keep them. */
   settings(values: NativeMixSettings): Promise<void>;
   stop(): Promise<void>;
-  state(): Promise<NativeMixState>;
+  state(knownQueueRevision?: string): Promise<NativeMixState>;
   command(action: MediaSessionAction, seekTime?: number): Promise<NativeMixState>;
 }
 
@@ -105,6 +106,7 @@ export interface NativeQueueEntry {
 export interface NativeRadioConfig {
   kind: 'own' | 'yandex' | 'online';
   seed?: { title: string; artist: string };
+  anchor?: 'seed';
   yandexSessionId?: string;
 }
 export interface NativeRecoverySnapshot {

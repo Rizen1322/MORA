@@ -64,7 +64,7 @@ function redactUrl(url: string): string {
   return url.replace(/([?&](token|t|s|p|password|client_id|clientId)=)[^&]*/gi, '$1***');
 }
 
-export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logger?: boolean; startWorkers?: boolean } = {}): Promise<{ app: FastifyInstance; services: Services; close: () => Promise<void> }> {
+export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logger?: boolean; startWorkers?: boolean; deferVerifySources?: boolean } = {}): Promise<{ app: FastifyInstance; services: Services; close: () => Promise<void> }> {
   const cfg = loadConfig(overrides);
   ensureDirs(cfg);
   const db = openDb(cfg.dataDir);
@@ -178,7 +178,7 @@ export async function createApp(overrides: Partial<AppConfig> = {}, opts: { logg
     });
   }
 
-  await lib.verifySources();
+  if (!opts.deferVerifySources) await lib.verifySources();
   if (opts.startWorkers !== false) {analysis.start();stems.start();downloads.start();imports.start();}
   yandexReactions.start();
 

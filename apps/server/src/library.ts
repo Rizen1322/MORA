@@ -443,6 +443,10 @@ export class Library {
     return { ok, missing };
   }
 
+  dislikedTrackIds(): string[] {
+    return (q(this.db, 'SELECT track_id FROM reactions WHERE value = -1').all() as { track_id: string }[]).map((r) => r.track_id);
+  }
+
   async deleteTrack(id: string): Promise<void> {
     const t = this.get(id);
     if (!t) return;

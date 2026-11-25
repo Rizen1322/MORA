@@ -38,12 +38,38 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
   let restartPaused: boolean | undefined = fs.existsSync(restartFile) ? true : undefined;
   try { const value = JSON.parse(fs.readFileSync(restartFile, 'utf8')); if (typeof value.paused === 'boolean') restartPaused = value.paused; } catch { /* no intentional restart */ }
   if (!pending) { restartPaused = undefined; try { fs.unlinkSync(restartFile); } catch { /* absent */ } }
-  const checkpoint = () => { if (!pending) recovery.checkpoint(playback.recoverySnapshot()); };
+  let checkpointTask: Promise<void> | undefined;
+  let checkpointRequested = false;
+  let savedCheckpoint: ReturnType<DesktopPlayback['recoverySnapshot']> = null;
+  let savedDetails: string | null | undefined = pending ? null : undefined;
+  let closing = false;
+  const checkpoint = (final = false) => {
+    if (pending || (closing && !final)) return Promise.resolve();
+    checkpointRequested = true;
+    return checkpointTask ??= Promise.resolve().then(async () => {
+      try {
+        while (checkpointRequested) {
+          checkpointRequested = false;
+          const snapshot = playback.recoverySnapshot();
+          const details = snapshot ? JSON.stringify([snapshot.index, snapshot.position, snapshot.device, snapshot.station, snapshot.context]) : undefined;
+          if (savedDetails === details && savedCheckpoint?.queue === snapshot?.queue &&
+              savedCheckpoint?.loop === snapshot?.loop && savedCheckpoint?.settings === snapshot?.settings) continue;
+          await recovery.checkpointAsync(snapshot);
+          savedCheckpoint = snapshot;
+          savedDetails = details;
+        }
+      } catch (error) {
+        console.error('playback checkpoint', error);
+      } finally {
+        checkpointTask = undefined;
+      }
+    });
+  };
   const artworkFiles = new Set<string>();
   let artworkAbort: AbortController | undefined;
   const artwork = async (coverUrl: string) => {
     artworkAbort?.abort();
-    if (!/^\/api\/(?:covers\/[a-zA-Z0-9_.-]+|tracks\/[a-zA-Z0-9_-]+\/cover|providers\/subsonic\/cover\/[^/?#]+)$/.test(coverUrl)) return '';
+    if (!/^\/api\/(?:covers\/[a-zA-Z0-9_.-]+|tracks\/[a-zA-Z0-9_-]+\/cover)$/.test(coverUrl)) return '';
     const abort = new AbortController(); artworkAbort = abort;
     const timeout = setTimeout(() => abort.abort(), 8000);
     try {
@@ -81,8 +107,8 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
   });
   const playback = new DesktopPlayback(audio, { backend,
     ready: rate => { media.reset(); media.start(rate); }, track: track => media.track(track) });
-  const syncDislikes = () => playback.applyDislikes(services.lib.listDTO().filter(t => t.reaction < 0).map(t => t.id));
-  // Library events arrive per track during imports; one full scan per burst is enough.
+  const syncDislikes = () => playback.applyDislikes(services.lib.dislikedTrackIds());
+  // Library events arrive per track during imports; refresh once per burst.
   let reactionTimer: NodeJS.Timeout | undefined;
   const unsubscribeReactions = services.events.on(event => {
     if (event.type === 'library' && !reactionTimer) reactionTimer = setTimeout(() => { reactionTimer = undefined; void syncDislikes().catch(console.error); }, 100);
@@ -90,7 +116,7 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
   await syncDislikes();
   await playback.setDevice(settings.audio.outputDevice);
   await playback.settings(audioOutputSettings(settings.audio));
-  const timer = setInterval(() => { try { checkpoint(); } catch (e) { console.error('playback checkpoint', e); } }, 2000);
+  const timer = setInterval(() => { void checkpoint(); }, 2000);
   timer.unref();
 
   app.get('/api/desktop/audio-events', async (request, reply) => {
@@ -132,7 +158,8 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
     setStation: (station, context) => playback.setStation(station, context),
     startSource: (entry, config) => playback.startSource(entry, config),
     prepareQueue: (from, entries, previousId, loop, replaceFuture, manifest) => playback.prepareQueue(from, entries, previousId, loop, replaceFuture, manifest),
-    settings: values => playback.settings(values), stop: () => playback.stop(), state: () => playback.state(),
+    settings: values => playback.settings(values), stop: () => playback.stop(),
+    state: revision => playback.state(typeof revision === 'string' ? revision : undefined),
     command: (action, position) => playback.command(action, position),
   };
   app.post<{ Params: { operation: string }; Body: unknown }>('/api/desktop/native-mix/:operation', { bodyLimit: 32 * 1024 * 1024 }, async (request, reply) => {
@@ -145,7 +172,7 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
     catch (e) { return reply.code(502).send({ error: (e as Error).message || 'Ошибка воспроизведения' }); }
     if (operation === 'startSource' || operation === 'startStation') saveAudio(args[1]);
     if (operation === 'settings') saveAudio(args[0]);
-    if (operation !== 'state' && operation !== 'settings') checkpoint();
+    if (operation !== 'state' && operation !== 'settings') void checkpoint();
     if (operation === 'stop') media.reset();
     return result ?? null;
   });
@@ -155,7 +182,8 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
       await playback.restoreRecovery({ ...pending, device: settings.audio.outputDevice, settings: restoredSettings });
     }
     pending = null;
-    checkpoint();
+    // A declined recovery must be cleared on disk even if playback stayed idle.
+    await checkpoint();
     restartPaused = undefined;
     try { fs.unlinkSync(restartFile); } catch { /* absent on normal recovery */ }
   };
@@ -177,19 +205,23 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
       else if (audio.process) void audio.command({ cmd: 'pause', paused: true }).catch(console.error);
     },
     close: async (preserve = false) => {
+      closing = true;
       unsubscribeReactions(); clearTimeout(reactionTimer);
       clearInterval(timer);
       artworkAbort?.abort();
       for (const client of clients) client.end();
       if (preserve) {
-        checkpoint();
+        await checkpoint(true);
         if (playback.recoverySnapshot()) {
           fs.writeFileSync(`${restartFile}.tmp`, JSON.stringify({ paused: !playback.state().playing }));
           fs.renameSync(`${restartFile}.tmp`, restartFile);
         }
       }
       await Promise.allSettled([playback.stop(), media.stop()]);
-      if (!preserve) { recovery.clean(); try { fs.unlinkSync(restartFile); } catch { /* no pending restart */ } }
+      if (!preserve) {
+        await checkpointTask;
+        recovery.clean(); try { fs.unlinkSync(restartFile); } catch { /* no pending restart */ }
+      }
       for (const file of artworkFiles) { try { fs.unlinkSync(file); } catch { /* optional artwork */ } }
     },
   };

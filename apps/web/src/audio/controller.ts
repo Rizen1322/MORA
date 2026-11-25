@@ -384,6 +384,7 @@ export class PlayerController {
   private nativePolledAt = 0;
   private nativeManifestKey = '';
   private nativeQueueRevision = 0;
+  private nativeQueuePollRevision?: string;
   private nativeQueueEditRevision = 0;
   private nativeSkip = false;
   private nativeStation: NativeRadioConfig | null = null;
@@ -443,7 +444,7 @@ export class PlayerController {
     if (desktopNative) this.nativePendingEntry = entry.entryId;
     this.nativeAbort.abort();
     const abort = this.nativeAbort = new AbortController();
-    if (!desktopNative) { this.finishPlay(endReason); this.nativeAt = -1; }
+    if (!desktopNative) { this.finishPlay(endReason); this.nativeAt = -1; this.nativeQueuePollRevision = undefined; }
     this.set({ ...(!desktopNative || this.nativeAt < 0 ? { index, position: seconds, duration: this.track(entry.trackId)?.duration ?? 0 } : {}),
       status: startPaused ? 'paused' : 'loading',
       transition: null, nextPlan: null, nextPending: [], error: null });
@@ -644,7 +645,7 @@ export class PlayerController {
       // A hidden page (if iOS keeps it running) checks less often.
       if (polling || (document.hidden && performance.now() - this.nativePolledAt < 2000)) return;
       polling = true; this.nativePolledAt = performance.now();
-      void this.nativeMix.state().then(s => this.onNativeState(s), () => {}).finally(() => { polling = false; });
+      void this.nativeMix.state(this.nativeQueuePollRevision).then(s => this.onNativeState(s), () => {}).finally(() => { polling = false; });
     }, 500);
   }
 
@@ -652,7 +653,7 @@ export class PlayerController {
     if (desktop?.nativeMix && this.nativeStarting) return;
     if (this.nativeAt < 0) return;
     if (!s.active || s.failed) {
-      this.nativeRevision++; this.nativeAbort.abort(); this.nativeManifestKey = '';
+      this.nativeRevision++; this.nativeAbort.abort(); this.nativeManifestKey = ''; this.nativeQueuePollRevision = undefined;
       this.nativeAt = -1;
       this.nativeFiles.clear();
       this.nativeTracks = [];
@@ -665,6 +666,7 @@ export class PlayerController {
       this.nativeLibraryRefresh ??= this.refreshLibrary().catch(() => {}).finally(() => { this.nativeLibraryRefresh = null; });
     }
     if (s.station !== undefined) this.nativeStation = s.station;
+    if (s.queue) this.nativeQueuePollRevision = s.queueRevision;
     const previousEntryId = this.state.queue[this.state.index]?.entryId;
     let queue = s.queue && s.station ? s.queue.map(e => ({ ...e, origin: e.origin ?? 'wave' as const })) : this.state.queue;
     if (s.context && s.station) this.set({ context: s.context });

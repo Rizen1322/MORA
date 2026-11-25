@@ -11,6 +11,51 @@ use serde_json::{json, Value};
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
 
 type Points = Vec<[f64; 2]>;
+type Pcm = (Vec<f32>, Vec<f32>);
+
+pub struct PreparedCommand {
+    value: Value,
+    pcm: Option<Result<Pcm, String>>,
+}
+
+impl PreparedCommand {
+    pub fn new(value: Value) -> Self {
+        let pcm = (value["cmd"] == "feedFile").then(|| {
+            read_file_command(&value, file_chunk(&value)?, file_frames(&value)?)
+        });
+        Self { value, pcm }
+    }
+
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
+}
+
+fn file_chunk(value: &Value) -> Result<usize, String> {
+    value["chunk"]
+        .as_u64()
+        .filter(|n| *n <= 9_007_199_254_740_991 / CHUNK as u64)
+        .and_then(|n| usize::try_from(n).ok())
+        .ok_or_else(|| "Invalid chunk".into())
+}
+
+fn file_frames(value: &Value) -> Result<usize, String> {
+    value["frames"]
+        .as_u64()
+        .filter(|n| (1..=CHUNK as u64).contains(n))
+        .map(|n| n as usize)
+        .ok_or_else(|| "Invalid PCM length".into())
+}
+
+fn read_file_command(value: &Value, chunk: usize, frames: usize) -> Result<Pcm, String> {
+    crate::source::read_pcm_file(
+        value["path"].as_str().ok_or("Missing PCM path")?,
+        value["format"].as_str().ok_or("Missing PCM format")?,
+        chunk,
+        frames,
+    )
+}
+
 fn eval(p: &[[f64; 2]], t: f64) -> f64 {
     if p.is_empty() {
         return 1.;
@@ -1148,6 +1193,12 @@ impl Mixer {
         })
     }
     pub fn command(&mut self, v: &Value) -> Result<(), String> {
+        self.apply_command(v, None)
+    }
+    pub fn prepared_command(&mut self, command: PreparedCommand) -> Result<(), String> {
+        self.apply_command(&command.value, command.pcm)
+    }
+    fn apply_command(&mut self, v: &Value, pcm: Option<Result<Pcm, String>>) -> Result<(), String> {
         let cmd = v["cmd"].as_str().ok_or("Missing command")?;
         let deck = match v.get("deck") {
             Some(d) => {
@@ -1239,26 +1290,21 @@ impl Mixer {
                 d.requested.clear();
             }
             "feedFile" => {
-                let chunk = v["chunk"]
-                    .as_u64()
-                    .filter(|n| *n <= 9_007_199_254_740_991 / CHUNK as u64)
-                    .ok_or("Invalid chunk")? as usize;
+                let chunk = file_chunk(v)?;
                 let d = &mut m.decks[deck];
                 if d.token.as_deref() != Some(token) {
                     return Ok(());
                 }
                 let expected =
                     (d.store.total - (chunk as i64 * CHUNK as i64)).clamp(0, CHUNK as i64) as usize;
-                let frames = v["frames"].as_u64().ok_or("Invalid PCM length")? as usize;
-                if frames != expected || frames == 0 {
+                let frames = file_frames(v)?;
+                if frames != expected {
                     return Err("Invalid PCM length".into());
                 }
-                let (l, r) = crate::source::read_pcm_file(
-                    v["path"].as_str().ok_or("Missing PCM path")?,
-                    v["format"].as_str().ok_or("Missing PCM format")?,
-                    chunk,
-                    frames,
-                )?;
+                let (l, r) = match pcm {
+                    Some(pcm) => pcm,
+                    None => read_file_command(v, chunk, frames),
+                }?;
                 d.store.chunks.insert(chunk, (l, r));
                 d.requested.remove(&chunk);
             }
@@ -1824,6 +1870,22 @@ mod tests {
         m.command(&feed).unwrap();
         assert_eq!(m.musical.borrow().decks[0].store.chunks[&0], (vec![0.25], vec![-0.25]));
         std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn realtime_file_feed_installs_preloaded_data_only_for_the_current_deck() {
+        let path = std::env::temp_dir().join(format!("mora-mixer-preloaded-{}", std::process::id()));
+        std::fs::write(&path, [0.25f32.to_le_bytes(), (-0.25f32).to_le_bytes()].concat()).unwrap();
+        let mut m = Mixer::new(48000).unwrap();
+        m.command(&json!({"cmd":"load","deck":0,"token":"current","totalFrames":1})).unwrap();
+        let data = json!({"cmd":"feedFile","deck":0,"token":"current","chunk":0,"path":path,"format":"f32le","frames":1});
+        let feed = PreparedCommand::new(data.clone());
+        let stale = PreparedCommand::new(data);
+        std::fs::remove_file(path).unwrap();
+        m.prepared_command(feed).unwrap();
+        assert_eq!(m.musical.borrow().decks[0].store.chunks[&0], (vec![0.25], vec![-0.25]));
+        m.command(&json!({"cmd":"load","deck":0,"token":"new","totalFrames":1})).unwrap();
+        m.prepared_command(stale).unwrap();
+        assert!(m.musical.borrow().decks[0].store.chunks.is_empty());
     }
     #[test]
     fn malformed_loop_cannot_overflow() {

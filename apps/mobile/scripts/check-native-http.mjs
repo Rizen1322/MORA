@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, rm, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -16,9 +16,23 @@ wave.write('RIFF', 0); wave.writeUInt32LE(wave.length - 8, 4); wave.write('WAVEf
 wave.writeUInt16LE(1, 20); wave.writeUInt16LE(1, 22); wave.writeUInt32LE(22050, 24); wave.writeUInt32LE(44100, 28);
 wave.writeUInt16LE(2, 32); wave.writeUInt16LE(16, 34); wave.write('data', 36); wave.writeUInt32LE(22050, 40);
 for (let i = 0; i < 11025; i++) wave.writeInt16LE(Math.round(Math.sin(i * .05) * 4000), 44 + i * 2);
+const progressiveWave = Buffer.alloc(44 + 6 * 48000 * 2);
+wave.copy(progressiveWave, 0, 0, 44);
+progressiveWave.writeUInt32LE(progressiveWave.length - 8, 4); progressiveWave.writeUInt32LE(progressiveWave.length - 44, 40);
+progressiveWave.writeUInt32LE(48000, 24); progressiveWave.writeUInt32LE(96000, 28);
+for (let i = 0; i < 6 * 48000; i++) progressiveWave.writeInt16LE(Math.round(Math.sin(i * .05) * 4000), 44 + i * 2);
+let slowSegmentReleased = false;
+let waitingSegment, failingSegment, siblingCancelled = false;
+let progressiveRelease, releasedProgressively = false;
+function failHlsSegment() {
+  if (waitingSegment && failingSegment) { failingSegment.writeHead(404); failingSegment.end('missing'); }
+}
 let coverAccepted = false, coverReleased = false;
 let imagesInFlight = 0;
 const server = createServer((req, res) => {
+  // Avoid a macOS runner race reusing a loopback socket that the fixture just closed.
+  res.setHeader('Connection', 'close');
+  console.log(`fixture request ${req.method} ${req.url} header=${req.headers['x-mora-test'] ?? '-'}`);
   if (req.url === '/redirect') {
     assert.equal(req.headers.authorization, 'Bearer fixture');
     res.writeHead(302, { Location: `http://localhost:${server.address().port}/body` }); res.end();
@@ -26,6 +40,37 @@ const server = createServer((req, res) => {
     assert.equal(req.headers.authorization, undefined);
     res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': payload.length }); res.end(payload);
   } else if (req.url === '/list.m3u8') { assert.equal(req.headers['x-mora-test'], 'required'); res.end('#EXTM3U\n#EXTINF:1,\nfirst.aac\n#EXTINF:1,\nsecond.aac\n#EXT-X-ENDLIST\n'); }
+  else if (req.url === '/list-window.m3u8') {
+    res.end('#EXTM3U\n' + Array.from({ length: 12 }, (_, i) => `#EXTINF:1,\nwindow-${i}.aac\n`).join('') + '#EXT-X-ENDLIST\n');
+  }
+  else if (req.url.startsWith('/window-')) {
+    const i = Number(/^\/window-(\d+)\.aac$/.exec(req.url)[1]);
+    assert.ok(slowSegmentReleased || i < 6, 'A blocked segment allowed the entire HLS playlist to start');
+    if (i === 0) setTimeout(() => { slowSegmentReleased = true; res.end(Buffer.from([i])); }, 400);
+    else res.end(Buffer.from([i]));
+  }
+  else if (req.url === '/list-cancel.m3u8') { res.end('#EXTM3U\n#EXTINF:1,\nwait.aac\n#EXTINF:1,\nfail.aac\n#EXT-X-ENDLIST\n'); }
+  else if (req.url === '/wait.aac') {
+    waitingSegment = res;
+    const timer = setTimeout(() => res.end(Buffer.from([0])), 4000);
+    res.on('close', () => { clearTimeout(timer); siblingCancelled = !res.writableEnded; });
+    failHlsSegment();
+  }
+  else if (req.url === '/fail.aac') { failingSegment = res; failHlsSegment(); }
+  else if (req.url === '/wave-progressive') {
+    const split = 44 + 5 * 48000 * 2;
+    res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': progressiveWave.length });
+    res.write(progressiveWave.subarray(0, 5));
+    const rest = setTimeout(() => res.write(progressiveWave.subarray(5, split)), 150);
+    const timeout = setTimeout(() => { progressiveRelease = undefined; res.end(progressiveWave.subarray(split)); }, 6000);
+    res.on('close', () => { clearTimeout(rest); clearTimeout(timeout); });
+    progressiveRelease = () => { res.end(progressiveWave.subarray(split)); progressiveRelease = undefined; };
+  }
+  else if (req.url === '/progressive-release') {
+    releasedProgressively = Boolean(progressiveRelease);
+    progressiveRelease?.();
+    res.end(releasedProgressively ? 'early' : 'late');
+  }
   else if (req.url === '/wave') { res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': wave.length }); res.end(wave); }
   else if (req.url === '/slow-cover') {
     // Old code waits for this optional resource before accepting ready PCM.
@@ -79,12 +124,22 @@ try {
   const files = join(folder, 'files'); await mkdir(files);
   const result = await new Promise((resolve, reject) => {
     const hash = createHash('md5').update('XGRlBW9FXlekgbPrRHuSiAtest/audio.mp3salt123').digest('hex');
+    // The macOS simulator JIT has trapped with SIGILL on some CI hosts; the interpreter keeps the fixture deterministic.
     const child = spawn(binary, [`http://127.0.0.1:${server.address().port}`, files,
-      `https://edge.storage.yandex.net/get-mp3/${hash}/1a/test/audio.mp3`, String(frames)], { stdio: 'inherit' });
+      `https://edge.storage.yandex.net/get-mp3/${hash}/1a/test/audio.mp3`, String(frames)],
+      { stdio: 'inherit', env: { ...process.env, JSC_useJIT: '0' } });
     child.on('error', error => reject(new Error('Native HTTP executable could not start', { cause: error })));
     child.on('close', (code, signal) => resolve({ code, signal }));
   });
+  if (result.code !== 0) {
+    console.log(`Native HTTP crash: exit=${result.code}, signal=${result.signal}; rerunning under lldb for a backtrace`);
+    spawnSync('lldb', ['-batch', '-o', 'run', '-o', 'thread backtrace all', '--', binary, `http://127.0.0.1:${server.address().port}`, files,
+      `https://edge.storage.yandex.net/get-mp3/${createHash('md5').update('XGRlBW9FXlekgbPrRHuSiAtest/audio.mp3salt123').digest('hex')}/1a/test/audio.mp3`, String(frames)],
+      { stdio: 'inherit', env: { ...process.env, JSC_useJIT: '0' } });
+  }
   assert.equal(result.code, 0, `Native HTTP executable failed: exit=${result.code}, signal=${result.signal}`);
+  assert.equal(siblingCancelled, true, 'A failed HLS segment let its sibling finish');
+  assert.equal(releasedProgressively, true, 'A fragmented audio header prevented streaming before EOF');
   assert.equal(coverAccepted, true, 'The artwork regression must accept its audio fixture');
   const actual = JSON.parse(await readFile(join(folder, 'analysis-actual.json'), 'utf8'));
   function compare(a, b, path = 'analysis') {

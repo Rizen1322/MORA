@@ -8,6 +8,7 @@ final class NativeLibraryStore {
     struct Snapshot {
         let tracks: [NativeTrack], library: [NativeTrack], playlists: [NativePlaylist]
         let entries: [String: [Entry]], history: [Play]
+        var remoteIndex: [String: String] = [:]
     }
     struct Failure: LocalizedError {
         let message: String
@@ -116,9 +117,18 @@ final class NativeLibraryStore {
                 return Play(id: id, trackId: track, startedAt: (row["started_at"] as? NSNumber)?.doubleValue ?? 0,
                     playedMs: (row["played_ms"] as? NSNumber)?.doubleValue ?? 0, reason: row["end_reason"] as? String)
             }
+            var remoteIndex: [String: String] = [:]
+            let sourceCols = Set(try rows("PRAGMA table_info(track_sources)").compactMap { $0["name"] as? String })
+            if sourceCols.contains("external_id") {
+                for row in try rows("SELECT provider,external_id,track_id FROM track_sources WHERE kind='remote' AND external_id IS NOT NULL") {
+                    if let p = row["provider"] as? String, let ext = row["external_id"] as? String, let tid = row["track_id"] as? String {
+                        remoteIndex["\(p):\(ext)"] = tid
+                    }
+                }
+            }
             _ = try rows("COMMIT")
             version = current
-            return Snapshot(tracks: all, library: saved, playlists: playlists, entries: entries, history: history)
+            return Snapshot(tracks: all, library: saved, playlists: playlists, entries: entries, history: history, remoteIndex: remoteIndex)
         } catch {
             _ = try? rows("ROLLBACK")
             throw error
@@ -158,7 +168,7 @@ extension NativeLibraryStore.Snapshot {
                 row["cover"] = p.cover.map { $0 as Any } ?? NSNull()
                 return row
             }
-            return ["title": "Плейлисты", "sections": [
+            return ["title": "Плейлисты", "style": "catalog", "sections": [
                 ["rows": [button("Создать плейлист", "createPlaylist", [:], ["symbol": "plus", "style": "primary", "prompt": ["title": "Новый плейлист", "placeholder": "Название"]]), link("Умные плейлисты", "/smart-playlists", "sparkles")]],
                 ["title": "Собрано вами", "footer": rows.isEmpty ? "Добавляйте музыку в плейлист через меню трека." : "", "rows": rows]]]
         }
@@ -177,7 +187,7 @@ extension NativeLibraryStore.Snapshot {
                 row["cover"] = first.cover.map { $0 as Any } ?? NSNull()
                 return row
             }
-            return ["title": "Альбомы", "search": "Альбом или исполнитель",
+            return ["title": "Альбомы", "style": "catalog", "search": "Альбом или исполнитель",
                     "sections": [["rows": rows.isEmpty ? [text("У треков нет сведений об альбоме.")] : rows]]]
         }
         if path == "/library/artists" {
@@ -192,7 +202,7 @@ extension NativeLibraryStore.Snapshot {
                 row["cover"] = first.cover.map { $0 as Any } ?? NSNull()
                 return row
             }
-            return ["title": "Исполнители", "search": "Исполнитель", "sections": [["rows": rows]]]
+            return ["title": "Исполнители", "style": "catalog", "search": "Исполнитель", "sections": [["rows": rows]]]
         }
         let byId = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
         if path == "/history" {
@@ -226,13 +236,17 @@ extension NativeLibraryStore.Snapshot {
             let play = ctx.merging(["ids": ids]) { _, value in value }
             let pending = list.contains { $0.reaction == 0 }
             let year = list.first?.year.map { " · \($0)" } ?? ""
-            let header: [Row] = [
-                button("Слушать", "playAll", play, ["symbol": "play.fill", "style": "primary", "disabled": ids.isEmpty]),
-                button("Вперемешку", "playAll", play.merging(["shuffle": true]) { _, value in value }, ["symbol": "shuffle", "disabled": ids.isEmpty]),
+            let cover = (list.first { $0.cover != nil } ?? list[0]).cover
+            var hero: Row = ["kind": "hero", "style": "album", "title": album,
+                             "subtitle": "\(artist)\(year) · \(NativeText.tracks(ids.count)) · \(total(list))",
+                             "play": act("playAll", play),
+                             "shuffle": act("playAll", play.merging(["shuffle": true]) { _, value in value })]
+            if let cover { hero["cover"] = cover }
+            let menu: [Row] = [
                 button(pending ? "Лайкнуть все" : "Всё в любимом", "likeAll", ["ids": ids], ["symbol": "heart", "disabled": !pending]),
             ]
-            return ["title": album, "search": "Найти в альбоме", "sections": [
-                ["footer": "\(artist)\(year) · \(NativeText.tracks(ids.count)) · \(total(list))", "rows": header],
+            return ["title": album, "style": "catalog", "search": "Найти в альбоме", "menu": menu, "sections": [
+                ["rows": [hero]],
                 ["play": ctx, "rows": list.map { track -> Row in ["kind": "track", "id": track.id] }]]]
         }
         if parts.first == "artist", parts.count == 2 {
@@ -257,7 +271,7 @@ extension NativeLibraryStore.Snapshot {
                 button("Радио по исполнителю", "artistRadio", ["artist": name], ["symbol": "dot.radiowaves.left.and.right"]),
                 link("Найти в каталоге Яндекса", "/search?q=\(encode(name))&type=artist", "magnifyingglass"),
             ]
-            return ["title": name, "search": "Найти у исполнителя", "sections": [
+            return ["title": name, "style": "catalog", "search": "Найти у исполнителя", "sections": [
                 ["rows": [hero]],
                 ["rows": controls],
                 ["play": ctx, "rows": list.map { track -> Row in ["kind": "track", "id": track.id] }]]]
@@ -297,23 +311,30 @@ extension NativeLibraryStore.Snapshot {
         let ids = list.map(\.trackId), ctx: Row = ["type": "playlist", "id": id, "label": playlist.name]
         let play = ctx.merging(["ids": ids]) { _, value in value }
         let pending = list.contains { byId[$0.trackId]?.reaction == 0 }
-        let header: [Row] = [
-            button("Слушать", "playAll", play, ["symbol": "play.fill", "style": "primary", "disabled": ids.isEmpty]),
-            button("Вперемешку", "playAll", play.merging(["shuffle": true]) { _, value in value }, ["symbol": "shuffle", "disabled": ids.isEmpty]),
-            button(pending ? "Лайкнуть все" : "Всё в любимом", "likeAll", ["ids": ids], ["symbol": "heart", "disabled": !pending])]
-        let controls: [Row] = [
-            button("Переименовать", "renamePlaylist", ["id": id], ["symbol": "pencil", "prompt": ["title": "Переименовать плейлист", "initial": playlist.name, "placeholder": "Название"]]),
-            ["kind": "choice", "title": "Порядок", "value": sort, "act": act("playlistSort", ["id": id]), "options": [["", "Как в плейлисте"], ["title", "По названию"], ["artist", "По исполнителю"], ["duration", "По длительности"]]],
-            button("Скачать на iPhone", "downloadTracks", ["ids": ids], ["symbol": "arrow.down.circle"]),
-            button("Экспорт", "exportPlaylist", ["id": id], ["symbol": "square.and.arrow.up"]),
-            link("Собрать микс", "/playlist/\(id)/mix", "wand.and.stars")]
+        let cover = playlist.cover ?? list.lazy.compactMap { byId[$0.trackId]?.cover }.first
+        var hero: Row = ["kind": "hero", "style": "album", "title": playlist.name,
+                         "subtitle": "\(NativeText.tracks(ids.count)) · \(time(ids.reduce(0) { $0 + (byId[$1]?.duration ?? 0) }))"]
+        if !ids.isEmpty {
+            hero["play"] = act("playAll", play)
+            hero["shuffle"] = act("playAll", play.merging(["shuffle": true]) { _, value in value })
+        }
+        if let cover { hero["cover"] = cover }
+        var menu: [Row] = []
+        if !ids.isEmpty {
+            menu.append(button(pending ? "Лайкнуть все" : "Всё в любимом", "likeAll", ["ids": ids], ["symbol": "heart", "disabled": !pending]))
+            menu.append(button("Скачать на iPhone", "downloadTracks", ["ids": ids], ["symbol": "arrow.down.circle"]))
+            menu.append(button("Экспорт", "exportPlaylist", ["id": id], ["symbol": "square.and.arrow.up"]))
+        }
+        menu.append(button("Переименовать", "renamePlaylist", ["id": id], ["symbol": "pencil", "prompt": ["title": "Переименовать плейлист", "initial": playlist.name, "placeholder": "Название"]]))
+        menu.append(["kind": "choice", "title": "Порядок", "value": sort, "act": act("playlistSort", ["id": id]), "options": [["", "Как в плейлисте"], ["title", "По названию"], ["artist", "По исполнителю"], ["duration", "По длительности"]]])
+        menu.append(link("Собрать микс", "/playlist/\(id)/mix", "wand.and.stars"))
+        menu.append(button("Удалить плейлист", "deletePlaylist", ["id": id], ["symbol": "trash", "style": "destructive", "confirm": ["title": "Удалить плейлист?", "text": "Плейлист «\(playlist.name)» будет удалён. Треки останутся в медиатеке.", "button": "Удалить"]]))
         var section: Row = ["play": ctx, "rows": list.map { entry -> Row in
             ["kind": "track", "id": entry.trackId, "remove": ["title": "Убрать из плейлиста", "symbol": "minus.circle", "act": act("removeFromPlaylist", ["id": id, "entry": entry.id])]]
         }]
         if sort.isEmpty { section["reorder"] = act("reorderPlaylist", ["id": id, "entries": list.map(\.id)]) }
         if list.isEmpty { section = ["title": "У каждой истории есть первый трек", "rows": [text("Добавьте музыку через меню трека."), link("Выбрать из медиатеки", "/library", "books.vertical")]] }
-        return ["title": playlist.name, "search": ids.isEmpty ? "" : "Найти в плейлисте", "sections": [
-            ["footer": "\(NativeText.tracks(ids.count)), \(time(ids.reduce(0) { $0 + (byId[$1]?.duration ?? 0) }))", "rows": header],
-            ["rows": controls], ["rows": [button("Удалить плейлист", "deletePlaylist", ["id": id], ["style": "destructive", "confirm": ["title": "Удалить плейлист?", "text": "Плейлист «\(playlist.name)» будет удалён. Треки останутся в медиатеке.", "button": "Удалить"]])]], section]]
+        return ["title": playlist.name, "style": "catalog", "search": ids.isEmpty ? "" : "Найти в плейлисте", "menu": menu, "sections": [
+            ["rows": [hero]], section]]
     }
 }

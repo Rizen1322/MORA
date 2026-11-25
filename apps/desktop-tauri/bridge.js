@@ -70,7 +70,7 @@
     nativeMix: {
       startStation: native('startStation'), setStation: native('setStation'), startSource: native('startSource'),
       prepareQueue: (from, entries, previousId, loop, _signal, replaceFuture, manifest) => native('prepareQueue')(from, entries, previousId, loop, replaceFuture, manifest),
-      settings: native('settings'), stop: native('stop'), state: native('state'), command: native('command'),
+      settings: native('settings'), stop: native('stop'), state: revision => revision ? native('state')(revision) : native('state')(), command: native('command'),
     },
     audioStart: device => invoke('/api/desktop/audio-start', { device }),
     audioCommand: command => invoke('/api/desktop/audio-command', command), audioStop: () => invoke('/api/desktop/audio-stop', {}),

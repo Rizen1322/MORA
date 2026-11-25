@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { ANALYZER_VERSION, DEFAULT_AUTOMIX_SETTINGS, finalistSpans, renderTransitionOffline, type PlannerTrack, type StereoPcm, type TrackAnalysis, type TransitionPlan } from '../packages/core/src/index.ts';
+import { ANALYZER_VERSION, DEFAULT_AUTOMIX_SETTINGS, finalistSpans, renderTransitionOffline, type OfflineRender, type PlannerTrack, type StereoPcm, type TrackAnalysis, type TransitionPlan } from '../packages/core/src/index.ts';
 import { CREATIVE_TRANSITION_STYLES, planCreativeTransition } from '../packages/core/src/plan/creative.ts';
 import { planForSourceWindows } from './review-source-window.ts';
 import { inspectAudio } from './audition-audio-check.ts';
@@ -20,20 +20,21 @@ const measuredLabels:Record<string,string>={bpmA:'Темп A, BPM',bpmB:'Тем�
 function measuredSummary(m:Record<string,unknown>) {return Object.entries(measuredLabels).flatMap(([key,label])=>typeof m?.[key]==='number'&&Number.isFinite(m[key])?[`${label}: ${(m[key] as number).toFixed(2)}`]:[]).join('; ');}
 const name = (t:Track) => `${t.artist} — ${t.title}${t.title !== t.assetTitle || t.artist !== t.assetArtist ? ` (recording: ${t.assetArtist} — ${t.assetTitle})` : ''}`;
 function arg(key:string, fallback:string):string { const i=process.argv.indexOf(key); if(i<0)return fallback; const v=process.argv[i+1]; if(!v || v.startsWith('--'))throw Error(`Missing ${key}`); return v; }
-export function loadTracks(dir:string):Track[] {
+export function loadTracks(dir:string, extraFiles:ReadonlyMap<string,string>=new Map()):Track[] {
   const db=new DatabaseSync(path.join(dir,'automix.sqlite'),{readOnly:true});
   try {
     const rows=db.prepare(`SELECT t.id,t.title,t.artist, a.title AS assetTitle,a.artist AS assetArtist,a.content_hash AS hash,a.provider,a.duration,a.album,a.album_artist AS albumArtist,a.track_no AS trackNo,a.disc_no AS discNo,n.data,
       (SELECT path FROM track_sources WHERE track_id=a.id AND path IS NOT NULL LIMIT 1) AS sourcePath
       FROM tracks t LEFT JOIN track_bindings b ON b.track_id=t.id JOIN tracks a ON a.id=COALESCE(b.asset_id,t.id)
       JOIN analysis n ON n.content_hash=a.content_hash AND n.version=? AND n.status='done'
-      WHERE t.saved=1 AND t.status='ok' AND a.status='ok' ORDER BY t.id`).all(ANALYZER_VERSION) as unknown as (Omit<Track,'analysis'|'file'> & {provider:string;data:string;sourcePath:string|null})[];
+      WHERE (t.saved=1 OR a.content_hash IN (SELECT value FROM json_each(?)))
+      AND t.status='ok' AND a.status='ok' ORDER BY t.id`).all(ANALYZER_VERSION, JSON.stringify([...extraFiles.keys()])) as unknown as (Omit<Track,'analysis'|'file'> & {provider:string;data:string;sourcePath:string|null})[];
     const caches=new Map<string,Map<string,string>>();
     return rows.flatMap(r=>{
       if(!['local','yandex','youtube','soundcloud'].includes(r.provider)||!/^[a-f0-9]{64}$/.test(r.hash))return [];
-      let file:string|undefined;
-      if(r.provider==='local')file=r.sourcePath??undefined;
-      else {
+      let file=extraFiles.get(r.hash);
+      if(!file && r.provider==='local')file=r.sourcePath??undefined;
+      else if(!file) {
         if(!caches.has(r.provider)){const folder=path.join(dir,'remote',r.provider);caches.set(r.provider,new Map(fs.existsSync(folder)?fs.readdirSync(folder).map(f=>[path.parse(f).name,path.join(folder,f)]):[]));}
         file=caches.get(r.provider)!.get(r.hash);
       }
@@ -44,26 +45,36 @@ export function loadTracks(dir:string):Track[] {
 }
 export function pt(t:Track):PlannerTrack {return {id:t.id,duration:t.duration,mixingAllowed:true,analysis:t.analysis,album:t.album,albumArtist:t.albumArtist||t.assetArtist,trackNo:t.trackNo,discNo:t.discNo};}
 export function verified(t:Track):boolean {return crypto.createHash('sha256').update(fs.readFileSync(t.file)).digest('hex')===t.hash;}
-function decode(file:string,start:number,end:number,ffmpeg:string):StereoPcm {
+export function decode(file:string,start:number,end:number,ffmpeg:string,sampleRate=SR):StereoPcm {
   if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start)throw Error('Invalid source window');
-  const buf=execFileSync(ffmpeg,['-v','error','-ss',String(start),'-i',file,'-t',String(end-start),'-ac','2','-ar',String(SR),'-f','f32le','pipe:1'],{maxBuffer:256*1024*1024,windowsHide:true,timeout:120_000});
+  const buf=execFileSync(ffmpeg,['-v','error','-ss',String(start),'-i',file,'-t',String(end-start),'-ac','2','-ar',String(sampleRate),'-f','f32le','pipe:1'],{maxBuffer:256*1024*1024,windowsHide:true,timeout:120_000});
   if(!buf.length||buf.length%8)throw Error('Incomplete stereo PCM'); const n=buf.length/8,L=new Float32Array(n),R=new Float32Array(n);
-  for(let i=0;i<n;i++){L[i]=buf.readFloatLE(i*8);R[i]=buf.readFloatLE(i*8+4);}return {L,R,sampleRate:SR};
+  for(let i=0;i<n;i++){L[i]=buf.readFloatLE(i*8);R[i]=buf.readFloatLE(i*8+4);}return {L,R,sampleRate};
 }
 export function wav(L:Float32Array,R:Float32Array):Buffer {
   const out=Buffer.alloc(44+L.length*4);out.write('RIFF',0);out.writeUInt32LE(out.length-8,4);out.write('WAVEfmt ',8);out.writeUInt32LE(16,16);out.writeUInt16LE(1,20);out.writeUInt16LE(2,22);out.writeUInt32LE(SR,24);out.writeUInt32LE(SR*4,28);out.writeUInt16LE(4,32);out.writeUInt16LE(16,34);out.write('data',36);out.writeUInt32LE(L.length*4,40);
   for(let i=0;i<L.length;i++){out.writeInt16LE(Math.max(-32768,Math.min(32767,Math.round(L[i]*32767))),44+i*4);out.writeInt16LE(Math.max(-32768,Math.min(32767,Math.round(R[i]*32767))),46+i*4);}return out;
 }
-export function render(c:Candidate,ffmpeg:string,solo?:'A'|'B') {
+export function prepareAudition(c:Candidate,ffmpeg:string,solo?:'A'|'B', prepareA?:(pcm:StereoPcm,offset:number)=>void, preSeconds=PRE) {
   const plan=c.plan;if(plan.vocalA||plan.vocalB||plan.voiceEcho||plan.automation.some(l=>l.lane==='voiceEcho'))throw Error('Plan requires separated vocals');
   if(!Number.isFinite(plan.gainA)||!Number.isFinite(plan.gainB))throw Error('Invalid normalization gain');
-  const spans=finalistSpans([plan]);const startA=Math.floor(Math.max(0,Math.min(spans.a[0],plan.aExit-PRE,plan.loopA ? plan.loopA.start-plan.loopA.crossfade-.05 : Infinity,plan.tapeStopA?.start??Infinity))*SR)/SR;const startB=Math.floor(Math.max(0,Math.min(spans.b[0],plan.bEntry))*SR)/SR;
+  const spans=finalistSpans([plan]);const startA=Math.floor(Math.max(0,Math.min(spans.a[0],plan.aExit-preSeconds,plan.loopA ? plan.loopA.start-plan.loopA.crossfade-.05 : Infinity,plan.tapeStopA?.start??Infinity))*SR)/SR;const startB=Math.floor(Math.max(0,Math.min(spans.b[0],plan.bEntry))*SR)/SR;
   const endA=Math.max(spans.a[1],plan.loopA?.end??0,plan.tapeStopA?.end??0);
   const a=decode(c.a.file,startA,Math.min(c.a.duration,endA+.05),ffmpeg),b=decode(c.b.file,startB,Math.min(c.b.duration,spans.b[1]+POST),ffmpeg);
+  prepareA?.(a,startA);
   if(solo==='A'){b.L.fill(0);b.R.fill(0)}else if(solo==='B'){a.L.fill(0);a.R.fill(0)}
-  const r=renderTransitionOffline(a,b,planForSourceWindows(plan,startA,startB),PRE,POST);const check=inspectAudio(r.L,r.R,SR);
+  return { a, b, shifted: planForSourceWindows(plan,startA,startB), preSeconds, postSeconds: POST };
+}
+
+export function checkAudition(plan:TransitionPlan,r:OfflineRender,solo?:'A'|'B') {
+  const check=inspectAudio(r.L,r.R,SR);
   if(!solo && (r.transitionStartFrame<0||!r.events.some(e=>e.type==='transitionEnd'&&!e.forced)||r.events.some(e=>e.type==='fallback'||e.type==='transitionAborted')||r.metrics.underruns||!Number.isFinite(r.metrics.maxLimiterReductionDb)||r.metrics.maxLimiterReductionDb>4||!check.finite||check.peak>=1||check.longestSilence>=1))throw Error(`Render quality check failed: ${JSON.stringify({...r.metrics,...check})}`);
   return {plan,r,check};
+}
+
+export function render(c:Candidate,ffmpeg:string,solo?:'A'|'B', prepareA?:(pcm:StereoPcm,offset:number)=>void, preSeconds=PRE) {
+  const {a,b,shifted,postSeconds}=prepareAudition(c,ffmpeg,solo,prepareA,preSeconds);
+  return checkAudition(c.plan,renderTransitionOffline(a,b,shifted,preSeconds,postSeconds),solo);
 }
 function main(){
   const dir=path.resolve(arg('--data-dir', 'C:/Users/aivaz/AppData/Local/MORA/data'));

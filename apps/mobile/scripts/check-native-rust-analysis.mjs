@@ -49,6 +49,7 @@ try {
     run('sh', [resolve(root, 'apps/mobile/scripts/build-rust-ios.sh'), 'macosx']);
     const binary = join(folder, 'check');
     run('xcrun', ['swiftc', '-O', resolve(root, 'apps/mobile/ios/App/App/NativeRustAnalysis.swift'),
+      resolve(root, 'apps/mobile/ios/App/App/NativePCMDecoder.swift'),
       resolve(root, 'apps/mobile/test/native-rust-analysis/main.swift'),
       resolve(root, 'packages/audio-rust/target/ios/macosx/libmora_audio.a'), '-o', binary]);
     start = performance.now();
@@ -74,7 +75,7 @@ try {
     } else if (a !== b) rows.push({ path, actual: a, expected: b });
   })(actual, expected, 'analysis');
   assert.equal(rows.length, 0, JSON.stringify(rows.slice(0, 8)));
-  console.log(`Compiled MIR agrees with the bundled analyzer: ${seconds} s audio, script ${Math.round(scriptMs)} ms (Node JIT), compiled ${Math.round(compiledMs)} ms`);
+  console.log(`Compiled MIR agrees with the bundled analyzer: ${seconds} s audio, script ${Math.round(scriptMs)} ms (Node JIT), native check ${Math.round(compiledMs)} ms wall time`);
 } finally {
   await rm(folder, { recursive: true, force: true });
 }

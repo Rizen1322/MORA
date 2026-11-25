@@ -105,6 +105,12 @@ export class YandexProvider implements Provider {
     return { kind: 'yandex', externalId: String(src.external_id), token, apiBase: this.base };
   }
 
+  /** Mobile native catalog only; never exposed through /api/settings or /api/providers. */
+  nativeCredentials(): { token: string; apiBase: string } | null {
+    const token = this.token();
+    return token ? { token, apiBase: this.base } : null;
+  }
+
   private reactionKey(token = this.token()): string | null {
     return token ? createHash('sha256').update(token).digest('hex') : null;
   }

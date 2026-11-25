@@ -1,6 +1,21 @@
 import Foundation
 
 enum NativeMixTimeline {
+    static let sourceWindowSize = 8
+
+    static func queueWindow(count: Int, current: Int, repeats: Bool, offset: Int = 0) -> (indices: [Int], endOffset: Int, hasMore: Bool) {
+        guard count > 0, (0..<count).contains(current), offset >= 0 else { return ([], 0, false) }
+        let ahead = repeats ? count - 1 : count - current - 1
+        let start = min(offset, ahead)
+        let end = start + min(sourceWindowSize, ahead - start)
+        return ((start..<end).map { (current + 1 + $0) % count }, end, end < ahead)
+    }
+
+    static func restoredOrder(_ saved: [String], available: [String]) -> [String] {
+        var unseen = Set(available)
+        return (saved + available).filter { unseen.remove($0) != nil }
+    }
+
     /// dataPlayedBack includes route latency; those in-flight blocks cannot refill the player yet.
     static func outputBufferCount(sampleRate: Double, frames: Int, latency: Double) -> Int {
         guard [44100.0, 48000.0].contains(sampleRate), frames > 0 else { return 5 }
@@ -41,7 +56,7 @@ enum NativeMixTimeline {
     /// Duration-only equal-power reserve; never waits for JavaScriptCore/MIR.
     static func reserve(before: [String: Any], next: [String: Any], frames: Int, settings: [String: Any]) -> [String: Any]? {
         guard settings["enabled"] as? Bool != false, before["mixingAllowed"] as? Bool == true,
-              next["mixingAllowed"] as? Bool == true, let a = before["duration"] as? Double, a.isFinite, a >= 15, frames > 0 else { return nil }
+              next["mixingAllowed"] as? Bool == true, let a = before["duration"] as? Double, a.isFinite, a > 0, frames > 0 else { return nil }
         func limit(_ name: String, _ fallback: Double, _ maximum: Double) -> Double {
             guard let v = (settings[name] as? NSNumber)?.doubleValue, v.isFinite else { return fallback }
             return max(0, min(maximum, v))

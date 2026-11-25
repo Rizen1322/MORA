@@ -27,10 +27,12 @@ func wait(_ what: String, _ match: @escaping ([String: Any]) -> Bool) -> [String
     }
 }
 var nextId = 0
-func request(_ method: String, _ url: String, _ body: String? = nil) -> (status: Int, text: String) {
+func request(_ method: String, _ url: String, _ body: String? = nil, headers: [String: String] = [:]) -> (status: Int, text: String) {
     nextId += 1
     let id = Double(nextId)
-    server.send(["t": "req", "id": id, "method": method, "url": url, "headers": body == nil ? [:] : ["content-type": "application/json"], "body": body ?? NSNull()])
+    var h = headers
+    if body != nil { h["content-type"] = "application/json" }
+    server.send(["t": "req", "id": id, "method": method, "url": url, "headers": h, "body": body ?? NSNull()])
     _ = wait("end \(url)") { ($0["t"] as? String == "end" || $0["t"] as? String == "fail") && $0["id"] as? Double == id }
     lock.lock(); defer { lock.unlock() }
     let mine = messages.filter { $0["id"] as? Double == id }
@@ -41,6 +43,14 @@ func request(_ method: String, _ url: String, _ body: String? = nil) -> (status:
         return String(decoding: m["data"] as? Data ?? Data(), as: UTF8.self)
     }.joined()
     return (status, text)
+}
+
+func evaluate(_ script: String) -> Any {
+    let done = DispatchSemaphore(value: 0)
+    var out: Any = NSNull()
+    server.evaluate(script) { out = $0; done.signal() }
+    done.wait()
+    return out
 }
 
 server.start()
@@ -137,18 +147,29 @@ let survivingLibrary = try nativeRequest("/api/library").get()
 assert((survivingLibrary["tracks"] as? [Any])?.count == 2, "Deleting playlist deleted tracks")
 print("Native library routes: PATCH, duplicate entries, reorder validation, add/remove, reactions, export and history passed")
 if case .success = nativeRequest("/api/not-found") { fatalError("native accepted HTTP 404") }
+
+// Native-only Yandex credentials endpoint rejects WebView page requests (even forged headers) and only serves Swift requests.
+let pageCreds = request("GET", "/api/mobile/yandex-credentials")
+assert(pageCreds.status == 403, "page request must not read yandex credentials: \(pageCreds)")
+if case .success = nativeRequest("/api/mobile/yandex-credentials") { fatalError("disconnected credentials must fail with 409") }
+var credsWriter: OpaquePointer?
+assert(sqlite3_open(root.appendingPathComponent("data/automix.sqlite").path, &credsWriter) == SQLITE_OK)
+assert(sqlite3_exec(credsWriter, #"INSERT INTO providers(id, config, secret, enabled, updated_at) VALUES ('yandex', '{}', '{"token":"test-oauth-tok"}', 1, 1);"#, nil, nil, nil) == SQLITE_OK)
+sqlite3_close(credsWriter)
+let nativeCreds = try nativeRequest("/api/mobile/yandex-credentials").get()
+assert(nativeCreds["token"] as? String == "test-oauth-tok" && nativeCreds["apiBase"] as? String == "https://api.music.yandex.net", "native credentials mismatch: \(nativeCreds)")
+let token = evaluate("moraHost.internalToken") as? String ?? ""
+let forged = request("GET", "/api/mobile/yandex-credentials", nil, headers: ["x-mora-native": token, "X-Mora-Native": token])
+assert(forged.status == 403, "forged x-mora-native header on page request was not stripped: \(forged)")
+assert(sqlite3_open(root.appendingPathComponent("data/automix.sqlite").path, &credsWriter) == SQLITE_OK)
+assert(sqlite3_exec(credsWriter, "DELETE FROM providers WHERE id = 'yandex';", nil, nil, nil) == SQLITE_OK)
+sqlite3_close(credsWriter)
+print("Native server: protected yandex credentials endpoint passed")
 lock.lock()
 assert(!messages.contains { (($0["id"] as? NSNumber)?.intValue ?? 0) < 0 }, "native response leaked to the page")
 lock.unlock()
 
 // Decoded planes reach the server as ArrayBuffers, as postMessage handed them to the worker (rpc.ts: new Float32Array(plane)).
-func evaluate(_ script: String) -> Any {
-    let done = DispatchSemaphore(value: 0)
-    var out: Any = NSNull()
-    server.evaluate(script) { out = $0; done.signal() }
-    done.wait()
-    return out
-}
 _ = evaluate("""
 globalThis.__originalReceive = globalThis.__moraReceive;
 globalThis.__nativeAborted = [];

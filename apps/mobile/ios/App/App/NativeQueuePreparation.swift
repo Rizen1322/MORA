@@ -90,11 +90,11 @@ final class NativeQueuePreparation: @unchecked Sendable {
             return try await loader.load(source, to: downloaded, folder: folder, ticket: ticket, sink: stream?.feed)
         }
         var owned = false, reported = 0
-        while let stream, stream.receiving {
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            let frames = stream.frames
-            if owned { if frames - reported >= 48000 { grow(frames, false); reported = frames } }
-            else if frames >= NativeMixTimeline.progressiveStartFrames, !ticket.cancelled, await early(frames) { owned = true; reported = frames }
+        while let stream, stream.receiving, !ticket.cancelled {
+            do { try await Task.sleep(nanoseconds: 125_000_000) } catch { ticket.cancel(); break }
+            guard let frames = stream.growingFrames, !ticket.cancelled else { break }
+            if owned { if frames - reported >= 12000 { grow(frames, false); reported = frames } }
+            else if frames >= NativeMixTimeline.progressiveStartFrames, await early(frames) { owned = true; reported = frames }
         }
         do {
             let media = try await load.value
@@ -134,6 +134,8 @@ final class NativeQueuePreparation: @unchecked Sendable {
         let loop = manifest["loopItems"] as? [[String: Any]] ?? []
         configure(remaining: raw.count, loopCount: loop.count)
         var before = previous, previousPCM = seed
+        if before["entryId"] == nil, let eid = seed["entryId"] { before["entryId"] = eid }
+        if before["id"] == nil, let tid = before["trackId"] ?? seed["trackId"] { before["id"] = tid }
         if let frames = seed["totalFrames"] as? Int {
             let est = seed["growing"] as? Bool == true ? (seed["estimatedFrames"] as? Int ?? frames) : frames
             before["duration"] = Double(max(frames, est)) / 48000
@@ -260,7 +262,25 @@ final class NativeMixAnalysis: @unchecked Sendable {
     private static let bundledScriptKey: String? = Bundle.main.url(forResource: "native-preparation", withExtension: "js", subdirectory: "public")
         .flatMap { try? Data(contentsOf: $0) }.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
     /// Set once at launch by the app (NativeRustAnalysis); test hosts without the static library keep the script analyzer.
-    static var compiled: (version: String, analyze: (URL, Int, @escaping () -> Bool) -> [String: Any]?)?
+    static var compiled: (version: String, analyze: (Int, ((UnsafeRawPointer, Int) throws -> Void) throws -> Void) throws -> [String: Any]?)?
+
+    private struct PcmIdentity: Hashable {
+        let device: UInt64, inode: UInt64, bytes: UInt64
+        let modified: Date, created: Date
+
+        init?(_ url: URL) {
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+                  let device = attributes[.systemNumber] as? NSNumber,
+                  let inode = attributes[.systemFileNumber] as? NSNumber,
+                  let bytes = attributes[.size] as? NSNumber,
+                  let modified = attributes[.modificationDate] as? Date,
+                  let created = attributes[.creationDate] as? Date else { return nil }
+            self.device = device.uint64Value; self.inode = inode.uint64Value; self.bytes = bytes.uint64Value
+            self.modified = modified; self.created = created
+        }
+    }
+    // Only the MIR executor touches this cache. The hard links share a file identity across pairs.
+    private static var fingerprints: [PcmIdentity: String] = [:]
     private let lock = NSLock()
     private var pending: [Request] = []
     private var active: Request?
@@ -361,8 +381,18 @@ final class NativeMixAnalysis: @unchecked Sendable {
                 }
                 guard let core = Self.core else { throw NativePreparationCore.Failure.script }
                 var a = request.a.value, b = request.b.value
-                a["analysis"] = try analyze(request.a, core: core, scriptKey: scriptKey, request: request, role: "seed")
-                b["analysis"] = try analyze(request.b, core: core, scriptKey: scriptKey, request: request, role: "candidate")
+                // Missing MIR (thermal, blocked analyzer, unreadable file) must still yield a reserve
+                // crossfade: the planner accepts a null analysis, but only cancellation aborts the pair.
+                func analysis(_ source: Source, role: String) throws -> Any {
+                    do { return try analyze(source, core: core, scriptKey: scriptKey, request: request, role: role) }
+                    catch {
+                        if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
+                        stage("analysisUnavailable", request, role: role)
+                        return NSNull()
+                    }
+                }
+                a["analysis"] = try analysis(request.a, role: "seed")
+                b["analysis"] = try analysis(request.b, role: "candidate")
                 if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
                 stage("planning", request)
                 let result = try core.plan(a: a, b: b, settings: request.settings, sampleRate: 48000)
@@ -371,7 +401,11 @@ final class NativeMixAnalysis: @unchecked Sendable {
                 track.removeValue(forKey: "transition"); track.removeValue(forKey: "plan")
                 track["plan"] = result["plan"]
                 var policies: [String: Bool] = [:]
-                for source in [request.a, request.b] { policies[source.value["entryId"] as? String ?? ""] = source.value["mixingAllowed"] as? Bool == true }
+                for source in [request.a, request.b] {
+                    if let eid = source.value["entryId"] as? String, !eid.isEmpty {
+                        policies[eid] = source.value["mixingAllowed"] as? Bool == true
+                    }
+                }
                 track["_analysisPolicy"] = policies
                 if let tr = result["transition"] as? [String: Any], let trigger = tr["triggerFrame"] as? Int,
                    let entry = tr["entryFrame"] as? Int, trigger < request.a.frames, entry < request.b.frames {
@@ -395,15 +429,26 @@ final class NativeMixAnalysis: @unchecked Sendable {
         guard source.value["mixingAllowed"] as? Bool == true else { return NSNull() }
         if let ready = source.value["analysis"] as? [String: Any], ready["version"] as? String == core.analyzerVersion { return ready }
         pace(request)
-        stage("fingerprint", request, role: role)
-        let file = try FileHandle(forReadingFrom: source.url)
-        defer { try? file.close() }
-        var digest = SHA256()
-        while let data = try file.read(upToCount: 1024 * 1024), !data.isEmpty {
-            if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
-            digest.update(data: data)
+        let identity = PcmIdentity(source.url)
+        let hash: String
+        if let identity, let saved = Self.fingerprints[identity] {
+            hash = saved
+        } else {
+            stage("fingerprint", request, role: role)
+            let file = try FileHandle(forReadingFrom: source.url)
+            defer { try? file.close() }
+            var digest = SHA256()
+            while let data = try file.read(upToCount: 1024 * 1024), !data.isEmpty {
+                if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
+                digest.update(data: data)
+            }
+            hash = digest.finalize().map { String(format: "%02x", $0) }.joined()
+            if let identity {
+                if Self.fingerprints.count >= 64 { Self.fingerprints.removeAll(keepingCapacity: true) }
+                Self.fingerprints[identity] = hash
+            }
         }
-        let key = scriptKey + digest.finalize().map { String(format: "%02x", $0) }.joined()
+        let key = scriptKey + hash
         if let ready = Self.cache[key] { stage("cacheHit", request, role: role); return ready }
         let stored = scriptKey == Self.bundledScriptKey ? Self.disk?.appendingPathComponent("\(key).json") : nil
         if let stored, let data = try? Data(contentsOf: stored),
@@ -415,19 +460,26 @@ final class NativeMixAnalysis: @unchecked Sendable {
             stage("thermalSkip", request, role: role); throw NativePreparationCore.Failure.analysis
         }
         stage("resampling", request, role: role)
-        let temporary = source.url.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).mir-44100")
-        defer { try? FileManager.default.removeItem(at: temporary) }
-        let frames = try NativePCMDecoder.resample(source.url, from: 48000, to: temporary, sampleRate: 44100, cancelled: { request.ticket.cancelled })
-        stage("analyzing", request, role: role)
         let result: [String: Any]
         if let compiled = Self.compiled, compiled.version == core.analyzerVersion {
-            stage("compiledAnalysis", request, role: role)
-            guard let value = compiled.analyze(temporary, frames, { request.ticket.cancelled }) else {
-                throw request.ticket.cancelled ? NativeMediaHTTP.Failure.cancelled : NativePreparationCore.Failure.analysis
+            let expectedFrames = max(1, Int(Double(source.frames) * 44100 / 48000))
+            let value = try compiled.analyze(expectedFrames) { consume in
+                _ = try NativePCMDecoder.resample(source.url, from: 48000, sampleRate: 44100,
+                    cancelled: { request.ticket.cancelled }, consume: consume)
+                if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
+                stage("compiledAnalysis", request, role: role)
             }
+            guard let value else { throw NativePreparationCore.Failure.analysis }
             result = value
         } else {
-            result = try core.analyze(temporary, frames: frames, ticket: request.ticket) { [self] name in pace(request); stage(name, request, role: role) }
+            let temporary = source.url.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).mir-44100")
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            let frames = try NativePCMDecoder.resample(source.url, from: 48000, to: temporary, sampleRate: 44100,
+                cancelled: { request.ticket.cancelled })
+            stage("analyzing", request, role: role)
+            result = try core.analyze(temporary, frames: frames, ticket: request.ticket) { [self] name in
+                pace(request); stage(name, request, role: role)
+            }
         }
         if request.ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
         Self.remember(key, result)

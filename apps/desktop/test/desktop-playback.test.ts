@@ -353,3 +353,34 @@ it('keeps refreshing the armed fallback when queue revisions change behind the s
     await vi.waitFor(() => expect(host.state().nextTrack?.plan?.id).toBe('refreshed-plan'));
   } finally { await host.stop(); }
 }, 10000);
+
+it('omits unchanged queue arrays when knownQueueRevision matches the current queueRevision', async () => {
+  let host: DesktopPlayback;
+  const audio = { process: {}, start: vi.fn(async () => ({ sampleRate: 48000, queueFrames: 2048 })),
+    feedFile: vi.fn(async () => {}), stop: vi.fn(async () => {}), command: vi.fn(async (v: any) => {
+      if (v.cmd === 'start') queueMicrotask(() => host.onEvent({ type: 'tick', clock: 0, paused: false, main: v.deck,
+        decks: [0, 1].map(deck => ({ token: deck === v.deck ? v.token : null, playing: deck === v.deck,
+          position: v.frame, totalFrames: 960000, starved: false, ratio: 1, bufferedAhead: 960000 })), transition: null, limiterDb: 0, peak: 0 }));
+    }) };
+  const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(url)).pathname, body = init?.body ? JSON.parse(String(init.body)) : null;
+    if (path === '/internal/desktop/pcm-source') return Response.json({ path: 'private', finalPath: 'private', partPath: '',
+      format: 'f32le', totalFrames: 960000, availableFrames: 960000, complete: true,
+      track: { trackId: body.trackId, title: '', artist: '', duration: 20, coverUrl: '', mixingAllowed: true } });
+    if (path === '/api/settings') return Response.json({ automix: DEFAULT_AUTOMIX_SETTINGS });
+    return Response.json({});
+  };
+  host = new DesktopPlayback(audio, { backend: () => ({ origin: 'http://127.0.0.1', accessToken: '', pcmToken: 'secret' }),
+    ready: vi.fn(), track: vi.fn(), fetch: fetcher as typeof fetch });
+  try {
+    await host.startSource({ trackId: 'a', entryId: 'entry-a' }, { sampleRate: 48000, position: 0 });
+    await host.prepareQueue(1, [{ trackId: 'b', entryId: 'entry-b' }], 'a');
+    const full = host.state();
+    expect(full.queue).toBeDefined();
+    expect(full.queueRevision).toBeTruthy();
+    const compact = host.state(full.queueRevision);
+    expect(compact.queue).toBeUndefined();
+    expect(compact.queueRevision).toBe(full.queueRevision);
+    expect(host.state('stale-revision').queue).toEqual(full.queue);
+  } finally { await host.stop(); }
+});

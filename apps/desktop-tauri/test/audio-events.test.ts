@@ -20,7 +20,7 @@ it('keeps the spectrum stream alive across waveform backpressure', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mora-audio-events-'));
   const app = Fastify();
   const host = await createPlaybackHost(app, dir, dir, () => ({ origin: 'http://127.0.0.1', accessToken: '', pcmToken: '' }),
-    { events: new EventHub(), lib: { listDTO: () => [] } } as any);
+    { events: new EventHub(), lib: { dislikedTrackIds: () => [] } } as any);
   const abort = new AbortController();
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {

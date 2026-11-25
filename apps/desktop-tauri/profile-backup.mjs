@@ -3,13 +3,14 @@ import path from 'node:path';
 import { DatabaseSync, backup } from 'node:sqlite';
 
 /** Snapshot before schema migrations; media files remain in place and are never rewritten. */
-export async function backupBeforeUpgrade(profile, dataDir, version) {
+export async function backupBeforeUpgrade(profile, dataDir, version, starting = () => {}) {
   if (!/^[0-9A-Za-z._-]+$/.test(version)) throw Error('Invalid upgrade version');
   const source = path.join(dataDir, 'automix.sqlite');
   if (!fs.existsSync(source)) return;
   const target = path.join(profile, 'upgrade-backups', version);
   const marker = path.join(target, 'complete.json');
   if (fs.existsSync(marker)) return;
+  starting();
   fs.mkdirSync(target, { recursive: true });
   const db = new DatabaseSync(source, { readOnly: true });
   try {

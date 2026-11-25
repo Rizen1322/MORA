@@ -20,6 +20,29 @@ it('replaces a restricted station candidate without discarding playable recommen
   } finally { await app.close(); }
 });
 
+it('uses catalog recommendations on the private iOS route', async () => {
+  const app = Fastify();
+  const item = (id: string) => ({ externalId: id, title: id, artist: id, playable: true, audioProvider: 'youtube' });
+  const radio = vi.fn(async () => [item('fresh')]);
+  const prepareProgressive = vi.fn(async (_provider: string, id: string) => `local-${id}`);
+  const services = { cfg: {}, db: { prepare: () => ({ get: () => undefined, all: () => [] }) },
+    lib: { listDTO: () => [], sources: () => [] },
+    publicMusic: { search: async () => [item('seed')], radio, prepareProgressive } } as unknown as Services;
+  vi.stubGlobal('moraHost', { internalToken: 'ios-token' });
+  registerNativeStationRoutes(app, services);
+  const request = { method: 'POST' as const, url: '/api/mobile/station-next', payload: { kind: 'online', exclude: [], seed: item('seed') } };
+  try {
+    expect((await app.inject(request)).statusCode).toBe(403);
+    const response = await app.inject({ ...request, headers: { 'x-mora-native': 'ios-token' } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().entries.map((entry: { trackId: string }) => entry.trackId)).toEqual(['local-seed', 'local-fresh']);
+    expect(radio).toHaveBeenCalledWith('seed', expect.any(AbortSignal));
+  } finally {
+    vi.unstubAllGlobals();
+    await app.close();
+  }
+});
+
 it('carries artist spacing over the native queue refill boundary including collaborations', async () => {
   const app = Fastify();
   const item = (id: string, artist: string) => ({ externalId: id, title: id, artist, playable: true, audioProvider: 'youtube' });
@@ -70,6 +93,32 @@ it('starts an explicit online seed and prepares only the requested selections', 
     expect(response.statusCode).toBe(200);
     expect(response.json().entries[0].trackId).toBe('local-seed');
     expect(prepareProgressive).toHaveBeenCalledTimes(2);
+  } finally { await app.close(); }
+});
+
+it('keeps a similar-to-track station anchored to its seed across refills', async () => {
+  const app = Fastify();
+  const item = (id: string) => ({ externalId: id, title: id, artist: id, playable: true, audioProvider: 'youtube' });
+  const search = vi.fn(async (_source: string, query: string) => query.includes('anchor') ? [item('anchor')] : [item('taste')]);
+  const radio = vi.fn(async () => [item('similar-1'), item('similar-2')]);
+  const prepareProgressive = vi.fn(async (_provider: string, id: string) => `local-${id}`);
+  const library = [{ id: 'liked', title: 'liked', artist: 'favourite', reaction: 1, status: 'ok', addedAt: 1, playCount: 5, lastPlayedAt: null }];
+  const services = { cfg: { desktopPlaybackToken: 'secret' }, db: { prepare: () => ({ get: () => undefined, all: () => [] }) },
+    lib: { listDTO: () => library, sources: () => [] }, publicMusic: { search, radio, prepareProgressive } } as unknown as Services;
+  registerNativeStationRoutes(app, services);
+  const headers = { 'x-mora-desktop-token': 'secret' };
+  try {
+    const response = await app.inject({ method: 'POST', url: '/internal/desktop/station-next', headers,
+      payload: { kind: 'online', seed: { title: 'anchor', artist: 'anchor' }, anchor: 'seed', currentId: 'played', exclude: ['played'], count: 1 } });
+    expect(response.statusCode).toBe(200);
+    // The refill ranks around the requested track, never around the listener's liked seeds.
+    expect(search.mock.calls.map(([, query]) => query)).toEqual(['anchor anchor']);
+    expect(radio).toHaveBeenCalledWith('anchor', expect.anything());
+    expect(response.json().entries).toHaveLength(1);
+    expect(response.json().entries[0].trackId).toMatch(/^local-similar-/);
+    const invalid = await app.inject({ method: 'POST', url: '/internal/desktop/station-next', headers,
+      payload: { kind: 'online', anchor: 'seed', exclude: [], count: 1 } });
+    expect(invalid.statusCode).toBe(400);
   } finally { await app.close(); }
 });
 

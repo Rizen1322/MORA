@@ -1,23 +1,22 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Services } from '../app.ts';
 import { getSettings } from '../automix.ts';
 import { q } from '../db.ts';
 import { isYandexTrackId } from '../providers/yandex-audio.ts';
 import { radioIdentity, rankRadio, tasteSeeds } from '../../../web/src/lib/radio-taste.ts';
 import type { PublicTrack } from '../public/provider.ts';
+import { hasNativeInternalAuth } from '../native-sources.ts';
 
-type Body = { kind: 'own' | 'yandex' | 'online'; seed?: { title: string; artist: string }; currentId?: string; exclude: string[]; count?: number; yandexSessionId?: string };
+type Body = { kind: 'own' | 'yandex' | 'online'; seed?: { title: string; artist: string }; anchor?: 'seed'; currentId?: string; exclude: string[]; count?: number; yandexSessionId?: string };
 
 export function registerNativeStationRoutes(app: FastifyInstance, s: Services): void {
-  app.post<{ Body: Body }>('/internal/desktop/station-next', async (req, reply) => {
-    const secret = s.cfg.desktopPlaybackToken, supplied = req.headers['x-mora-desktop-token'];
-    if (!secret || typeof supplied !== 'string' || Buffer.byteLength(secret) !== Buffer.byteLength(supplied) ||
-      !timingSafeEqual(Buffer.from(secret), Buffer.from(supplied))) return reply.code(403).send({ error: 'Недоступно' });
+  const advance = async (req: FastifyRequest<{ Body: Body }>, reply: FastifyReply, mobile: boolean) => {
     const b = req.body;
     const validId = (id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= 256;
-    if (!b || !['own', 'yandex', 'online'].includes(b.kind) || !Array.isArray(b.exclude) || b.exclude.length > 2000 || b.exclude.some(id => !validId(id)) ||
+    if (!b || !['own', 'yandex', 'online'].includes(b.kind) || (mobile && b.kind !== 'online') || !Array.isArray(b.exclude) || b.exclude.length > 2000 || b.exclude.some(id => !validId(id)) ||
       (b.currentId !== undefined && !validId(b.currentId)) || (b.yandexSessionId !== undefined && !validId(b.yandexSessionId)) ||
+      (b.anchor !== undefined && (b.anchor !== 'seed' || !b.seed)) ||
       (b.count !== undefined && (!Number.isInteger(b.count) || b.count < 1 || b.count > 6)) ||
       (b.seed !== undefined && (!b.seed || typeof b.seed.title !== 'string' || typeof b.seed.artist !== 'string' || !(b.seed.title.trim() || b.seed.artist.trim()) || b.seed.title.length + b.seed.artist.length > 199)))
       return reply.code(400).send({ error: 'Некорректные параметры волны' });
@@ -52,16 +51,20 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
       }
       for (const play of history) { const t = byId.get(play.track_id); if (t && Date.now() - play.started_at < 7200000) seen.add(radioIdentity(t)); }
       const initial = !b.currentId && !b.exclude.length;
-      const seeds = tasteSeeds(library, history.length ? history[0].started_at : 0);
-      const primary = initial && b.seed ? b.seed : (b.currentId ? byId.get(b.currentId) : undefined) ?? seeds.shift() ?? b.seed;
-      if (!primary) throw new Error('Поставьте лайк или выберите основу радио');
+      // "Similar to this track" keeps its seed on every refill instead of drifting to the listener's taste.
+      const pinned = b.anchor === 'seed' ? b.seed : undefined;
+      const seeds = pinned ? [] : tasteSeeds(library, history.length ? history[0].started_at : 0);
+      const primary = pinned ?? (initial && b.seed ? b.seed : (b.currentId ? byId.get(b.currentId) : undefined) ?? seeds.shift() ?? b.seed);
+      if (!primary) return reply.code(mobile ? 422 : 502).send({ error: 'Поставьте лайк или выберите основу радио' });
       const resolved = await Promise.allSettled([primary, ...seeds.slice(0, 2)].map(async seed => (await s.publicMusic.search('ytmusic', `${seed.artist} ${seed.title}`.trim(), abort.signal)).find(t => t.playable)));
       abort.signal.throwIfAborted();
       const found = resolved.flatMap(r => r.status === 'fulfilled' && r.value ? [r.value] : []);
       const first = resolved[0].status === 'fulfilled' ? resolved[0].value : undefined;
       if (initial && b.seed && !first) throw new Error('Не нашли начальную песню для радио');
-      if (!found.length) throw new Error(resolved.every(r => r.status === 'rejected')
-        ? 'YouTube Music не отвечает. Проверьте интернет или VPN и попробуйте снова.' : 'Не нашли основу радио');
+      if (!found.length) {
+        if (resolved.every(r => r.status === 'rejected')) throw new Error('YouTube Music не отвечает. Проверьте интернет или VPN и попробуйте снова.');
+        return reply.code(mobile ? 422 : 502).send({ error: pinned ? 'Не нашли похожих песен. Попробуйте позже или другой трек.' : 'Не нашли основу радио' });
+      }
       const results = await Promise.allSettled([...new Set(found.map(t => t.externalId))].slice(0, 3).map(id => s.publicMusic.radio(id, abort.signal)));
       abort.signal.throwIfAborted();
       const pool = results.flatMap(r => r.status === 'fulfilled' ? r.value.map(t => ({ ...t, libraryTrackId: t.libraryTrackId ?? null })) : []);
@@ -74,7 +77,9 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
         for (const t of found) { seen.add(radioIdentity(t)); seen.add(`${t.audioProvider}:${t.externalId}`); }
         picks = rankRadio(pool, library, seen, recentArtists, settings, primary);
       }
-      if (!picks.length) throw new Error('Пока нет свежих рекомендаций');
+      if (!picks.length && !results.every(r => r.status === 'rejected'))
+        return reply.code(mobile ? 422 : 502).send({ error: 'Пока нет свежих рекомендаций' });
+      if (!picks.length) throw new Error('Сервис рекомендаций не ответил');
       const entries: { trackId: string; entryId: string; origin: 'wave' }[] = [];
       let failure: unknown;
       for (let at = 0; at < Math.min(picks.length, count + 3) && entries.length < count;) {
@@ -93,5 +98,16 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
     } catch (e) {
       return reply.code(abort.signal.aborted ? 499 : 502).send({ error: (e as Error).message });
     }
+  };
+
+  app.post<{ Body: Body }>('/internal/desktop/station-next', async (req, reply) => {
+    const secret = s.cfg.desktopPlaybackToken, supplied = req.headers['x-mora-desktop-token'];
+    if (!secret || typeof supplied !== 'string' || Buffer.byteLength(secret) !== Buffer.byteLength(supplied) ||
+      !timingSafeEqual(Buffer.from(secret), Buffer.from(supplied))) return reply.code(403).send({ error: 'Недоступно' });
+    return advance(req, reply, false);
+  });
+  app.post<{ Body: Body }>('/api/mobile/station-next', async (req, reply) => {
+    if (!hasNativeInternalAuth(req.headers)) return reply.code(403).send({ error: 'Недоступно' });
+    return advance(req, reply, true);
   });
 }

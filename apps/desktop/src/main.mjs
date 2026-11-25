@@ -106,7 +106,7 @@ function playbackHost() {
 
 async function mediaArtwork(coverUrl) {
   mediaArtworkAbort?.abort();
-  if (!origin || !/^\/api\/(?:covers\/[a-zA-Z0-9_.-]+|tracks\/[a-zA-Z0-9_-]+\/cover|providers\/subsonic\/cover\/[^/?#]+)$/.test(coverUrl)) return '';
+  if (!origin || !/^\/api\/(?:covers\/[a-zA-Z0-9_.-]+|tracks\/[a-zA-Z0-9_-]+\/cover)$/.test(coverUrl)) return '';
   const abort = new AbortController(); mediaArtworkAbort = abort;
   const timeout = setTimeout(() => abort.abort(), 8000);
   try {

@@ -61,6 +61,7 @@ final class NativeMixHost {
     private var analysisPolicies: [String: Bool] = [:]
     private var artworkLoader = NativeQueueArtwork()
     private var sourceBytes: [Int: Int] = [:]
+    private var sourceLinks: [URL: Int] = [:]
     private var pendingUploads: Set<Int> = []
     // Songs playing while they still decode, by file key: their downloads stop when the file is dropped.
     private var growing: [Int: NativePreparationTicket] = [:]
@@ -125,6 +126,11 @@ final class NativeMixHost {
         return bytes[Self.key(tracks[index], index)] == count * 8 && FileManager.default.fileExists(atPath: url.path)
     }
     private var canGoBack: Bool { position > 3 ? available(index) : available(index - 1) }
+    private var hasMoreQueue: Bool {
+        guard tracks.indices.contains(index),
+              knownManifest?["queueEntryId"] as? String == tracks[index]["entryId"] as? String else { return false }
+        return knownManifest?["queueHasMore"] as? Bool == true || knownManifest?["queueWraps"] as? Bool == true
+    }
     private var playbackRate: Double { wantsPlaying && !failed ? PlaybackSettings(config["playback"] as? [String: Any]).speed : 0 }
     private func reply(_ completion: @escaping Reply, _ result: Result<[String: Any], Error>) {
         DispatchQueue.main.async { completion(result) }
@@ -158,7 +164,7 @@ final class NativeMixHost {
                 self.id = UUID().uuidString
                 let folder = root.appendingPathComponent(self.id, isDirectory: true)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: NativePreparationFiles.attributes)
-                self.folder = folder; self.bytes = [:]; self.sourceBytes = [:]; self.pendingUploads = []; self.preparedFileKey = 500000; self.sourceKey = 0
+                self.folder = folder; self.bytes = [:]; self.sourceBytes = [:]; self.sourceLinks = [:]; self.pendingUploads = []; self.preparedFileKey = 500000; self.sourceKey = 0
                 self.preparing = true; self.failed = false
                 self.knownManifest = nil; self.ownershipRevision += 1
                 self.epoch += 1; self.save()
@@ -271,7 +277,7 @@ final class NativeMixHost {
                 self.artworkLoader.cancel(); self.artworkLoader = NativeQueueArtwork()
                 if let folder = self.folder {
                     for key in self.sourceBytes.keys { try? FileManager.default.removeItem(at: folder.appendingPathComponent("source-\(key).media")) }
-                    self.sourceBytes.removeAll()
+                    self.sourceBytes.removeAll(); self.sourceLinks.removeAll()
                 }
                 self.artworks = raw.map { self.artwork($0) }
                 self.config = config; self.config["tracks"] = metadata; self.tracks = metadata
@@ -412,16 +418,33 @@ final class NativeMixHost {
             self.reply(completion, .success(["keys": (first..<self.sourceKey).map { $0 }]))
         }
     }
-    func sourceFromDownload(id: String, key: Int, file: URL, completion: @escaping Reply) {
+    func sourceFromDownload(id: String, key: Int? = nil, file: URL, completion: @escaping Reply) {
         work.async {
             do {
-                guard self.id == id, let folder = self.folder, (0..<500000).contains(key) else { throw Failure.invalid }
+                guard self.id == id, let folder = self.folder else { throw Failure.invalid }
+                if key == nil, let existing = self.sourceLinks[file] {
+                    self.reply(completion, .success(["found": true, "key": existing]))
+                    return
+                }
+                let destinationKey: Int
+                if let key {
+                    guard (0..<500000).contains(key) else { throw Failure.invalid }
+                    destinationKey = key
+                } else {
+                    repeat { self.sourceKey += 1 } while self.sourceBytes[self.sourceKey] != nil && self.sourceKey < 500000
+                    destinationKey = self.sourceKey
+                    guard (0..<500000).contains(destinationKey) else { throw Failure.invalid }
+                }
                 let bytes = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-                guard bytes > 0, bytes <= 128 * 1024 * 1024, self.sourceBytes.values.reduce(0, +) + bytes <= 512 * 1024 * 1024 else { throw Failure.invalid }
-                let target = folder.appendingPathComponent("source-\(key).media")
+                guard bytes > 0, bytes <= 128 * 1024 * 1024 else { throw Failure.invalid }
+                let existingBytes = self.sourceBytes[destinationKey] ?? 0
+                guard self.sourceBytes.values.reduce(0, +) - existingBytes + bytes <= 512 * 1024 * 1024 else { throw Failure.invalid }
+                let target = folder.appendingPathComponent("source-\(destinationKey).media")
+                try? FileManager.default.removeItem(at: target)
                 try FileManager.default.linkItem(at: file, to: target)
-                self.sourceBytes[key] = bytes
-                self.reply(completion, .success(["found": true]))
+                self.sourceBytes[destinationKey] = bytes
+                self.sourceLinks[file] = destinationKey
+                self.reply(completion, .success(["found": true, "key": destinationKey]))
             } catch { self.reply(completion, .failure(error)) }
         }
     }
@@ -463,6 +486,9 @@ final class NativeMixHost {
                 var configuration = manifest, future = items
                 var previous = manifest["previous"] as! [String: Any]
                 // A suspended page can send stale entries with a fresh native index.
+                if let queueEntry = manifest["queueEntryId"] as? String {
+                    guard queueEntry == (self.tracks[self.index]["entryId"] as? String), requestedFrom == self.index + 1 else { throw Failure.invalid }
+                }
                 guard let consumed = NativeMixTimeline.consumedPrefix(future, currentEntryId: self.tracks[self.index]["entryId"] as? String,
                     requestedFrom: requestedFrom, currentIndex: self.index) else { throw Failure.invalid }
                 if consumed > 0 { previous = future[consumed - 1]; future.removeFirst(consumed) }
@@ -490,7 +516,7 @@ final class NativeMixHost {
                     self.analysisWorker.cancel(); self.analysisWorker = NativeMixAnalysis(); self.analysisSettings = settings
                 }
                 let analysis = self.analysisWorker
-                self.skipTarget = -1 // A replacement manifest owns new navigation intent.
+                if manifest["preservePendingSkip"] as? Bool != true { self.skipTarget = -1 } // A replacement manifest owns new navigation intent.
                 let retained = manifest["retainedSources"] as? [Int] ?? []
                 guard retained.count <= 20000, retained.allSatisfy({ (0..<500000).contains($0) }) else { throw Failure.invalid }
                 var referenced = Set((items + (manifest["loopItems"] as? [[String: Any]] ?? [])).compactMap { item -> Int? in
@@ -503,6 +529,7 @@ final class NativeMixHost {
                 for key in self.sourceBytes.keys where !referenced.contains(key) {
                     try? FileManager.default.removeItem(at: folder.appendingPathComponent("source-\(key).media")); self.sourceBytes.removeValue(forKey: key)
                 }
+                self.sourceLinks = self.sourceLinks.filter { referenced.contains($0.value) }
                 self.tracks = Array(self.tracks.prefix(from)); self.artworks = Array(self.artworks.prefix(from)); self.config["tracks"] = self.tracks
                 analysis.retain(Dictionary(uniqueKeysWithValues: self.tracks.enumerated().map { ($0.offset, Self.key($0.element, $0.offset)) }))
                 analysis.advance(self.index)
@@ -562,7 +589,7 @@ final class NativeMixHost {
                                 }
                                 self.skipTarget = -1
                                 // Nothing more will arrive: release the output held for it.
-                                if self.ended { self.continueWhenPrepared = false; self.engine?.pause() }
+                                if self.ended && !self.hasMoreQueue { self.continueWhenPrepared = false; self.engine?.pause() }
                             }
                             if ["ready", "failed", "finished"].contains(kind) { self.publish("preparation") }
                             else { self.save() }
@@ -777,7 +804,7 @@ final class NativeMixHost {
                     let target = skipTarget // The natural advance is one step towards it.
                     do { try select(index: index + 1, position: 0, playing: true); skipTarget = target } catch { fail() }; return
                 }
-                continueWhenPrepared = preparation?.hasRemaining == true
+                continueWhenPrepared = preparation?.hasRemaining == true || hasMoreQueue
                 wantsPlaying = false; ended = true; player?.pause()
                 if continueWhenPrepared { holdOutput() } else { engine?.pause() }
                 publish("ended"); return
@@ -1056,7 +1083,7 @@ final class NativeMixHost {
                 if self.ownsSession { try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation); self.ownsSession = false }
                 // folder is created only under our private cache with a native-generated UUID.
                 if let folder = self.folder { try? FileManager.default.removeItem(at: folder) }
-                self.folder = nil; self.preparing = false; self.engine = nil; self.player = nil; self.bytes = [:]; self.newestKey = -1
+                self.folder = nil; self.preparing = false; self.engine = nil; self.player = nil; self.bytes = [:]; self.sourceBytes = [:]; self.sourceLinks = [:]; self.newestKey = -1
                 self.marks.removeAll(); self.artworks.removeAll(); self.tracks.removeAll(); self.config = [:]; self.save()
                 DispatchQueue.main.async {
                     for (command, target) in self.targets { command.isEnabled = false; command.removeTarget(target) }

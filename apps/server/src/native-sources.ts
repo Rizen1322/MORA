@@ -40,7 +40,7 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
   await Promise.all(Array.from({ length: Math.min(4, entries.length) }, async () => {
     while (next < entries.length) {
       const index = next++, entry = entries[index], track = s.lib.media(entry.trackId);
-      if (!track || !(track.duration > 0)) throw Error('Неподдерживаемый трек в очереди');
+      if (!track || !(track.duration > 0)) continue;
       const identity = s.lib.get(entry.trackId) ?? track;
       const sources = s.lib.sources(track.id), remote = sources.find(source => source.kind === 'remote');
       const resolving = (async (): Promise<NativeMediaSource> => {
@@ -107,13 +107,30 @@ export async function nativeSources(s: Services, entries: Entry[], previousId: s
   const previous = s.lib.media(previousId);
   if (!previous) throw Error('Текущий трек не найден');
   // Dead entries are not handed to native; the page removes them by entryId.
+  const settings = getSettings(s.db);
   return { items: items.filter(item => item && item.source.kind !== 'unavailable'), previous: { trackId: previousId, duration: previous.duration,
     mixingAllowed: s.lib.mixingPolicy.get(previous.provider) === true, analysis: s.analysis.get(previous.content_hash) },
-    settings: getSettings(s.db).automix, feedback: s.automix.ratingStats() };
+    settings: settings.automix, sound: settings.sound, feedback: s.automix.ratingStats() };
+}
+
+/** Verifies that an internal mobile request came from Swift rather than the WebView. */
+export function hasNativeInternalAuth(headers: Record<string, unknown> | undefined): boolean {
+  const expected = (globalThis as { moraHost?: { internalToken?: unknown } }).moraHost?.internalToken;
+  const given = headers?.['x-mora-native'];
+  return typeof expected === 'string' && expected.length > 0 && given === expected;
 }
 
 /** Mobile worker only. These private handoff routes are never registered by the desktop server. */
 export function registerNativeSources(app: FastifyInstance, services: Services) {
+  app.get('/api/mobile/yandex-credentials', async (req: any, reply: any) => {
+    reply.header('Cache-Control', 'no-store');
+    if (!hasNativeInternalAuth(req.headers)) {
+      return reply.code(403).send({ error: 'Доступ разрешён только нативному клиенту' });
+    }
+    const creds = services.providers.yandex.nativeCredentials();
+    if (!creds) return reply.code(409).send({ error: 'Подключите аккаунт Яндекс Музыки' });
+    return creds;
+  });
   app.post('/api/mobile/import-file', async (req: any, reply: any) => {
     try { return await importNativeFile(services, req.body); }
     catch (error) { return reply.code(422).send({ error: (error as Error).message }); }

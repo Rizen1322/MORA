@@ -37,7 +37,10 @@ try {
     assert.match(await cdp.evaluate("window.__TAURI_INTERNALS__.invoke('desktop_action',{action:'save-export',value:{contents:'{',name:'MORA-playlists.json'}}).then(()=>'',e=>String(e))"), /JSON/);
     assert.equal(await cdp.evaluate('window.automixDesktop.getSettings().then(x => x.decorated)'), false);
     assert.equal(await cdp.evaluate('document.querySelectorAll(".titlebar .window-controls button").length'), 3);
-    assert.equal(await cdp.evaluate('getComputedStyle(document.querySelector(".titlebar")).height'), '40px');
+    assert.equal(await cdp.evaluate(`(() => {
+      const style = getComputedStyle(document.querySelector('.titlebar'));
+      return style.height === style.getPropertyValue('--titlebar-h').trim();
+    })()`), true);
     await cdp.evaluate(`window.__windowCommands=[];window.__originalWindowCommand=window.automixDesktop.windowCommand;window.automixDesktop.windowCommand=async action=>{window.__windowCommands.push(action)};document.querySelectorAll('.titlebar .window-controls button').forEach(b=>b.click())`);
     assert.deepEqual(await cdp.evaluate('window.__windowCommands'), ['minimize', 'maximize', 'close']);
     await cdp.evaluate('window.automixDesktop.windowCommand=window.__originalWindowCommand;delete window.__originalWindowCommand');
@@ -58,7 +61,15 @@ try {
     const secondExit = await Promise.race([new Promise(resolve => second.once('exit', resolve)), new Promise(resolve => setTimeout(() => resolve(null), 15000))]);
     if (secondExit === null) second.kill();
     assert.notEqual(secondExit, null, `second instance did not exit: ${secondLog}`);
-    console.log('Hidden Tauri window: React desktop bridge and inactive playback state passed.');
+    const closed = new Promise(resolve => child.once('exit', resolve));
+    await cdp.evaluate(`(async () => {
+      await window.automixDesktop.setCloseToTray(false);
+      setTimeout(() => void window.automixDesktop.windowCommand('close').catch(() => {}), 0);
+    })()`);
+    const exit = await Promise.race([closed, new Promise(resolve => setTimeout(() => resolve('timeout'), 15000))]);
+    assert.equal(exit, 0, 'closing the window must shut down the shell');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(profile, 'playback-recovery.json'), 'utf8')).clean, true);
+    console.log('Hidden Tauri window: React desktop bridge, backend restart and clean shutdown passed.');
   } finally { cdp.close(); }
 } catch (error) {
   const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then(r => r.text()).catch(() => 'DevTools unavailable');
