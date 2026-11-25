@@ -75,7 +75,9 @@ final class NativeCatalogState {
             searchSessions.removeValue(forKey: sid)
             searchSessionOrder.removeAll { $0 == sid }
         }
-        externalReactions.removeAll()
+        for key in externalReactions.keys where key.hasPrefix("yandex:") {
+            externalReactions.removeValue(forKey: key)
+        }
         pageGeneration += 1
         yandexGeneration += 1
         yandex?.clear()
@@ -349,13 +351,83 @@ final class NativeCatalogState {
         return renderSearchSession(session, lookup: localLookup)
     }
 
+    /// Runs public search (`ytmusic`, `youtube`, `soundcloud`) via the JSC server search route,
+    /// returning the dictionary shape consumed by `NativeSearchResults` and storing a `SearchSession`.
+    func searchPublic(source: String, query: String, request: Request,
+                      localLookup: LocalTrackLookup? = nil) async throws -> [String: Any] {
+        guard ["ytmusic", "youtube", "soundcloud"].contains(source) else {
+            throw NSError(domain: "NativeCatalogState", code: 1, userInfo: [NSLocalizedDescriptionKey: "Неизвестный источник"])
+        }
+        let cleanQuery = String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
+        if !cleanQuery.isEmpty {
+            recordedSearchQueries.append(cleanQuery)
+        }
+        if let fixture = searchFixtures[source] {
+            return fixture
+        }
+        let defaultProvider = source == "soundcloud" ? "soundcloud" : "youtube"
+        let rawItems: [[String: Any]]
+        if cleanQuery.isEmpty {
+            rawItems = []
+        } else {
+            let path = "/api/search/\(Self.enc(source))?q=\(Self.enc(cleanQuery))"
+            let found = try await request("GET", path, nil)
+            rawItems = found["items"] as? [[String: Any]] ?? []
+        }
+        let combinedLookup: LocalTrackLookup? = localLookup.map { lookup in
+            { provider, externalId in
+                lookup(provider, externalId) ?? (provider != source ? lookup(source, externalId) : nil)
+            }
+        }
+        let enriched = Self.enrichTracks(
+            rawItems,
+            defaultProvider: defaultProvider,
+            lookup: combinedLookup,
+            pendingReactions: externalReactions
+        )
+        let sourceTitle: String
+        switch source {
+        case "ytmusic": sourceTitle = "YouTube Music"
+        case "youtube": sourceTitle = "YouTube"
+        case "soundcloud": sourceTitle = "SoundCloud"
+        default: sourceTitle = source
+        }
+        let label = cleanQuery.isEmpty ? sourceTitle : "\(sourceTitle) · \(cleanQuery)"
+        let session = SearchSession(
+            id: UUID().uuidString,
+            source: source,
+            query: cleanQuery,
+            scope: "all",
+            page: 0,
+            items: enriched,
+            artists: [],
+            albums: [],
+            more: false,
+            context: ["type": "search", "label": label]
+        )
+        storeSession(session)
+        return renderSearchSession(session, lookup: combinedLookup)
+    }
+
     func updateSearchSessionTrack(sessionId: String, externalId: String, reaction: Int? = nil,
                                   libraryTrackId: String? = nil, saved: Bool? = nil,
                                   lookup: LocalTrackLookup? = nil) -> [String: Any]? {
         guard var session = searchSessions[sessionId] else { return nil }
-        if let reaction { setExternalReaction(provider: session.source, externalId: externalId, value: reaction) }
+        let defaultProvider = session.source == "soundcloud" ? "soundcloud" : (session.source == "yandex" ? "yandex" : "youtube")
+        if let reaction {
+            setExternalReaction(provider: defaultProvider, externalId: externalId, value: reaction)
+            if defaultProvider != session.source {
+                setExternalReaction(provider: session.source, externalId: externalId, value: reaction)
+            }
+        }
         for i in session.items.indices where Self.trackId(session.items[i]) == externalId {
-            if let reaction { session.items[i]["reaction"] = reaction }
+            if let reaction {
+                let itemProvider = (session.items[i]["audioProvider"] as? String)
+                    ?? (session.items[i]["provider"] as? String)
+                    ?? defaultProvider
+                setExternalReaction(provider: itemProvider, externalId: externalId, value: reaction)
+                session.items[i]["reaction"] = reaction
+            }
             if let libraryTrackId { session.items[i]["libraryTrackId"] = libraryTrackId }
             if let saved { session.items[i]["saved"] = saved }
         }
@@ -374,15 +446,28 @@ final class NativeCatalogState {
     }
 
     private func renderSearchSession(_ session: SearchSession, lookup: LocalTrackLookup?) -> [String: Any] {
+        let defaultProvider = session.source == "soundcloud" ? "soundcloud" : (session.source == "yandex" ? "yandex" : "youtube")
         let formattedTracks = session.items.map { item -> [String: Any] in
             let id = Self.trackId(item)
-            let local = lookup?(session.source, id)
-            let reaction = local?.reaction ?? (item["reaction"] as? NSNumber)?.intValue ?? 0
+            let provider = (item["audioProvider"] as? String) ?? (item["provider"] as? String) ?? defaultProvider
+            let local = lookup?(provider, id) ?? (provider != session.source ? lookup?(session.source, id) : nil)
+            let pending = externalReactions["\(provider):\(id)"] ?? (provider != session.source ? externalReactions["\(session.source):\(id)"] : nil)
+            let reaction = local?.reaction ?? (item["reaction"] as? NSNumber)?.intValue ?? pending ?? 0
             let saved = local?.saved ?? (item["saved"] as? Bool == true)
+            let localTrackId = local?.trackId ?? (item["libraryTrackId"] as? String)
+            let tags: String = {
+                if let labels = item["labels"] as? [[String: Any]] {
+                    return labels.compactMap { $0["tag"] as? String }.filter { !$0.isEmpty }.joined(separator: " · ")
+                }
+                if let labels = item["labels"] as? [String] {
+                    return labels.filter { !$0.isEmpty }.joined(separator: " · ")
+                }
+                return item["tags"] as? String ?? ""
+            }()
             var row: [String: Any] = [
                 "id": id,
                 "externalId": id,
-                "provider": item["provider"] as? String ?? session.source,
+                "provider": provider,
                 "title": item["title"] as? String ?? "",
                 "artist": item["artist"] as? String ?? "",
                 "album": item["album"] as? String ?? "",
@@ -391,8 +476,9 @@ final class NativeCatalogState {
                 "ok": item["playable"] as? Bool != false,
                 "saved": saved,
                 "explicit": item["explicit"] as? Bool == true,
-                "tags": "",
+                "tags": tags,
             ]
+            if let localTrackId, !localTrackId.isEmpty { row["localTrackId"] = localTrackId }
             if let cover = item["coverUrl"] as? String, !cover.isEmpty { row["cover"] = cover }
             return row
         }
@@ -414,6 +500,7 @@ final class NativeCatalogState {
             var t = raw
             let extId = trackId(raw)
             let provider = (raw["audioProvider"] as? String) ?? (raw["provider"] as? String) ?? defaultProvider
+            let source = raw["source"] as? String
             if t["provider"] == nil { t["provider"] = provider }
             if t["externalId"] == nil && !extId.isEmpty { t["externalId"] = extId }
             if t["coverUrl"] == nil, let thumb = raw["thumbnail"] as? String { t["coverUrl"] = thumb }
@@ -424,7 +511,8 @@ final class NativeCatalogState {
                 t["libraryTrackId"] = local.trackId
                 t["saved"] = local.saved
                 t["reaction"] = local.reaction
-            } else if !extId.isEmpty, let pending = pendingReactions["\(provider):\(extId)"] {
+            } else if !extId.isEmpty,
+                      let pending = pendingReactions["\(provider):\(extId)"] ?? source.flatMap({ pendingReactions["\($0):\(extId)"] }) {
                 t["reaction"] = pending
             }
             return t
