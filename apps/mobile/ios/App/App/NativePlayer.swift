@@ -203,20 +203,22 @@ final class NativePlayerModel: ObservableObject {
         guard !changingMode, let store = NativeShellStore.shared else { return }
         changingMode = true
         UISelectionFeedbackGenerator().selectionChanged()
-        Task { @MainActor in
+        var automix: [String: Any] = ["enabled": style != "off"]
+        if style != "off" { automix["style"] = style }
+        let body: [String: Any] = ["automix": automix]
+        let labels = ["auto": "Авто", "smooth": "Плавное сведение", "tight": "Короткое сведение", "off": "Выключен"]
+        let label = labels[style] ?? style
+        Task<Void, Never> { @MainActor in
             defer { changingMode = false }
             do {
                 if store.sharedLibrary {
                     try await NativeQueueController.shared.setAutomixStyle(style)
                 } else {
-                    _ = try await NativeServerApp.request("PUT", "/api/settings", body: [
-                        "automix": style == "off" ? ["enabled": false] : ["enabled": true, "style": style]
-                    ])
+                    _ = try await NativeServerApp.request("PUT", "/api/settings", body: body)
                 }
                 automixStyle = style
                 modes.automix = style != "off"
-                let labels = ["auto": "Авто", "smooth": "Плавное сведение", "tight": "Короткое сведение", "off": "Выключен"]
-                store.show("AutoMix: \(labels[style] ?? style)")
+                store.show("AutoMix: \(label)")
             } catch {
                 if !NativeShellStore.isCancelled(error) { actionError = error.localizedDescription }
             }
