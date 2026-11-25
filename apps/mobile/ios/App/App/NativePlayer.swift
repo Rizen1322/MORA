@@ -524,6 +524,52 @@ private struct RoutePicker: UIViewRepresentable {
     func updateUIView(_ view: AVRoutePickerView, context: Context) {}
 }
 
+private struct HorizontalCoverSwipe: UIViewRepresentable {
+    var enabled: Bool
+    var onDrag: (CGFloat) -> Void
+    var onEnd: (CGFloat, CGFloat) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
+        pan.delegate = context.coordinator
+        pan.maximumNumberOfTouches = 1
+        view.addGestureRecognizer(pan)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.parent = self
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var parent: HorizontalCoverSwipe
+        init(parent: HorizontalCoverSwipe) { self.parent = parent }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard parent.enabled, let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            let v = pan.velocity(in: pan.view)
+            return abs(v.x) > abs(v.y) * 1.15
+        }
+
+        @objc func handlePan(_ pan: UIPanGestureRecognizer) {
+            let translation = pan.translation(in: pan.view)
+            let velocity = pan.velocity(in: pan.view)
+            switch pan.state {
+            case .began, .changed:
+                parent.onDrag(translation.x)
+            case .ended, .cancelled, .failed:
+                parent.onEnd(translation.x, velocity.x)
+            default:
+                break
+            }
+        }
+    }
+}
+
 struct NativePlayerView: View {
     @ObservedObject var model: NativePlayerModel
     @ObservedObject private var sleep = NativeSleepTimer.shared
@@ -532,7 +578,6 @@ struct NativePlayerView: View {
     @State private var showLyrics = false
     @State private var lyricsRefreshToken = 0
     @State private var coverDragOffset: CGFloat = 0
-    @GestureState private var isCoverDragging = false
     @Namespace private var playerLayout
 
     var body: some View {
@@ -617,13 +662,6 @@ struct NativePlayerView: View {
         .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.84), value: s.blending)
         .onChange(of: queueOpen) { _, open in if open { coverDragOffset = 0 } }
         .onChange(of: showLyrics) { _, open in if open { coverDragOffset = 0 } }
-        .onChange(of: isCoverDragging) { _, active in
-            if !active && coverDragOffset != 0 {
-                withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.78)) {
-                    coverDragOffset = 0
-                }
-            }
-        }
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
         .alert("Не удалось выполнить действие", isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(model.actionError ?? "") }
         .sheet(isPresented: Binding(get: { !model.playlistTarget.isEmpty }, set: { if !$0 { model.playlistTarget = [] } })) {
@@ -865,31 +903,18 @@ struct NativePlayerView: View {
             .shadow(color: .black.opacity(0.6), radius: playing ? 30 : 14, y: playing ? 20 : 10)
             .scaleEffect(playing || reduceMotion ? 1 : 0.94)
             .offset(x: reduceMotion ? 0 : coverDragOffset)
-            .gesture(
-                DragGesture(minimumDistance: 16, coordinateSpace: .global)
-                    .updating($isCoverDragging) { _, active, _ in
-                        active = true
-                    }
-                    .onChanged { value in
-                        guard !queueOpen && !showLyrics else { return }
-                        guard abs(value.translation.width) >= abs(value.translation.height) else {
-                            if coverDragOffset != 0 { coverDragOffset = 0 }
-                            return
-                        }
-                        if !reduceMotion {
-                            coverDragOffset = max(-48, min(48, value.translation.width * 0.45))
-                        }
-                    }
-                    .onEnded { value in
-                        guard !queueOpen && !showLyrics else {
-                            coverDragOffset = 0
-                            return
-                        }
-                        let isHorizontal = abs(value.translation.width) >= abs(value.translation.height)
-                        if isHorizontal && value.translation.width < -60 {
+            .overlay {
+                HorizontalCoverSwipe(
+                    enabled: !queueOpen && !showLyrics,
+                    onDrag: { dx in
+                        guard !reduceMotion else { return }
+                        coverDragOffset = max(-48, min(48, dx * 0.45))
+                    },
+                    onEnd: { dx, vx in
+                        if dx < -60 || vx < -420 {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             model.transport("nexttrack")
-                        } else if isHorizontal && value.translation.width > 60 {
+                        } else if dx > 60 || vx > 420 {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             model.transport("previoustrack")
                         }
@@ -897,7 +922,8 @@ struct NativePlayerView: View {
                             coverDragOffset = 0
                         }
                     }
-            )
+                )
+            }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: playing)
             .layoutPriority(-1)
     }

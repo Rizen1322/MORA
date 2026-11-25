@@ -817,6 +817,7 @@ final class NativeShellStore: ObservableObject {
                 self.offline.toggle()
                 if !self.offline { self.show("Сеть снова доступна") }
                 self.sendNetwork()
+                Task { @MainActor in NativeQueueController.shared.handleNetworkChange(offline: self.offline) }
             }
         }
         network.start(queue: DispatchQueue(label: "ru.mora.network"))
@@ -838,7 +839,7 @@ final class NativeShellStore: ObservableObject {
             self.ui.playback.automix = qc.automixEnabled
             self.ui.playback.canShuffle = qc.entries.count > 1
         }
-        if qc.waveSource != nil || qc.waveLoading {
+        if sharedLibrary || qc.waveSource != nil || qc.waveLoading || qc.waveError != nil || self.ui.wave.loading {
             self.ui.wave.loading = qc.waveLoading
             self.ui.wave.error = qc.waveError
             self.ui.wave.active = qc.waveSource.flatMap(NativeWaveSource.init(rawValue:))
