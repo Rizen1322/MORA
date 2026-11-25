@@ -57,10 +57,10 @@ final class NativeYandexCatalog {
         self.fetch = fetch
     }
 
-    private func locked<T>(_ work: () -> T) -> T {
+    private func locked<T>(_ work: () throws -> T) rethrows -> T {
         lock.lock()
         defer { lock.unlock() }
-        return work()
+        return try work()
     }
 
     /// Drops both cached pages and credentials (when account connects or disconnects).
