@@ -338,7 +338,7 @@ final class NativeMixHost {
     }
     /// The first song follows the same native loader/decoder as the future queue.
     /// No page callback is needed between download completion and audio start.
-    func prepareStart(id: String, item: [String: Any], config: [String: Any], completion: @escaping Reply) {
+    func prepareStart(id: String, item: [String: Any], config: [String: Any], networkTimeout: TimeInterval? = nil, completion: @escaping Reply) {
         work.async {
             let gain = config["gainDb"] as? Double ?? 0
             guard id == self.id, let folder = self.folder,
@@ -367,6 +367,14 @@ final class NativeMixHost {
                     if first { completion(result) }
                 }
             }()
+            if let networkTimeout, !["local", "station"].contains(source["kind"] as? String ?? "") {
+                self.work.asyncAfter(deadline: .now() + networkTimeout) { [weak self] in
+                    guard let self, self.initialTicket === ticket else { return }
+                    ticket.cancel()
+                    self.initialTicket = nil; self.initialConfig = [:]
+                    self.reply(replyOnce, .failure(NativeMediaHTTP.Failure.transport(URLError.timedOut.rawValue)))
+                }
+            }
             Task.detached(priority: .userInitiated) { [weak self] in
                 let http = NativeMediaHTTP(allowedHTTPHosts: hosts)
                 defer { http.invalidate(); try? FileManager.default.removeItem(at: downloaded) }
