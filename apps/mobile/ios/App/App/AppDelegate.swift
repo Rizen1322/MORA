@@ -14,6 +14,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         NativePreparationCore.compiledPlan = NativeRustAnalysis.plan
         _ = NativeDownloadManager.shared
         _ = NativeMetrics.shared
+        DispatchQueue.global(qos: .utility).async { NativeMixHost.cleanupOrphanedSessions() }
         application.shortcutItems = [
             UIApplicationShortcutItem(type: "mora.wave", localizedTitle: "Волна", localizedSubtitle: nil, icon: UIApplicationShortcutIcon(systemImageName: "waveform")),
             UIApplicationShortcutItem(type: "mora.search", localizedTitle: "Поиск", localizedSubtitle: nil, icon: UIApplicationShortcutIcon(systemImageName: "magnifyingglass")),

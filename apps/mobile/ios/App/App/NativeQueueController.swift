@@ -49,6 +49,7 @@ import Foundation
     private var didRestoreQueue = false
     private var prefetchedIds = Set<String>()
     private var cachedKeepWave: (count: Int, at: Date)?
+    private var rescuedEndedEntryId: String?
 
     var onStateChange: (() -> Void)?
 
@@ -478,9 +479,41 @@ import Foundation
         } else if offline && (source == "yandex" || source == "online") {
             waveFallbackActive = true
             context = waveContext(for: source, offlineFallback: true)
+            pruneUndownloadedFuture()
             onStateChange?()
+            scheduleSync()
             Task { @MainActor in await self.topUpWaveIfNeeded(force: true) }
         }
+    }
+
+    private func isDownloaded(_ trackId: String) -> Bool {
+        NativeDownloadManager.shared.localFile(trackId) != nil || NativeShellStore.shared?.byId[trackId]?.offline == true
+    }
+
+    private func pruneUndownloadedFuture() {
+        guard index + 1 < entries.count else { return }
+        let keptHead = Array(entries.prefix(index + 1))
+        let downloadedTail = entries.dropFirst(index + 1).filter { isDownloaded($0.trackId) }
+        guard downloadedTail.count != entries.count - keptHead.count else { return }
+        entries = keptHead + downloadedTail
+    }
+
+    private func rescueEndedWave() async {
+        guard isWave, !waveLoading else { return }
+        pruneUndownloadedFuture()
+        if index + 1 >= entries.count {
+            let fallback = await fetchOfflineWaveTrackIds(count: 3, excluding: Set(entries.map(\.trackId)))
+            if !fallback.isEmpty {
+                entries.append(contentsOf: fallback.map { Entry(entryId: UUID().uuidString, trackId: $0) })
+            }
+        }
+        guard index + 1 < entries.count else { return }
+        if let source = waveSource, source == "yandex" || source == "online" {
+            waveFallbackActive = true
+            context = waveContext(for: source, offlineFallback: true)
+        }
+        onStateChange?()
+        try? await startAt(index + 1, paused: false)
     }
 
     func startArtistRadio(artist: String, tracks: [NativeTrack]) async throws {
@@ -518,6 +551,7 @@ import Foundation
         hostIndex = idx
         let movedInQueue = found != index
         if movedInQueue || idx != previousHostIndex {
+            if movedInQueue { rescuedEndedEntryId = nil }
             finishPlay(reason: idx == previousHostIndex + 1 ? "transition" : "skip")
             index = found
             if let entry = currentEntry { beginPlay(entry) }
@@ -530,6 +564,13 @@ import Foundation
         if isWave && entries.count - 1 - index <= 2 {
             Task { @MainActor in await topUpWaveIfNeeded() }
         }
+        if isWave && !waveLoading && snapshot["ended"] as? Bool == true
+            && snapshot["playing"] as? Bool != true
+            && snapshot["waitingForPreparation"] as? Bool != true
+            && rescuedEndedEntryId != eid {
+            rescuedEndedEntryId = eid
+            Task { @MainActor in await self.rescueEndedWave() }
+        }
     }
 
     /// Wave settings changed: the next launch must build a fresh queue with them.
@@ -541,6 +582,7 @@ import Foundation
         waveSource = nil
         waveOfflineOnly = false
         waveFallbackActive = false
+        rescuedEndedEntryId = nil
         yandexSessionId = nil
         waveError = nil
         waveLoading = false
@@ -557,6 +599,7 @@ import Foundation
 
     private func startAt(_ targetIndex: Int, paused: Bool, startPosition: Double = 0) async throws {
         guard entries.indices.contains(targetIndex) else { return }
+        rescuedEndedEntryId = nil
         revision &+= 1
         let rev = revision
         startingRevision = rev
@@ -807,7 +850,12 @@ import Foundation
             guard !additions.isEmpty else { return }
             entries.append(contentsOf: additions)
             onStateChange?()
-            scheduleSync()
+            let snap = NativeMixHost.shared.snapshot
+            if snap["ended"] as? Bool == true && snap["playing"] as? Bool != true && index + 1 < entries.count {
+                Task { @MainActor in try? await self.startAt(self.index + 1, paused: false) }
+            } else {
+                scheduleSync()
+            }
             Task { @MainActor in await prefetchUpcomingIfNeeded() }
         }
 
@@ -831,6 +879,7 @@ import Foundation
                 }
             }
             guard isCurrent() else { return }
+            pruneUndownloadedFuture()
             let fallback = await fetchOfflineWaveTrackIds(count: 3, excluding: existing)
             guard isCurrent() else { return }
             if !fallback.isEmpty {
@@ -853,6 +902,7 @@ import Foundation
                 return
             }
             guard isCurrent() else { return }
+            pruneUndownloadedFuture()
             let fallback = await fetchOfflineWaveTrackIds(count: 3, excluding: existing)
             guard isCurrent() else { return }
             if !fallback.isEmpty {

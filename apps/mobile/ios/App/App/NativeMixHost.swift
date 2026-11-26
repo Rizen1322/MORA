@@ -157,6 +157,15 @@ final class NativeMixHost {
            let start = plan["triggerFrame"] as? Double { result["transitionStart"] = start / sr }
         lock.lock(); cached = result; lock.unlock()
     }
+    static func cleanupOrphanedSessions(keeping activeId: String? = nil) {
+        guard let root = try? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+            .appendingPathComponent("MORA/native-mix", isDirectory: true),
+              let items = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return }
+        for url in items where url.lastPathComponent != activeId {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
     func begin(_ completion: @escaping Reply) {
         work.async {
             do {
@@ -166,6 +175,7 @@ final class NativeMixHost {
                 self.id = UUID().uuidString
                 let folder = root.appendingPathComponent(self.id, isDirectory: true)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: NativePreparationFiles.attributes)
+                Self.cleanupOrphanedSessions(keeping: self.id)
                 self.folder = folder; self.bytes = [:]; self.sourceBytes = [:]; self.sourceLinks = [:]; self.pendingUploads = []; self.preparedFileKey = 500000; self.sourceKey = 0
                 self.preparing = true; self.failed = false
                 self.knownManifest = nil; self.ownershipRevision += 1
