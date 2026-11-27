@@ -4,7 +4,7 @@ mod secrets;
 mod profile;
 mod power;
 use serde_json::{json, Value};
-use std::{env, fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc, Arc, Mutex}, time::{Duration, Instant}};
+use std::{env, fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc, Mutex}, time::{Duration, Instant}};
 use std::os::windows::process::CommandExt;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri::{menu::MenuBuilder, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
@@ -108,7 +108,7 @@ fn import_paths_overlap(source: &Path, data: &Path) -> Result<bool, String> {
     let source = future_path(source)?; let data = future_path(data)?; let staging = future_path(&PathBuf::from(name))?;
     Ok(source.starts_with(&data) || data.starts_with(&source) || source.starts_with(&staging) || staging.starts_with(&source))
 }
-fn spawn_backend(profile: &Path, resources: &Path, token: &str, pcm: &str, port: u16, startup: Option<&tauri::WebviewWindow>) -> Result<(Child, u16, bool), String> {
+fn spawn_backend(profile: &Path, resources: &Path, token: &str, pcm: &str, port: u16) -> Result<(Child, u16, bool), String> {
     let node = env::var_os("AUTOMIX_NODE_PATH").map(PathBuf::from).unwrap_or_else(|| resources.join("node/node.exe"));
     let entry = env::var_os("AUTOMIX_BACKEND_ENTRY").map(PathBuf::from).unwrap_or_else(|| resources.join("backend/tauri-backend.mjs"));
     let network = env::var_os("AUTOMIX_NETWORK_RUST").map(PathBuf::from).unwrap_or_else(|| resources.join("network/mora-network.exe"));
@@ -142,11 +142,9 @@ fn spawn_backend(profile: &Path, resources: &Path, token: &str, pcm: &str, port:
         match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok(message) if message["type"] == "backup" => {
                 deadline = Instant::now() + Duration::from_secs(600);
-                startup_status(startup, "Резервное копирование медиатеки перед обновлением…");
             }
             Ok(message) if message["type"] == "starting" => {
                 deadline = Instant::now() + Duration::from_secs(90);
-                startup_status(startup, "Запуск локального сервиса…");
             }
             Ok(message) => break message,
             Err(error) => {
@@ -187,7 +185,7 @@ fn restart_child(state: &Session, stop: bool) -> Result<(), String> {
     if state.maintenance.load(Ordering::Acquire) { return Err("Дождитесь окончания переноса медиатеки".into()); }
     if stop { stop_child(&mut child, true); }
     else if !matches!(child.try_wait(), Ok(Some(_))) { return Ok(()); }
-    let (mut replacement, _, recovery) = spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port, None)?;
+    let (mut replacement, _, recovery) = spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port)?;
     if stop && recovery {
         if let Some(stdin) = replacement.stdin.as_mut() { let _ = writeln!(stdin, "{}", json!({"type":"recovery", "restore":true})); }
     } else { offer_recovery(&mut replacement, recovery); }
@@ -257,7 +255,7 @@ async fn desktop_action(window: tauri::WebviewWindow, state: tauri::State<'_, Se
             let _guard = Maintenance(&state.maintenance);
             flush_window_bounds(&state, true);
             launch_update(&mut state.child.lock().unwrap(), &installer, |child| {
-                let (mut replacement, _, recovery) = spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port, None)?;
+                let (mut replacement, _, recovery) = spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port)?;
                 if recovery { if let Some(stdin) = replacement.stdin.as_mut() { let _ = writeln!(stdin, "{}", json!({"type":"recovery", "restore":true})); } }
                 *child = replacement; Ok(())
             })?;
@@ -301,7 +299,7 @@ async fn desktop_action(window: tauri::WebviewWindow, state: tauri::State<'_, Se
                 }
                 if !matches!(worker.wait(), Ok(status) if status.success()) && result["status"] == "done" { result = json!({"status":"error", "message":"Импорт прерван"}); }
             }
-            match spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port, None) {
+            match spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port) {
                 Ok((replacement, _, _)) => *child = replacement,
                 Err(error) => return Err(format!("Импорт завершён, но сервис не запустился: {error}")),
             }
@@ -364,12 +362,7 @@ fn show_window(window: &tauri::WebviewWindow) {
     set_webview_visible(window, true);
     let _ = window.show(); let _ = window.unminimize(); let _ = window.set_focus();
 }
-fn startup_status(window: Option<&tauri::WebviewWindow>, message: &str) {
-    if let Some(window) = window {
-        let _ = window.eval(format!("document.getElementById('startup-status').textContent = {}", json!(message)));
-    }
-}
-fn start_session(startup: Option<&tauri::WebviewWindow>) -> Result<(Session, Value, mpsc::Receiver<&'static str>), String> {
+fn start_session() -> Result<(Session, Value, mpsc::Receiver<&'static str>), String> {
     let profile = match env::var_os("AUTOMIX_PROFILE_DIR") {
         Some(path) => PathBuf::from(path),
         None => profile::choose(&PathBuf::from(env::var_os("LOCALAPPDATA").ok_or("Не найдена папка профиля Windows")?))?,
@@ -380,7 +373,7 @@ fn start_session(startup: Option<&tauri::WebviewWindow>) -> Result<(Session, Val
         None => env::current_exe().map_err(|e| e.to_string())?.parent().ok_or("Не найдена папка MORA")?.join("resources"),
     };
     let token = random_hex()?; let pcm = random_hex()?;
-    let (mut child, port, recovery) = spawn_backend(&profile, &resources, &token, &pcm, 0, startup)?;
+    let (mut child, port, recovery) = spawn_backend(&profile, &resources, &token, &pcm, 0)?;
     offer_recovery(&mut child, recovery);
     let initial: Value = fs::read(profile.join("desktop.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
     let mut saved: Value = fs::read(profile.join("tauri-window.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_else(|| json!({}));
@@ -508,36 +501,24 @@ fn open_main(app: &tauri::AppHandle, session: Session, saved: Value, commands: m
     });
     println!("MORA_TAURI_READY {port}"); Ok(())
 }
-fn launch_session(app: tauri::AppHandle, startup: Option<tauri::WebviewWindow>, aborted: Arc<AtomicBool>) {
+fn launch_session(app: tauri::AppHandle) {
+    // Nothing is shown while the local service starts: the real window appears as soon as it is ready.
     let (session, saved, commands) = loop {
-        if aborted.load(Ordering::Acquire) { return; }
-        startup_status(startup.as_ref(), "Запуск локального сервиса…");
-        match start_session(startup.as_ref()) {
+        match start_session() {
             Ok(ready) => break ready,
             Err(error) => {
-                if aborted.load(Ordering::Acquire) { return; }
                 eprintln!("Tauri startup: {error}");
-                let Some(startup) = startup.as_ref() else { app.exit(1); return; };
-                startup_status(Some(startup), "Не удалось запустить локальный сервис");
-                if !app.dialog().message(error).parent(startup).title("Не удалось открыть MORA").kind(MessageDialogKind::Error)
+                if !app.dialog().message(error.as_str()).title("Не удалось открыть MORA").kind(MessageDialogKind::Error)
                     .buttons(MessageDialogButtons::OkCancelCustom("Повторить".into(), "Выйти".into())).blocking_show() {
                     app.exit(1); return;
                 }
             }
         }
     };
-    if aborted.load(Ordering::Acquire) {
-        stop_child(&mut session.child.lock().unwrap(), false);
-        return;
-    }
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
-        if aborted.load(Ordering::Acquire) {
-            stop_child(&mut session.child.lock().unwrap(), false);
-            return;
-        }
         match open_main(&handle, session, saved, commands) {
-            Ok(()) => if let Some(window) = startup { let _ = window.destroy(); },
+            Ok(()) => {}
             Err(error) => {
                 eprintln!("MORA window: {error}");
                 let exit = handle.clone();
@@ -560,25 +541,13 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if env::var_os("AUTOMIX_TEST").is_none() {
-                if let Some(w) = app.get_webview_window("main").or_else(|| app.get_webview_window("startup")) { show_window(&w); }
+                if let Some(w) = app.get_webview_window("main") { show_window(&w); }
             }
         }))
         .invoke_handler(tauri::generate_handler![desktop_action])
         .setup(|app| {
-            let startup_aborted = Arc::new(AtomicBool::new(false));
-            let startup = if env::var_os("AUTOMIX_TEST").is_some() { None } else {
-                let w = WebviewWindowBuilder::new(app, "startup", WebviewUrl::App("index.html".into()))
-                    .title("MORA").inner_size(440.0, 152.0).resizable(false).center().build()?;
-                let flag = Arc::clone(&startup_aborted);
-                w.on_window_event(move |event| {
-                    if matches!(event, WindowEvent::CloseRequested { .. }) {
-                        flag.store(true, Ordering::Release);
-                    }
-                });
-                Some(w)
-            };
             let handle = app.handle().clone();
-            std::thread::spawn(move || launch_session(handle, startup, startup_aborted));
+            std::thread::spawn(move || launch_session(handle));
             Ok(())
         }).build(context).expect("Tauri startup failed");
     app.run(|handle, event| if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
