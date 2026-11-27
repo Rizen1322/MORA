@@ -38,8 +38,6 @@ try {
     .flatMap(([, list]) => list).filter(d => d.name.includes('iPhone'));
   device = candidates.find(d => d.state === 'Booted') ?? candidates[0];
   assert.ok(device, 'An available iPhone simulator is required');
-  if (device.state !== 'Booted') run('xcrun', ['simctl', 'boot', device.udid]);
-  run('xcrun', ['simctl', 'bootstatus', device.udid, '-b'], 600000);
   const app = join(dir, 'HostCheck.app'); await mkdir(join(app, 'public'), { recursive: true });
   const bundle = 'ru.mora.native-host-check';
   await writeFile(join(app, 'Info.plist'), `<?xml version="1.0"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict>
@@ -52,6 +50,8 @@ try {
     '-target', `${process.arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-ios17.4-simulator`,
     ...files, resolve(root, 'apps/mobile/test/native-host/main.swift'), '-o', join(app, 'HostCheck')], 600000);
   run('codesign', ['--force', '--sign', '-', app]);
+  if (device.state !== 'Booted') run('xcrun', ['simctl', 'boot', device.udid]);
+  run('xcrun', ['simctl', 'bootstatus', device.udid, '-b'], 600000);
   run('xcrun', ['simctl', 'install', device.udid, app]);
   const container = run('xcrun', ['simctl', 'get_app_container', device.udid, bundle, 'data']);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

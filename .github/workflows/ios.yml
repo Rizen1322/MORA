@@ -184,6 +184,16 @@ jobs:
           MORA_CARPLAY: ${{ inputs.carplay && '1' || '0' }}
           MORA_ICLOUD: ${{ inputs.icloud && '1' || '0' }}
         run: node apps/mobile/scripts/verify-ipa.cjs apps/mobile/MORA-unsigned.ipa "$GITHUB_SHA" "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MORA-unsigned-ipa${{ inputs.carplay && '-carplay' || '' }}${{ inputs.icloud && '-icloud' || '' }}
+          path: |
+            apps/mobile/MORA-unsigned.ipa
+            apps/mobile/MORA-unsigned.ipa.sha256
+            apps/mobile/MORA-unsigned.ipa.verification.json
+            apps/mobile/RELEASE-NOTES.md
+          if-no-files-found: error
+          retention-days: 14
       - name: Compare compiled Rust MIR with the bundled analyzer
         run: node apps/mobile/scripts/check-native-rust-analysis.mjs
       - name: Test native media preparation
@@ -211,16 +221,6 @@ jobs:
           sleep 20
           xcrun simctl io "$DEVICE" screenshot "$RUNNER_TEMP/mora-native-home.png"
           kill -0 "$LAUNCH_PID" || { cat "$RUNNER_TEMP/mora-ui-console.log"; exit 1; }
-      - uses: actions/upload-artifact@v4
-        with:
-          name: MORA-unsigned-ipa${{ inputs.carplay && '-carplay' || '' }}${{ inputs.icloud && '-icloud' || '' }}
-          path: |
-            apps/mobile/MORA-unsigned.ipa
-            apps/mobile/MORA-unsigned.ipa.sha256
-            apps/mobile/MORA-unsigned.ipa.verification.json
-            apps/mobile/RELEASE-NOTES.md
-          if-no-files-found: error
-          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: MORA-native-ui-check
