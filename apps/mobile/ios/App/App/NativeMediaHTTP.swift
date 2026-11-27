@@ -56,17 +56,27 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
             self.ticket = ticket; self.sink = sink; self.completion = completion
         }
     }
+    private final class MemoryTransfer {
+        let limit: Int, ticket: NativePreparationTicket
+        let completion: (Result<Data, Error>) -> Void
+        var buffer = Data()
+        init(limit: Int, ticket: NativePreparationTicket, completion: @escaping (Result<Data, Error>) -> Void) {
+            self.limit = limit; self.ticket = ticket; self.completion = completion
+        }
+    }
+    static let sharedHTTPS = NativeMediaHTTP()
     private let delegateQueue: OperationQueue = {
-        let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1; queue.qualityOfService = .utility; return queue
+        let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1; queue.qualityOfService = .userInitiated; return queue
     }()
     private let allowLoopback: Bool
     private let allowedHTTPHosts: Set<String>
     private let timeout: TimeInterval
     private var transfers: [Int: Transfer] = [:] // delegateQueue only
+    private var memoryTransfers: [Int: MemoryTransfer] = [:] // delegateQueue only
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = min(30, timeout); config.timeoutIntervalForResource = timeout
-        config.httpCookieStorage = nil; config.urlCache = nil; config.httpMaximumConnectionsPerHost = 3
+        config.timeoutIntervalForRequest = min(20, timeout); config.timeoutIntervalForResource = timeout
+        config.httpCookieStorage = nil; config.urlCache = nil; config.httpMaximumConnectionsPerHost = 6
         return URLSession(configuration: config, delegate: self, delegateQueue: delegateQueue)
     }()
     init(allowLoopback: Bool = false, allowedHTTPHosts: Set<String> = [], timeout: TimeInterval = 180) {
@@ -103,10 +113,27 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
     }
     func data(_ url: URL, headers: [String: String] = [:], limit: Int = 1024 * 1024,
               ticket: NativePreparationTicket) async throws -> Data {
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("mora-response-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: file) }
-        try await download(url, to: file, headers: headers, limit: limit, ticket: ticket)
-        return try Data(contentsOf: file)
+        guard valid(url), limit > 0 else { throw Failure.invalidURL }
+        if ticket.cancelled { throw Failure.cancelled }
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+            delegateQueue.addOperation {
+                guard !ticket.cancelled else { continuation.resume(throwing: Failure.cancelled); return }
+                var request = URLRequest(url: url); request.cachePolicy = .reloadIgnoringLocalCacheData
+                request.allHTTPHeaderFields = headers
+                let task = self.session.dataTask(with: request)
+                self.memoryTransfers[task.taskIdentifier] = MemoryTransfer(limit: limit, ticket: ticket, completion: { continuation.resume(with: $0) })
+                ticket.add(task); task.resume()
+            }
+        }
+    }
+    private func finishMemory(_ task: URLSessionTask, _ result: Result<Data, Error>) {
+        guard let transfer = memoryTransfers.removeValue(forKey: task.taskIdentifier) else { return }
+        transfer.ticket.remove(task)
+        if case .success(let data) = result, data.isEmpty {
+            transfer.completion(.failure(Failure.network))
+            return
+        }
+        transfer.completion(result)
     }
     private func finish(_ task: URLSessionTask, _ result: Result<Void, Error>) {
         guard let transfer = transfers.removeValue(forKey: task.taskIdentifier) else { return }
@@ -125,6 +152,16 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
     }
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
                     completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        if let transfer = memoryTransfers[dataTask.taskIdentifier] {
+            guard let response = response as? HTTPURLResponse, (200...299).contains(response.statusCode) else {
+                finishMemory(dataTask, .failure(Failure.http((response as? HTTPURLResponse)?.statusCode ?? 0)))
+                completionHandler(.cancel); return
+            }
+            guard response.expectedContentLength <= Int64(transfer.limit) else {
+                finishMemory(dataTask, .failure(Failure.tooLarge)); completionHandler(.cancel); return
+            }
+            completionHandler(.allow); return
+        }
         guard let transfer = transfers[dataTask.taskIdentifier] else { completionHandler(.cancel); return }
         guard let response = response as? HTTPURLResponse, (200...299).contains(response.statusCode) else {
             finish(dataTask, .failure(Failure.http((response as? HTTPURLResponse)?.statusCode ?? 0)))
@@ -136,6 +173,12 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
         completionHandler(.allow)
     }
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        if let transfer = memoryTransfers[dataTask.taskIdentifier] {
+            guard !transfer.ticket.cancelled else { finishMemory(dataTask, .failure(Failure.cancelled)); dataTask.cancel(); return }
+            guard transfer.buffer.count + data.count <= transfer.limit else { finishMemory(dataTask, .failure(Failure.tooLarge)); dataTask.cancel(); return }
+            transfer.buffer.append(data)
+            return
+        }
         guard let transfer = transfers[dataTask.taskIdentifier] else { return }
         do {
             guard !transfer.ticket.cancelled else { throw Failure.cancelled }
@@ -145,13 +188,23 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
         } catch { finish(dataTask, .failure(error)); dataTask.cancel() }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let transfer = memoryTransfers[task.taskIdentifier] {
+            if transfer.ticket.cancelled { finishMemory(task, .failure(Failure.cancelled)) }
+            else if let error { finishMemory(task, .failure(Failure.transport((error as NSError).code))) }
+            else { finishMemory(task, .success(transfer.buffer)) }
+            return
+        }
         if let transfer = transfers[task.taskIdentifier], transfer.ticket.cancelled { finish(task, .failure(Failure.cancelled)) }
         else if let error { finish(task, .failure(Failure.transport((error as NSError).code))) }
         else { finish(task, .success(())) }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        guard let url = request.url, valid(url) else { finish(task, .failure(Failure.invalidURL)); completionHandler(nil); return }
+        guard let url = request.url, valid(url) else {
+            if memoryTransfers[task.taskIdentifier] != nil { finishMemory(task, .failure(Failure.invalidURL)) }
+            else { finish(task, .failure(Failure.invalidURL)) }
+            completionHandler(nil); return
+        }
         var next = request
         if response.url?.host != url.host {
             next.setValue(nil, forHTTPHeaderField: "Authorization"); next.setValue(nil, forHTTPHeaderField: "Cookie")

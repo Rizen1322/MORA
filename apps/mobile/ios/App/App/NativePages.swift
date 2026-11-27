@@ -59,6 +59,7 @@ struct NativePageView: View {
     @State private var pendingChoices: [String: String] = [:]
     @State private var query = ""
     @State private var running = false
+    @State private var loadingRowTitle: String?
     @State private var reload = 0
     @State private var confirm: (row: NativePageRow.Confirm, act: NativePageAct)?
     @State private var prompt: (row: NativePageRow.Prompt, act: NativePageAct)?
@@ -127,12 +128,18 @@ struct NativePageView: View {
                 ContentUnavailableView("Не удалось открыть", systemImage: "exclamationmark.triangle", description: Text(failure))
                     .listRowBackground(Color.clear)
                 Button("Повторить") { reload &+= 1 }
+            } else if waveSource == nil && NativeCatalogState.handles(store.path) {
+                MoraCatalogSkeleton(preview: store.catalogPreview?.path == store.path ? store.catalogPreview : nil)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
             } else {
                 ProgressView(waveSource == nil ? "Загрузка…" : "Загружаем настройки…").frame(maxWidth: .infinity).listRowBackground(Color.clear)
             }
         }, catalog: catalog)
         .scrollContentBackground(.hidden)
         .background(Color.moraBackground)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: page != nil)
         // Only full-bleed hero pages carry their title inside the scroll header; library lists keep navigation titles.
         .navigationTitle(hero ? "" : current?.title ?? "")
         .navigationBarTitleDisplayMode(waveSource == nil && !hero ? .automatic : .inline)
@@ -299,7 +306,7 @@ struct NativePageView: View {
                 } else {
                     page = nil
                 }
-                failure = nil; form = [:]; pendingToggles = [:]; pendingChoices = [:]; query = ""
+                failure = nil; loadingRowTitle = nil; form = [:]; pendingToggles = [:]; pendingChoices = [:]; query = ""
             }
             .onChange(of: waveSource?.wrappedValue) { failure = nil; pendingToggles = [:]; pendingChoices = [:] }
             .safeAreaInset(edge: .bottom) {
@@ -417,7 +424,7 @@ struct NativePageView: View {
                 .accessibilityLabel("Вперемешку")
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MoraPressStyle())
         .disabled(running)
     }
 
@@ -681,7 +688,9 @@ struct NativePageView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: 14) {
                     ForEach(items) { item in
-                        Button { store.go(item.path) } label: {
+                        Button {
+                            store.openCatalog(item.path, title: item.title, detail: item.subtitle ?? "", cover: item.cover, isArtist: item.round)
+                        } label: {
                             VStack(alignment: item.round ? .center : .leading, spacing: 6) {
                                 NativeCover(url: item.cover, size: 150, radius: item.round ? 75 : 12, monogram: item.title)
                                     .overlay(Group {
@@ -699,27 +708,53 @@ struct NativePageView: View {
                                     Text("Исполнитель").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                 }
                             }.frame(width: 150, alignment: item.round ? .center : .leading)
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(MoraPressStyle())
                     }
                 }.padding(.horizontal, 16)
             }
             .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 12, trailing: 0)).listRowSeparator(.hidden)
 
         case .item(let title, let subtitle, let cover, let tag, let tone, let path, let act, let actions, let number):
+            let isArtist = path?.hasPrefix("/artist/") == true || path?.hasPrefix("/catalog/artist/") == true || path?.hasPrefix("/public/artist/") == true || path?.hasPrefix("/soundcloud/artist/") == true
+            let isAlbum = path?.hasPrefix("/album/") == true || path?.hasPrefix("/catalog/album/") == true || path?.hasPrefix("/public/album/") == true
+            let isRowLoading = running && act != nil && loadingRowTitle == title
             HStack(spacing: 12) {
                 Button {
-                    if let path { store.go(path) } else if let act { run(act) }
+                    if let path {
+                        if isArtist || isAlbum {
+                            store.openCatalog(path, title: title, detail: subtitle ?? "", cover: cover ?? nil, isArtist: isArtist)
+                        } else {
+                            store.go(path)
+                        }
+                    } else if let act {
+                        loadingRowTitle = title
+                        run(act)
+                    }
                 } label: {
                     HStack(spacing: 12) {
-                        let isArtist = path?.hasPrefix("/artist/") == true || path?.hasPrefix("/catalog/artist/") == true || path?.hasPrefix("/public/artist/") == true || path?.hasPrefix("/soundcloud/artist/") == true
-                        if let number { Text("\(number)").font(.body.monospacedDigit()).foregroundStyle(.secondary).frame(width: 26) }
-                        else if cover != nil || isArtist {
+                        if let number {
+                            if isRowLoading {
+                                ProgressView().controlSize(.small).tint(.moraMint).frame(width: 26)
+                            } else {
+                                Text("\(number)").font(.body.monospacedDigit()).foregroundStyle(.secondary).frame(width: 26)
+                            }
+                        } else if cover != nil || isArtist {
                             NativeCover(url: cover ?? nil, size: isArtist ? 52 : 48, radius: isArtist ? 26 : 8, monogram: title)
+                                .overlay {
+                                    if isRowLoading {
+                                        RoundedRectangle(cornerRadius: isArtist ? 26 : 8, style: .continuous)
+                                            .fill(Color.black.opacity(0.55))
+                                            .overlay { ProgressView().controlSize(.small).tint(.moraMint) }
+                                    }
+                                }
                                 .overlay(Group { if isArtist { Circle().stroke(Color.white.opacity(0.16), lineWidth: 1) } })
                                 .shadow(color: .black.opacity(isArtist ? 0.3 : 0), radius: 5, y: 2)
                         }
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(title).font(.body.weight(.medium)).lineLimit(2)
+                            Text(title)
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(isRowLoading ? Color.moraMint : .white)
+                                .lineLimit(2)
                             if let subtitle { Text(subtitle).font(.subheadline).foregroundStyle(color(tone) ?? .white.opacity(0.6)).lineLimit(3) }
                         }
                         Spacer(minLength: 0)
@@ -733,7 +768,7 @@ struct NativePageView: View {
                     .frame(minHeight: 52)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(MoraRowPressStyle())
                 .disabled(path == nil && act == nil)
                 // A catalog track has eight actions: inline they squeeze the title out of the row, so past two they go in a menu.
                 if actions.count > 2 {
@@ -852,7 +887,7 @@ struct NativePageView: View {
         }
         running = true
         Task { @MainActor in
-            defer { running = false; reload &+= 1 }
+            defer { running = false; loadingRowTitle = nil; reload &+= 1 }
             do {
                 if store.sharedLibrary, NativeImportState.handles(store.path), NativeImportState.supports(act.name) {
                     let result = try await store.imports.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2, timeout: 120) })

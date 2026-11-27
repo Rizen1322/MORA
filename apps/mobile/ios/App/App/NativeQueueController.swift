@@ -369,15 +369,17 @@ import Foundation
 
         if chosen == "yandex" {
             do {
-                let res = try await NativeServerApp.request("POST", "/api/providers/yandex/wave", body: ["count": 3, "queue": Array(yandexQueueIds.suffix(100))])
+                yandexSessionId = nil
+                yandexQueueIds = []
+                let res = try await NativeServerApp.request("POST", "/api/providers/yandex/wave", body: ["count": 2])
                 let sid = (res["sessionId"] as? String) ?? (res["session"] as? String)
                 let batchId = res["batchId"] as? String
-                let waveEntries = await collectYandexWaveEntries(from: res, limit: 3, excluding: [])
+                let waveEntries = await collectYandexWaveEntries(from: res, limit: 2, excluding: [])
                 guard reqId == waveRequestId else { return }
                 guard !waveEntries.isEmpty else {
                     throw NSError(domain: "NativeWave", code: 1, userInfo: [NSLocalizedDescriptionKey: "Яндекс Музыка не вернула треки"])
                 }
-                if let sid, sid != yandexSessionId {
+                if let sid {
                     sendYandexFeedback(sessionId: sid, batchId: batchId, event: ["type": "radioStarted", "from": "desktop_home-radio_bubble-default"])
                 }
                 yandexSessionId = sid
@@ -861,7 +863,7 @@ import Foundation
 
         if source == "yandex" {
             if !isOffline {
-                var yBody: [String: Any] = ["count": 2, "queue": Array(yandexQueueIds.suffix(100))]
+                var yBody: [String: Any] = ["count": 2, "queue": Array(yandexQueueIds.suffix(25))]
                 if let yandexSessionId { yBody["session"] = yandexSessionId }
                 if let res = try? await NativeServerApp.request("POST", "/api/providers/yandex/wave", body: yBody) {
                     guard isCurrent() else { return }
@@ -985,6 +987,17 @@ import Foundation
         for id in newEntries.compactMap(\.yandexId) where !id.isEmpty && !yandexQueueIds.contains(id) {
             yandexQueueIds.append(id)
         }
+    }
+
+    @MainActor func sendYandexReactionFeedback(trackId: String, value: Int) {
+        guard waveSource == "yandex", value == 1 || value == -1 else { return }
+        let matched = currentEntry?.trackId == trackId ? currentEntry : entries.first(where: { $0.trackId == trackId })
+        guard let matched, let yid = matched.yandexId, !yid.isEmpty,
+              let sid = matched.yandexSessionId ?? yandexSessionId, !sid.isEmpty else { return }
+        sendYandexFeedback(sessionId: sid, batchId: matched.yandexBatchId, event: [
+            "type": value == 1 ? "like" : "dislike",
+            "trackId": yid,
+        ])
     }
 
     private func sendYandexFeedback(sessionId: String, batchId: String?, event: [String: Any]) {

@@ -386,8 +386,9 @@ final class NativeMixHost {
                 }
             }
             Task.detached(priority: .userInitiated) { [weak self] in
-                let http = NativeMediaHTTP(allowedHTTPHosts: hosts)
-                defer { http.invalidate(); try? FileManager.default.removeItem(at: downloaded) }
+                let ownedHTTP = hosts.isEmpty ? nil : NativeMediaHTTP(allowedHTTPHosts: hosts)
+                let http = ownedHTTP ?? NativeMediaHTTP.sharedHTTPS
+                defer { ownedHTTP?.invalidate(); try? FileManager.default.removeItem(at: downloaded) }
                 // On work: starts the prepared song; early starts it while it still decodes (it then grows).
                 let begin: @Sendable (Int, Bool) -> Bool = { [weak self] frames, early in
                     guard let self else { return false }

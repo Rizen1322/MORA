@@ -87,7 +87,7 @@ extension NativeShellStore {
         return true
     }
 
-    @MainActor private func ensureSearchTrack(_ track: [String: Any], provider: String, priority: Int = 0) async throws -> String {
+    @MainActor private func ensureSearchTrack(_ track: [String: Any], provider: String, priority: Int = 0, awaitRefresh: Bool = true) async throws -> String {
         let externalId = (track["externalId"] as? String) ?? (track["id"] as? String) ?? ""
         if let known = track["libraryTrackId"] as? String, !known.isEmpty, byId[known]?.ok == true { return known }
         if !externalId.isEmpty, let local = localCatalogTrack(provider: provider, externalId: externalId), byId[local.trackId]?.ok == true {
@@ -112,7 +112,12 @@ extension NativeShellStore {
             guard let id = res["trackId"] as? String, !id.isEmpty else { throw NativeLibraryActions.Failure(message: "Не удалось подготовить трек") }
             trackId = id
         }
-        try? await refreshLibraryAfterMutation()
+        if awaitRefresh {
+            try? await refreshLibraryAfterMutation()
+        } else {
+            registerOptimisticCatalogTrack(id: trackId, raw: track, provider: provider)
+            refreshLibrary()
+        }
         return trackId
     }
 
@@ -129,7 +134,7 @@ extension NativeShellStore {
 
         let first = ordered.removeFirst()
         let firstProvider = (first["audioProvider"] as? String) ?? (first["provider"] as? String) ?? defaultProvider
-        let firstId = try await ensureSearchTrack(first, provider: firstProvider, priority: 0)
+        let firstId = try await ensureSearchTrack(first, provider: firstProvider, priority: 0, awaitRefresh: false)
         guard gen == searchPlayGeneration else { return }
         try await NativeQueueController.shared.play(trackIds: [firstId], at: 0, context: context)
 
@@ -149,7 +154,7 @@ extension NativeShellStore {
                 for item in chunk {
                     guard gen == searchPlayGeneration else { return }
                     let p = (item["audioProvider"] as? String) ?? (item["provider"] as? String) ?? defaultProvider
-                    if let tid = try? await self.ensureSearchTrack(item, provider: p, priority: 2) {
+                    if let tid = try? await self.ensureSearchTrack(item, provider: p, priority: 2, awaitRefresh: false) {
                         ids.append(tid)
                     }
                 }
@@ -348,6 +353,149 @@ extension NativeShellStore {
 
 /// SwiftUI screens of the shell; navigation still uses the page's router.
 
+/// Tactile spring press feedback for cards, pills and primary buttons.
+struct MoraPressStyle: ButtonStyle {
+    var scale: CGFloat = 0.96
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? scale : 1)
+            .opacity(configuration.isPressed ? 0.86 : 1)
+            .animation(reduceMotion ? nil : .spring(response: 0.22, dampingFraction: 0.72), value: configuration.isPressed)
+    }
+}
+
+/// Subtle highlight + micro-press feedback for track and catalog rows.
+struct MoraRowPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(configuration.isPressed ? Color.white.opacity(0.06) : Color.clear)
+                    .padding(.horizontal, -6)
+            )
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: configuration.isPressed)
+    }
+}
+
+/// Lightweight pulsing skeleton modifier that respects Reduce Motion.
+struct MoraShimmer: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(reduceMotion ? 0.55 : (pulse ? 0.78 : 0.36))
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.95).repeatForever(autoreverses: true)) {
+                    pulse = true
+                }
+            }
+    }
+}
+
+struct MoraSearchSkeleton: View {
+    var rows: Int = 5
+
+    var body: some View {
+        VStack(spacing: 12) {
+            ForEach(0..<rows, id: \.self) { index in
+                HStack(spacing: 12) {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(0.11))
+                        .frame(width: 48, height: 48)
+                    VStack(alignment: .leading, spacing: 7) {
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(Color.white.opacity(0.12))
+                            .frame(width: index % 2 == 0 ? 175 : 140, height: 13)
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(Color.white.opacity(0.08))
+                            .frame(width: index % 2 == 0 ? 115 : 145, height: 11)
+                    }
+                    Spacer()
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                        .frame(width: 34, height: 11)
+                }
+                .frame(minHeight: 54)
+            }
+        }
+        .modifier(MoraShimmer())
+    }
+}
+
+struct MoraCatalogSkeleton: View {
+    let preview: NativeCatalogPreview?
+
+    var body: some View {
+        let isArtist = preview?.isArtist == true
+        let width = UIScreen.main.bounds.width
+        VStack(spacing: 22) {
+            ZStack(alignment: .bottom) {
+                if let preview, let cover = preview.cover {
+                    NativeCover(url: cover, size: width, radius: 0, monogram: preview.title)
+                        .frame(width: width, height: 280)
+                        .clipped()
+                        .blur(radius: 38)
+                        .opacity(0.42)
+                    LinearGradient(
+                        colors: [Color.moraBackground.opacity(0.1), Color.moraBackground.opacity(0.75), Color.moraBackground],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 280)
+                }
+                VStack(spacing: 12) {
+                    if let preview {
+                        NativeCover(url: preview.cover, size: isArtist ? 142 : 200, radius: isArtist ? 71 : 14, monogram: preview.title)
+                            .overlay(Group {
+                                if isArtist { Circle().stroke(Color.moraMint.opacity(0.4), lineWidth: 1.5) }
+                                else { RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(0.12), lineWidth: 0.75) }
+                            })
+                            .shadow(color: .black.opacity(0.45), radius: 18, y: 8)
+                        Text(preview.title)
+                            .font(.title2.bold())
+                            .foregroundStyle(.white)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 16)
+                        if !preview.detail.isEmpty {
+                            Text(preview.detail)
+                                .font(.subheadline)
+                                .foregroundStyle(.white.opacity(0.65))
+                                .lineLimit(1)
+                        }
+                    } else {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(Color.white.opacity(0.1))
+                            .frame(width: 190, height: 190)
+                            .modifier(MoraShimmer())
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.white.opacity(0.12))
+                            .frame(width: 180, height: 22)
+                            .modifier(MoraShimmer())
+                    }
+                    HStack(spacing: 12) {
+                        Capsule().fill(Color.moraMint.opacity(0.22)).frame(width: 148, height: 46)
+                        Capsule().fill(Color.moraSurfaceElevated).frame(width: 148, height: 46)
+                    }
+                    .modifier(MoraShimmer())
+                    .padding(.top, 4)
+                }
+                .padding(.top, 14)
+                .padding(.bottom, 8)
+            }
+            MoraSearchSkeleton(rows: 6)
+                .padding(.horizontal, 16)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
 /// Tinted glass symbol badge matching MORA's obsidian & mint design system.
 struct NativeIconBadge: View {
     let symbol: String
@@ -369,28 +517,6 @@ struct NativeIconBadge: View {
 
 struct NativeHomeView: View {
     @EnvironmentObject private var store: NativeShellStore
-
-    private var favoriteArtists: [(name: String, cover: String?)] {
-        var seen = Set<String>()
-        var out: [(name: String, cover: String?)] = []
-        let ordered = store.liked + store.library
-        for track in ordered {
-            let trimmed = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, seen.insert(trimmed.lowercased()).inserted else { continue }
-            out.append((trimmed, track.cover))
-            if out.count >= 10 { break }
-        }
-        return out
-    }
-
-    private var recentlyPlayedTracks: [NativeTrack] {
-        Array(
-            store.library
-                .filter { $0.lastPlayedAt > 0 && $0.ok }
-                .sorted { $0.lastPlayedAt == $1.lastPlayedAt ? $0.id < $1.id : $0.lastPlayedAt > $1.lastPlayedAt }
-                .prefix(4)
-        )
-    }
 
     private static func encoded(_ value: String) -> String {
         value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? value
@@ -456,7 +582,7 @@ struct NativeHomeView: View {
     }
 
     @ViewBuilder private var stations: some View {
-        let items = NativeArtistStation.build(Array(store.byId.values))
+        let items = store.artistStations
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Станции для вас").font(.title2.bold()).accessibilityAddTraits(.isHeader)
@@ -499,7 +625,7 @@ struct NativeHomeView: View {
                                 }
                                 .frame(width: 172, alignment: .leading)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(MoraPressStyle())
                             .disabled(store.offline || store.ui.wave.loading)
                             .accessibilityElement(children: .combine)
                             .accessibilityHint(store.offline ? "Для станции нужен интернет" : "Слушать артиста и похожую музыку")
@@ -512,7 +638,7 @@ struct NativeHomeView: View {
     }
 
     private var tiles: some View {
-        let offlineCount = store.library.filter(\.offline).count
+        let offlineCount = store.offlineTrackCount
         let items: [(String, String, String, Bool, String?)] = [
             ("/liked", "Любимое", "heart.fill", false, store.liked.isEmpty ? nil : NativeText.tracks(store.liked.count)),
             ("/downloads", "Загрузки", "arrow.down.circle.fill", false, offlineCount > 0 ? NativeText.tracks(offlineCount) : nil),
@@ -536,14 +662,14 @@ struct NativeHomeView: View {
                     .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(MoraPressStyle())
                 .accessibilityElement(children: .combine)
             }
         }
     }
 
     @ViewBuilder private var recentlyPlayed: some View {
-        let tracks = recentlyPlayedTracks
+        let tracks = store.recentlyPlayedTracks
         if !tracks.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
@@ -588,7 +714,7 @@ struct NativeHomeView: View {
                             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(MoraPressStyle())
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("\(track.title), \(track.artist)\(active ? (store.miniPlaying ? ", сейчас играет" : ", на паузе") : "")")
                         .accessibilityHint("Играть")
@@ -600,7 +726,7 @@ struct NativeHomeView: View {
     }
 
     @ViewBuilder private var artistRail: some View {
-        let artists = favoriteArtists
+        let artists = store.favoriteArtists
         if !artists.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
@@ -626,7 +752,7 @@ struct NativeHomeView: View {
                                         .frame(width: 92)
                                 }
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(MoraPressStyle())
                         }
                     }
                 }
@@ -660,7 +786,7 @@ struct NativeHomeView: View {
                                 }
                                 .frame(width: 152, alignment: .leading)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(MoraPressStyle())
                             .accessibilityElement(children: .combine)
                             .accessibilityHint("Играть")
                             .contextMenu { NativeTrackActions(track: t, play: { store.play(tracks, at: i, type: type, label: title) }) }
@@ -696,7 +822,7 @@ struct NativeHomeView: View {
                             }
                             .frame(width: 152, alignment: .leading)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(MoraPressStyle())
                         .accessibilityElement(children: .combine)
                     }
                 }
@@ -743,12 +869,14 @@ struct NativeWaveHero: View {
                         .foregroundStyle(Color.moraBackground)
                         .background(Color.moraMint.opacity(button.enabled ? 1 : 0.4), in: Capsule())
                 }
+                .buttonStyle(MoraPressStyle())
                 .disabled(!button.enabled)
                 Button { store.waveSource = selected; store.go("/wave") } label: {
                     Image(systemName: "slider.horizontal.3").font(.headline).frame(width: 54, height: 54)
                         .background(Color.white.opacity(0.1), in: Circle())
                         .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 0.75))
                 }
+                .buttonStyle(MoraPressStyle())
                 .accessibilityLabel("Настроить волну").accessibilityIdentifier("wave.settings")
             }
             if let error = wave.error, !error.isEmpty {
@@ -874,7 +1002,7 @@ struct NativeTrackListView: View {
                 .background(prominent ? Color.moraMint : Color.moraSurfaceElevated, in: Capsule())
                 .overlay(Capsule().stroke(prominent ? Color.clear : Color.white.opacity(0.09), lineWidth: 0.75))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MoraPressStyle())
     }
 
     private func bulkBar(_ chosen: [NativeTrack]) -> some View {
@@ -1009,7 +1137,7 @@ struct NativeTrackRow: View {
             .contentShape(Rectangle())
             .opacity(track.ok || selected != nil ? 1 : 0.45)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MoraRowPressStyle())
         .disabled(!track.ok && selected == nil)
         .listRowBackground(Color.clear)
         .accessibilityLabel("\(track.title), \(track.artist)\(isActive ? (store.miniPlaying ? ", сейчас играет" : ", на паузе") : "")\(track.liked ? ", в любимом" : "")")
@@ -1144,21 +1272,29 @@ struct NativePlaylistPicker: View {
 
 // MARK: Search
 
-/// Catalog search: the collection, YouTube Music and SoundCloud (the web /search page, without its extras).
+/// Catalog search: the collection, YouTube Music, SoundCloud and Yandex Music.
 struct NativeSearchView: View {
     private static let publicSources = ["ytmusic", "youtube", "soundcloud"]
     @EnvironmentObject private var store: NativeShellStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var results: [String: NativeSearchResults] = [:]
     @State private var errors: [String: String] = [:]
     @State private var searching: Set<String> = []
     @State private var recent = UserDefaults.standard.stringArray(forKey: "mora.nativeSearchRecent") ?? []
     @State private var busy = false
+    @State private var loadingTrackId: String?
+    @State private var lastSearchedQuery = ""
     @State private var playGeneration = 0
     @State private var failure: String?
     private var query: String { store.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var source: String { store.searchSource }
     private var scope: String { store.searchScope }
     private var key: String { query + "|" + source + "|" + scope }
+    private var availableSourceChips: [String] {
+        store.ui.wave.yandex
+            ? ["yandex", "all", "local"] + Self.publicSources
+            : ["all", "local"] + Self.publicSources + ["yandex"]
+    }
     private var sources: [String] { source == "all" ? Self.publicSources + (store.ui.wave.yandex ? ["yandex"] : []) : source == "local" ? [] : [source] }
     private var local: [NativeTrack] { query.isEmpty ? [] : NativeSearchText.filter(store.library, query) }
 
@@ -1167,8 +1303,8 @@ struct NativeSearchView: View {
             List {
                 filters
                 if let title = store.ui.preparing {
-                    HStack {
-                        ProgressView()
+                    HStack(spacing: 10) {
+                        ProgressView().tint(.moraMint)
                         Text("Подготавливаем «\(title)»…").font(.subheadline)
                         Spacer()
                         Button("Отмена") { store.run("searchCancel") }
@@ -1194,19 +1330,28 @@ struct NativeSearchView: View {
             }
             .listStyle(.plain).scrollContentBackground(.hidden).background(Color.moraBackground)
             .scrollDismissesKeyboard(.interactively)
-            .searchable(text: $store.searchQuery, placement: .navigationBarDrawer(displayMode: .always), prompt: "Исполнитель, трек, альбом или ссылка")
+            .searchable(text: $store.searchQuery, placement: .navigationBarDrawer(displayMode: .always), prompt: "Трек, исполнитель, альбом или ссылка")
             .autocorrectionDisabled().textInputAutocapitalization(.never).submitLabel(.search)
             .onSubmit(of: .search) { remember() }
             .navigationTitle(source == "yandex" ? "Яндекс Музыка" : "Поиск")
             .task(id: key) {
-                // Typing must not hit the provider on every keystroke.
-                if !query.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
+                // Single debounce: only delay when typing a non-empty query; source/scope switches search immediately.
+                if !query.isEmpty && query != lastSearchedQuery {
+                    try? await Task.sleep(for: .milliseconds(220))
+                }
                 guard !Task.isCancelled else { return }
+                lastSearchedQuery = query
                 await search()
             }
             .refreshable { await search() }
-            .onChange(of: store.searchSource) { _, value in if value != "yandex" { store.searchScope = "all" } }
-            .onChange(of: store.searchQuery) { _, value in if value.count > 200 { store.searchQuery = String(value.prefix(200)) } }
+            .onChange(of: store.searchSource) { _, value in
+                loadingTrackId = nil
+                if value != "yandex" { store.searchScope = "all" }
+            }
+            .onChange(of: store.searchQuery) { _, value in
+                loadingTrackId = nil
+                if value.count > 200 { store.searchQuery = String(value.prefix(200)) }
+            }
             .alert("Не удалось выполнить", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(failure ?? "") }
         }
     }
@@ -1235,9 +1380,13 @@ struct NativeSearchView: View {
             VStack(alignment: .leading, spacing: 10) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(["all", "local"] + Self.publicSources + ["yandex"], id: \.self) { value in
+                        ForEach(availableSourceChips, id: \.self) { value in
                             let selected = store.searchSource == value
-                            Button { store.searchSource = value } label: {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                if reduceMotion { store.pickSearchSource(value) }
+                                else { withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { store.pickSearchSource(value) } }
+                            } label: {
                                 Text(Self.shortTitle(value))
                                     .font(.subheadline.weight(selected ? .semibold : .medium))
                                     .padding(.horizontal, 14)
@@ -1246,7 +1395,7 @@ struct NativeSearchView: View {
                                     .background(selected ? Color.moraMint : Color.moraSurface, in: Capsule())
                                     .overlay(Capsule().stroke(selected ? Color.clear : Color.white.opacity(0.1), lineWidth: 0.75))
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(MoraPressStyle())
                             .accessibilityAddTraits(selected ? .isSelected : [])
                         }
                     }
@@ -1258,7 +1407,11 @@ struct NativeSearchView: View {
                     HStack(spacing: 8) {
                         ForEach(scopes, id: \.0) { value, label in
                             let selected = store.searchScope == value
-                            Button { store.searchScope = value } label: {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                if reduceMotion { store.searchScope = value }
+                                else { withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { store.searchScope = value } }
+                            } label: {
                                 Text(label)
                                     .font(.caption.weight(selected ? .bold : .semibold))
                                     .frame(maxWidth: .infinity)
@@ -1267,7 +1420,7 @@ struct NativeSearchView: View {
                                     .background(selected ? Color.moraMint.opacity(0.18) : Color.moraSurface, in: Capsule())
                                     .overlay(Capsule().stroke(selected ? Color.moraMint.opacity(0.45) : Color.white.opacity(0.08), lineWidth: 0.75))
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(MoraPressStyle())
                             .accessibilityAddTraits(selected ? .isSelected : [])
                         }
                     }
@@ -1282,13 +1435,65 @@ struct NativeSearchView: View {
     @ViewBuilder private var history: some View {
         if !recent.isEmpty {
             Section {
-                ForEach(recent, id: \.self) { text in
-                    Button { store.searchQuery = text } label: { Label(text, systemImage: "clock").frame(minHeight: 38) }
-                        .swipeActions { Button("Удалить", role: .destructive) { recent.removeAll { $0 == text }; saveRecent() } }
-                        .listRowBackground(Color.clear)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(recent, id: \.self) { text in
+                            HStack(spacing: 6) {
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    store.searchQuery = text
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "clock")
+                                            .font(.caption2)
+                                            .foregroundStyle(.white.opacity(0.55))
+                                        Text(text)
+                                            .font(.subheadline)
+                                            .foregroundStyle(.white)
+                                            .lineLimit(1)
+                                    }
+                                    .padding(.leading, 12)
+                                    .padding(.vertical, 8)
+                                }
+                                .buttonStyle(.plain)
+                                Button {
+                                    if reduceMotion {
+                                        recent.removeAll { $0 == text }
+                                        saveRecent()
+                                    } else {
+                                        withAnimation(.easeOut(duration: 0.18)) {
+                                            recent.removeAll { $0 == text }
+                                            saveRecent()
+                                        }
+                                    }
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(.white.opacity(0.45))
+                                        .padding(.trailing, 10)
+                                        .padding(.vertical, 8)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Удалить \(text)")
+                            }
+                            .background(Color.moraSurfaceElevated, in: Capsule())
+                            .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 0.75))
+                        }
+                    }
+                    .padding(.vertical, 2)
                 }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             } header: {
-                HStack { Text("Недавно искали"); Spacer(); Button("Очистить") { recent = []; saveRecent() } }
+                HStack {
+                    Text("Недавно искали")
+                    Spacer()
+                    Button("Очистить") {
+                        if reduceMotion { recent = []; saveRecent() }
+                        else { withAnimation(.easeOut(duration: 0.2)) { recent = []; saveRecent() } }
+                    }
+                    .font(.caption.weight(.medium))
+                }
             }
         }
     }
@@ -1320,7 +1525,7 @@ struct NativeSearchView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(MoraPressStyle())
                 }
             }
             .padding(.top, 4)
@@ -1337,32 +1542,162 @@ struct NativeSearchView: View {
             ForEach(Array(matches.prefix(source == "all" ? 4 : matches.count).enumerated()), id: \.element.id) { index, track in
                 NativeTrackRow(track: track) { remember(); store.play(matches, at: index, type: "search", label: query) }
             }
-            if source == "all" && matches.count > 4 { Button("Все треки медиатеки") { store.searchSource = "local" } }
+            if source == "all" && matches.count > 4 { Button("Все треки медиатеки") { store.pickSearchSource("local") } }
         }
     }
     private func remoteSection(_ value: String) -> some View {
-        Section(Self.title(value)) {
+        let isBusy = searching.contains(value)
+        let found = results[value]
+        return Section {
             if let error = errors[value] {
                 Text(error).font(.footnote).foregroundStyle(.secondary)
                 Button("Повторить") { retry(value) }
+                    .listRowBackground(Color.clear)
             }
-            if searching.contains(value) { ProgressView("Ищем…").frame(maxWidth: .infinity).listRowBackground(Color.clear) }
-            if let found = results[value] {
-                if found.isEmpty && !searching.contains(value) { Text("Ничего не найдено").foregroundStyle(.secondary) }
-                ForEach(Array(found.artists.prefix(source == "all" ? 4 : found.artists.count))) { item in linkRow(item, symbol: "music.mic") }
-                ForEach(Array(found.albums.prefix(source == "all" ? 4 : found.albums.count))) { item in linkRow(item, symbol: "square.stack") }
-                ForEach(Array(found.tracks.prefix(source == "all" ? 6 : found.tracks.count))) { item in hitRow(item, source: value, session: found.session) }
+            if isBusy && found == nil {
+                MoraSearchSkeleton(rows: 5)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+            if let found {
+                if found.isEmpty && !isBusy {
+                    Text("Ничего не найдено")
+                        .foregroundStyle(.secondary)
+                        .listRowBackground(Color.clear)
+                }
+                let shownTracks = Array(found.tracks.prefix(source == "all" ? 6 : found.tracks.count))
+                let shownArtists = Array(found.artists.prefix(source == "all" ? 6 : found.artists.count))
+                let shownAlbums = Array(found.albums.prefix(source == "all" ? 6 : found.albums.count))
+
+                // Tracks ALWAYS come first when present.
+                if !shownTracks.isEmpty {
+                    if source == "yandex" && scope == "all" && (!shownArtists.isEmpty || !shownAlbums.isEmpty) {
+                        Text(query.isEmpty ? "Ваши треки" : "Треки")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.65))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
+                    ForEach(shownTracks) { item in hitRow(item, source: value, session: found.session) }
+                }
+
+                if !shownArtists.isEmpty {
+                    if value == "yandex" && scope == "artist" {
+                        ForEach(shownArtists) { item in linkRow(item, symbol: "music.mic") }
+                    } else {
+                        artistsShelf(shownArtists)
+                    }
+                }
+
+                if !shownAlbums.isEmpty {
+                    if value == "yandex" && scope == "album" {
+                        ForEach(shownAlbums) { item in linkRow(item, symbol: "square.stack") }
+                    } else {
+                        albumsShelf(shownAlbums)
+                    }
+                }
+
                 if source == "all" && (!found.artists.isEmpty || !found.albums.isEmpty || found.tracks.count > 6) {
-                    Button("Все результаты · " + Self.title(value)) { store.searchSource = value }
+                    Button("Все результаты · " + Self.title(value)) { store.pickSearchSource(value) }
+                        .foregroundStyle(Color.moraMint)
+                        .listRowBackground(Color.clear)
                 } else if source == "yandex" && found.more {
-                    Button("Показать ещё") { retry(value, more: true) }.disabled(searching.contains(value))
+                    Button(isBusy ? "Загружаем…" : "Показать ещё") { retry(value, more: true) }
+                        .disabled(isBusy)
+                        .foregroundStyle(Color.moraMint)
+                        .listRowBackground(Color.clear)
+                }
+            }
+        } header: {
+            HStack(spacing: 8) {
+                Text(value == "yandex" && query.isEmpty ? "Недавно понравилось в Яндексе" : Self.title(value))
+                Spacer()
+                if isBusy && found != nil {
+                    ProgressView().controlSize(.small).tint(.moraMint)
                 }
             }
         }
     }
+    private func artistsShelf(_ items: [NativeCatalogLink]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Исполнители")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.65))
+                .padding(.horizontal, 16)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 14) {
+                    ForEach(items) { item in
+                        Button {
+                            remember()
+                            store.openCatalog(item.path, title: item.title, detail: item.detail, cover: item.cover, isArtist: true)
+                        } label: {
+                            VStack(spacing: 7) {
+                                NativeCover(url: item.cover, size: 78, radius: 39, monogram: item.title)
+                                    .overlay(Circle().stroke(Color.white.opacity(0.16), lineWidth: 1))
+                                    .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
+                                Text(item.title)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                                    .frame(width: 84)
+                            }
+                        }
+                        .buttonStyle(MoraPressStyle())
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 2)
+            }
+        }
+        .listRowInsets(EdgeInsets(top: 10, leading: 0, bottom: 8, trailing: 0))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+    }
+    private func albumsShelf(_ items: [NativeCatalogLink]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Альбомы")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.65))
+                .padding(.horizontal, 16)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 14) {
+                    ForEach(items) { item in
+                        Button {
+                            remember()
+                            store.openCatalog(item.path, title: item.title, detail: item.detail, cover: item.cover, isArtist: false)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                NativeCover(url: item.cover, size: 126, radius: 12, monogram: item.title)
+                                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.white.opacity(0.09), lineWidth: 0.75))
+                                    .shadow(color: .black.opacity(0.32), radius: 8, y: 4)
+                                Text(item.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                                Text(item.detail.isEmpty ? "Альбом" : item.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.white.opacity(0.55))
+                                    .lineLimit(1)
+                            }
+                            .frame(width: 126, alignment: .leading)
+                        }
+                        .buttonStyle(MoraPressStyle())
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 2)
+            }
+        }
+        .listRowInsets(EdgeInsets(top: 10, leading: 0, bottom: 10, trailing: 0))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+    }
     private func linkRow(_ item: NativeCatalogLink, symbol: String) -> some View {
         let isArtist = symbol == "music.mic"
-        return Button { remember(); store.go(item.path) } label: {
+        return Button {
+            remember()
+            store.openCatalog(item.path, title: item.title, detail: item.detail, cover: item.cover, isArtist: isArtist)
+        } label: {
             HStack(spacing: 12) {
                 NativeCover(url: item.cover, size: isArtist ? 52 : 48, radius: isArtist ? 26 : 8, monogram: item.title)
                     .overlay(Group {
@@ -1377,52 +1712,86 @@ struct NativeSearchView: View {
                 }
                 Spacer()
                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-            }.frame(minHeight: 58)
-        }.buttonStyle(.plain).listRowBackground(Color.clear)
+            }.frame(minHeight: 58).contentShape(Rectangle())
+        }.buttonStyle(MoraRowPressStyle()).listRowBackground(Color.clear)
+    }
+    @ViewBuilder private func hitContextButtons(_ track: NativeTrack, _ hit: NativeSearchHit, _ source: String, _ session: String) -> some View {
+        actionButton("Играть следующим", "text.line.first.and.arrowtriangle.forward", "next", track, source, session)
+        actionButton("В очередь", "text.append", "queue", track, source, session)
+        actionButton(track.liked ? "Убрать лайк" : "Нравится", "heart", "like", track, source, session)
+        actionButton(track.reaction < 0 ? "Убрать дизлайк" : "Не нравится", "hand.thumbsdown", "dislike", track, source, session)
+        if !hit.saved { actionButton("Сохранить в медиатеку", "plus", "save", track, source, session) }
+        if !store.playlists.isEmpty {
+            Menu("В плейлист", systemImage: "music.note.list") {
+                ForEach(store.playlists) { playlist in Button(playlist.name) { act("playlist", track: track, source: source, session: session, playlist: playlist.id) } }
+            }
+        }
+        actionButton("Скачать", "arrow.down.circle", "download", track, source, session)
+        actionButton("Другая версия", "arrow.triangle.swap", "versions", track, source, session)
+        actionButton("Исполнитель", "music.mic", "artist", track, source, session)
+        if !track.album.isEmpty { actionButton("Альбом", "square.stack", "album", track, source, session) }
+        actionButton("Радио по треку", "dot.radiowaves.left.and.right", "radio", track, source, session)
     }
     private func hitRow(_ hit: NativeSearchHit, source: String, session: String) -> some View {
         let track = hit.track
-        return Button { act("play", track: track, source: source, session: session) } label: {
-            HStack(spacing: 12) {
-                NativeCover(url: track.cover, size: 48, radius: 8, monogram: track.title)
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 5) {
-                        Text(track.title).font(.body.weight(.medium)).lineLimit(1)
-                        if hit.explicit {
-                            Text("E").font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.75))
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Color.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+        let provider = track.provider.isEmpty ? (source == "yandex" ? "yandex" : source == "soundcloud" ? "soundcloud" : "youtube") : track.provider
+        let localTrackId = store.localCatalogTrack(provider: provider, externalId: track.id)?.trackId
+        let isActive = store.isCurrentTrack(localTrackId ?? track.id)
+        let isLoading = loadingTrackId == track.id
+        return HStack(spacing: 8) {
+            Button { act("play", track: track, source: source, session: session) } label: {
+                HStack(spacing: 12) {
+                    NativeCover(url: track.cover, size: 48, radius: 8, monogram: track.title)
+                        .overlay {
+                            if isLoading {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.black.opacity(0.55))
+                                    .overlay { ProgressView().controlSize(.small).tint(.moraMint) }
+                            } else if isActive {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.black.opacity(0.45))
+                                    .overlay { NativePlayingIndicator(playing: store.miniPlaying) }
+                            }
                         }
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 5) {
+                            Text(track.title)
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(isActive || isLoading ? Color.moraMint : .white)
+                                .lineLimit(1)
+                            if hit.explicit {
+                                Text("E").font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.75))
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(Color.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            }
+                        }
+                        Text(track.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                        if !hit.tags.isEmpty { Text(hit.tags).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
                     }
-                    Text(track.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                    if !hit.tags.isEmpty { Text(hit.tags).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
-                }
-                Spacer(minLength: 0)
-                if track.liked { Image(systemName: "heart.fill").font(.caption).foregroundStyle(Color.moraMint) }
-                if hit.saved { Image(systemName: "checkmark").font(.caption).foregroundStyle(.secondary) }
-                Text(NativePlayerTime.text(track.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            }.frame(minHeight: 56).contentShape(Rectangle()).opacity(track.ok ? 1 : 0.45)
-        }
-        .buttonStyle(.plain).disabled(!track.ok).listRowBackground(Color.clear)
-        .contextMenu {
-            actionButton("Играть следующим", "text.line.first.and.arrowtriangle.forward", "next", track, source, session)
-            actionButton("В очередь", "text.append", "queue", track, source, session)
-            actionButton(track.liked ? "Убрать лайк" : "Нравится", "heart", "like", track, source, session)
-            actionButton(track.reaction < 0 ? "Убрать дизлайк" : "Не нравится", "hand.thumbsdown", "dislike", track, source, session)
-            if !hit.saved { actionButton("Сохранить в медиатеку", "plus", "save", track, source, session) }
-            if !store.playlists.isEmpty {
-                Menu("В плейлист", systemImage: "music.note.list") {
-                    ForEach(store.playlists) { playlist in Button(playlist.name) { act("playlist", track: track, source: source, session: session, playlist: playlist.id) } }
-                }
+                    Spacer(minLength: 0)
+                    if track.liked { Image(systemName: "heart.fill").font(.caption).foregroundStyle(Color.moraMint) }
+                    if hit.saved { Image(systemName: "checkmark").font(.caption).foregroundStyle(.secondary) }
+                    Text(NativePlayerTime.text(track.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }.frame(minHeight: 56).contentShape(Rectangle()).opacity(track.ok ? 1 : 0.45)
             }
-            actionButton("Скачать", "arrow.down.circle", "download", track, source, session)
-            actionButton("Другая версия", "arrow.triangle.swap", "versions", track, source, session)
-            actionButton("Исполнитель", "music.mic", "artist", track, source, session)
-            if !track.album.isEmpty { actionButton("Альбом", "square.stack", "album", track, source, session) }
-            actionButton("Радио по треку", "dot.radiowaves.left.and.right", "radio", track, source, session)
+            .buttonStyle(MoraRowPressStyle()).disabled(!track.ok)
+            Menu {
+                hitContextButtons(track, hit, source, session)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .foregroundStyle(.white.opacity(0.55))
+                    .frame(width: 32, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Действия с треком")
+        }
+        .listRowBackground(Color.clear)
+        .contextMenu {
+            hitContextButtons(track, hit, source, session)
         }
         .swipeActions(edge: .leading) { actionButton("Следующим", "text.line.first.and.arrowtriangle.forward", "next", track, source, session).tint(.moraMint) }
         .swipeActions(edge: .trailing) { actionButton(track.liked ? "Убрать лайк" : "Нравится", "heart", "like", track, source, session).tint(.moraGold) }
@@ -1435,12 +1804,18 @@ struct NativeSearchView: View {
         let isPlay = kind == "play"
         if !isPlay, busy { return }
         remember()
-        if isPlay { playGeneration &+= 1; UIImpactFeedbackGenerator(style: .light).impactOccurred() }
-        else { busy = true }
+        if isPlay {
+            playGeneration &+= 1
+            loadingTrackId = track.id
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        } else { busy = true }
         let generation = playGeneration
         let requested = key, origin = store.path
         Task { @MainActor in
-            defer { if !isPlay { busy = false } }
+            defer {
+                if !isPlay { busy = false }
+                else if loadingTrackId == track.id && generation == playGeneration { loadingTrackId = nil }
+            }
             do {
                 if store.sharedLibrary, store.catalog.searchSession(session) != nil {
                     let res = try await store.executeNativeSearchAction(kind: kind, trackId: track.id, sessionId: session, playlist: playlist)
@@ -1473,10 +1848,14 @@ struct NativeSearchView: View {
     private func saveRecent() { UserDefaults.standard.set(recent, forKey: "mora.nativeSearchRecent") }
     private func retry(_ source: String, more: Bool = false) { Task { @MainActor in await load(source, key: key, more: more) } }
     @MainActor private func search() async {
-        results = [:]; errors = [:]; searching = []
-        guard !store.offline else { return }
-        guard !query.isEmpty || source == "yandex", source != "local", source != "yandex" || store.ui.wave.yandex else { return }
-        do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+        errors = [:]
+        if store.offline || source == "local" || (query.isEmpty && source != "yandex") || (source == "yandex" && !store.ui.wave.yandex) {
+            results = [:]; searching = []
+            return
+        }
+        let active = Set(sources)
+        results = results.filter { active.contains($0.key) }
+        searching = []
         let requested = key
         await withTaskGroup(of: Void.self) { group in
             for source in sources { group.addTask { @MainActor in await load(source, key: requested) } }
@@ -1511,7 +1890,8 @@ struct NativeSearchView: View {
             }
             guard key == requested, !Task.isCancelled else { return }
             guard let found = NativeSearchResults(value) else { throw NativeShellError.page }
-            results[source] = found
+            if reduceMotion { results[source] = found }
+            else { withAnimation(.easeOut(duration: 0.18)) { results[source] = found } }
         } catch { if key == requested && !Task.isCancelled { errors[source] = Self.message(error) } }
     }
     private static func message(_ error: Error) -> String { (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription }
@@ -1672,7 +2052,7 @@ struct NativeLibraryView: View {
                                                 .frame(width: 80)
                                         }
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(MoraPressStyle())
                                     .accessibilityLabel(track.artist)
                                 }
                             }
@@ -1713,7 +2093,7 @@ struct NativeLibraryView: View {
                                             .lineLimit(1)
                                     }
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(MoraPressStyle())
                                 .accessibilityElement(children: .combine)
                                 .accessibilityHint("Играть")
                                 .contextMenu { NativeTrackActions(track: track, play: { store.play(store.library, at: index, type: "library", label: "Медиатека") }) }
@@ -1770,7 +2150,7 @@ struct NativeLibraryView: View {
             .frame(minHeight: 42)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MoraRowPressStyle())
         .listRowBackground(Color.clear)
         .listRowSeparatorTint(Color.white.opacity(0.08))
     }

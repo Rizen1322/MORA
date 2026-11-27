@@ -581,7 +581,7 @@ describe('Yandex full MP3 import through local API/download fixtures', () => {
     } finally { rename.mockRestore(); }
   });
 
-  it('excludes recently played 48h Yandex tracks, advances Rotor batch when exhausted, and forwards wave feedback', async () => {
+  it('excludes recently played 6h Yandex tracks without seeding new Rotor queue from history, advances batch, and forwards feedback', async () => {
     const db = a.services.db;
     const now = Date.now();
     const recentExt = ['200:10', ...Array.from({ length: 12 }, (_, i) => `${710 + i}:10`)];
@@ -609,14 +609,16 @@ describe('Yandex full MP3 import through local API/download fixtures', () => {
       expect(returnedIds).toContain('722');
       const calls = seen.slice(requests);
       const newCall = calls.find((r) => r.path === '/rotor/session/new')!;
-      expect(JSON.parse(newCall.body).queue).toEqual(expect.arrayContaining(['710:10', '721:10']));
+      expect(JSON.parse(newCall.body).queue).toBeUndefined();
       expect(calls.some((r) => r.path === '/rotor/session/fixture-wave/tracks')).toBe(true);
 
       const fbStart = seen.length;
       for (const event of [
         { type: 'radioStarted', from: 'desktop_home-radio_bubble-default' },
         { type: 'trackStarted', trackId: '722:10' },
+        { type: 'like', trackId: '722:10' },
         { type: 'skip', trackId: '722:10', totalPlayedSeconds: 4 },
+        { type: 'dislike', trackId: '722:10' },
         { type: 'trackFinished', trackId: '723:10', totalPlayedSeconds: 180 },
       ]) {
         const fb = await a.app.inject({
@@ -627,11 +629,39 @@ describe('Yandex full MP3 import through local API/download fixtures', () => {
         expect(fb.statusCode, fb.body).toBe(200);
       }
       const fbCalls = seen.slice(fbStart).filter((r) => r.path === '/rotor/session/fixture-wave/feedback');
-      expect(fbCalls).toHaveLength(4);
-      expect(fbCalls.map((c) => JSON.parse(c.body).event.type)).toEqual(['radioStarted', 'trackStarted', 'skip', 'trackFinished']);
+      expect(fbCalls).toHaveLength(6);
+      expect(fbCalls.map((c) => JSON.parse(c.body).event.type)).toEqual(['radioStarted', 'trackStarted', 'like', 'skip', 'dislike', 'trackFinished']);
     } finally {
       q(db, 'DELETE FROM plays').run();
       for (const id of insertedTrackIds) q(db, 'DELETE FROM tracks WHERE id = ?').run(id);
+    }
+  });
+
+  it('fastImportMetadata inserts trusted Yandex catalog metadata without network round trips when metadataOnlyImport is enabled', async () => {
+    const prev = a.services.providers.yandex.metadataOnlyImport;
+    a.services.providers.yandex.metadataOnlyImport = true;
+    const requests = seen.length;
+    try {
+      const id = a.services.providers.yandex.fastImportMetadata({
+        externalId: '790:10',
+        title: 'Fast Track',
+        artist: 'Fast Artist',
+        album: 'Fast Album',
+        duration: 195,
+        coverUrl: null,
+        pageUrl: 'https://music.yandex.ru/track/790',
+        license: null,
+        playable: true,
+        artists: [{ id: '42', name: 'Fast Artist' }],
+        albumId: '10',
+      });
+      expect(id).toBeTruthy();
+      expect(seen.length).toBe(requests);
+      const row = a.services.lib.get(id!)!;
+      expect(row.title).toBe('Fast Track');
+      expect(row.duration).toBe(195);
+    } finally {
+      a.services.providers.yandex.metadataOnlyImport = prev;
     }
   });
 

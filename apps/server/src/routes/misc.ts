@@ -7,6 +7,7 @@ import { getSettings, type AppSettings } from '../automix.ts';
 import { kvSet, q } from '../db.ts';
 import type { ExternalTrack } from '../providers/types.ts';
 import { PRIORITY } from '../analysis.ts';
+import { hasNativeInternalAuth } from '../native-sources.ts';
 import { isYandexTrackId } from '../providers/yandex-audio.ts';
 
 const clampNum = (v: unknown, a: number, b: number, d: number) => {
@@ -183,6 +184,10 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
     const p = providers.get(req.params.id);
     if (!p?.importTrack || !req.body?.track) return reply.code(400).send({ error: 'импорт не поддерживается' });
     try {
+      if (req.params.id === 'yandex' && hasNativeInternalAuth(req.headers as Record<string, unknown>)) {
+        const fast = providers.yandex.fastImportMetadata(req.body.track);
+        if (fast) return { trackId: fast };
+      }
       return { trackId: await p.importTrack(req.body.track) };
     } catch (e) {
       return reply.code(502).send({ error: (e as Error).message });
@@ -218,19 +223,19 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
     }
     try {
       const queue = [...new Set(body.queue ?? [])];
-      const cutoff = Date.now() - 48 * 3600 * 1000;
+      const cutoff = Date.now() - 6 * 3600 * 1000;
       const recentYandexIds = (q(db, `
         SELECT ts.external_id AS external_id
         FROM plays p
         JOIN track_sources ts ON ts.track_id = p.track_id
         WHERE ts.provider = 'yandex' AND ts.kind = 'remote' AND p.started_at >= ?
-        ORDER BY p.id DESC LIMIT 150
+          AND (p.played_ms IS NULL OR p.played_ms >= 15000 OR p.end_reason IN ('transition', 'ended'))
+        ORDER BY p.id DESC LIMIT 40
       `).all(cutoff) as { external_id: string | null }[])
         .map((row) => String(row.external_id ?? ''))
         .filter((id) => isYandexTrackId(id));
       const exclude = [...new Set([...queue, ...recentYandexIds])];
-      const effectiveQueue = queue.length ? queue : [...new Set(recentYandexIds)].slice(0, 20);
-      const wave = await providers.yandex.wave(body.session ?? null, effectiveQueue, { count: body.count ?? 2, exclude, seeds: getSettings(db).wave.yandexSeeds });
+      const wave = await providers.yandex.wave(body.session ?? null, queue, { count: body.count ?? 2, exclude, seeds: getSettings(db).wave.yandexSeeds });
       const ids = wave.items.flatMap((item) => item.trackId ? [item.trackId] : []);
       analysis.prioritize(ids.slice(0, body.count ?? 2), PRIORITY.wave);
       return wave;
@@ -252,7 +257,7 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
     }
   });
 
-  app.post<{ Body: { sessionId: string; batchId: string | null; event: { type: 'radioStarted' | 'trackStarted' | 'trackFinished' | 'skip'; trackId?: string; totalPlayedSeconds?: number; from?: string } } }>(
+  app.post<{ Body: { sessionId: string; batchId: string | null; event: { type: 'radioStarted' | 'trackStarted' | 'trackFinished' | 'skip' | 'like' | 'dislike'; trackId?: string; totalPlayedSeconds?: number; from?: string } } }>(
     '/api/providers/yandex/feedback',
     async (req, reply) => {
       try {

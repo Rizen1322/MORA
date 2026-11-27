@@ -587,14 +587,17 @@ final class NativeYandexCatalog {
         return pairs.map { "\(esc($0.0))=\(esc($0.1))" }.joined(separator: "&")
     }
 
-    private static func urlSessionFetch(_ request: URLRequest, _ limit: Int) async throws -> (Int, Data) {
+    private static let sharedRedirectBlocker = NativeYandexRedirectBlocker()
+    private static let sharedSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpMaximumConnectionsPerHost = 2
+        configuration.httpMaximumConnectionsPerHost = 4
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        let blocker = NativeYandexRedirectBlocker()
-        let session = URLSession(configuration: configuration, delegate: blocker, delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        let (data, response) = try await session.data(for: request)
+        configuration.timeoutIntervalForRequest = 15
+        return URLSession(configuration: configuration, delegate: sharedRedirectBlocker, delegateQueue: nil)
+    }()
+
+    private static func urlSessionFetch(_ request: URLRequest, _ limit: Int) async throws -> (Int, Data) {
+        let (data, response) = try await sharedSession.data(for: request)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
     }
 }

@@ -406,7 +406,7 @@ export class YandexProvider implements Provider {
     return { groups };
   }
 
-  async feedback(sessionId: string, batchId: string | null, event: { type: 'radioStarted' | 'trackStarted' | 'trackFinished' | 'skip'; trackId?: string; totalPlayedSeconds?: number; from?: string }): Promise<void> {
+  async feedback(sessionId: string, batchId: string | null, event: { type: 'radioStarted' | 'trackStarted' | 'trackFinished' | 'skip' | 'like' | 'dislike'; trackId?: string; totalPlayedSeconds?: number; from?: string }): Promise<void> {
     await this.call('POST', `/rotor/session/${encodeURIComponent(sessionId)}/feedback`, {
       event: { ...event, timestamp: new Date().toISOString() },
       batchId: batchId ?? undefined,
@@ -554,6 +554,58 @@ export class YandexProvider implements Provider {
     const job = this.importOne(id).finally(() => this.imports.delete(id));
     this.imports.set(id, job);
     return job;
+  }
+
+  /** Fast metadata-only import for trusted mobile catalog/search hits that already carry verified metadata. */
+  fastImportMetadata(
+    t: ExternalTrack & { artists?: { id?: string | number; name?: string }[]; albumId?: string | number | null },
+  ): string | null {
+    if (!this.metadataOnlyImport || !t || t.playable === false) return null;
+    const rawId = typeof t.externalId === 'string' || typeof t.externalId === 'number' ? String(t.externalId) : '';
+    if (!isYandexTrackId(rawId)) return null;
+    const id = this.checkedId(rawId);
+    const existing = this.lib.tracksBySource(this.id, id).find((row) => row.provider === this.id);
+    if (existing) return existing.id;
+    const title = typeof t.title === 'string' ? t.title.trim().slice(0, 300) : '';
+    const duration = typeof t.duration === 'number' && Number.isFinite(t.duration) ? t.duration : 0;
+    if (!title || !(duration > 0 && duration < 86400)) return null;
+    const artist = typeof t.artist === 'string' ? t.artist.trim().slice(0, 300) : '';
+    const album = typeof t.album === 'string' ? t.album.trim().slice(0, 300) : '';
+    let coverUrl: string | null = null;
+    if (typeof t.coverUrl === 'string' && t.coverUrl) {
+      try { coverUrl = validateYandexMediaUrl(t.coverUrl, this.base).href; } catch { coverUrl = null; }
+    }
+    const baseId = id.split(':')[0];
+    const albumPart = id.split(':')[1];
+    const rawAlbumId = t.albumId != null ? String(t.albumId) : albumPart;
+    const catalogAlbumId = rawAlbumId && /^\d+$/.test(rawAlbumId) ? rawAlbumId : null;
+    const catalogArtists = Array.isArray(t.artists)
+      ? t.artists
+          .filter((a) => a && a.id !== undefined && /^\d+$/.test(String(a.id)) && typeof a.name === 'string' && a.name.trim())
+          .slice(0, 20)
+          .map((a) => ({ id: String(a.id), name: String(a.name).trim().slice(0, 200) }))
+      : [];
+    const { id: trackId } = this.lib.addRemote({
+      provider: this.id,
+      externalId: id,
+      title,
+      artist,
+      album,
+      duration,
+      year: null,
+      genre: '',
+      trackNo: null,
+      discNo: null,
+      coverId: null,
+      meta: {
+        pageUrl: `https://music.yandex.ru/track/${baseId}`,
+        coverUrl,
+        suffix: 'mp3',
+        catalogArtists,
+        catalogAlbumId,
+      },
+    });
+    return trackId;
   }
 
   private async importOne(id: string): Promise<string> {

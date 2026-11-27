@@ -133,10 +133,10 @@ enum NativeMixTimeline {
         return max(0, ((track["totalFrames"] as? NSNumber)?.doubleValue ?? 0) / sampleRate - 1)
     }
 
-    /// Progressive start: a remote song the player is waiting for starts after 4 s of decoded PCM
+    /// Progressive start: a remote song the player is waiting for starts after 1.5 s of decoded PCM
     /// instead of after its whole download. Switch off here if devices show problems.
     static let progressiveStart = true
-    static let progressiveStartFrames = 4 * 48000
+    static let progressiveStartFrames = Int(1.5 * 48000)
     static func progressive(_ source: [String: Any]?) -> Bool {
         progressiveStart && !["local", "upload", "station"].contains(source?["kind"] as? String ?? "local")
     }

@@ -28,6 +28,7 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
     private var content: UIViewController?
     private var bar: UIViewController?
     private var observer: AnyCancellable?
+    private var lastShellLayout: (contentHidden: Bool, tabsHidden: Bool, barHidden: Bool, webOnly: Bool, tabIndex: Int)?
     /// The web layer may be the only thing on screen (web mode, or a route the page owns): native must keep a way back.
     private lazy var webExit: UIButton = {
         let button = UIButton(type: .system)
@@ -123,14 +124,21 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
     private func layoutShell() {
         guard let content, let bar else { return }
         let visible = shell.shown && !shell.ui.overlay && !NativeDeepLink.splashVisible
-        content.view.isHidden = !shell.nativeContentVisible
-        tabsOverlay.isHidden = !visible
-        bar.view.isHidden = !visible || shell.miniTitle == nil
+        let contentHidden = !shell.nativeContentVisible
+        let tabsHidden = !visible
+        let barHidden = !visible || shell.miniTitle == nil
         // While native owns the screen the page hides its own navigation: a web-only layer needs a native way back.
         let webOnly = !shell.shown || shell.screen == .web
+        let tabIndex = NativeTab.allCases.firstIndex(of: shell.tab) ?? tabs.selectedIndex
+        let nextLayout = (contentHidden, tabsHidden, barHidden, webOnly, tabIndex)
+        if let last = lastShellLayout, last == nextLayout { return }
+        lastShellLayout = nextLayout
+        content.view.isHidden = contentHidden
+        tabsOverlay.isHidden = tabsHidden
+        bar.view.isHidden = barHidden
         webExit.isHidden = !webOnly
         if webOnly { positionWebExit() }
-        if let index = NativeTab.allCases.firstIndex(of: shell.tab), tabs.selectedIndex != index { tabs.selectedIndex = index }
+        if tabs.selectedIndex != tabIndex { tabs.selectedIndex = tabIndex }
         view.bringSubviewToFront(tabsOverlay)
         view.bringSubviewToFront(bar.view)
         view.bringSubviewToFront(webExit)
@@ -588,6 +596,21 @@ enum NativeShellError: LocalizedError {
     var errorDescription: String? { self == .timeout ? "Медиатека не отвечает" : "Медиатека ещё загружается" }
 }
 
+final class NativePlaybackProgress: ObservableObject {
+    @Published var position: Double = 0
+    @Published var duration: Double = 0
+    @Published var blending: Bool = false
+    var fraction: Double { duration > 0 ? min(1, max(0, position / duration)) : 0 }
+}
+
+struct NativeCatalogPreview: Equatable {
+    let path: String
+    let title: String
+    let detail: String
+    let cover: String?
+    let isArtist: Bool
+}
+
 /// Swift reads library data from the server's SQLite; the page still owns routing and commands.
 final class NativeShellStore: ObservableObject {
     static weak var shared: NativeShellStore?
@@ -595,6 +618,12 @@ final class NativeShellStore: ObservableObject {
     static let ownScreens: Set<String> = ["/settings", "/sources", "/downloads", "/sound", "/backups", "/statistics"]
     @Published private(set) var library: [NativeTrack] = []
     private(set) var byId: [String: NativeTrack] = [:]
+    private(set) var cachedLiked: [NativeTrack] = []
+    private(set) var offlineTrackCount = 0
+    private(set) var recentlyPlayedTracks: [NativeTrack] = []
+    private(set) var favoriteArtists: [(name: String, cover: String?)] = []
+    private(set) var artistStations: [NativeArtistStation] = []
+    let playbackProgress = NativePlaybackProgress()
     let imports = NativeImportState()
     let smart = NativeSmartState()
     let wave = NativeWaveState()
@@ -611,10 +640,13 @@ final class NativeShellStore: ObservableObject {
     @Published private(set) var player = NativePlayerState()
     @Published private(set) var artwork: UIImage?
     @Published var banner: String?
+    @Published var catalogPreview: NativeCatalogPreview?
     weak var webView: WKWebView?
     weak var presenter: UIViewController?
     var host: NativeMixHost?
     private var timer: Timer?
+    private var libraryPollTick = 0
+    private var userPickedSearchSource = false
     private var artworkKey = ""
     private var bannerTask: DispatchWorkItem?
     private var reactions = NativeReactionOutbox()
@@ -727,7 +759,47 @@ final class NativeShellStore: ObservableObject {
     @MainActor var nativeContentVisible: Bool { shown && !ui.overlay && screen != .web && !NativeDeepLink.splashVisible }
     var screen: NativeScreen { NativeRoute.screen(path) }
     var tab: NativeTab { NativeRoute.tab(path) }
-    var liked: [NativeTrack] { NativeTrack.favorites(library) }
+    var liked: [NativeTrack] { cachedLiked }
+
+    private func rebuildLibraryCaches() {
+        cachedLiked = NativeTrack.favorites(library)
+        offlineTrackCount = library.filter(\.offline).count
+        recentlyPlayedTracks = Array(
+            library
+                .filter { $0.lastPlayedAt > 0 && $0.ok }
+                .sorted { $0.lastPlayedAt == $1.lastPlayedAt ? $0.id < $1.id : $0.lastPlayedAt > $1.lastPlayedAt }
+                .prefix(4)
+        )
+        var seen = Set<String>()
+        var artists: [(name: String, cover: String?)] = []
+        for track in cachedLiked + library {
+            let trimmed = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed.lowercased()).inserted else { continue }
+            artists.append((trimmed, track.cover))
+            if artists.count >= 10 { break }
+        }
+        favoriteArtists = artists
+        artistStations = NativeArtistStation.build(Array(byId.values))
+    }
+
+    func pickSearchSource(_ source: String) {
+        userPickedSearchSource = true
+        searchSource = source
+    }
+
+    private func syncDefaultSearchSource(yandexLinked: Bool) {
+        if yandexLinked && !userPickedSearchSource && searchSource == "all" {
+            searchSource = "yandex"
+        } else if !yandexLinked && searchSource == "yandex" {
+            searchSource = "all"
+        }
+    }
+
+    func openCatalog(_ path: String, title: String, detail: String = "", cover: String? = nil, isArtist: Bool = false) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        catalogPreview = NativeCatalogPreview(path: path, title: title, detail: detail, cover: cover, isArtist: isArtist)
+        go(path)
+    }
 
     var sharedLibrary: Bool { NativeServerApp.booted && NativeServerApp.shared != nil }
 
@@ -762,6 +834,7 @@ final class NativeShellStore: ObservableObject {
                     self.byId = Dictionary(uniqueKeysWithValues: snapshot.tracks.map { ($0.id, $0) })
                     self.playlists = snapshot.playlists
                     self.applyPendingReactions()
+                    self.rebuildLibraryCaches()
                     self.revision &+= 1
                     NativeSpotlight.update(self.library)
                     self.publishWidget()
@@ -883,6 +956,7 @@ final class NativeShellStore: ObservableObject {
 
     func updateYandexConnection(_ linked: Bool) {
         ui.wave.yandex = linked
+        syncDefaultSearchSource(yandexLinked: linked)
         if !linked && waveSource == .yandex { waveSource = nil }
         catalog.clearYandex()
     }
@@ -893,7 +967,27 @@ final class NativeShellStore: ObservableObject {
         return (trackId, savedIds.contains(trackId), reaction(trackId))
     }
 
-    @MainActor func ensureCatalogTrack(_ track: [String: Any], provider: String, priority: Int = 0) async throws -> String {
+    @MainActor func registerOptimisticCatalogTrack(id: String, raw: [String: Any], provider: String) {
+        guard byId[id] == nil else { return }
+        var dict: [String: Any] = [
+            "id": id,
+            "title": raw["title"] as? String ?? "",
+            "artist": raw["artist"] as? String ?? "",
+            "album": raw["album"] as? String ?? "",
+            "duration": (raw["duration"] as? NSNumber)?.doubleValue ?? 0,
+            "provider": provider,
+            "sourceKind": "remote",
+            "ok": raw["playable"] as? Bool != false,
+        ]
+        if let cover = (raw["coverUrl"] as? String) ?? (raw["cover"] as? String), !cover.isEmpty {
+            dict["cover"] = cover
+        }
+        if let track = NativeTrack(dict) {
+            byId[id] = track
+        }
+    }
+
+    @MainActor func ensureCatalogTrack(_ track: [String: Any], provider: String, priority: Int = 0, awaitRefresh: Bool = true) async throws -> String {
         let externalId = (track["externalId"] as? String) ?? (track["id"] as? String) ?? ""
         if let known = track["libraryTrackId"] as? String, !known.isEmpty, byId[known]?.ok == true { return known }
         if !externalId.isEmpty, let local = localCatalogTrack(provider: provider, externalId: externalId), byId[local.trackId]?.ok == true {
@@ -914,7 +1008,12 @@ final class NativeShellStore: ObservableObject {
             guard let id = res["trackId"] as? String, !id.isEmpty else { throw NativeLibraryActions.Failure(message: "Не удалось подготовить трек") }
             trackId = id
         }
-        try? await refreshLibraryAfterMutation()
+        if awaitRefresh {
+            try? await refreshLibraryAfterMutation()
+        } else {
+            registerOptimisticCatalogTrack(id: trackId, raw: track, provider: provider)
+            refreshLibrary()
+        }
         return trackId
     }
 
@@ -948,7 +1047,7 @@ final class NativeShellStore: ObservableObject {
 
         let first = ordered.removeFirst()
         let firstProvider = (first["audioProvider"] as? String) ?? (first["provider"] as? String) ?? "yandex"
-        let firstId = try await ensureCatalogTrack(first, provider: firstProvider, priority: 0)
+        let firstId = try await ensureCatalogTrack(first, provider: firstProvider, priority: 0, awaitRefresh: false)
         guard gen == catalogPlayGeneration else { return }
         try await NativeQueueController.shared.play(trackIds: [firstId], at: 0, context: context)
         if shuffle != NativeQueueController.shared.shuffle {
@@ -1185,6 +1284,7 @@ final class NativeShellStore: ObservableObject {
             if let rows = value["library"] as? [[String: Any]] {
                 library = rows.compactMap(NativeTrack.init)
                 byId = Dictionary(library.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                rebuildLibraryCaches()
                 DispatchQueue.main.async { NativeSpotlight.update(self.library) }
             }
             if let rows = value["playlists"] as? [[String: Any]] { playlists = rows.compactMap(NativePlaylist.init) }
@@ -1202,6 +1302,7 @@ final class NativeShellStore: ObservableObject {
         }
         if next.wave.yandex != ui.wave.yandex { catalog.clearYandex() }
         if next != ui { ui = next }
+        syncDefaultSearchSource(yandexLinked: next.wave.yandex)
         // Stage 4: the Swift queue controller owns playback; the page's snapshot must not reset wave/queue state.
         if sharedLibrary { Task { @MainActor in self.syncQueueControllerState() } }
         // A push sent before the page saw native's own navigation must not jump back.
@@ -1362,6 +1463,7 @@ final class NativeShellStore: ObservableObject {
         else if let source = url?.queryItems?.first(where: { $0.name == "src" })?.value, ["all", "local", "ytmusic", "youtube", "soundcloud", "yandex"].contains(source) { searchSource = source }
         if let scope = url?.queryItems?.first(where: { $0.name == "type" })?.value, ["all", "track", "artist", "album"].contains(scope) { searchScope = scope }
         let next = path.components(separatedBy: "?")[0]
+        if next != catalogPreview?.path { catalogPreview = nil }
         if !next.isEmpty && next != self.path {
             if navHistory.last != self.path {
                 navHistory.append(self.path)
@@ -1374,6 +1476,7 @@ final class NativeShellStore: ObservableObject {
     }
     func select(_ tab: NativeTab) {
         UIAccessibility.post(notification: .screenChanged, argument: nil)
+        catalogPreview = nil
         go(NativeRoute.root(tab))
         navHistory.removeAll()
     }
@@ -1401,6 +1504,7 @@ final class NativeShellStore: ObservableObject {
     }
     /// The page's history: native pages sit on top of the route they were opened from.
     func back() {
+        catalogPreview = nil
         if let previous = navHistory.popLast() {
             self.path = previous
             pending = (previous, Date())
@@ -1434,6 +1538,10 @@ final class NativeShellStore: ObservableObject {
         reactions.set(id, value)
         byId[id]?.reaction = value
         if let index = library.firstIndex(where: { $0.id == id }) { library[index].reaction = value }
+        rebuildLibraryCaches()
+        if sharedLibrary && value != 0 {
+            Task { @MainActor in NativeQueueController.shared.sendYandexReactionFeedback(trackId: id, value: value) }
+        }
         flushReactions()
     }
     func likeAll(_ ids: [String]) {
@@ -1482,31 +1590,57 @@ final class NativeShellStore: ObservableObject {
         guard timer == nil, UIApplication.shared.applicationState != .background else { return }
         refreshPlayer()
         refreshLibrary()
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.refreshPlayer(); self?.refreshLibrary() }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.refreshPlayer()
+            self.libraryPollTick &+= 1
+            if self.libraryPollTick % 4 == 0 { self.refreshLibrary() }
+        }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
     func stopPolling() { timer?.invalidate(); timer = nil }
 
+    private func updatePlaybackProgress(_ next: NativePlayerState) {
+        let changed = next.blending != playbackProgress.blending
+            || abs(next.position - playbackProgress.position) >= 0.25
+            || next.duration != playbackProgress.duration
+            || (next.position == 0) != (playbackProgress.position == 0)
+        guard changed else { return }
+        playbackProgress.position = next.position
+        playbackProgress.duration = next.duration
+        playbackProgress.blending = next.blending
+    }
+
     private func refreshPlayer() {
         guard let host, host.active else {
-            if player.active { player = NativePlayerState(); artwork = nil; artworkKey = "" }
+            if player.active {
+                player = NativePlayerState(); artwork = nil; artworkKey = ""
+                playbackProgress.position = 0; playbackProgress.duration = 0; playbackProgress.blending = false
+            }
             return
         }
         host.playerState { [weak self] result in
             guard let self, case .success(let value) = result else { return }
             Task { @MainActor in NativeQueueController.shared.syncFromHost(value) }
             let next = NativePlayerState(value)
-            let metaChanged = next.trackId != self.player.trackId || next.title != self.player.title || next.artist != self.player.artist || next.playing != self.player.playing || next.active != self.player.active
-            let progressChanged = next.blending != self.player.blending || abs(next.position - self.player.position) >= 0.25 || next.duration != self.player.duration || (next.position == 0) != (self.player.position == 0)
-            if metaChanged || progressChanged {
+            let metaChanged = next.trackId != self.player.trackId || next.entryId != self.player.entryId || next.title != self.player.title || next.artist != self.player.artist || next.playing != self.player.playing || next.active != self.player.active
+            self.updatePlaybackProgress(next)
+            if metaChanged {
                 self.player = next
-                if metaChanged { self.publishWidget() }
+                self.publishWidget()
             }
             let key = "\(next.entryId)|\(next.artworkReady)"
             if key != self.artworkKey {
                 self.artworkKey = key
-                self.artwork = (value["artwork"] as? MPMediaItemArtwork)?.image(at: CGSize(width: 120, height: 120))
+                let itemArtwork = value["artwork"] as? MPMediaItemArtwork
+                Task.detached(priority: .userInitiated) { [weak self] in
+                    let rendered = itemArtwork?.image(at: CGSize(width: 120, height: 120))
+                    await MainActor.run {
+                        guard let self, self.artworkKey == key else { return }
+                        self.artwork = rendered
+                    }
+                }
             }
         }
     }
@@ -1524,19 +1658,23 @@ final class NativeShellStore: ObservableObject {
         var next = NativePlayerState(state)
         if ended { next.playing = false }
         let key = "\(next.entryId)|\(next.artworkReady)"
-        if key != artworkKey, let image = (state["artwork"] as? MPMediaItemArtwork)?.image(at: CGSize(width: 120, height: 120)) {
+        if key != artworkKey, let itemArtwork = state["artwork"] as? MPMediaItemArtwork {
             artworkKey = key
-            artwork = image
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let rendered = itemArtwork.image(at: CGSize(width: 120, height: 120))
+                await MainActor.run {
+                    guard let self, self.artworkKey == key else { return }
+                    self.artwork = rendered
+                }
+            }
         }
         let metaChanged = next.trackId != player.trackId || next.playing != player.playing || next.title != player.title
             || next.artist != player.artist || next.active != player.active || next.entryId != player.entryId
-        let progressChanged = next.blending != player.blending || abs(next.position - player.position) >= 0.25 || next.duration != player.duration || (next.position == 0) != (player.position == 0)
-        guard metaChanged || progressChanged else { return }
+        updatePlaybackProgress(next)
+        guard metaChanged else { return }
         player = next
-        if metaChanged {
-            publishWidget()
-            if sharedLibrary || next.trackId != ui.now?.id { syncQueueControllerState() }
-        }
+        publishWidget()
+        if sharedLibrary || next.trackId != ui.now?.id { syncQueueControllerState() }
     }
 
     /// Home-screen widgets: the playing (or last) track and the newest likes; redrawn only when they change.
@@ -1612,6 +1750,13 @@ final class NativeShellStore: ObservableObject {
 /// Library covers come from the page (/api/... lives in its worker); remote ones over HTTPS.
 enum NativeCovers {
     private static let cache: NSCache<NSString, UIImage> = { let c = NSCache<NSString, UIImage>(); c.countLimit = 400; return c }()
+    private static let session: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.urlCache = URLCache(memoryCapacity: 40 * 1024 * 1024, diskCapacity: 150 * 1024 * 1024, diskPath: "mora-covers")
+        cfg.requestCachePolicy = .returnCacheDataElseLoad
+        cfg.httpMaximumConnectionsPerHost = 6
+        return URLSession(configuration: cfg)
+    }()
     @MainActor private static var loading: [String: Task<UIImage?, Never>] = [:]
 
     static func cached(_ url: String?) -> UIImage? {
@@ -1623,12 +1768,15 @@ enum NativeCovers {
     @MainActor static func image(_ url: String) async -> UIImage? {
         if let image = cache.object(forKey: url as NSString) { return image }
         if let task = loading[url] { return await task.value }
-        let task = Task<UIImage?, Never> { @MainActor in
+        let isShared = NativeShellStore.shared?.sharedLibrary == true
+        let task = Task<UIImage?, Never> {
             var data: Data?
             if url.hasPrefix("https://"), let remote = URL(string: url) {
-                data = try? await URLSession.shared.data(from: remote).0
+                data = await Task.detached(priority: .userInitiated) {
+                    try? await NativeCovers.session.data(from: remote).0
+                }.value
             } else if url.hasPrefix("/api/") {
-                if url.hasPrefix("/api/covers/"), NativeShellStore.shared?.sharedLibrary == true {
+                if url.hasPrefix("/api/covers/"), isShared {
                     let fileName = String(url.dropFirst("/api/covers/".count))
                     if !fileName.contains("\n"), fileName.range(of: "^[a-f0-9]{40}\\.(jpg|png|webp)$", options: .regularExpression) != nil {
                         let coverURL = NativeServerApp.root.appendingPathComponent("data/covers/" + fileName)
@@ -1640,11 +1788,13 @@ enum NativeCovers {
                     data = Data(base64Encoded: base64)
                 }
             }
-            // Thumbnails only: full-size embedded covers would cost megabytes each in a long list.
-            guard let data, let full = UIImage(data: data), full.size.width > 0, full.size.height > 0 else { return nil }
-            let scale = min(1, 240 / max(full.size.width, full.size.height))
-            let image = await full.byPreparingThumbnail(ofSize: CGSize(width: full.size.width * scale, height: full.size.height * scale)) ?? full
-            cache.setObject(image, forKey: url as NSString)
+            guard let rawData = data else { return nil }
+            let image: UIImage? = await Task.detached(priority: .userInitiated) {
+                guard let full = UIImage(data: rawData), full.size.width > 0, full.size.height > 0 else { return nil }
+                let scale = min(1, 240 / max(full.size.width, full.size.height))
+                return await full.byPreparingThumbnail(ofSize: CGSize(width: full.size.width * scale, height: full.size.height * scale)) ?? full
+            }.value
+            if let image { cache.setObject(image, forKey: url as NSString) }
             return image
         }
         loading[url] = task
@@ -1663,11 +1813,15 @@ struct NativeCover: View {
     var monogram: String? = nil
     var aspectSquare: Bool = false
     @State private var loaded: UIImage?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        let cachedHit = image ?? NativeCovers.cached(url)
+        let shown = cachedHit ?? loaded
         let artwork = ZStack {
-            if let shown = image ?? loaded ?? NativeCovers.cached(url) {
+            if let shown {
                 Image(uiImage: shown).resizable().scaledToFill()
+                    .transition(.opacity)
             } else {
                 LinearGradient(colors: [Color.moraMint.opacity(0.24), Color.moraSurface], startPoint: .topLeading, endPoint: .bottomTrailing)
                 if let initial = monogram?.trimmingCharacters(in: .whitespacesAndNewlines).first {
@@ -1681,6 +1835,7 @@ struct NativeCover: View {
                 }
             }
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: shown != nil)
         Group {
             if aspectSquare {
                 Color.clear.aspectRatio(1, contentMode: .fit)
@@ -1694,7 +1849,9 @@ struct NativeCover: View {
         .task(id: embedded ?? url) {
             guard image == nil else { return }
             if let embedded {
-                loaded = NativeArtworkImage.decode(embedded).map { UIImage(cgImage: $0) }
+                loaded = await Task.detached(priority: .userInitiated) {
+                    NativeArtworkImage.decode(embedded).map { UIImage(cgImage: $0) }
+                }.value
             } else if let url {
                 if let hit = NativeCovers.cached(url) { loaded = hit; return }
                 loaded = await NativeCovers.image(url)
@@ -1776,6 +1933,7 @@ struct NativeShellContent: View {
             }
             ZStack(alignment: .top) {
                 screen
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.path)
                 if store.path != NativeRoute.root(store.tab) {
                     // Pages are route switches, not NavigationStack pushes, so iOS gives them no back swipe: this edge does.
                     Color.clear.frame(width: 18).frame(maxHeight: .infinity).contentShape(Rectangle())
@@ -1897,25 +2055,8 @@ struct NativeShellBar: View {
         .padding(.leading, 8).padding(.trailing, 6)
         .frame(minHeight: 56)
         .overlay(alignment: .bottom) {
-            if store.miniProgress > 0 {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Rectangle()
-                            .fill(Color.white.opacity(0.08))
-                        Rectangle()
-                            .fill(
-                                LinearGradient(
-                                    colors: store.player.blending ? [.moraMint, .moraGold] : [.moraMint, .moraMint],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .frame(width: geo.size.width * store.miniProgress)
-                            .animation(UIAccessibility.isReduceMotionEnabled ? nil : .easeOut(duration: 0.18), value: store.miniProgress)
-                    }
-                }
-                .frame(height: 2)
-                .allowsHitTesting(false)
+            if store.nativePlaying {
+                NativeMiniProgressBar(progress: store.playbackProgress)
             }
         }
         .clipShape(Capsule())
@@ -1943,5 +2084,32 @@ struct NativeShellBar: View {
         )
         .onDisappear { dragOffset = 0 }
         .environmentObject(store)
+    }
+}
+
+private struct NativeMiniProgressBar: View {
+    @ObservedObject var progress: NativePlaybackProgress
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if progress.fraction > 0 {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(Color.white.opacity(0.08))
+                    Rectangle()
+                        .fill(
+                            LinearGradient(
+                                colors: progress.blending ? [.moraMint, .moraGold] : [.moraMint, .moraMint],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: geo.size.width * progress.fraction)
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: progress.fraction)
+                }
+            }
+            .frame(height: 2)
+            .allowsHitTesting(false)
+        }
     }
 }

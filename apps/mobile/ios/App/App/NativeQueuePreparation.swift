@@ -91,7 +91,7 @@ final class NativeQueuePreparation: @unchecked Sendable {
         }
         var owned = false, reported = 0
         while let stream, stream.receiving, !ticket.cancelled {
-            do { try await Task.sleep(nanoseconds: 125_000_000) } catch { ticket.cancel(); break }
+            do { try await Task.sleep(nanoseconds: 40_000_000) } catch { ticket.cancel(); break }
             guard let frames = stream.growingFrames, !ticket.cancelled else { break }
             if owned { if frames - reported >= 12000 { grow(frames, false); reported = frames } }
             else if frames >= NativeMixTimeline.progressiveStartFrames, await early(frames) { owned = true; reported = frames }
