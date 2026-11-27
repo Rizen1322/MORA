@@ -2,11 +2,13 @@ import SwiftUI
 
 struct NativeDownloadsView: View {
     @EnvironmentObject private var store: NativeShellStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var downloads = NativeDownloadsState()
     @State private var error: String?
     @State private var actionError: String?
     @State private var busy = false
     @State private var refreshing = false
+    @State private var pollEpoch = 0
     @State private var confirmation: Confirmation?
     private enum Confirmation: Identifiable {
         case clear, remove(NativeTrack), cancel(NativeDownloadsState.Job)
@@ -23,18 +25,25 @@ struct NativeDownloadsView: View {
                 Section {
                     Text(error).foregroundStyle(.red)
                     Button("Повторить") { actionError = nil; Task { await refresh() } }
-                }
+                }.listRowBackground(Color.moraSurface)
             }
             Section {
-                Button { perform { try await downloadLiked() } } label: { Label("Скачать всё любимое", systemImage: "heart.fill") }
-                    .accessibilityIdentifier("native-downloads-liked")
-                Button { perform { try await downloadWaveForTrip() } } label: { Label("Скачать волну в дорогу (20 треков)", systemImage: "waveform.badge.plus") }
-                    .accessibilityIdentifier("native-downloads-wave")
+                Button { perform { try await downloadLiked() } } label: {
+                    Label("Скачать всё любимое", systemImage: "heart.fill")
+                }
+                .disabled(busy)
+                .accessibilityIdentifier("native-downloads-liked")
+                Button { perform { try await downloadWaveForTrip() } } label: {
+                    Label("Скачать волну в дорогу (20 треков)", systemImage: "waveform.badge.plus")
+                }
+                .disabled(busy)
+                .accessibilityIdentifier("native-downloads-wave")
             } footer: { Text("Скачанные треки играют без интернета. Настройка Wi-Fi применяется к системным фоновым загрузкам.") }
+                .listRowBackground(Color.moraSurface)
             if !downloads.active.isEmpty {
                 Section("Скачивается") {
                     ForEach(downloads.active, id: \.identity) { job in jobRow(job) }
-                }
+                }.listRowBackground(Color.moraSurface)
             }
             Section {
                 if pinned.isEmpty {
@@ -47,10 +56,13 @@ struct NativeDownloadsView: View {
                         Button(role: .destructive) { confirmation = .remove(track) } label: {
                             Image(systemName: "trash").frame(width: 44, height: 44)
                         }
-                        .buttonStyle(.borderless).accessibilityLabel("Удалить загрузку: " + track.title)
+                        .buttonStyle(.borderless)
+                        .disabled(busy)
+                        .accessibilityLabel("Удалить загрузку: " + track.title)
                     }
                 }
             } header: { Text("Скачано · \(pinned.count)") }
+                .listRowBackground(Color.moraSurface)
             if !own.isEmpty {
                 Section {
                     ForEach(Array(own.enumerated()), id: \.element.id) { index, track in
@@ -58,52 +70,92 @@ struct NativeDownloadsView: View {
                     }
                 } header: { Text("Свои файлы · \(own.count)") }
                 footer: { Text("Файлы из «Файлов» и импорта сохранены внутри приложения. Убрать трек из медиатеки можно в его меню.") }
+                    .listRowBackground(Color.moraSurface)
             }
             if let usage = downloads.usage {
                 Section {
-                    LabeledContent("Скачанное", value: NativeDownloadsState.space(usage.pinnedBytes + downloads.nativeBytes))
-                    Text("Не удаляется автоматически").font(.footnote).foregroundStyle(.secondary)
-                    LabeledContent("Кэш прослушанного", value: NativeDownloadsState.space(usage.cacheBytes))
-                    Text("Старое удаляется само, когда превышен предел. Текущий и следующий трек защищены.")
-                        .font(.footnote).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        LabeledContent("Скачанное", value: NativeDownloadsState.space(usage.pinnedBytes + downloads.nativeBytes))
+                        Text("Не удаляется автоматически").font(.caption).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        LabeledContent("Кэш прослушанного", value: NativeDownloadsState.space(usage.cacheBytes))
+                        Text("Старое удаляется само, когда превышен предел. Текущий и следующий трек защищены.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     Picker("Предел кэша", selection: Binding(
                         get: { Int((usage.limitBytes / (1024 * 1024)).rounded()) },
                         set: { value in perform { _ = try await NativeServerApp.request("PUT", "/api/downloads/settings", body: ["cacheLimitMb": value]) } })) {
                         ForEach(cacheLimits(usage), id: \.self) { value in Text(NativeDownloadsState.space(Double(value) * 1024 * 1024)).tag(value) }
-                    }
+                    }.disabled(busy)
                     Button("Очистить кэш", role: .destructive) { confirmation = .clear }
+                        .disabled(busy)
                         .accessibilityIdentifier("native-downloads-clear-cache")
                 } header: { Text("Место на диске") }
                 footer: { if let free = usage.freeBytes { Text("Свободно на диске: " + NativeDownloadsState.space(free)) } }
-            } else if error == nil { ProgressView("Загрузка сведений о месте на диске…") }
+                    .listRowBackground(Color.moraSurface)
+            } else if error == nil { ProgressView("Загрузка сведений о месте на диске…").listRowBackground(Color.clear) }
         }
-        .disabled(busy)
-        .scrollContentBackground(.hidden).background(Color.moraBackground)
+        .scrollContentBackground(.hidden)
+        .background(Color.moraBackground)
+        .tint(Color.moraMint)
         .navigationTitle("Загрузки")
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) { Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") } }
+            if busy { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
         }
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: downloads.active.count)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: pinned.count)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: downloads.usage != nil)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: error)
         .accessibilityIdentifier("native-downloads-screen")
         .refreshable { await refresh() }
-        .task {
+        .task(id: pollEpoch) {
             while !Task.isCancelled {
                 await refresh()
+                if downloads.active.isEmpty { break }
                 do { try await Task.sleep(for: .seconds(2)) } catch { break }
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NativeDownloadManager.changed)) { _ in updateNative() }
-        .alert(item: $confirmation) { action in
+        .onReceive(NotificationCenter.default.publisher(for: NativeDownloadManager.changed)) { _ in
+            let wasEmpty = downloads.active.isEmpty
+            updateNative()
+            if wasEmpty && !downloads.active.isEmpty { pollEpoch &+= 1 }
+        }
+        .confirmationDialog(
+            confirmationTitle,
+            isPresented: Binding(get: { confirmation != nil }, set: { if !$0 { confirmation = nil } }),
+            titleVisibility: .visible,
+            presenting: confirmation
+        ) { action in
             switch action {
             case .clear:
-                return Alert(title: Text("Очистить кэш?"), message: Text("Скачанное и свои файлы сохранятся. Текущий и следующий трек защищены."),
-                    primaryButton: .destructive(Text("Очистить")) { perform { try await clearCache() } }, secondaryButton: .cancel())
+                Button("Очистить", role: .destructive) { perform { try await clearCache() } }
+                Button("Отмена", role: .cancel) {}
             case .remove(let track):
-                return Alert(title: Text("Удалить загрузку?"), message: Text("«\(track.title)» останется в медиатеке. Для сетевого трека может понадобиться интернет."),
-                    primaryButton: .destructive(Text("Удалить")) { perform { try await remove(track) } }, secondaryButton: .cancel())
+                Button("Удалить", role: .destructive) { perform { try await remove(track) } }
+                Button("Отмена", role: .cancel) {}
             case .cancel(let job):
-                return Alert(title: Text("Отменить загрузку?"), message: Text(job.title),
-                    primaryButton: .destructive(Text("Отменить загрузку")) { perform { try await act(job, "cancel") } }, secondaryButton: .cancel(Text("Продолжить")))
+                Button("Отменить загрузку", role: .destructive) { perform { try await act(job, "cancel") } }
+                Button("Продолжить", role: .cancel) {}
             }
+        } message: { action in
+            switch action {
+            case .clear:
+                Text("Скачанное и свои файлы сохранятся. Текущий и следующий трек защищены.")
+            case .remove(let track):
+                Text("«\(track.title)» останется в медиатеке. Для сетевого трека может понадобиться интернет.")
+            case .cancel(let job):
+                Text(job.title)
+            }
+        }
+    }
+
+    private var confirmationTitle: String {
+        switch confirmation {
+        case .clear: return "Очистить кэш?"
+        case .remove: return "Удалить загрузку?"
+        case .cancel: return "Отменить загрузку?"
+        case nil: return ""
         }
     }
 
@@ -115,21 +167,25 @@ struct NativeDownloadsView: View {
             Text(job.title.isEmpty ? "Трек" : job.title).font(.headline)
             Text(job.status + (job.state == "downloading" ? " · \(Int(job.progress * 100))%" : ""))
                 .font(.subheadline).foregroundStyle(job.state == "failed" ? Color.red : Color.secondary)
-            if job.state == "downloading" { ProgressView(value: job.progress).accessibilityValue("\(Int(job.progress * 100))%") }
+            if job.state == "downloading" {
+                ProgressView(value: job.progress)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: job.progress)
+                    .accessibilityValue("\(Int(job.progress * 100))%")
+            }
             if job.totalBytes > 0 {
                 Text("\(NativeDownloadsState.space(job.bytes)) / \(NativeDownloadsState.space(job.totalBytes))" +
                      (job.eta.map { " · осталось " + NativePlayerTime.text($0) } ?? ""))
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             HStack {
-                if job.canPause { Button("Пауза", systemImage: "pause") { perform { try await act(job, "pause") } } }
+                if job.canPause { Button("Пауза", systemImage: "pause") { perform { try await act(job, "pause") } }.disabled(busy) }
                 if job.canRetry {
                     Button(job.state == "paused" ? "Продолжить" : "Повторить", systemImage: "arrow.clockwise") {
                         perform { try await act(job, job.state == "paused" ? "resume" : "retry") }
-                    }
+                    }.disabled(busy)
                 }
                 Spacer()
-                Button("Отменить", systemImage: "xmark", role: .destructive) { confirmation = .cancel(job) }
+                Button("Отменить", systemImage: "xmark", role: .destructive) { confirmation = .cancel(job) }.disabled(busy)
             }.buttonStyle(.borderless)
         }.padding(.vertical, 6).accessibilityIdentifier("native-download-job-" + job.identity)
     }
@@ -173,10 +229,11 @@ struct NativeDownloadsView: View {
     @MainActor private func downloadLiked() async throws {
         let available = Set(pinned.map(\.id))
         let ids = store.library.filter { $0.liked && $0.sourceKind == "remote" && !available.contains($0.id) }.map(\.id)
+        let usage = ids.isEmpty ? nil : try await fetchUsage()
         var failed = 0
         var lastError = ""
         for id in ids {
-            do { try await add(id) } catch { failed += 1; lastError = error.localizedDescription }
+            do { try await add(id, cachedUsage: usage) } catch { failed += 1; lastError = error.localizedDescription }
         }
         if failed > 0 { throw NativeDownloadsState.Failure(message: "Не удалось добавить загрузки: \(failed). \(lastError)") }
         store.show(ids.isEmpty ? "Эти треки уже на iPhone или не скачиваются" : "Добавлено загрузок: \(ids.count)")
@@ -219,16 +276,17 @@ struct NativeDownloadsView: View {
 
         let alreadyDownloaded = Set(pinned.map(\.id))
             .union(Set(downloads.active.compactMap(\.trackId)))
-        let targets = candidateIds.filter { id in
+        let targets = Array(candidateIds.filter { id in
             guard !alreadyDownloaded.contains(id) else { return false }
             if let track = store.byId[id] { return track.ok && !track.offline }
             return true
-        }.prefix(20)
+        }.prefix(20))
 
+        let usage = targets.isEmpty ? nil : try? await fetchUsage()
         var added = 0
         for id in targets {
             do {
-                try await add(id)
+                try await add(id, cachedUsage: usage)
                 added += 1
             } catch {
                 if (try? await NativeServerApp.request("POST", "/api/downloads", body: ["trackId": id])) != nil {
@@ -238,7 +296,14 @@ struct NativeDownloadsView: View {
         }
         store.show(added > 0 ? "В загрузку добавлено треков: \(added)" : "Треки волны уже скачаны")
     }
-    @MainActor private func add(_ id: String) async throws {
+    @MainActor private func fetchUsage() async throws -> NativeDownloadsState.Usage {
+        let responseUsage = try await NativeServerApp.request("GET", "/api/downloads")
+        guard let raw = responseUsage["usage"] as? [String: Any] else {
+            throw NativeDownloadsState.Failure(message: "Не удалось проверить место для загрузки")
+        }
+        return try NativeDownloadsState.Usage(raw)
+    }
+    @MainActor private func add(_ id: String, cachedUsage: NativeDownloadsState.Usage? = nil) async throws {
         let response = try await NativeServerApp.request("POST", "/api/mobile/native-sources", body: [
             "entries": [["trackId": id, "entryId": UUID().uuidString, "file": 0]], "previousId": id])
         guard let items = response["items"] as? [[String: Any]], let item = items.first,
@@ -246,11 +311,10 @@ struct NativeDownloadsView: View {
         guard ["direct", "yandex"].contains(source["kind"] as? String ?? "") else {
             _ = try await NativeServerApp.request("POST", "/api/downloads", body: ["trackId": id]); return
         }
-        let responseUsage = try await NativeServerApp.request("GET", "/api/downloads")
-        guard let raw = responseUsage["usage"] as? [String: Any] else { throw NativeDownloadsState.Failure(message: "Не удалось проверить место для загрузки") }
-        let usage = try NativeDownloadsState.Usage(raw)
-        let http = NativeMediaHTTP(); defer { http.invalidate() }
-        let request = try await NativeMediaLoader(http: http).backgroundRequest(source, ticket: NativePreparationTicket())
+        let usage: NativeDownloadsState.Usage
+        if let cachedUsage { usage = cachedUsage }
+        else { usage = try await fetchUsage() }
+        let request = try await NativeMediaLoader(http: NativeMediaHTTP.sharedHTTPS).backgroundRequest(source, ticket: NativePreparationTicket())
         _ = try NativeDownloadManager.shared.add(trackId: id, title: item["title"] as? String ?? "Трек", artist: item["artist"] as? String ?? "",
             album: store.byId[id]?.album ?? "", duration: (item["duration"] as? NSNumber)?.doubleValue ?? 0,
             request: request, limit: Int64(min(1e12, usage.availableForNative)))

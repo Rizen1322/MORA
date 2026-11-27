@@ -3,6 +3,7 @@ import UIKit
 
 struct NativeBackupsView: View {
     @EnvironmentObject private var store: NativeShellStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var listing = NativeBackupFiles.Listing()
     @State private var loaded = false
     @State private var busy = false
@@ -15,55 +16,110 @@ struct NativeBackupsView: View {
     private struct Share: Identifiable { let id = UUID(); let url: URL }
 
     var body: some View {
-        NavigationStack {
-            List {
-                if let failure {
-                    Section { Text(failure).foregroundStyle(.red) }
+        List {
+            if let failure {
+                Section { Text(failure).foregroundStyle(.red) }
+                    .listRowBackground(Color.moraSurface)
+            }
+            if let message {
+                Section { Text(message).foregroundStyle(.secondary) }
+                    .listRowBackground(Color.moraSurface)
+            }
+            if !listing.warnings.isEmpty {
+                Section { ForEach(listing.warnings, id: \.self) { Text($0).foregroundStyle(.secondary) } }
+                    .listRowBackground(Color.moraSurface)
+            }
+            Section {
+                if !loaded {
+                    ProgressView("Загружаем копии…")
+                } else if listing.entries.isEmpty {
+                    Text(listing.warnings.isEmpty ? "Резервных копий пока нет" : "Доступных копий в списке нет").foregroundStyle(.secondary)
                 }
-                if let message { Section { Text(message).foregroundStyle(.secondary) } }
-                if !listing.warnings.isEmpty {
-                    Section { ForEach(listing.warnings, id: \.self) { Text($0).foregroundStyle(.secondary) } }
-                }
-                Section {
-                    if !loaded { ProgressView("Загружаем копии…") }
-                    else if listing.entries.isEmpty { Text(listing.warnings.isEmpty ? "Резервных копий пока нет" : "Доступных копий в списке нет").foregroundStyle(.secondary) }
-                    ForEach(listing.entries) { entry in
-                        Button { inspect(entry) } label: {
-                            Label((entry.cloud ? "iCloud · " : "") + entry.name, systemImage: entry.cloud ? "icloud" : "clock.arrow.circlepath")
-                        }.disabled(busy)
+                ForEach(listing.entries) { entry in
+                    Button { inspect(entry) } label: {
+                        HStack(spacing: 12) {
+                            NativeIconBadge(
+                                symbol: entry.cloud ? "icloud" : "clock.arrow.circlepath",
+                                size: 30,
+                                tint: entry.cloud ? .moraMint : .moraGold
+                            )
+                            Text((entry.cloud ? "iCloud · " : "") + entry.name)
+                                .foregroundStyle(.white)
+                                .lineLimit(2)
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.forward")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.white.opacity(0.32))
+                        }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                     }
-                    Button("Обновить список") { Task { await load() } }.disabled(busy)
-                } footer: {
-                    Text("Последние пять копий в каждом хранилище. Локальные копии удаляются вместе с приложением — сохраните важную через «Поделиться».")
+                    .buttonStyle(MoraRowPressStyle())
+                    .disabled(busy)
                 }
-                if let selection {
+                Button("Обновить список") { Task { await load() } }.disabled(busy)
+            } footer: {
+                Text("Последние пять копий в каждом хранилище. Локальные копии удаляются вместе с приложением — сохраните важную через «Поделиться».")
+            }
+            .listRowBackground(Color.moraSurface)
+        }
+        .scrollContentBackground(.hidden).background(Color.moraBackground).tint(Color.moraMint)
+        .navigationTitle("Резервные копии")
+        .toolbar {
+            if busy { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
+        }
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: loaded)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: listing.entries.count)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: failure)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: message)
+        .accessibilityIdentifier("native-backups-screen")
+        .task { await load() }
+        .refreshable { await load() }
+        .sheet(item: $selection) { selected in
+            NavigationStack {
+                Form {
                     Section {
-                        Text(selection.backup.name).font(.headline)
-                        LabeledContent("Плейлистов", value: String(selection.backup.count))
-                        Text(selection.hasLibrary ? "Настройки, плейлисты, лайки и история будут восстановлены. Аудиофайлы и аккаунты в копию не входят." : "Будут восстановлены названия плейлистов и порядок песен. Аудиофайлы и аккаунты в копию не входят.")
+                        Text(selected.backup.name).font(.headline)
+                        LabeledContent("Плейлистов", value: String(selected.backup.count))
+                        Text(selected.hasLibrary ? "Настройки, плейлисты, лайки и история будут восстановлены. Аудиофайлы и аккаунты в копию не входят." : "Будут восстановлены названия плейлистов и порядок песен. Аудиофайлы и аккаунты в копию не входят.")
                             .font(.footnote).foregroundStyle(.secondary)
-                        Button("Восстановить") { confirmation = selection }.disabled(busy)
-                            .accessibilityIdentifier("native-backups-restore")
-                        Button { share(selection) } label: { Label("Поделиться", systemImage: "square.and.arrow.up") }.disabled(busy)
-                        Button("Отмена", role: .cancel) { self.selection = nil }.disabled(busy)
                     } header: { Text("Выбранная копия") }
+                        .listRowBackground(Color.moraSurface)
+                    Section {
+                        Button("Восстановить") { confirmation = selected }.disabled(busy)
+                            .accessibilityIdentifier("native-backups-restore")
+                        Button { share(selected) } label: { Label("Поделиться", systemImage: "square.and.arrow.up") }.disabled(busy)
+                    }
+                    .listRowBackground(Color.moraSurface)
                 }
+                .scrollContentBackground(.hidden).background(Color.moraBackground)
+                .navigationTitle("Резервная копия").navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Готово") { selection = nil }
+                    }
+                }
+                .confirmationDialog(
+                    "Восстановить копию?",
+                    isPresented: Binding(get: { confirmation != nil }, set: { if !$0 { confirmation = nil } }),
+                    titleVisibility: .visible,
+                    presenting: confirmation
+                ) { item in
+                    Button("Восстановить") {
+                        selection = nil
+                        restore(item)
+                    }
+                    Button("Отмена", role: .cancel) {}
+                } message: { item in
+                    Text(item.hasLibrary ? "Будут восстановлены настройки, плейлисты, лайки и история из «\(item.backup.name)». Существующие данные могут измениться." : "Будут восстановлены плейлисты из «\(item.backup.name)». Ранее восстановленные плейлисты этой копии будут обновлены.")
+                }
+                .sheet(item: $share, onDismiss: discardShare) { NativeBackupsShareSheet(url: $0.url) }
             }
-            .scrollContentBackground(.hidden).background(Color.moraBackground).tint(Color.moraMint)
-            .navigationTitle("Резервные копии")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") } }
-                if busy { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
-            }
-            .accessibilityIdentifier("native-backups-screen")
-            .task { await load() }
-            .refreshable { await load() }
-            .alert(item: $confirmation) { selected in
-                Alert(title: Text("Восстановить копию?"),
-                    message: Text(selected.hasLibrary ? "Будут восстановлены настройки, плейлисты, лайки и история из «\(selected.backup.name)». Существующие данные могут измениться." : "Будут восстановлены плейлисты из «\(selected.backup.name)». Ранее восстановленные плейлисты этой копии будут обновлены."),
-                    primaryButton: .default(Text("Восстановить")) { restore(selected) }, secondaryButton: .cancel())
-            }
-            .sheet(item: $share, onDismiss: discardShare) { NativeBackupsShareSheet(url: $0.url) }
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(Color.moraBackground)
+            .tint(.moraMint)
+            .preferredColorScheme(.dark)
         }
     }
     @MainActor private func load() async {

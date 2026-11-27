@@ -127,8 +127,10 @@ final class NativeQueuePreparation: @unchecked Sendable {
             guard let source = item["source"] as? [String: Any], source["allowHTTP"] as? Bool == true,
                   let text = source["url"] as? String else { return nil }; return URL(string: text)?.host
         })
-        let http = NativeMediaHTTP(allowedHTTPHosts: hosts), loader = NativeMediaLoader(http: http)
-        defer { http.invalidate() }
+        let ownedHTTP = hosts.isEmpty ? nil : NativeMediaHTTP(allowedHTTPHosts: hosts)
+        let http = ownedHTTP ?? NativeMediaHTTP.sharedHTTPS
+        let loader = NativeMediaLoader(http: http)
+        defer { ownedHTTP?.invalidate() }
         var produced = 0, processed = 0, retries = 0, wrapped = -1, at = from
         var batch = raw, cursor = 0
         let loop = manifest["loopItems"] as? [[String: Any]] ?? []
@@ -506,6 +508,15 @@ final class NativeMixAnalysis: @unchecked Sendable {
 /// Session-owned: replacing a preparation manifest keeps artwork requests for
 /// retained PCM alive. The host checks the entry/file identity before applying it.
 final class NativeQueueArtwork: @unchecked Sendable {
+    private static let artworkSession: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.urlCache = URLCache(memoryCapacity: 16 * 1024 * 1024, diskCapacity: 60 * 1024 * 1024, diskPath: "mora-artwork")
+        cfg.requestCachePolicy = .returnCacheDataElseLoad
+        cfg.timeoutIntervalForRequest = 10
+        cfg.timeoutIntervalForResource = 15
+        cfg.httpMaximumConnectionsPerHost = 4
+        return URLSession(configuration: cfg)
+    }()
     private let ticket = NativePreparationTicket()
     private let lock = NSLock()
     private var pendingArtwork = 0
@@ -537,8 +548,20 @@ final class NativeQueueArtwork: @unchecked Sendable {
     }
     private func startArtwork(_ request: ArtworkRequest) {
         Task.detached(priority: .utility) {
+            defer { self.artworkFinished() }
+            guard !self.ticket.cancelled else { return }
+            if request.url.scheme == "https", request.hosts.isEmpty {
+                var urlRequest = URLRequest(url: request.url)
+                urlRequest.cachePolicy = .returnCacheDataElseLoad
+                guard let (data, response) = try? await Self.artworkSession.data(for: urlRequest),
+                      !self.ticket.cancelled,
+                      let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                      !data.isEmpty, data.count <= 2 * 1024 * 1024 else { return }
+                request.accept(request.index, request.file, data)
+                return
+            }
             let http = NativeMediaHTTP(allowedHTTPHosts: request.hosts, timeout: 8)
-            defer { http.invalidate(); self.artworkFinished() }
+            defer { http.invalidate() }
             if let data = try? await http.data(request.url, limit: 2 * 1024 * 1024, ticket: self.ticket), !self.ticket.cancelled {
                 request.accept(request.index, request.file, data)
             }

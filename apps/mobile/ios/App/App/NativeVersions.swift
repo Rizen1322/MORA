@@ -314,8 +314,14 @@ private enum NativeVersionSource {
                        let host = URL(string: text)?.host {
                         allowedHTTPHosts.insert(host)
                     }
-                    let loaderHTTP = NativeMediaHTTP(allowedHTTPHosts: allowedHTTPHosts, timeout: 90)
-                    self.http = loaderHTTP
+                    let loaderHTTP: NativeMediaHTTP
+                    if allowedHTTPHosts.isEmpty {
+                        loaderHTTP = NativeMediaHTTP.sharedHTTPS
+                        self.http = nil
+                    } else {
+                        loaderHTTP = NativeMediaHTTP(allowedHTTPHosts: allowedHTTPHosts, timeout: 90)
+                        self.http = loaderHTTP
+                    }
                     url = try await NativeMediaLoader(http: loaderHTTP).load(source, to: destination, folder: directory, ticket: ticket)
                 }
                 guard generation == intent, !Task.isCancelled else { return }
@@ -427,6 +433,7 @@ private enum NativeVersionSource {
 @MainActor struct NativeVersionView: View {
     @StateObject private var model: NativeVersionModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var query: String
     @State private var variant = ""
     @State private var source = "all"
@@ -441,7 +448,7 @@ private enum NativeVersionSource {
             List {
                 Section {
                     HStack(spacing: 12) {
-                        NativeCover(url: model.target.cover, size: 56, radius: 8)
+                        NativeCover(url: model.target.cover, size: 56, radius: 8, monogram: model.target.title)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(model.target.title).font(.headline).lineLimit(2)
                             Text(model.target.artist).foregroundStyle(.secondary).lineLimit(1)
@@ -459,35 +466,56 @@ private enum NativeVersionSource {
                         Text("Ремикс").tag("remix"); Text("Live").tag("live"); Text("Slowed").tag("slowed")
                     }
                 }
+                .listRowBackground(Color.moraSurface)
                 Section("Другие записи") {
-                    if model.loading { ProgressView("Ищем версии…") }
+                    if model.loading {
+                        MoraSearchSkeleton(rows: 4)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
                     ForEach(model.rows) { choice in choiceRow(choice) }
                     if !model.loading && model.rows.isEmpty { Text("Другие версии не найдены").foregroundStyle(.secondary) }
                     ForEach(model.errors, id: \.self) { Text($0).font(.footnote).foregroundStyle(.secondary) }
                 }
+                .listRowBackground(Color.moraSurface)
                 Section {
                     Button("Добавить выбранную версию отдельно") { apply("separate") }.disabled(model.selected == nil || model.busy != nil)
                     if model.target.binding != nil {
                         Button("Вернуть исходную запись") { apply("restore") }.disabled(model.busy != nil)
                     }
                 }
+                .listRowBackground(Color.moraSurface)
             }
             .listStyle(.insetGrouped).scrollContentBackground(.hidden).background(Color.moraBackground)
             .navigationTitle("Другая версия").navigationBarTitleDisplayMode(.inline)
             .searchable(text: $query, prompt: "Исполнитель и название")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() }.disabled(model.busy == "apply") } }
             .safeAreaInset(edge: .bottom) {
+                let ctaDisabled = model.selected == nil || model.loading || model.busy != nil
                 Button { apply("bind") } label: {
-                    HStack { if model.busy == "apply" { ProgressView() }; Text("Использовать для этого трека").fontWeight(.semibold) }
-                        .frame(maxWidth: .infinity, minHeight: 44)
+                    HStack(spacing: 8) {
+                        if model.busy == "apply" { ProgressView().tint(Color.moraBackground) }
+                        Text("Использовать для этого трека").fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .foregroundStyle(Color.moraBackground)
+                    .background(Color.moraMint.opacity(ctaDisabled ? 0.35 : 1), in: Capsule())
                 }
-                .buttonStyle(.borderedProminent).disabled(model.selected == nil || model.loading || model.busy != nil)
-                .padding().background(.ultraThinMaterial)
+                .buttonStyle(MoraPressStyle())
+                .disabled(ctaDisabled)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(.ultraThinMaterial)
             }
         }
+        .presentationBackground(Color.moraBackground)
+        .preferredColorScheme(.dark)
         .tint(.moraMint)
-        .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.25), value: model.selected)
-        .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.25), value: model.rows.map(\.id))
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: model.selected)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: model.rows.map(\.id))
+        .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: model.previewing)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: model.loading)
         .task(id: "\(query)|\(variant)|\(source)") {
             do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
             await model.search("\(query) \(variant)".trimmingCharacters(in: .whitespaces), source: source)
@@ -497,20 +525,27 @@ private enum NativeVersionSource {
         .interactiveDismissDisabled(model.busy == "apply")
     }
     private func choiceRow(_ choice: NativeVersionChoice) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let isSelected = model.selected == choice.id
+        return VStack(alignment: .leading, spacing: 6) {
         HStack(spacing: 10) {
             Button { model.selected = choice.id } label: {
                 HStack(spacing: 10) {
-                    NativeCover(url: choice.track.cover, size: 44, radius: 6)
+                    NativeCover(url: choice.track.cover, size: 44, radius: 6, monogram: choice.track.title)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(choice.track.title).foregroundStyle(.primary).lineLimit(2)
                         Text("\(choice.track.artist) · \(choice.source) · \(NativePlayerTime.text(choice.track.duration))").font(.caption).foregroundStyle(.secondary)
                         if !choice.tags.isEmpty { Text(choice.tags).font(.caption2).foregroundStyle(.secondary) }
                     }
                     Spacer(minLength: 0)
-                    if model.selected == choice.id { Image(systemName: "checkmark.circle.fill") }
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.moraMint)
+                            .symbolEffect(.bounce, value: isSelected)
+                    }
                 }.contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(!choice.track.ok || model.busy == "apply")
+            }
+            .buttonStyle(MoraRowPressStyle())
+            .disabled(!choice.track.ok || model.busy == "apply")
             Button { model.preview(choice) } label: {
                 if model.busy == choice.id { ProgressView().frame(width: 44, height: 44) }
                 else { Image(systemName: model.previewing == choice.id ? "stop.fill" : "play.fill").frame(width: 44, height: 44) }

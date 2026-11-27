@@ -514,7 +514,7 @@ public class MoraAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         guard let trackId = call.getString("trackId"), let source = call.getObject("source"),
               let duration = call.getDouble("duration"), let limit = call.getDouble("limitBytes"), limit.isFinite, limit >= 0, limit <= 1e12 else { call.reject("Неверная загрузка"); return }
         Task { @MainActor in
-            let http = NativeMediaHTTP(); defer { http.invalidate() }
+            let http = NativeMediaHTTP.sharedHTTPS
             do {
                 let request = try await NativeMediaLoader(http: http).backgroundRequest(source, ticket: NativePreparationTicket())
                 let job = try NativeDownloadManager.shared.add(trackId: trackId, title: call.getString("title") ?? "Трек", artist: call.getString("artist") ?? "",

@@ -3,6 +3,7 @@ import UIKit
 
 struct NativeSoundView: View {
     @EnvironmentObject private var store: NativeShellStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sound: NativeSoundState?
     @State private var draft: [Int: Double] = [:]
     @State private var draftSpeed: Double?
@@ -18,43 +19,46 @@ struct NativeSoundView: View {
     @State private var failure: String?
 
     var body: some View {
-        NavigationStack {
-            Form {
-                if let failure {
-                    Section {
-                        Text(failure).foregroundStyle(.red)
-                        Button("Обновить настройки") { Task { await load() } }.disabled(busy || editing)
-                    }.listRowBackground(Color.moraSurface)
-                }
-                if let sound {
-                    controls(sound)
-                    playbackSection(sound)
-                    stageSection(sound)
-                    Section("Полосы") {
-                        ForEach(NativeSoundState.bands.indices, id: \.self) { index in band(index, sound) }
-                    }.listRowBackground(Color.moraSurface)
-                } else if failure == nil { ProgressView("Загружаем настройки звука…").listRowBackground(Color.clear) }
-                Section { Color.clear.frame(height: 56).listRowBackground(Color.clear) }
+        Form {
+            if let failure {
+                Section {
+                    Text(failure).foregroundStyle(.red)
+                    Button("Обновить настройки") { Task { await load() } }.disabled(busy || editing)
+                }.listRowBackground(Color.moraSurface)
             }
-            .scrollContentBackground(.hidden)
-            .background(Color.moraBackground)
-            .tint(Color.moraMint)
-            .navigationTitle("Звук")
-            .accessibilityIdentifier("native-sound-screen")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") } }
-                if busy { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
-            }
-            .refreshable { await load() }
-            .task {
-                await load()
-                while !Task.isCancelled {
-                    do { try await Task.sleep(for: .seconds(10)) } catch { return }
-                    await load(silent: true)
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in Task { await load(silent: true) } }
+            if let sound {
+                let eqActive = pendingEnabled ?? sound.enabled
+                controls(sound)
+                playbackSection(sound)
+                stageSection(sound)
+                Section("Полосы") {
+                    ForEach(NativeSoundState.bands.indices, id: \.self) { index in
+                        band(index, sound)
+                            .opacity(eqActive ? 1 : 0.45)
+                    }
+                }.listRowBackground(Color.moraSurface)
+            } else if failure == nil { ProgressView("Загружаем настройки звука…").listRowBackground(Color.clear) }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.moraBackground)
+        .tint(Color.moraMint)
+        .navigationTitle("Звук")
+        .accessibilityIdentifier("native-sound-screen")
+        .toolbar {
+            if busy { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
+        }
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: pendingEnabled ?? sound?.enabled ?? false)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: failure)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: sound != nil)
+        .refreshable { await load() }
+        .task {
+            await load()
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(10)) } catch { return }
+                await load(silent: true)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in Task { await load(silent: true) } }
     }
     private func controls(_ sound: NativeSoundState) -> some View {
         Section {
@@ -81,6 +85,7 @@ struct NativeSoundView: View {
     private func playbackSection(_ sound: NativeSoundState) -> some View {
         let speedValue = draftSpeed ?? sound.speed
         let semitonesValue = draftSemitones ?? sound.semitones
+        let dirty = abs(speedValue - 1.0) > 0.001 || abs(semitonesValue) > 0.01
         return Section("Скорость и тон") {
             sliderRow(
                 "Скорость",
@@ -100,17 +105,21 @@ struct NativeSoundView: View {
                 step: 0.5,
                 identifier: "native-sound-semitones"
             ) { .semitones($0) }
-            if abs(sound.speed - 1.0) > 0.001 || abs(sound.semitones) > 0.01 {
+            if dirty {
                 Button("Сбросить скорость и тон") { save(.resetPlayback) }
                     .foregroundStyle(Color.moraMint)
                     .disabled(busy || editing)
                     .accessibilityIdentifier("native-sound-reset-playback")
             }
-        }.listRowBackground(Color.moraSurface)
+        }
+        .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: dirty)
+        .listRowBackground(Color.moraSurface)
     }
     private func stageSection(_ sound: NativeSoundState) -> some View {
         let balanceValue = draftBalance ?? sound.balance
         let reverbValue = draftReverb ?? sound.reverbMix
+        let monoValue = pendingMono ?? sound.mono
+        let dirty = abs(balanceValue) > 0.01 || monoValue || reverbValue > 0.005
         return Section("Сцена и баланс") {
             sliderRow(
                 "Баланс",
@@ -121,7 +130,7 @@ struct NativeSoundView: View {
                 step: 0.05,
                 identifier: "native-sound-balance"
             ) { .balance($0) }
-            Toggle(isOn: Binding(get: { pendingMono ?? sound.mono }, set: { save(.mono($0)) })) {
+            Toggle(isOn: Binding(get: { monoValue }, set: { save(.mono($0)) })) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Моно")
                     Text("Сводить оба канала в один").font(.caption).foregroundStyle(.secondary)
@@ -138,13 +147,15 @@ struct NativeSoundView: View {
                 step: 0.01,
                 identifier: "native-sound-reverb"
             ) { .reverbMix($0) }
-            if abs(sound.balance) > 0.01 || sound.mono || sound.reverbMix > 0.005 {
+            if dirty {
                 Button("Сбросить сцену") { save(.resetTone) }
                     .foregroundStyle(Color.moraMint)
                     .disabled(busy || editing)
                     .accessibilityIdentifier("native-sound-reset-tone")
             }
-        }.listRowBackground(Color.moraSurface)
+        }
+        .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: dirty)
+        .listRowBackground(Color.moraSurface)
     }
     private func displayedGains(_ sound: NativeSoundState) -> [Double] {
         let presetGains: [Double]? = pendingPreset.flatMap { index in
@@ -180,7 +191,14 @@ struct NativeSoundView: View {
         commit: @escaping (Double) -> NativeSoundState.Edit
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack { Text(title); Spacer(); Text(detail).monospacedDigit().foregroundStyle(.secondary) }
+            HStack {
+                Text(title)
+                Spacer()
+                Text(detail)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .foregroundStyle(.secondary)
+            }
             Slider(value: Binding(get: { draft.wrappedValue ?? committed }, set: { draft.wrappedValue = $0 }),
                    in: range, step: step,
                    onEditingChanged: { active in
@@ -189,7 +207,7 @@ struct NativeSoundView: View {
             })
             .accessibilityLabel(title).accessibilityValue(detail)
             .accessibilityIdentifier(identifier)
-        }.disabled(busy)
+        }
     }
     private static func semitonesText(_ value: Double) -> String {
         let v = abs(value) < 0.05 ? 0.0 : value
@@ -277,96 +295,139 @@ struct NativeSoundView: View {
     }
 }
 
+private struct NativeEQVector: VectorArithmetic {
+    var values: [Double]
+    static var zero: NativeEQVector { NativeEQVector(values: Array(repeating: 0, count: 10)) }
+    static func + (lhs: NativeEQVector, rhs: NativeEQVector) -> NativeEQVector {
+        let count = max(lhs.values.count, rhs.values.count)
+        return NativeEQVector(values: (0..<count).map {
+            (lhs.values.indices.contains($0) ? lhs.values[$0] : 0) + (rhs.values.indices.contains($0) ? rhs.values[$0] : 0)
+        })
+    }
+    static func - (lhs: NativeEQVector, rhs: NativeEQVector) -> NativeEQVector {
+        let count = max(lhs.values.count, rhs.values.count)
+        return NativeEQVector(values: (0..<count).map {
+            (lhs.values.indices.contains($0) ? lhs.values[$0] : 0) - (rhs.values.indices.contains($0) ? rhs.values[$0] : 0)
+        })
+    }
+    mutating func scale(by rhs: Double) {
+        for i in values.indices { values[i] *= rhs }
+    }
+    var magnitudeSquared: Double {
+        values.reduce(0) { $0 + $1 * $1 }
+    }
+}
+
 /// Interactive 10-band equalizer curve drawn from live slider drafts or committed gains.
 private struct NativeEQCurveView: View {
     let gains: [Double]
     let enabled: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private static let tickLabels = ["31", "125", "1к", "4к", "16к"]
+    private static let ticks: [(index: Int, label: String)] = [(0, "31"), (2, "125"), (5, "1к"), (7, "4к"), (9, "16к")]
 
     var body: some View {
         VStack(spacing: 6) {
-            Canvas { context, size in
+            Color.clear
+                .modifier(NativeEQCurveModifier(vector: NativeEQVector(values: gains), enabled: enabled))
+                .frame(height: 116)
+                .background(Color.moraSurfaceElevated.opacity(0.65), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.white.opacity(0.1), lineWidth: 0.75))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.85), value: gains)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: enabled)
+
+            GeometryReader { geo in
                 let hPad: CGFloat = 12
-                let topPad: CGFloat = 14
-                let bottomPad: CGFloat = 14
-                let plotHeight = max(1, size.height - topPad - bottomPad)
-                let midY = topPad + plotHeight / 2
-                let lineStartX = hPad - 4
-                let lineEndX = size.width - hPad + 4
-
-                for db in [6.0, -6.0] {
-                    let y = midY - CGFloat(db / NativeSoundState.maxDB) * (plotHeight / 2)
-                    var grid = Path()
-                    grid.move(to: CGPoint(x: lineStartX, y: y))
-                    grid.addLine(to: CGPoint(x: lineEndX, y: y))
-                    context.stroke(grid, with: .color(Color.white.opacity(0.07)), lineWidth: 0.75)
-                }
-
-                var zeroLine = Path()
-                zeroLine.move(to: CGPoint(x: lineStartX, y: midY))
-                zeroLine.addLine(to: CGPoint(x: lineEndX, y: midY))
-                context.stroke(
-                    zeroLine,
-                    with: .color(Color.white.opacity(0.16)),
-                    style: StrokeStyle(lineWidth: 1, dash: [4, 4])
-                )
-
-                let points = Self.points(for: gains, size: size, hPad: hPad, topPad: topPad, bottomPad: bottomPad)
-                guard !points.isEmpty else { return }
-
-                let curve = Self.smoothPath(through: points)
-                let accent = enabled ? Color.moraMint : Color.white.opacity(0.38)
-
-                if let first = points.first, let last = points.last {
-                    var fill = curve
-                    fill.addLine(to: CGPoint(x: last.x, y: size.height))
-                    fill.addLine(to: CGPoint(x: first.x, y: size.height))
-                    fill.closeSubpath()
-                    let topFill = enabled ? Color.moraMint.opacity(0.28) : Color.white.opacity(0.08)
-                    let minY = points.map(\.y).min() ?? topPad
-                    context.fill(
-                        fill,
-                        with: .linearGradient(
-                            Gradient(colors: [topFill, .clear]),
-                            startPoint: CGPoint(x: 0, y: minY),
-                            endPoint: CGPoint(x: 0, y: size.height)
-                        )
-                    )
-                }
-
-                context.stroke(
-                    curve,
-                    with: .color(accent),
-                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
-                )
-
-                for pt in points {
-                    let halo = Path(ellipseIn: CGRect(x: pt.x - 4, y: pt.y - 4, width: 8, height: 8))
-                    context.fill(halo, with: .color(Color.moraBackground.opacity(0.6)))
-                    let dot = Path(ellipseIn: CGRect(x: pt.x - 3, y: pt.y - 3, width: 6, height: 6))
-                    context.fill(dot, with: .color(accent))
+                let plotWidth = max(1, geo.size.width - hPad * 2)
+                ForEach(Self.ticks, id: \.index) { tick in
+                    Text(tick.label)
+                        .position(x: hPad + CGFloat(tick.index) / 9 * plotWidth, y: geo.size.height / 2)
                 }
             }
-            .frame(height: 116)
-            .background(Color.moraSurfaceElevated.opacity(0.65), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.white.opacity(0.1), lineWidth: 0.75))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-            HStack {
-                ForEach(Self.tickLabels, id: \.self) { label in
-                    Text(label)
-                    if label != Self.tickLabels.last { Spacer(minLength: 4) }
-                }
-            }
+            .frame(height: 14)
             .font(.caption2.monospacedDigit())
             .foregroundStyle(.white.opacity(0.45))
-            .padding(.horizontal, 6)
         }
         .padding(.vertical, 6)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Кривая эквалайзера")
         .accessibilityIdentifier("native-sound-eq-curve")
+    }
+}
+
+private struct NativeEQCurveModifier: ViewModifier, Animatable {
+    var vector: NativeEQVector
+    let enabled: Bool
+
+    var animatableData: NativeEQVector {
+        get { vector }
+        set { vector = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        Canvas { context, size in
+            let hPad: CGFloat = 12
+            let topPad: CGFloat = 14
+            let bottomPad: CGFloat = 14
+            let plotHeight = max(1, size.height - topPad - bottomPad)
+            let midY = topPad + plotHeight / 2
+            let lineStartX = hPad - 4
+            let lineEndX = size.width - hPad + 4
+
+            for db in [6.0, -6.0] {
+                let y = midY - CGFloat(db / NativeSoundState.maxDB) * (plotHeight / 2)
+                var grid = Path()
+                grid.move(to: CGPoint(x: lineStartX, y: y))
+                grid.addLine(to: CGPoint(x: lineEndX, y: y))
+                context.stroke(grid, with: .color(Color.white.opacity(0.07)), lineWidth: 0.75)
+            }
+
+            var zeroLine = Path()
+            zeroLine.move(to: CGPoint(x: lineStartX, y: midY))
+            zeroLine.addLine(to: CGPoint(x: lineEndX, y: midY))
+            context.stroke(
+                zeroLine,
+                with: .color(Color.white.opacity(0.16)),
+                style: StrokeStyle(lineWidth: 1, dash: [4, 4])
+            )
+
+            let points = Self.points(for: vector.values, size: size, hPad: hPad, topPad: topPad, bottomPad: bottomPad)
+            guard !points.isEmpty else { return }
+
+            let curve = Self.smoothPath(through: points)
+            let accent = enabled ? Color.moraMint : Color.white.opacity(0.38)
+
+            if let first = points.first, let last = points.last {
+                var fill = curve
+                fill.addLine(to: CGPoint(x: last.x, y: size.height))
+                fill.addLine(to: CGPoint(x: first.x, y: size.height))
+                fill.closeSubpath()
+                let topFill = enabled ? Color.moraMint.opacity(0.28) : Color.white.opacity(0.08)
+                let minY = points.map(\.y).min() ?? topPad
+                context.fill(
+                    fill,
+                    with: .linearGradient(
+                        Gradient(colors: [topFill, .clear]),
+                        startPoint: CGPoint(x: 0, y: minY),
+                        endPoint: CGPoint(x: 0, y: size.height)
+                    )
+                )
+            }
+
+            context.stroke(
+                curve,
+                with: .color(accent),
+                style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
+            )
+
+            for pt in points {
+                let halo = Path(ellipseIn: CGRect(x: pt.x - 4, y: pt.y - 4, width: 8, height: 8))
+                context.fill(halo, with: .color(Color.moraBackground.opacity(0.6)))
+                let dot = Path(ellipseIn: CGRect(x: pt.x - 3, y: pt.y - 3, width: 6, height: 6))
+                context.fill(dot, with: .color(accent))
+            }
+        }
     }
 
     private static func points(for gains: [Double], size: CGSize, hPad: CGFloat, topPad: CGFloat, bottomPad: CGFloat) -> [CGPoint] {

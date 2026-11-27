@@ -11,6 +11,8 @@ import Network
     private(set) var jobs: [NativeDownloadJob] = []
     private var tasks: [String: URLSessionDownloadTask] = [:]
     private var started: [String: Date] = [:]
+    private var readyFiles: [String: URL] = [:]
+    private let io = DispatchQueue(label: "ru.mora.download-io", qos: .utility)
     private var lastSave = Date.distantPast
     private var limitBytes: Int64 = 512 * 1024 * 1024
     private var completion: (() -> Void)?
@@ -29,6 +31,18 @@ import Network
         let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1
         return URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
     }()
+
+    private func rebuildReadyFilesCache() {
+        guard let root = Self.root else { readyFiles = [:]; return }
+        var map: [String: URL] = [:]
+        for job in jobs where job.state == .done {
+            let url = root.appendingPathComponent(job.id + ".media")
+            if FileManager.default.isReadableFile(atPath: url.path) {
+                map[job.trackId] = url
+            }
+        }
+        readyFiles = map
+    }
 
     private override init() {
         super.init()
@@ -50,6 +64,7 @@ import Network
                 NativeShellStore.shared?.show("Не удалось прочитать очередь загрузок: \(error.localizedDescription)")
             }
         }
+        rebuildReadyFilesCache()
         session.getAllTasks { tasks in
             DispatchQueue.main.async {
                 for case let task as URLSessionDownloadTask in tasks {
@@ -87,9 +102,12 @@ import Network
     }
     #endif
     func localFile(_ trackId: String) -> URL? {
+        if let cached = readyFiles[trackId] { return cached }
         guard let root = Self.root, let job = jobs.first(where: { $0.trackId == trackId && $0.state == .done }) else { return nil }
         let url = root.appendingPathComponent(job.id + ".media")
-        return FileManager.default.isReadableFile(atPath: url.path) ? url : nil
+        guard FileManager.default.isReadableFile(atPath: url.path) else { return nil }
+        readyFiles[trackId] = url
+        return url
     }
     func enqueue(trackId: String, album: String) async throws {
         if localFile(trackId) != nil || jobs.contains(where: { $0.trackId == trackId && tasks[$0.id] != nil }) { return }
@@ -105,10 +123,9 @@ import Network
                 }) == true { return }
                 guard let raw = downloads["usage"] as? [String: Any] else { throw failure("Не удалось проверить место для загрузки") }
                 let usage = try NativeDownloadsState.Usage(raw)
-                let http = NativeMediaHTTP(); defer { http.invalidate() }
                 let ticket = NativePreparationTicket()
                 let request = try await withTaskCancellationHandler {
-                    try await NativeMediaLoader(http: http).backgroundRequest(source, ticket: ticket)
+                    try await NativeMediaLoader(http: NativeMediaHTTP.sharedHTTPS).backgroundRequest(source, ticket: ticket)
                 } onCancel: { ticket.cancel() }
                 try Task.checkCancellation()
                 _ = try add(trackId: trackId, title: item["title"] as? String ?? "Трек", artist: item["artist"] as? String ?? "",
@@ -176,10 +193,11 @@ import Network
             let file = root.appendingPathComponent(job.id + ".media")
             if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
         }
-        jobs.removeAll { $0.trackId == trackId }; try save(); publish(force: true)
+        jobs.removeAll { $0.trackId == trackId }; readyFiles.removeValue(forKey: trackId); try save(); publish(force: true)
     }
     func remapTracks(_ mapping: [String: String]) {
         for i in jobs.indices { jobs[i].trackId = mapping[jobs[i].trackId] ?? jobs[i].trackId }
+        rebuildReadyFilesCache()
         publish(force: true)
     }
     func list() -> [String: Any] {
@@ -194,18 +212,34 @@ import Network
     }
     private func failure(_ message: String) -> NSError { NSError(domain: "MORADownload", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
     private func save() throws {
+        let payload = try encodedQueueData()
         guard let root = Self.root else { throw failure("Общая папка MORA недоступна") }
         let file = root.appendingPathComponent("queue.json")
+        try payload.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+    private func encodedQueueData() throws -> Data {
         var savedJobs = jobs
         #if DEBUG
         // A diagnostic row must not survive a real background callback saving the queue.
         if let id = visualFixtureId { savedJobs.removeAll { $0.id == id } }
         #endif
-        try JSONEncoder().encode(savedJobs).write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        return try JSONEncoder().encode(savedJobs)
     }
     private func publish(force: Bool = false) {
         guard force || Date().timeIntervalSince(lastSave) >= 0.5 else { return }
-        do { try save(); lastSave = .now } catch { NativeShellStore.shared?.show("Не удалось сохранить очередь: \(error.localizedDescription)") }
+        lastSave = .now
+        if let root = Self.root, let data = try? encodedQueueData() {
+            let file = root.appendingPathComponent("queue.json")
+            io.async {
+                do {
+                    try data.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                } catch {
+                    DispatchQueue.main.async {
+                        NativeShellStore.shared?.show("Не удалось сохранить очередь: \(error.localizedDescription)")
+                    }
+                }
+            }
+        }
         NotificationCenter.default.post(name: Self.changed, object: nil)
     }
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
@@ -249,6 +283,7 @@ import Network
                     try? FileManager.default.removeItem(at: destination)
                     throw error
                 }
+                self.readyFiles[previous.trackId] = destination
                 self.lastSave = .now
                 NotificationCenter.default.post(name: Self.changed, object: nil)
             } catch {
@@ -256,6 +291,19 @@ import Network
                 self.publish(force: true)
             }
         }
+    }
+    private static func friendlyDownloadError(_ error: Error) -> String {
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain {
+            switch ns.code {
+            case NSURLErrorNotConnectedToInternet: return "Нет подключения к интернету"
+            case NSURLErrorTimedOut: return "Превышено время ожидания загрузки"
+            case NSURLErrorNetworkConnectionLost, NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed, NSURLErrorCannotConnectToHost:
+                return "Потеряно соединение при загрузке"
+            default: break
+            }
+        }
+        return error.localizedDescription
     }
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         DispatchQueue.main.async {
@@ -267,13 +315,26 @@ import Network
                 self.publish(force: true)
                 return
             }
+            let ns = error as NSError
+            if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled {
+                self.jobs[i].state = .cancelled
+                self.jobs[i].error = nil
+                self.publish(force: true)
+                return
+            }
+            let httpStatus = (task.response as? HTTPURLResponse)?.statusCode ?? 0
+            let expiredOrDenied = [401, 403, 404, 410].contains(httpStatus)
             self.jobs[i].attempts += 1
-            if self.jobs[i].attempts <= 3, let request = task.originalRequest {
+            if !expiredOrDenied, self.jobs[i].attempts <= 3, let request = task.originalRequest {
                 let retry = self.session.downloadTask(with: request)
                 retry.taskDescription = id; retry.earliestBeginDate = Date().addingTimeInterval(NativeDownloadJob.retryDelay(attempt: self.jobs[i].attempts))
                 self.tasks[id] = retry; self.jobs[i].state = .queued; retry.resume()
-            } else { self.jobs[i].state = .failed }
-            self.jobs[i].error = error.localizedDescription; self.publish(force: true)
+                self.jobs[i].error = "Нет связи — повторим автоматически"
+            } else {
+                self.jobs[i].state = .failed
+                self.jobs[i].error = expiredOrDenied ? "Ссылка загрузки устарела — нажмите «Повторить»" : Self.friendlyDownloadError(error)
+            }
+            self.publish(force: true)
         }
     }
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {

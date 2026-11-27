@@ -28,33 +28,46 @@ struct NativeImportPicker: View {
             }
             .scrollContentBackground(.hidden).background(Color.moraBackground)
             .navigationTitle("Выбрать запись")
+            .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $query, prompt: "Название и исполнитель")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } } }
             .task(id: source + "|" + query) { await search() }
         }
+        .presentationBackground(Color.moraBackground)
+        .tint(.moraMint)
+        .preferredColorScheme(.dark)
     }
     private var header: some View {
         Section {
-            Text(target.title).font(.headline)
+            Text(target.title).font(.headline).foregroundStyle(.white)
             Text(target.artist).foregroundStyle(.secondary)
             Picker("Источник", selection: $source) {
                 Text("Все").tag("all"); Text("Медиатека").tag("local"); Text("YouTube Music").tag("ytmusic")
                 Text("YouTube").tag("youtube"); Text("SoundCloud").tag("soundcloud")
             }
         }
+        .listRowBackground(Color.moraSurface)
     }
     @ViewBuilder private var localResults: some View {
         if !local.isEmpty {
             Section("Медиатека") { ForEach(local) { track in localRow(track) } }
+                .listRowBackground(Color.moraSurface)
         }
     }
     private func localRow(_ track: NativeTrack) -> some View {
         Button { choose(["trackId": track.id]); dismiss() } label: {
             HStack(spacing: 12) {
-                NativeCover(url: track.cover, size: 44)
-                VStack(alignment: .leading) { Text(track.title); Text(track.artist).font(.caption).foregroundStyle(.secondary) }
-            }.frame(minHeight: 44)
+                NativeCover(url: track.cover, size: 44, monogram: track.title)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(track.title).foregroundStyle(.white).lineLimit(1)
+                    Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(MoraRowPressStyle())
     }
     private var remoteResults: some View {
         Section("Найденные записи") {
@@ -63,6 +76,7 @@ struct NativeImportPicker: View {
             ForEach(errors, id: \.self) { Text($0).foregroundStyle(.secondary) }
             if !loading && results.isEmpty && errors.isEmpty { Text("Записи не найдены").foregroundStyle(.secondary) }
         }
+        .listRowBackground(Color.moraSurface)
     }
     private func remoteRow(_ row: [String: Any]) -> some View {
         let title = row["title"] as? String ?? "", artist = row["artist"] as? String ?? "", provider = row["audioProvider"] as? String ?? ""
@@ -71,13 +85,17 @@ struct NativeImportPicker: View {
             catch { errors = [error.localizedDescription] }
         } label: {
             HStack(spacing: 12) {
-                NativeCover(url: row["coverUrl"] as? String, size: 44)
+                NativeCover(url: row["coverUrl"] as? String, size: 44, monogram: title)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                    Text(artist + " · " + provider).font(.caption).foregroundStyle(.secondary)
+                    Text(title).foregroundStyle(.white).lineLimit(1)
+                    Text(artist + " · " + provider).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
-            }.frame(minHeight: 44)
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(MoraRowPressStyle())
     }
     @MainActor private func search() async {
         loading = true; results = []; errors = []

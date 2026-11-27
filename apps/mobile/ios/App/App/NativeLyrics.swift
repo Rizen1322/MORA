@@ -423,30 +423,51 @@ final class NativeLyricsService {
             inFlight[jobKey] = entry
             return entry
         }
-        defer {
-            locked {
-                if inFlight[jobKey] === job {
-                    job.waiters = max(0, job.waiters - 1)
-                    if job.waiters == 0 { inFlight.removeValue(forKey: jobKey) }
-                }
-            }
-        }
-        var result = try await withTaskCancellationHandler {
-            try await job.task.value
-        } onCancel: {
-            let cancelTask = self.locked { () -> Task<NativeLyricsResult, Error>? in
+        var released = false
+        let releaseWaiter: (Bool) -> Task<NativeLyricsResult, Error>? = { allowCancel in
+            self.locked {
+                guard !released else { return nil }
+                released = true
                 guard self.inFlight[jobKey] === job else { return nil }
                 job.waiters = max(0, job.waiters - 1)
                 if job.waiters == 0 {
                     self.inFlight.removeValue(forKey: jobKey)
-                    return job.task
+                    return allowCancel ? job.task : nil
                 }
                 return nil
             }
-            cancelTask?.cancel()
+        }
+        defer { _ = releaseWaiter(false) }
+        var result = try await withTaskCancellationHandler {
+            try await job.task.value
+        } onCancel: {
+            releaseWaiter(true)?.cancel()
         }
         result.offsetMs = offset
         return result
+    }
+
+    private static func isConnectionLoss(_ error: Error) -> Bool {
+        let ns = error as NSError
+        guard ns.domain == NSURLErrorDomain else { return false }
+        return [NSURLErrorTimedOut, NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost,
+                NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed, NSURLErrorCannotConnectToHost].contains(ns.code)
+    }
+
+    private static func friendlyError(_ error: Error) -> Error {
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain {
+            switch ns.code {
+            case NSURLErrorNotConnectedToInternet:
+                return Failure(message: "Нет подключения к интернету")
+            case NSURLErrorTimedOut:
+                return Failure(message: "Сервис текстов не ответил. Попробуйте чуть позже.")
+            case NSURLErrorNetworkConnectionLost, NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed, NSURLErrorCannotConnectToHost:
+                return Failure(message: "Не удалось связаться с сервисом текстов. Проверьте сеть.")
+            default: break
+            }
+        }
+        return error
     }
 
     /// Exact lookup by artist, title and duration first; falls back to scored search within 4 seconds.
@@ -474,6 +495,7 @@ final class NativeLyricsService {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
+            if Self.isConnectionLoss(error) { throw Self.friendlyError(error) }
             lookupError = error
         }
 
@@ -481,7 +503,12 @@ final class NativeLyricsService {
             return fromRow(exactRow)
         }
 
-        let found = try await lrclib("/api/search", params: [("track_name", clean), ("artist_name", primary)], deadline: deadline) as? [[String: Any]] ?? []
+        let found: [[String: Any]]
+        do {
+            found = try await lrclib("/api/search", params: [("track_name", clean), ("artist_name", primary)], deadline: deadline) as? [[String: Any]] ?? []
+        } catch {
+            throw Self.friendlyError(error)
+        }
         let best = found
             .filter { row in
                 guard hasText(row) else { return false }
@@ -567,7 +594,7 @@ final class NativeLyricsService {
             } catch {
                 try Task.checkCancellation()
                 if attempt > 0 || !shouldRetry(error) {
-                    throw error
+                    throw Self.friendlyError(error)
                 }
                 attempt += 1
                 try await Task.sleep(for: .milliseconds(350))
@@ -582,7 +609,6 @@ final class NativeLyricsService {
                 NSURLErrorTimedOut,
                 NSURLErrorCannotConnectToHost,
                 NSURLErrorNetworkConnectionLost,
-                NSURLErrorNotConnectedToInternet,
                 NSURLErrorDNSLookupFailed,
                 NSURLErrorCannotFindHost,
             ].contains(ns.code)
@@ -624,14 +650,18 @@ final class NativeLyricsService {
         }
     }
 
-    private static func urlSessionFetch(_ request: URLRequest) async throws -> (Int, Data) {
+    private static let sharedRedirectBlocker = NativeLyricsRedirectBlocker()
+    private static let sharedSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpMaximumConnectionsPerHost = 2
+        configuration.httpMaximumConnectionsPerHost = 4
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        let blocker = NativeLyricsRedirectBlocker()
-        let session = URLSession(configuration: configuration, delegate: blocker, delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        let (data, response) = try await session.data(for: request)
+        configuration.timeoutIntervalForRequest = 12
+        configuration.timeoutIntervalForResource = 20
+        return URLSession(configuration: configuration, delegate: sharedRedirectBlocker, delegateQueue: nil)
+    }()
+
+    private static func urlSessionFetch(_ request: URLRequest) async throws -> (Int, Data) {
+        let (data, response) = try await sharedSession.data(for: request)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
     }
 }

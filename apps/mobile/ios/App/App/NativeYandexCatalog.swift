@@ -22,7 +22,7 @@ final class NativeYandexCatalog {
     typealias Fetch = (_ request: URLRequest, _ limit: Int) async throws -> (Int, Data)
 
     private struct CacheEntry { let expires: Date; let value: [String: Any] }
-    private struct CredCache { let token: String; let apiBase: String; let expires: Date }
+    private struct CredCache { let token: String; let apiBase: String; let expires: Date; var uid: String? = nil }
 
     private static let maxResponseBytes = 4 << 20
     private static let cacheLimit = 40
@@ -49,6 +49,8 @@ final class NativeYandexCatalog {
     private var creds: CredCache?
     private var cache: [String: CacheEntry] = [:]
     private var cacheOrder: [String] = []
+    private var inFlight: [String: Task<[String: Any], Error>] = [:]
+    private var inFlightCreds: Task<(token: String, apiBase: String), Error>?
     private var generation = 0
     private var cacheGeneration = 0
 
@@ -71,6 +73,8 @@ final class NativeYandexCatalog {
             creds = nil
             cache.removeAll()
             cacheOrder.removeAll()
+            inFlight.removeAll()
+            inFlightCreds = nil
         }
     }
 
@@ -80,6 +84,7 @@ final class NativeYandexCatalog {
             cacheGeneration &+= 1
             cache.removeAll()
             cacheOrder.removeAll()
+            inFlight.removeAll()
         }
     }
 
@@ -138,9 +143,16 @@ final class NativeYandexCatalog {
 
     func home() async throws -> [String: Any] {
         try await cached("home") { apiBase in
-            let statusRaw = Self.object(try await self.call(method: "GET", path: "/account/status"))
-            guard let uid = Self.numericId(Self.object(statusRaw["account"])["uid"]) else {
-                throw Failure(statusCode: 502, message: "Не удалось загрузить медиатеку Яндекс Музыки")
+            let uid: String
+            if let cachedUid = self.locked({ self.creds?.uid }) {
+                uid = cachedUid
+            } else {
+                let statusRaw = Self.object(try await self.call(method: "GET", path: "/account/status"))
+                guard let parsedUid = Self.numericId(Self.object(statusRaw["account"])["uid"]) else {
+                    throw Failure(statusCode: 502, message: "Не удалось загрузить медиатеку Яндекс Музыки")
+                }
+                uid = parsedUid
+                self.locked { if var current = self.creds { current.uid = uid; self.creds = current } }
             }
             let likesRaw = Self.object(try await self.call(method: "GET", path: "/users/\(uid)/likes/tracks"))
             let ids = Self.list(Self.object(likesRaw["library"])["tracks"], limit: 60).compactMap { value -> String? in
@@ -268,66 +280,113 @@ final class NativeYandexCatalog {
 
     // MARK: cache & transport
 
-    private func cached(_ key: String, work: (_ apiBase: String) async throws -> [String: Any]) async throws -> [String: Any] {
+    private static func friendlyNetworkError(_ error: Error) -> Error {
+        if error is Failure || error is CancellationError { return error }
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain {
+            switch ns.code {
+            case NSURLErrorCancelled:
+                return CancellationError()
+            case NSURLErrorNotConnectedToInternet:
+                return Failure(statusCode: 503, message: "Нет подключения к интернету")
+            case NSURLErrorTimedOut:
+                return Failure(statusCode: 504, message: "Яндекс Музыка не ответила вовремя. Повторите запрос")
+            case NSURLErrorNetworkConnectionLost, NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed, NSURLErrorCannotConnectToHost:
+                return Failure(statusCode: 503, message: "Не удалось связаться с Яндекс Музыкой. Проверьте сеть")
+            default: break
+            }
+        }
+        return Failure(statusCode: 502, message: "Не удалось загрузить каталог Яндекс Музыки. Повторите запрос")
+    }
+
+    private func cached(_ key: String, work: @escaping (_ apiBase: String) async throws -> [String: Any]) async throws -> [String: Any] {
         let now = Date()
-        let hit: (value: [String: Any]?, account: Int, cache: Int) = locked {
+        let hit: (value: [String: Any]?, existing: Task<[String: Any], Error>?, account: Int, cache: Int) = locked {
             if let entry = cache[key], entry.expires > now {
                 cacheOrder.removeAll { $0 == key }
                 cacheOrder.append(key)
-                return (entry.value, generation, cacheGeneration)
+                return (entry.value, nil, generation, cacheGeneration)
             }
             cache.removeValue(forKey: key)
             cacheOrder.removeAll { $0 == key }
-            return (nil, generation, cacheGeneration)
+            return (nil, inFlight[key], generation, cacheGeneration)
         }
         if let cachedValue = hit.value { return cachedValue }
+        if let existing = hit.existing { return try await existing.value }
 
-        let creds = try await loadCredentials()
-        let value: [String: Any]
-        do {
-            value = try await work(creds.apiBase)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch let err as Failure {
-            throw err
-        } catch {
+        let task = Task<[String: Any], Error> {
+            let creds = try await self.loadCredentials()
+            let value: [String: Any]
+            do {
+                value = try await work(creds.apiBase)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let err as Failure {
+                throw err
+            } catch {
+                try Task.checkCancellation()
+                throw Self.friendlyNetworkError(error)
+            }
             try Task.checkCancellation()
-            throw Failure(statusCode: 502, message: "Не удалось загрузить каталог Яндекс Музыки. Повторите запрос")
+            try self.locked {
+                guard self.generation == hit.account else { throw CancellationError() }
+                guard self.cacheGeneration == hit.cache else { return }
+                self.cache[key] = CacheEntry(expires: Date().addingTimeInterval(Self.cacheTTL), value: value)
+                self.cacheOrder.removeAll { $0 == key }
+                self.cacheOrder.append(key)
+                while self.cacheOrder.count > Self.cacheLimit, let oldest = self.cacheOrder.first {
+                    self.cacheOrder.removeFirst()
+                    self.cache.removeValue(forKey: oldest)
+                }
+            }
+            return value
         }
 
-        try Task.checkCancellation()
-        try locked {
-            guard generation == hit.account else { throw CancellationError() }
-            guard cacheGeneration == hit.cache else { return }
-            cache[key] = CacheEntry(expires: Date().addingTimeInterval(Self.cacheTTL), value: value)
-            cacheOrder.removeAll { $0 == key }
-            cacheOrder.append(key)
-            while cacheOrder.count > Self.cacheLimit, let oldest = cacheOrder.first {
-                cacheOrder.removeFirst()
-                cache.removeValue(forKey: oldest)
+        locked {
+            if generation == hit.account && cacheGeneration == hit.cache {
+                inFlight[key] = task
             }
         }
-        return value
+        defer {
+            locked {
+                if inFlight[key] == task { inFlight.removeValue(forKey: key) }
+            }
+        }
+        return try await task.value
     }
 
     private func loadCredentials() async throws -> (token: String, apiBase: String) {
-        if let hit = locked({ creds.flatMap { $0.expires > Date() ? ($0.token, $0.apiBase) : nil } }) {
-            return hit
+        let state = locked { () -> (hit: (String, String)?, existing: Task<(token: String, apiBase: String), Error>?, gen: Int) in
+            if let c = creds, c.expires > Date() { return ((c.token, c.apiBase), nil, generation) }
+            return (nil, inFlightCreds, generation)
         }
-        let gen = locked { generation }
-        let loaded = try await credentialsLoader()
-        guard !loaded.token.isEmpty else {
-            throw Failure(statusCode: 409, message: "Подключите аккаунт Яндекс Музыки")
+        if let hit = state.hit { return hit }
+        if let existing = state.existing { return try await existing.value }
+
+        let task = Task<(token: String, apiBase: String), Error> {
+            let loaded = try await self.credentialsLoader()
+            guard !loaded.token.isEmpty else {
+                throw Failure(statusCode: 409, message: "Подключите аккаунт Яндекс Музыки")
+            }
+            guard let base = Self.checkedApiBase(loaded.apiBase) else {
+                throw Failure(statusCode: 502, message: "Некорректный адрес API Яндекса")
+            }
+            try Task.checkCancellation()
+            try self.locked {
+                guard self.generation == state.gen else { throw CancellationError() }
+                self.creds = CredCache(token: loaded.token, apiBase: base, expires: Date().addingTimeInterval(Self.credentialsTTL))
+            }
+            return (loaded.token, base)
         }
-        guard let base = Self.checkedApiBase(loaded.apiBase) else {
-            throw Failure(statusCode: 502, message: "Некорректный адрес API Яндекса")
+        locked {
+            if generation == state.gen { inFlightCreds = task }
         }
-        try Task.checkCancellation()
-        try locked {
-            guard generation == gen else { throw CancellationError() }
-            creds = CredCache(token: loaded.token, apiBase: base, expires: Date().addingTimeInterval(Self.credentialsTTL))
+        defer {
+            locked {
+                if inFlightCreds == task { inFlightCreds = nil }
+            }
         }
-        return (loaded.token, base)
+        return try await task.value
     }
 
     private func call(method: String, path: String, formBody: [(String, String)]? = nil, allowRetry: Bool = true) async throws -> Any {
@@ -593,6 +652,7 @@ final class NativeYandexCatalog {
         configuration.httpMaximumConnectionsPerHost = 4
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 22
         return URLSession(configuration: configuration, delegate: sharedRedirectBlocker, delegateQueue: nil)
     }()
 

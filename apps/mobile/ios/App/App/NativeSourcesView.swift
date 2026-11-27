@@ -4,6 +4,7 @@ import UIKit
 /// Account forms talk to the app-process JSC API, including while WebContent is suspended.
 struct NativeSourcesView: View {
     @EnvironmentObject private var store: NativeShellStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var account: NativeSourceAccount?
     @State private var settings: NativeSettingsState?
     @State private var values: [String: String] = [:]
@@ -13,6 +14,7 @@ struct NativeSourcesView: View {
     @State private var message: String?
     @State private var busy = false
     @State private var generation = 0
+    @State private var likesPollEpoch = 0
     @State private var readingLikes = false
     @State private var disconnecting = false
     @State private var cancellingImport = false
@@ -23,79 +25,82 @@ struct NativeSourcesView: View {
     private var importLikes: Bool { settings?.bool("yandex", "importLikes", fallback: true) != false }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                if let failure {
+        Form {
+            if let failure {
+                Section {
+                    Text(failure).foregroundStyle(.red)
+                    Button("Повторить") { Task { await load(force: true) } }.disabled(busy)
+                }.listRowBackground(Color.moraSurface)
+            }
+            if let message { Section { Text(message).foregroundStyle(.secondary) }.listRowBackground(Color.moraSurface) }
+            if let account {
+                connection(account)
+                if account.linked {
+                    if settings != nil { synchronization }
+                    if importLikes { likesImport }
                     Section {
-                        Text(failure).foregroundStyle(.red)
-                        Button("Повторить") { Task { await load(force: true) } }.disabled(busy)
+                        sourceNavRow("Поиск в Яндексе", symbol: "magnifyingglass", tint: .moraMint) { store.go("/search?src=yandex") }
+                        sourceNavRow("Мои плейлисты Яндекса", symbol: "music.note.list", tint: .moraMint) { store.go("/yandex-playlists") }
+                        sourceNavRow("Моя волна Яндекса", symbol: "waveform", tint: .moraGold) { store.waveSource = .yandex; store.go("/wave") }
                     }.listRowBackground(Color.moraSurface)
                 }
-                if let message { Section { Text(message).foregroundStyle(.secondary) }.listRowBackground(Color.moraSurface) }
-                if let account {
-                    connection(account)
-                    if account.linked {
-                        if settings != nil { synchronization }
-                        if importLikes { likesImport }
-                        Section {
-                            Button { store.go("/search?src=yandex") } label: {
-                                HStack(spacing: 12) {
-                                    NativeIconBadge(symbol: "magnifyingglass", size: 28, tint: .moraMint)
-                                    Text("Поиск в Яндексе").foregroundStyle(.white)
-                                }
-                            }
-                            Button { store.go("/yandex-playlists") } label: {
-                                HStack(spacing: 12) {
-                                    NativeIconBadge(symbol: "music.note.list", size: 28, tint: .moraMint)
-                                    Text("Мои плейлисты Яндекса").foregroundStyle(.white)
-                                }
-                            }
-                            Button { store.waveSource = .yandex; store.go("/wave") } label: {
-                                HStack(spacing: 12) {
-                                    NativeIconBadge(symbol: "waveform", size: 28, tint: .moraGold)
-                                    Text("Моя волна Яндекса").foregroundStyle(.white)
-                                }
-                            }
-                        }.listRowBackground(Color.moraSurface)
-                    }
-                    if account.hasSecret || account.connected {
-                        Section {
-                            Button("Отключить аккаунт", role: .destructive) { disconnecting = true }.disabled(busy)
-                        }.listRowBackground(Color.moraSurface)
-                    }
-                } else if failure == nil { ProgressView("Проверяем подключение…").listRowBackground(Color.clear) }
-                Section {
-                    Text("SoundCloud и YouTube Music доступны через поиск без подключения аккаунта.").foregroundStyle(.secondary)
-                }.listRowBackground(Color.moraSurface)
-                Section { Color.clear.frame(height: 56).listRowBackground(Color.clear) }
-            }
-            .scrollContentBackground(.hidden)
-            .background(Color.moraBackground)
-            .tint(Color.moraMint)
-            .navigationTitle("Источники")
-            .accessibilityIdentifier("native-sources-screen")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") } }
-                if busy { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
-            }
-            .refreshable { await load(force: true) }
-            .task { await load() }
-            .task(id: account?.linked == true && importLikes) {
-                guard account?.linked == true && importLikes else { return }
-                while !Task.isCancelled {
-                    await loadLikes()
-                    do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                if account.hasSecret || account.connected {
+                    Section {
+                        Button("Отключить аккаунт", role: .destructive) { disconnecting = true }.disabled(busy)
+                    }.listRowBackground(Color.moraSurface)
                 }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in Task { await load(force: true) } }
-            .onDisappear { values.removeAll() }
-            .confirmationDialog("Отключить Яндекс Музыку?", isPresented: $disconnecting, titleVisibility: .visible) {
-                Button("Отключить", role: .destructive) { disconnect() }
-            } message: { Text("Токен будет удалён. Музыка, уже добавленная в медиатеку, сохранится.") }
-            .confirmationDialog("Завершить импорт лайков?", isPresented: $cancellingImport, titleVisibility: .visible) {
-                Button("Завершить импорт", role: .destructive) { changeLikes("cancel") }
-            } message: { Text("Уже добавленные треки останутся в медиатеке.") }
+            } else if failure == nil { ProgressView("Проверяем подключение…").listRowBackground(Color.clear) }
+            Section {
+                Text("SoundCloud и YouTube Music доступны через поиск без подключения аккаунта.").foregroundStyle(.secondary)
+            }.listRowBackground(Color.moraSurface)
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.moraBackground)
+        .tint(Color.moraMint)
+        .navigationTitle("Источники")
+        .accessibilityIdentifier("native-sources-screen")
+        .toolbar {
+            if busy { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
+        }
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: account?.linked)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: settings != nil)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: importLikes)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: likes?.state)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: failure)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: message)
+        .refreshable { await load(force: true) }
+        .task { await load() }
+        .task(id: "\(account?.linked == true)|\(importLikes)|\(likesPollEpoch)") {
+            guard account?.linked == true && importLikes else { return }
+            while !Task.isCancelled {
+                await loadLikes()
+                if likes?.finished == true { break }
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in Task { await load(force: true) } }
+        .onDisappear { values.removeAll() }
+        .confirmationDialog("Отключить Яндекс Музыку?", isPresented: $disconnecting, titleVisibility: .visible) {
+            Button("Отключить", role: .destructive) { disconnect() }
+        } message: { Text("Токен будет удалён. Музыка, уже добавленная в медиатеку, сохранится.") }
+        .confirmationDialog("Завершить импорт лайков?", isPresented: $cancellingImport, titleVisibility: .visible) {
+            Button("Завершить импорт", role: .destructive) { changeLikes("cancel") }
+        } message: { Text("Уже добавленные треки останутся в медиатеке.") }
+    }
+
+    private func sourceNavRow(_ title: String, symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                NativeIconBadge(symbol: symbol, size: 28, tint: tint)
+                Text(title).foregroundStyle(.white)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.forward")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.35))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(MoraRowPressStyle())
     }
 
     private func connection(_ account: NativeSourceAccount) -> some View {
@@ -113,9 +118,15 @@ struct NativeSourcesView: View {
                     }
                 }
                 if !account.fields.isEmpty {
-                    Button(account.hasSecret ? "Проверить подключение" : "Подключить Яндекс") { connect(account) }
-                        .foregroundStyle(Color.moraMint).fontWeight(.semibold)
-                        .disabled(busy).accessibilityIdentifier("sources.connect")
+                    Button { connect(account) } label: {
+                        Text(account.hasSecret ? "Проверить подключение" : "Подключить Яндекс")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 46)
+                            .foregroundStyle(Color.moraBackground)
+                            .background(Color.moraMint.opacity(busy ? 0.5 : 1), in: Capsule())
+                    }
+                    .buttonStyle(MoraPressStyle())
+                    .disabled(busy).accessibilityIdentifier("sources.connect")
                 }
                 ForEach(account.docs, id: \.absoluteString) { url in Link(url.host ?? "Помощь со входом", destination: url) }
             }
@@ -158,7 +169,10 @@ struct NativeSourcesView: View {
             } else {
                 if let likes {
                     ProgressView(value: likes.progress) { Text(likes.title) }
-                    Text("В Любимом: \(likes.done) из \(likes.total) · ошибок: \(likes.failed) · пропущено: \(likes.skipped)").font(.caption).foregroundStyle(.secondary)
+                    Text("В Любимом: \(likes.done) из \(likes.total) · ошибок: \(likes.failed) · пропущено: \(likes.skipped)")
+                        .font(.caption.monospacedDigit())
+                        .contentTransition(.numericText())
+                        .foregroundStyle(.secondary)
                     if !likes.message.isEmpty { Text(likes.message).font(.caption).foregroundStyle(.secondary) }
                     if likes.active { Button("Приостановить") { changeLikes("pause") }.disabled(busy) }
                     else if !likes.finished { Button("Продолжить") { changeLikes("resume") }.disabled(busy || likes.busy) }
@@ -240,7 +254,11 @@ struct NativeSourcesView: View {
     private func changeLikes(_ action: String) {
         perform {
             try await NativeSourcesState.changeLikes(action, request: request)
-            do { likes = try await NativeSourcesState.likes(request: request); likesFailure = nil }
+            do {
+                likes = try await NativeSourcesState.likes(request: request)
+                likesFailure = nil
+                if likes?.finished == false { likesPollEpoch &+= 1 }
+            }
             catch { likesFailure = "Команда выполнена. Не удалось обновить состояние: \(error.localizedDescription)" }
             store.refreshLibrary()
         }

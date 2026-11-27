@@ -64,8 +64,8 @@ final class NativeServer {
     private let work = DispatchQueue(label: "ru.mora.server.work", qos: .utility, attributes: .concurrent)
     private let session: URLSession = {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 60
-        config.timeoutIntervalForResource = 15 * 60
+        config.timeoutIntervalForRequest = 25
+        config.timeoutIntervalForResource = 120
         return URLSession(configuration: config)
     }()
 
@@ -125,7 +125,7 @@ final class NativeServer {
                     self.timerQueue.asyncAfter(deadline: .now() + timeout) { [weak self] in
                         self?.queue.async {
                             guard let self, self.nativeReplies[id] != nil else { return }
-                            self.finishNative(id, .failure(URLError(.timedOut)), abort: true)
+                            self.finishNative(id, .failure(RequestFailure(message: "Превышено время ожидания ответа")), abort: true)
                         }
                     }
                     var headers: [String: String] = ["x-mora-native": self.internalToken]
@@ -634,11 +634,26 @@ final class NativeServer {
         timer.resume()
     }
 
+    private static func friendlyErrorMessage(_ error: Error) -> String {
+        if let rf = error as? RequestFailure { return rf.message }
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain {
+            switch ns.code {
+            case NSURLErrorNotConnectedToInternet: return "Нет подключения к интернету"
+            case NSURLErrorTimedOut: return "Превышено время ожидания ответа"
+            case NSURLErrorNetworkConnectionLost, NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed, NSURLErrorCannotConnectToHost:
+                return "Не удалось выполнить сетевой запрос"
+            default: break
+            }
+        }
+        return error.localizedDescription
+    }
+
     private func reply(_ id: Any, _ result: Result<Any, Error>) {
         queue.async {
             switch result {
             case .success(let value): self.send(["t": "rpc-res", "id": id, "ok": true, "value": value])
-            case .failure(let error): self.send(["t": "rpc-res", "id": id, "ok": false, "error": error.localizedDescription])
+            case .failure(let error): self.send(["t": "rpc-res", "id": id, "ok": false, "error": Self.friendlyErrorMessage(error)])
             }
         }
     }
@@ -678,6 +693,9 @@ final class NativeServer {
             reply(id, .failure(URLError(.unsupportedURL))); return
         }
         var request = URLRequest(url: url)
+        if let timeoutMs = (args["timeoutMs"] as? NSNumber)?.doubleValue, timeoutMs.isFinite {
+            request.timeoutInterval = max(1, min(180, timeoutMs / 1000.0))
+        }
         request.httpMethod = args["method"] as? String ?? "GET"
         for (k, v) in args["headers"] as? [String: Any] ?? [:] { request.setValue("\(v)", forHTTPHeaderField: k) }
         if let body = args["body"] as? String { request.httpBody = Data(body.utf8) }

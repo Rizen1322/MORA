@@ -22,10 +22,49 @@ final class NativeSoundCloud {
     private var client: Client?
     private var retryAt: Date?
     private var artistRetryAt: Date?
+    private var searchCache: [String: (until: Date, items: [[String: Any]])] = [:]
+    private var artistCache: [String: (until: Date, page: [String: Any])] = [:]
     private let fetch: Fetch
+    private let persistClient: Bool
 
-    static let live = NativeSoundCloud(fetch: NativeSoundCloud.urlSessionFetch)
-    init(fetch: @escaping Fetch = NativeSoundCloud.urlSessionFetch) { self.fetch = fetch }
+    static let live = NativeSoundCloud(fetch: NativeSoundCloud.urlSessionFetch, persistClient: true)
+    init(fetch: @escaping Fetch = NativeSoundCloud.urlSessionFetch, persistClient: Bool = false) {
+        self.fetch = fetch
+        self.persistClient = persistClient
+        if persistClient,
+           let saved = UserDefaults.standard.string(forKey: "mora.soundcloud.clientId"),
+           saved.range(of: "^[0-9a-zA-Z]{32}$", options: .regularExpression) != nil {
+            let until = Date(timeIntervalSince1970: UserDefaults.standard.double(forKey: "mora.soundcloud.clientUntil"))
+            if until > Date() { client = Client(id: saved, until: until) }
+        }
+    }
+
+    func resetBreakers() {
+        locked { retryAt = nil; artistRetryAt = nil }
+    }
+
+    private static func isConnectionLoss(_ error: Error) -> Bool {
+        let ns = error as NSError
+        guard ns.domain == NSURLErrorDomain else { return false }
+        return [NSURLErrorTimedOut, NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost,
+                NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed, NSURLErrorCannotConnectToHost].contains(ns.code)
+    }
+
+    private static func friendlyError(_ error: Error) -> Error {
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain {
+            switch ns.code {
+            case NSURLErrorNotConnectedToInternet:
+                return Failure(message: "Нет подключения к интернету")
+            case NSURLErrorTimedOut:
+                return Failure(message: "SoundCloud не ответил вовремя")
+            case NSURLErrorNetworkConnectionLost, NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed, NSURLErrorCannotConnectToHost:
+                return Failure(message: "Не удалось связаться с SoundCloud. Проверьте сеть")
+            default: break
+            }
+        }
+        return error
+    }
 
     private func locked<T>(_ work: () -> T) -> T {
         lock.lock()
@@ -40,26 +79,35 @@ final class NativeSoundCloud {
         let clean = query.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return [] }
+        let count = min(25, max(1, limit))
+        let cacheKey = "\(count):\(clean)"
+        if let hit = locked({ searchCache[cacheKey].flatMap { $0.until > Date() ? $0.items : nil } }) {
+            return hit
+        }
         if let retryAt = locked({ retryAt }), retryAt > Date() { throw Failure(message: "SoundCloud: быстрый поиск временно недоступен") }
         do {
             let id = try await clientId()
-            let count = min(25, max(1, limit))
             var components = URLComponents(string: "https://api-v2.soundcloud.com/search/tracks")!
             components.queryItems = [.init(name: "q", value: String(clean.prefix(200))), .init(name: "limit", value: String(count)),
                                      .init(name: "client_id", value: id), .init(name: "linked_partitioning", value: "1")]
             let (status, data) = try await get(components.url!, limit: 2 << 20)
             guard status == 200, let value = try? JSONSerialization.jsonObject(with: data) else {
-                throw Failure(message: "SoundCloud: HTTP \(status)")
+                throw Failure(message: "SoundCloud временно недоступен (\(status))")
             }
-            locked { retryAt = nil }
-            return Self.parseSearch(value, limit: count)
+            let parsed = Self.parseSearch(value, limit: count)
+            locked {
+                retryAt = nil
+                if searchCache.count >= 30 { searchCache.removeAll() }
+                searchCache[cacheKey] = (Date().addingTimeInterval(120), parsed)
+            }
+            return parsed
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as NSError where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
             throw error
         } catch {
-            locked { retryAt = Date().addingTimeInterval(30) }
-            throw error
+            if !Self.isConnectionLoss(error) { locked { retryAt = Date().addingTimeInterval(30) } }
+            throw Self.friendlyError(error)
         }
     }
 
@@ -68,12 +116,19 @@ final class NativeSoundCloud {
         guard id.range(of: "^[0-9]{1,20}$", options: .regularExpression) != nil else {
             throw Failure(message: "Некорректный ID исполнителя")
         }
+        if let hit = locked({ artistCache[id].flatMap { $0.until > Date() ? $0.page : nil } }) {
+            return hit
+        }
         if let artistRetryAt = locked({ artistRetryAt }), artistRetryAt > Date() { throw Failure(message: "SoundCloud: профили временно недоступны") }
         do {
             let clientId = try await clientId()
-            let (userStatus, userData) = try await get(URL(string: "https://api-v2.soundcloud.com/users/\(id)?client_id=\(clientId)")!, limit: 1 << 20)
+            let userURL = URL(string: "https://api-v2.soundcloud.com/users/\(id)?client_id=\(clientId)")!
+            let tracksURL = URL(string: "https://api-v2.soundcloud.com/users/\(id)/tracks?client_id=\(clientId)&limit=25&linked_partitioning=1")!
+            async let userFetch = get(userURL, limit: 1 << 20)
+            async let tracksFetch = get(tracksURL, limit: 2 << 20)
+            let (userStatus, userData) = try await userFetch
             guard userStatus == 200, let user = (try? JSONSerialization.jsonObject(with: userData)) as? [String: Any] else {
-                throw Failure(message: "SoundCloud: HTTP \(userStatus)")
+                throw Failure(message: "SoundCloud временно недоступен (\(userStatus))")
             }
             let userId = String((user["id"] as? NSNumber)?.intValue ?? -1)
             let permalink = user["permalink"] as? String ?? ""
@@ -83,28 +138,31 @@ final class NativeSoundCloud {
                   page == "https://soundcloud.com/\(permalink)" else {
                 throw Failure(message: "SoundCloud: профиль исполнителя не подтверждён")
             }
-            let tracksURL = URL(string: "https://api-v2.soundcloud.com/users/\(id)/tracks?client_id=\(clientId)&limit=25&linked_partitioning=1")!
-            let (tracksStatus, tracksData) = try await get(tracksURL, limit: 2 << 20)
+            let (tracksStatus, tracksData) = try await tracksFetch
             guard tracksStatus == 200, let raw = (try? JSONSerialization.jsonObject(with: tracksData)) as? [String: Any],
                   let collection = raw["collection"] as? [Any] else {
                 throw Failure(message: "SoundCloud: изменился формат треков")
             }
             let tracks = Self.parseSearch(["collection": collection], limit: 25)
                 .filter { ($0["artist_id"] as? String) == id }
-            locked { artistRetryAt = nil }
             var result: [String: Any] = ["id": id, "permalink": permalink,
                                          "title": String((user["username"] as? String ?? "").prefix(300)),
                                          "description": String((user["description"] as? String ?? "").prefix(4000)),
                                          "tracks": tracks]
             if let cover = Self.image(user["avatar_url"]) { result["coverUrl"] = cover }
+            locked {
+                artistRetryAt = nil
+                if artistCache.count >= 30 { artistCache.removeAll() }
+                artistCache[id] = (Date().addingTimeInterval(180), result)
+            }
             return result
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as NSError where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
             throw error
         } catch {
-            locked { artistRetryAt = Date().addingTimeInterval(30) }
-            throw error
+            if !Self.isConnectionLoss(error) { locked { artistRetryAt = Date().addingTimeInterval(30) } }
+            throw Self.friendlyError(error)
         }
     }
 
@@ -134,7 +192,12 @@ final class NativeSoundCloud {
             if let match = idRegex.firstMatch(in: js, range: NSRange(js.startIndex..., in: js)),
                let range = Range(match.range(at: 1), in: js) {
                 let id = String(js[range])
-                locked { client = Client(id: id, until: Date().addingTimeInterval(30 * 60)) }
+                let until = Date().addingTimeInterval(30 * 60)
+                locked { client = Client(id: id, until: until) }
+                if persistClient {
+                    UserDefaults.standard.set(id, forKey: "mora.soundcloud.clientId")
+                    UserDefaults.standard.set(until.timeIntervalSince1970, forKey: "mora.soundcloud.clientUntil")
+                }
                 return id
             }
         }
@@ -148,7 +211,13 @@ final class NativeSoundCloud {
         }
         let (status, data) = try await fetch(url, limit)
         guard data.count <= limit else { throw Failure(message: "SoundCloud: слишком большой ответ") }
-        if status == 401 || status == 403 { locked { client = nil } }
+        if status == 401 || status == 403 {
+            locked { client = nil }
+            if persistClient {
+                UserDefaults.standard.removeObject(forKey: "mora.soundcloud.clientId")
+                UserDefaults.standard.removeObject(forKey: "mora.soundcloud.clientUntil")
+            }
+        }
         return (status, data)
     }
 
@@ -210,18 +279,22 @@ final class NativeSoundCloud {
         return text.replacingOccurrences(of: #"-large\.(jpg|png)(\?.*)?$"#, with: "-t500x500.$1$2", options: .regularExpression)
     }
 
+    private static let sharedRedirectBlocker = NativeSoundCloudRedirectBlocker()
+    private static let sharedSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpMaximumConnectionsPerHost = 4
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.timeoutIntervalForRequest = 12
+        configuration.timeoutIntervalForResource = 18
+        return URLSession(configuration: configuration, delegate: sharedRedirectBlocker, delegateQueue: nil)
+    }()
+
     private static func urlSessionFetch(_ url: URL, _ limit: Int) async throws -> (Int, Data) {
-        var request = URLRequest(url: url, timeoutInterval: 8)
+        var request = URLRequest(url: url, timeoutInterval: 10)
         request.setValue("*/*", forHTTPHeaderField: "Accept")
         request.setValue("https://soundcloud.com", forHTTPHeaderField: "Origin")
         request.setValue("https://soundcloud.com/", forHTTPHeaderField: "Referer")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpMaximumConnectionsPerHost = 2
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        let blocker = NativeSoundCloudRedirectBlocker()
-        let session = URLSession(configuration: configuration, delegate: blocker, delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await sharedSession.data(for: request)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
     }
 }

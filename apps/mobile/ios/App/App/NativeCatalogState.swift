@@ -68,6 +68,11 @@ final class NativeCatalogState {
         publicCatalog?.invalidate()
     }
 
+    func resetNetworkBreakers() {
+        publicCatalog?.resetBreakers()
+        soundcloud?.resetBreakers()
+    }
+
     /// Drops Yandex account credentials and cached Yandex pages/sessions when account changes.
     func clearYandex() {
         for key in cache.keys where key.hasPrefix("yandex/") { cache.removeValue(forKey: key) }
@@ -224,10 +229,27 @@ final class NativeCatalogState {
         if let hit = cached(key) { data = hit }
         else {
             var nativePage: [String: Any]?
-            if source == "soundcloud", kind == "artist", let soundcloud {
-                nativePage = try? await soundcloud.artist(id)
-            } else if source == "public", let publicCatalog {
-                nativePage = try? await (kind == "artist" ? publicCatalog.artist(id) : publicCatalog.album(id))
+            do {
+                if source == "soundcloud", kind == "artist", let soundcloud {
+                    nativePage = try await soundcloud.artist(id)
+                } else if source == "public", let publicCatalog {
+                    nativePage = try await (kind == "artist" ? publicCatalog.artist(id) : publicCatalog.album(id))
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let failure as NativePublicCatalog.Failure where failure.statusCode == 503 || failure.statusCode == 504 {
+                throw failure
+            } catch let error as NSError where error.domain == NSURLErrorDomain && [
+                NSURLErrorNotConnectedToInternet, NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost,
+                NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed, NSURLErrorCannotConnectToHost
+            ].contains(error.code) {
+                throw NSError(domain: "NativeCatalogState", code: error.code, userInfo: [NSLocalizedDescriptionKey: "Нет подключения к интернету"])
+            } catch {
+                if source == "soundcloud", let scErr = error as? NativeSoundCloud.Failure,
+                   scErr.message.contains("интернету") || scErr.message.contains("сеть") || scErr.message.contains("вовремя") {
+                    throw scErr
+                }
+                nativePage = nil
             }
             try Task.checkCancellation()
             if let nativePage, !(nativePage["tracks"] as? [Any] ?? []).isEmpty || !(nativePage["title"] as? String ?? "").isEmpty {

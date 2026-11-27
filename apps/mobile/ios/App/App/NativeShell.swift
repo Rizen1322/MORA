@@ -106,14 +106,19 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
         embed(bar)
         bar.view.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            bar.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            bar.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bar.view.bottomAnchor.constraint(equalTo: tabs.tabBar.topAnchor, constant: -8),
+            bar.view.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
+            bar.view.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
+            bar.view.bottomAnchor.constraint(equalTo: tabs.tabBar.topAnchor, constant: -12),
         ])
         self.content = content; self.bar = bar
         shell.presenter = self
         observer = shell.objectWillChange.sink { [weak self] in DispatchQueue.main.async { self?.layoutShell() } }
         layoutShell()
+    }
+
+    var miniPlayerSourceView: UIView? {
+        guard let barView = bar?.view, !barView.isHidden, barView.window != nil else { return nil }
+        return barView
     }
 
     private func embed(_ child: UIViewController, into container: UIView? = nil) {
@@ -129,13 +134,42 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
         let barHidden = !visible || shell.miniTitle == nil
         // While native owns the screen the page hides its own navigation: a web-only layer needs a native way back.
         let webOnly = !shell.shown || shell.screen == .web
-        let tabIndex = NativeTab.allCases.firstIndex(of: shell.tab) ?? tabs.selectedIndex
+        let tabIndex = NativeTab.allCases.firstIndex(of: shell.activeTab) ?? tabs.selectedIndex
         let nextLayout = (contentHidden, tabsHidden, barHidden, webOnly, tabIndex)
         if let last = lastShellLayout, last == nextLayout { return }
         lastShellLayout = nextLayout
         content.view.isHidden = contentHidden
         tabsOverlay.isHidden = tabsHidden
-        bar.view.isHidden = barHidden
+        let animated = !UIAccessibility.isReduceMotionEnabled && view.window != nil
+        if bar.view.isHidden != barHidden {
+            if !barHidden {
+                bar.view.isHidden = false
+                if animated {
+                    bar.view.alpha = 0
+                    bar.view.transform = CGAffineTransform(translationX: 0, y: 12)
+                    UIView.animate(withDuration: 0.24, delay: 0, usingSpringWithDamping: 0.88, initialSpringVelocity: 0.4) {
+                        bar.view.alpha = 1
+                        bar.view.transform = .identity
+                    }
+                } else {
+                    bar.view.alpha = 1
+                    bar.view.transform = .identity
+                }
+            } else if animated {
+                UIView.animate(withDuration: 0.18, animations: {
+                    bar.view.alpha = 0
+                    bar.view.transform = CGAffineTransform(translationX: 0, y: 12)
+                }, completion: { _ in
+                    let stillHidden = !(self.shell.shown && !self.shell.ui.overlay && !NativeDeepLink.splashVisible) || self.shell.miniTitle == nil
+                    if stillHidden {
+                        bar.view.isHidden = true
+                        bar.view.transform = .identity
+                    }
+                })
+            } else {
+                bar.view.isHidden = true
+            }
+        }
         webExit.isHidden = !webOnly
         if webOnly { positionWebExit() }
         if tabs.selectedIndex != tabIndex { tabs.selectedIndex = tabIndex }
@@ -160,7 +194,8 @@ final class MoraRootViewController: UIViewController, UITabBarControllerDelegate
         if !webExit.isHidden { positionWebExit() }
         tabs.view.layoutIfNeeded()
         let top = tabs.tabBar.convert(tabs.tabBar.bounds, to: view).minY
-        let inset = tabsOverlay.isHidden ? 0 : max(0, view.safeAreaLayoutGuide.layoutFrame.maxY - top) + (bar.view.isHidden ? 0 : bar.view.frame.height + 8)
+        let barHidden = !(shell.shown && !shell.ui.overlay && !NativeDeepLink.splashVisible) || shell.miniTitle == nil
+        let inset = tabsOverlay.isHidden ? 0 : max(0, view.safeAreaLayoutGuide.layoutFrame.maxY - top) + (barHidden ? 0 : bar.view.frame.height + 12)
         if content.additionalSafeAreaInsets.bottom != inset { content.additionalSafeAreaInsets.bottom = inset }
     }
     func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
@@ -636,6 +671,9 @@ final class NativeShellStore: ObservableObject {
     @Published private(set) var ui = NativeUiState()
     /// The route on screen: the page's, or the one native just asked for (until the page confirms it).
     @Published private(set) var path = "/"
+    @Published var activeTab: NativeTab = .home
+    @Published var tabPaths: [NativeTab: [String]] = [.home: [], .library: [], .search: []]
+    @Published private(set) var onlineEpoch = 0
     @Published private(set) var shown = UserDefaults.standard.object(forKey: "mora.nativeShell") as? Bool ?? true
     @Published private(set) var player = NativePlayerState()
     @Published private(set) var artwork: UIImage?
@@ -853,16 +891,17 @@ final class NativeShellStore: ObservableObject {
         }
     }
 
-    func libraryPage() throws -> [String: Any]? {
-        let parts = path.split(separator: "/")
-        let local = path == "/history" || path == "/library/playlists" || path == "/library/albums" || path == "/library/artists"
+    func libraryPage(for overridePath: String? = nil) throws -> [String: Any]? {
+        let targetPath = overridePath ?? path
+        let parts = targetPath.split(separator: "/")
+        let local = targetPath == "/history" || targetPath == "/library/playlists" || targetPath == "/library/albums" || targetPath == "/library/artists"
             || (parts.count == 2 && (parts[0] == "playlist" || parts[0] == "artist" || parts[0] == "track-edit"))
             || (parts.count == 3 && parts[0] == "album")
         guard sharedLibrary, local else { return nil }
         guard let snapshot = librarySnapshot else { throw NativeLibraryStore.Failure(message: libraryFailure ?? "Медиатека загружается") }
         let current = NativeLibraryStore.Snapshot(tracks: Array(byId.values), library: library, playlists: playlists, entries: snapshot.entries, history: snapshot.history)
         let id = parts.last.flatMap { String($0).removingPercentEncoding } ?? ""
-        return try current.page(path, sort: playlistSort[id] ?? "")
+        return try current.page(targetPath, sort: playlistSort[id] ?? "")
     }
 
     private func applyPendingReactions() {
@@ -897,7 +936,13 @@ final class NativeShellStore: ObservableObject {
             DispatchQueue.main.async {
                 guard let self, (path.status != .satisfied) != self.offline else { return }
                 self.offline.toggle()
-                if !self.offline { self.show("Сеть снова доступна") }
+                if !self.offline {
+                    self.catalog.resetNetworkBreakers()
+                    self.onlineEpoch &+= 1
+                    NotificationCenter.default.post(name: NativeCovers.retryNotification, object: nil)
+                    self.flushReactions()
+                    self.show("Сеть снова доступна")
+                }
                 self.sendNetwork()
                 Task { @MainActor in NativeQueueController.shared.handleNetworkChange(offline: self.offline) }
             }
@@ -1308,7 +1353,10 @@ final class NativeShellStore: ObservableObject {
         // A push sent before the page saw native's own navigation must not jump back.
         if let pending, pending.path != next.path, Date().timeIntervalSince(pending.at) < 2 {} else {
             pending = nil
-            if path != next.path { path = next.path }
+            if path != next.path {
+                syncStack(for: next.path)
+                path = next.path
+            }
         }
         applyPendingReactions()
         flushReactions()
@@ -1450,7 +1498,57 @@ final class NativeShellStore: ObservableObject {
             controller.modalPresentationStyle = .pageSheet
             controller.sheetPresentationController?.prefersGrabberVisible = true
             controller.overrideUserInterfaceStyle = .dark
+            controller.view.backgroundColor = UIColor(Color.moraBackground)
+            controller.view.tintColor = UIColor(Color.moraMint)
             parent.present(controller, animated: true)
+        }
+    }
+
+    func navigationBinding(for tab: NativeTab) -> Binding<[String]> {
+        Binding(
+            get: { self.tabPaths[tab] ?? [] },
+            set: { newStack in
+                guard self.tabPaths[tab] != newStack else { return }
+                self.tabPaths[tab] = newStack
+                guard self.activeTab == tab else { return }
+                let next = newStack.last ?? NativeRoute.root(tab)
+                if self.path != next {
+                    self.catalogPreview = nil
+                    self.path = next
+                    self.pending = (next, Date())
+                    self.run("go", ["path": next])
+                }
+            }
+        )
+    }
+
+    private func syncStack(for next: String) {
+        if next.isEmpty || next == "/" {
+            activeTab = .home
+            tabPaths[.home] = []
+            return
+        }
+        if next == "/library" {
+            activeTab = .library
+            tabPaths[.library] = []
+            return
+        }
+        if next == "/search" || next == "/yandex" {
+            activeTab = .search
+            tabPaths[.search] = []
+            return
+        }
+        guard NativeRoute.screen(next) != .web else { return }
+        var stack = tabPaths[activeTab] ?? []
+        if let existing = stack.lastIndex(of: next) {
+            if existing != stack.count - 1 {
+                stack = Array(stack.prefix(existing + 1))
+                tabPaths[activeTab] = stack
+            }
+        } else {
+            stack.append(next)
+            if stack.count > 24 { stack.removeFirst() }
+            tabPaths[activeTab] = stack
         }
     }
 
@@ -1470,6 +1568,7 @@ final class NativeShellStore: ObservableObject {
                 if navHistory.count > 64 { navHistory.removeFirst() }
             }
         }
+        syncStack(for: next)
         self.path = next
         pending = (self.path, Date())
         run("go", ["path": path])
@@ -1477,8 +1576,10 @@ final class NativeShellStore: ObservableObject {
     func select(_ tab: NativeTab) {
         UIAccessibility.post(notification: .screenChanged, argument: nil)
         catalogPreview = nil
-        go(NativeRoute.root(tab))
+        activeTab = tab
+        tabPaths[tab] = []
         navHistory.removeAll()
+        go(NativeRoute.root(tab))
     }
 
     func play(_ list: [NativeTrack], at index: Int, type: String, label: String, id: String? = nil) {
@@ -1505,7 +1606,16 @@ final class NativeShellStore: ObservableObject {
     /// The page's history: native pages sit on top of the route they were opened from.
     func back() {
         catalogPreview = nil
-        if let previous = navHistory.popLast() {
+        if var stack = tabPaths[activeTab], !stack.isEmpty {
+            stack.removeLast()
+            tabPaths[activeTab] = stack
+            let previous = stack.last ?? NativeRoute.root(activeTab)
+            if navHistory.last == self.path || !navHistory.isEmpty { navHistory.removeLast() }
+            self.path = previous
+            pending = (previous, Date())
+            run("go", ["path": previous])
+        } else if let previous = navHistory.popLast() {
+            syncStack(for: previous)
             self.path = previous
             pending = (previous, Date())
             run("go", ["path": previous])
@@ -1552,7 +1662,7 @@ final class NativeShellStore: ObservableObject {
         show(summary + (kept > 0 ? " · с дизлайком оставлено как есть: \(kept)" : ""))
     }
     private func flushReactions() {
-        guard !sendingReactions, UIApplication.shared.applicationState == .active, sharedLibrary || webView != nil, !reactions.pending.isEmpty else { return }
+        guard !sendingReactions, !offline, UIApplication.shared.applicationState == .active, sharedLibrary || webView != nil, !reactions.pending.isEmpty else { return }
         sendingReactions = true
         Task { @MainActor in
             defer { sendingReactions = false }
@@ -1749,12 +1859,15 @@ final class NativeShellStore: ObservableObject {
 
 /// Library covers come from the page (/api/... lives in its worker); remote ones over HTTPS.
 enum NativeCovers {
+    static let retryNotification = Notification.Name("ru.mora.coverRetry")
     private static let cache: NSCache<NSString, UIImage> = { let c = NSCache<NSString, UIImage>(); c.countLimit = 400; return c }()
     private static let session: URLSession = {
         let cfg = URLSessionConfiguration.default
         cfg.urlCache = URLCache(memoryCapacity: 40 * 1024 * 1024, diskCapacity: 150 * 1024 * 1024, diskPath: "mora-covers")
         cfg.requestCachePolicy = .returnCacheDataElseLoad
         cfg.httpMaximumConnectionsPerHost = 6
+        cfg.timeoutIntervalForRequest = 12
+        cfg.timeoutIntervalForResource = 25
         return URLSession(configuration: cfg)
     }()
     @MainActor private static var loading: [String: Task<UIImage?, Never>] = [:]
@@ -1773,7 +1886,9 @@ enum NativeCovers {
             var data: Data?
             if url.hasPrefix("https://"), let remote = URL(string: url) {
                 data = await Task.detached(priority: .userInitiated) {
-                    try? await NativeCovers.session.data(from: remote).0
+                    guard let (bytes, resp) = try? await NativeCovers.session.data(from: remote) else { return nil }
+                    if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { return nil }
+                    return bytes
                 }.value
             } else if url.hasPrefix("/api/") {
                 if url.hasPrefix("/api/covers/"), isShared {
@@ -1785,10 +1900,10 @@ enum NativeCovers {
                     }
                 }
                 if data == nil, let store = NativeShellStore.shared, let base64 = try? await store.call("cover", ["url": url]) as? String {
-                    data = Data(base64Encoded: base64)
+                    data = await Task.detached(priority: .userInitiated) { Data(base64Encoded: base64) }.value
                 }
             }
-            guard let rawData = data else { return nil }
+            guard !Task.isCancelled, let rawData = data else { return nil }
             let image: UIImage? = await Task.detached(priority: .userInitiated) {
                 guard let full = UIImage(data: rawData), full.size.width > 0, full.size.height > 0 else { return nil }
                 let scale = min(1, 240 / max(full.size.width, full.size.height))
@@ -1813,6 +1928,7 @@ struct NativeCover: View {
     var monogram: String? = nil
     var aspectSquare: Bool = false
     @State private var loaded: UIImage?
+    @State private var retryTick = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -1846,7 +1962,12 @@ struct NativeCover: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .accessibilityHidden(true)
-        .task(id: embedded ?? url) {
+        .onReceive(NotificationCenter.default.publisher(for: NativeCovers.retryNotification)) { _ in
+            if image == nil && url != nil && loaded == nil && NativeCovers.cached(url) == nil {
+                retryTick &+= 1
+            }
+        }
+        .task(id: "\(embedded ?? url ?? "")|\(retryTick)") {
             guard image == nil else { return }
             if let embedded {
                 loaded = await Task.detached(priority: .userInitiated) {
@@ -1930,71 +2051,93 @@ struct NativeShellContent: View {
                     .font(.footnote.weight(.medium)).foregroundStyle(Color.moraGold)
                     .frame(maxWidth: .infinity).padding(.vertical, 6)
                     .background(Color.moraGold.opacity(0.12))
+                    .transition(.move(edge: .top).combined(with: .opacity))
             }
-            ZStack(alignment: .top) {
-                screen
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.path)
-                if store.path != NativeRoute.root(store.tab) {
-                    // Pages are route switches, not NavigationStack pushes, so iOS gives them no back swipe: this edge does.
-                    Color.clear.frame(width: 18).frame(maxHeight: .infinity).contentShape(Rectangle())
-                        .gesture(DragGesture(minimumDistance: 12).onEnded { g in
-                            if g.translation.width > 70 && abs(g.translation.height) < g.translation.width { store.back() }
-                        })
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityHidden(true)
+            screen
+                .overlay(alignment: .bottom) {
+                    if let text = store.banner {
+                        Text(text).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
+                            .padding(.horizontal, 16).padding(.vertical, 10)
+                            .moraGlass(Capsule())
+                            .padding(.horizontal, 20).padding(.bottom, 12)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true) // announced when it appears
+                    }
                 }
-            }
-            .overlay(alignment: .bottom) {
-                if let text = store.banner {
-                    Text(text).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
-                        .padding(.horizontal, 16).padding(.vertical, 10)
-                        .moraGlass(Capsule())
-                        .padding(.horizontal, 20).padding(.bottom, 12)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true) // announced when it appears
-                }
-            }
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: store.offline)
         .background(Color.moraBackground.ignoresSafeArea())
         .sheet(isPresented: Binding(get: { !store.playlistTarget.isEmpty }, set: { if !$0 { store.playlistTarget = [] } })) {
-            NativePlaylistPicker(tracks: store.playlistTarget).environmentObject(store)
+            NativePlaylistPicker(tracks: store.playlistTarget)
+                .environmentObject(store)
+                .presentationBackground(Color.moraBackground)
+                .tint(.moraMint)
+                .preferredColorScheme(.dark)
         }
-        .animation(.easeOut(duration: 0.25), value: store.banner)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: store.banner)
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
         .foregroundStyle(.white)
         .tint(.moraMint)
         .environmentObject(store)
         .sheet(isPresented: $store.waveSettingsOpen) {
-            NativePageView(waveSource: Binding(get: { store.waveSource ?? store.ui.wave.preferred }, set: { store.waveSource = $0 }))
-                .onDisappear { store.waveSettingsDismissed() }
-                .environmentObject(store)
-                .tint(.moraMint)
-                .presentationDetents([.fraction(0.72), .large])
-                .presentationDragIndicator(.visible)
-                .preferredColorScheme(.dark)
+            NavigationStack {
+                NativePageView(waveSource: Binding(get: { store.waveSource ?? store.ui.wave.preferred }, set: { store.waveSource = $0 }))
+                    .onDisappear { store.waveSettingsDismissed() }
+            }
+            .environmentObject(store)
+            .tint(.moraMint)
+            .presentationDetents([.fraction(0.72), .large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(Color.moraBackground)
+            .preferredColorScheme(.dark)
         }
     }
     @ViewBuilder private var screen: some View {
-        switch store.screen {
-            case .home: NativeHomeView()
-            case .more: NativeMoreView()
-            case .liked: NativeTrackListView(title: "Любимое", type: "liked", tracks: store.liked)
-            case .library:
-                if store.path == "/library" { NativeLibraryView() }
-                else { NativeTrackListView(title: "Песни", type: "library", tracks: store.library) }
-            case .search: NativeSearchView()
-            case .page:
-                if store.sharedLibrary && NativeShellStore.ownScreens.contains(store.path) {
-                    if store.path == "/settings" { NativeSettingsView() }
-                    else if store.path == "/sources" { NativeSourcesView() }
-                    else if store.path == "/downloads" { NavigationStack { NativeDownloadsView() } }
-                    else if store.path == "/sound" { NativeSoundView() }
-                    else if store.path == "/statistics" { NativeStatisticsView() }
-                    else { NativeBackupsView() }
-                } else { NativePageView() }
-            case .web: Color.clear
+        if store.screen == .web {
+            Color.clear
+        } else {
+            NavigationStack(path: store.navigationBinding(for: store.activeTab)) {
+                tabRootView(for: store.activeTab)
+                    .navigationDestination(for: String.self) { destination in
+                        destinationView(for: destination)
+                    }
             }
+            .id(store.activeTab)
+        }
+    }
+    @ViewBuilder private func tabRootView(for tab: NativeTab) -> some View {
+        switch tab {
+        case .home: NativeHomeView()
+        case .library: NativeLibraryView()
+        case .search: NativeSearchView()
+        }
+    }
+    @ViewBuilder private func destinationView(for route: String) -> some View {
+        switch NativeRoute.screen(route) {
+        case .home: NativeHomeView()
+        case .more: NativeMoreView()
+        case .liked: NativeTrackListView(title: "Любимое", type: "liked", tracks: store.liked)
+        case .library:
+            if route == "/library" { NativeLibraryView() }
+            else { NativeTrackListView(title: "Песни", type: "library", tracks: store.library) }
+        case .search: NativeSearchView()
+        case .page:
+            if store.sharedLibrary && NativeShellStore.ownScreens.contains(route) {
+                switch route {
+                case "/settings": NativeSettingsView()
+                case "/sources": NativeSourcesView()
+                case "/downloads": NativeDownloadsView()
+                case "/sound": NativeSoundView()
+                case "/statistics": NativeStatisticsView()
+                default: NativeBackupsView()
+                }
+            } else {
+                NativePageView(routePath: route)
+            }
+        case .web:
+            Color.clear
+        }
     }
 }
 
@@ -2012,17 +2155,17 @@ extension NativeTab {
 struct NativeShellBar: View {
     @ObservedObject var store: NativeShellStore
     @State private var dragOffset: CGFloat = 0
+    @State private var verticalDrag: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 8) {
             if let title = store.miniTitle { mini(title) }
         }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 4)
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge) // the bar keeps its height; screens scale fully
         .foregroundStyle(.white)
-        .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.25), value: store.miniTitle != nil)
-        .animation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.2), value: store.miniPlaying)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: store.miniTitle != nil)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: store.miniPlaying)
     }
 
     private func mini(_ title: String) -> some View {
@@ -2040,16 +2183,19 @@ struct NativeShellBar: View {
                 }
                 .contentShape(Rectangle())
             }
+            .buttonStyle(MoraPressStyle())
             .accessibilityElement(children: .combine)
             .accessibilityLabel("\(title), \(store.miniArtist)")
             .accessibilityHint("Открыть плеер")
             Button { store.togglePlayback() } label: {
                 Image(systemName: store.miniPlaying ? "pause.fill" : "play.fill").contentTransition(.symbolEffect(.replace)).font(.title3).frame(width: 44, height: 44)
             }
+            .buttonStyle(MoraPressStyle())
             .accessibilityLabel(store.miniPlaying ? "Пауза" : "Играть")
             Button { store.next() } label: {
                 Image(systemName: "forward.fill").font(.title3).frame(width: 44, height: 44)
             }
+            .buttonStyle(MoraPressStyle())
             .accessibilityLabel("Следующий")
         }
         .padding(.leading, 8).padding(.trailing, 6)
@@ -2061,28 +2207,38 @@ struct NativeShellBar: View {
         }
         .clipShape(Capsule())
         .moraGlass(Capsule())
-        .offset(x: dragOffset)
+        .offset(x: dragOffset, y: verticalDrag)
         .highPriorityGesture(
-            DragGesture(minimumDistance: 20, coordinateSpace: .global)
+            DragGesture(minimumDistance: 16, coordinateSpace: .global)
                 .onChanged { value in
-                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                    dragOffset = max(-32, min(32, value.translation.width * 0.35))
+                    if abs(value.translation.width) > abs(value.translation.height) {
+                        dragOffset = max(-32, min(32, value.translation.width * 0.35))
+                        verticalDrag = 0
+                    } else if value.translation.height < 0 {
+                        verticalDrag = max(-14, value.translation.height * 0.25)
+                        dragOffset = 0
+                    }
                 }
                 .onEnded { value in
                     if abs(value.translation.width) > abs(value.translation.height) {
                         if value.translation.width < -55 { store.next() }
                         else if value.translation.width > 55 { store.previous() }
+                    } else if value.translation.height < -24 {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        store.openPlayer()
                     }
-                    if UIAccessibility.isReduceMotionEnabled {
+                    if reduceMotion {
                         dragOffset = 0
+                        verticalDrag = 0
                     } else {
                         withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
                             dragOffset = 0
+                            verticalDrag = 0
                         }
                     }
                 }
         )
-        .onDisappear { dragOffset = 0 }
+        .onDisappear { dragOffset = 0; verticalDrag = 0 }
         .environmentObject(store)
     }
 }

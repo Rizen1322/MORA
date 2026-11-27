@@ -48,6 +48,7 @@ final class NativePublicCatalog {
     private let lock = NSLock()
     private var breakers: [String: BreakerState] = [:]
     private var cache: [String: CacheEntry] = [:]
+    private var searchCache: [String: (until: Date, items: [[String: Any]])] = [:]
     private var cacheOrder: [String] = []
 
     init(fetch: @escaping Fetch = NativePublicCatalog.urlSessionFetch) {
@@ -63,8 +64,13 @@ final class NativePublicCatalog {
     func invalidate() {
         locked {
             cache.removeAll()
+            searchCache.removeAll()
             cacheOrder.removeAll()
         }
+    }
+
+    func resetBreakers() {
+        locked { breakers.removeAll() }
     }
 
     // MARK: public surface
@@ -124,9 +130,42 @@ final class NativePublicCatalog {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return [] }
         let bounded = String(q.prefix(200))
-        let params = kind == "video" ? Self.videosParams : Self.songsParams
+        let resolvedKind = kind == "video" ? "video" : "song"
+        let cacheKey = "\(resolvedKind):\(bounded)"
+        if let hit = locked({ searchCache[cacheKey].flatMap { $0.until > Date() ? $0.items : nil } }) {
+            return hit
+        }
+        let params = resolvedKind == "video" ? Self.videosParams : Self.songsParams
         let raw = try await requestYtm(endpoint: "search", body: ["query": bounded, "params": params])
-        return Self.parseSearch(raw, kind: kind == "video" ? "video" : "song")
+        let parsed = Self.parseSearch(raw, kind: resolvedKind)
+        locked {
+            if searchCache.count >= 40 { searchCache.removeAll() }
+            searchCache[cacheKey] = (Date().addingTimeInterval(120), parsed)
+        }
+        return parsed
+    }
+
+    private static func isConnectionLoss(_ error: Error) -> Bool {
+        let ns = error as NSError
+        guard ns.domain == NSURLErrorDomain else { return false }
+        return [NSURLErrorTimedOut, NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost,
+                NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed, NSURLErrorCannotConnectToHost].contains(ns.code)
+    }
+
+    private static func friendlyNetworkError(_ error: Error) -> Error {
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain {
+            switch ns.code {
+            case NSURLErrorNotConnectedToInternet:
+                return Failure(statusCode: 503, message: "Нет подключения к интернету")
+            case NSURLErrorTimedOut:
+                return Failure(statusCode: 504, message: "YouTube Music не ответил вовремя")
+            case NSURLErrorNetworkConnectionLost, NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed, NSURLErrorCannotConnectToHost:
+                return Failure(statusCode: 503, message: "Не удалось связаться с YouTube Music. Проверьте сеть")
+            default: break
+            }
+        }
+        return error
     }
 
     func requestYtm(endpoint: String, body: [String: Any], service: String = "music") async throws -> [String: Any] {
@@ -148,7 +187,7 @@ final class NativePublicCatalog {
         payload["context"] = ["client": clientPayload]
         let encoded = try JSONSerialization.data(withJSONObject: payload)
 
-        var request = URLRequest(url: url, timeoutInterval: 8)
+        var request = URLRequest(url: url, timeoutInterval: 10)
         request.httpMethod = "POST"
         request.httpBody = encoded
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -159,7 +198,7 @@ final class NativePublicCatalog {
         do {
             let (status, data) = try await fetch(request, Self.maxBytes)
             guard (200..<300).contains(status) else {
-                throw Failure(statusCode: 502, message: "YouTube Music: HTTP \(status)")
+                throw Failure(statusCode: 502, message: "YouTube Music временно недоступен (\(status))")
             }
             guard data.count <= Self.maxBytes else {
                 throw Failure(statusCode: 502, message: "YouTube Music: слишком большой ответ")
@@ -174,16 +213,18 @@ final class NativePublicCatalog {
         } catch let error as NSError where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
             throw error
         } catch {
-            locked {
-                var st = breakers[key] ?? BreakerState()
-                st.fails += 1
-                if st.fails >= 3 {
-                    st.until = Date().addingTimeInterval(15)
-                    st.fails = 0
+            if !Self.isConnectionLoss(error) {
+                locked {
+                    var st = breakers[key] ?? BreakerState()
+                    st.fails += 1
+                    if st.fails >= 3 {
+                        st.until = Date().addingTimeInterval(15)
+                        st.fails = 0
+                    }
+                    breakers[key] = st
                 }
-                breakers[key] = st
             }
-            throw error
+            throw Self.friendlyNetworkError(error)
         }
     }
 
@@ -484,14 +525,18 @@ final class NativePublicCatalog {
         return ytmThumbSizeRegex.stringByReplacingMatches(in: raw, range: NSRange(raw.startIndex..., in: raw), withTemplate: "=w544-h544")
     }
 
-    private static func urlSessionFetch(_ request: URLRequest, _ limit: Int) async throws -> (Int, Data) {
+    private static let sharedRedirectBlocker = NativePublicRedirectBlocker()
+    private static let sharedSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpMaximumConnectionsPerHost = 2
+        configuration.httpMaximumConnectionsPerHost = 4
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        let blocker = NativePublicRedirectBlocker()
-        let session = URLSession(configuration: configuration, delegate: blocker, delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        let (data, response) = try await session.data(for: request)
+        configuration.timeoutIntervalForRequest = 12
+        configuration.timeoutIntervalForResource = 18
+        return URLSession(configuration: configuration, delegate: sharedRedirectBlocker, delegateQueue: nil)
+    }()
+
+    private static func urlSessionFetch(_ request: URLRequest, _ limit: Int) async throws -> (Int, Data) {
+        let (data, response) = try await sharedSession.data(for: request)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
     }
 }

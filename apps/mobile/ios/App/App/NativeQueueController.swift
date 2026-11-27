@@ -635,7 +635,7 @@ import Foundation
             throw NSError(domain: "NativeQueue", code: 5, userInfo: [NSLocalizedDescriptionKey: "Файл трека недоступен"])
         }
         let config: [String: Any] = ["sampleRate": 48000.0, "position": max(0.0, startPosition), "paused": paused, "gainDb": 0.0]
-        let state = try await hostReply { host.prepareStart(id: sid, item: preparedItem, config: config, completion: $0) }
+        let state = try await hostReply { host.prepareStart(id: sid, item: preparedItem, config: config, networkTimeout: 25, completion: $0) }
         guard rev == revision else { return }
         startingRevision = nil
         hostIndex = state["index"] as? Int ?? 0

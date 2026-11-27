@@ -60,7 +60,7 @@ final class NativeMediaLoader {
               (base.scheme == "https" && base.host == "api.music.yandex.net")
                 || (allowLoopback && ["127.0.0.1", "localhost"].contains(base.host ?? "")) else { throw Failure.source }
         let endpoint = base.appendingPathComponent("tracks").appendingPathComponent(id).appendingPathComponent("download-info")
-        let data = try await http.data(endpoint, headers: ["Authorization": "OAuth \(token)", "Accept": "application/json"], ticket: ticket)
+        let data = try await http.data(endpoint, headers: ["Authorization": "OAuth \(token)", "Accept": "application/json"], ticket: ticket, timeout: 12)
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let variants = object["result"] as? [[String: Any]],
               let chosen = variants.filter({ ($0["codec"] as? String) == "mp3" && ($0["preview"] as? Bool) == false
@@ -68,7 +68,7 @@ final class NativeMediaLoader {
                 .sorted(by: { ($0["bitrateInKbps"] as? Int ?? 0) > ($1["bitrateInKbps"] as? Int ?? 0) }).first,
               let value = chosen["downloadInfoUrl"] as? String, let info = URL(string: value), mediaURL(info, base: base) else { throw Failure.source }
         if chosen["direct"] as? Bool == true { return info }
-        let xml = try await http.data(info, limit: 65536, ticket: ticket)
+        let xml = try await http.data(info, limit: 65536, ticket: ticket, timeout: 12)
         guard let text = String(data: xml, encoding: .utf8) else { throw Failure.source }
         return try yandexXML(text, base: base)
     }
@@ -153,8 +153,19 @@ final class NativeMediaLoader {
                 while launched < min(parts.count, written + width) {
                     let i = launched, p = parts[i], segment = scratch.appendingPathComponent(String(i)); launched += 1
                     group.addTask {
-                        try await http.download(p.url, to: segment, headers: p.headers, limit: p.expected ?? 16 * 1024 * 1024, ticket: ticket)
-                        return i
+                        var attempt = 0
+                        while true {
+                            do {
+                                try await http.download(p.url, to: segment, headers: p.headers, limit: p.expected ?? 16 * 1024 * 1024, ticket: ticket)
+                                return i
+                            } catch {
+                                try? FileManager.default.removeItem(at: segment)
+                                guard !ticket.cancelled, attempt < 2, Self.shouldRetrySegment(error) else { throw error }
+                                let delayMs = attempt == 0 ? 300 : 900
+                                attempt += 1
+                                try await Task.sleep(for: .milliseconds(delayMs))
+                            }
+                        }
                     }
                 }
                 guard let i = try await group.next(), !ticket.cancelled else { throw NativeMediaHTTP.Failure.cancelled }
@@ -175,6 +186,18 @@ final class NativeMediaLoader {
         if ticket.cancelled { throw NativeMediaHTTP.Failure.cancelled }
         try file.synchronize(); try file.close()
         try FileManager.default.moveItem(at: partial, to: destination)
+    }
+    private static func shouldRetrySegment(_ error: Error) -> Bool {
+        switch error {
+        case NativeMediaHTTP.Failure.http(let status):
+            return status == 408 || status == 429 || status >= 500
+        case NativeMediaHTTP.Failure.transport(let code):
+            return code != NSURLErrorCancelled
+        case NativeMediaHTTP.Failure.network:
+            return true
+        default:
+            return false
+        }
     }
     private func attributes(_ line: String) -> [String: String] {
         guard let regex = try? NSRegularExpression(pattern: "([A-Z0-9-]+)=(?:\"([^\"]*)\"|([^,]*))") else { return [:] }

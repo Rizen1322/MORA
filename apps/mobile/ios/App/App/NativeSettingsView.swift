@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// Settings are fetched and saved in the app-process server; no page description or page command.
 struct NativeSettingsView: View {
     @EnvironmentObject private var store: NativeShellStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var settings: NativeSettingsState?
     @State private var confirmed: NativeSettingsState?
     @State private var busy = false
@@ -26,62 +27,65 @@ struct NativeSettingsView: View {
     private var handoff: Bool { settings?.bool("automix", "eqHandoff", fallback: true) != false }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                if let failure {
-                    Section {
-                        Text(failure).foregroundStyle(.red)
-                        Button("Повторить") { Task { await load() } }.disabled(busy)
-                    }.listRowBackground(Color.moraSurface)
-                }
-                if let message { Section { Text(message).foregroundStyle(.secondary) }.listRowBackground(Color.moraSurface) }
-                if settings != nil {
-                    overview
-                    transitions
-                    playback
-                    downloads
-                    appearance
-                    more
-                    backups
-                    Section {
-                        Toggle("Расширенные настройки", isOn: $advanced)
-                    } footer: { Text("DJ-приёмы, пределы переходов и служебные сведения.") }
-                        .listRowBackground(Color.moraSurface)
-                    if advanced { advancedTransitions; services }
-                } else if failure == nil { ProgressView("Загружаем настройки…").listRowBackground(Color.clear) }
-                Section { Color.clear.frame(height: 56).listRowBackground(Color.clear) }
+        Form {
+            if let failure {
+                Section {
+                    Text(failure).foregroundStyle(.red)
+                    Button("Повторить") { Task { await load() } }.disabled(busy)
+                }.listRowBackground(Color.moraSurface)
             }
-            .scrollContentBackground(.hidden)
-            .background(Color.moraBackground)
-            .tint(Color.moraMint)
-            .navigationTitle("Настройки")
-            .accessibilityIdentifier("native-settings-screen")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") } }
-                if busy { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
-            }
-            .refreshable { await load() }
-            .task {
-                await load()
-                while !Task.isCancelled {
-                    do { try await Task.sleep(for: .seconds(10)) } catch { return }
-                    await load(silent: true) // The player and backup restore can change settings while this screen remains open.
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in Task { await load(silent: true) } }
-            .task(id: advanced) {
-                guard advanced else { return }
-                while !Task.isCancelled {
-                    await loadHealth()
-                    do { try await Task.sleep(for: .seconds(10)) } catch { return }
-                }
-            }
-            .confirmationDialog("Очистить кэш звука?", isPresented: $clearCache, titleVisibility: .visible) {
-                Button("Очистить", role: .destructive) { clearAudioCache() }
-            } message: { Text("Декодированный звук и сохранённые планы переходов будут созданы заново при воспроизведении. Медиатека, анализ и история сохранятся.") }
-            .fileImporter(isPresented: $importing, allowedContentTypes: [.json], allowsMultipleSelection: false, onCompletion: inspectBackup)
-            .sheet(item: $share, onDismiss: discardShare) { NativeSettingsShareSheet(url: $0.url) }
+            if let message { Section { Text(message).foregroundStyle(.secondary) }.listRowBackground(Color.moraSurface) }
+            if settings != nil {
+                overview
+                transitions
+                playback
+                downloads
+                appearance
+                more
+                backups
+                Section {
+                    Toggle("Расширенные настройки", isOn: $advanced)
+                } footer: { Text("DJ-приёмы, пределы переходов и служебные сведения.") }
+                    .listRowBackground(Color.moraSurface)
+                if advanced { advancedTransitions; services }
+            } else if failure == nil { ProgressView("Загружаем настройки…").listRowBackground(Color.clear) }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.moraBackground)
+        .tint(Color.moraMint)
+        .navigationTitle("Настройки")
+        .accessibilityIdentifier("native-settings-screen")
+        .toolbar {
+            if busy { ToolbarItem(placement: .topBarTrailing) { ProgressView() } }
+        }
+        .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: advanced)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: off)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: settings?.string("automix", "entryMode", fallback: "smart"))
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: backup?.name)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: failure)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: message)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: settings != nil)
+        .refreshable { await load() }
+        .task {
+            await load()
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(10)) } catch { return }
+                await load(silent: true) // The player and backup restore can change settings while this screen remains open.
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in Task { await load(silent: true) } }
+        .task(id: advanced) {
+            guard advanced else { return }
+            while !Task.isCancelled {
+                await loadHealth()
+                do { try await Task.sleep(for: .seconds(10)) } catch { return }
+            }
+        }
+        .confirmationDialog("Очистить кэш звука?", isPresented: $clearCache, titleVisibility: .visible) {
+            Button("Очистить", role: .destructive) { clearAudioCache() }
+        } message: { Text("Декодированный звук и сохранённые планы переходов будут созданы заново при воспроизведении. Медиатека, анализ и история сохранятся.") }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.json], allowsMultipleSelection: false, onCompletion: inspectBackup)
+        .sheet(item: $share, onDismiss: discardShare) { NativeSettingsShareSheet(url: $0.url) }
     }
 
     private var overview: some View {
@@ -101,12 +105,18 @@ struct NativeSettingsView: View {
     private func statPill(_ label: String, _ value: String, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.white.opacity(0.55)).textCase(.uppercase)
-            Text(value).font(.subheadline.weight(.bold)).foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.8)
+            Text(value)
+                .font(.subheadline.monospacedDigit().weight(.bold))
+                .foregroundStyle(tint)
+                .contentTransition(.numericText())
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color.moraSurfaceElevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(Color.moraSurfaceElevated, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
     }
 
     private var transitions: some View {
@@ -149,7 +159,10 @@ struct NativeSettingsView: View {
                     Text("Проверить файлы медиатеки").foregroundStyle(.white)
                     Spacer()
                 }
-            }.disabled(busy)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(MoraRowPressStyle())
+            .disabled(busy)
         }.listRowBackground(Color.moraSurface)
     }
     private var backups: some View {
@@ -158,21 +171,33 @@ struct NativeSettingsView: View {
                 HStack(spacing: 12) {
                     NativeIconBadge(symbol: "square.and.arrow.up", size: 28, tint: .moraMint)
                     Text("Экспорт медиатеки").foregroundStyle(.white)
+                    Spacer()
                 }
-            }.disabled(busy)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(MoraRowPressStyle())
+            .disabled(busy)
             link("Автоматические копии", "/backups", "clock.arrow.circlepath", tint: .moraGold)
             Button { exportBackup(library: false) } label: {
                 HStack(spacing: 12) {
                     NativeIconBadge(symbol: "square.and.arrow.up.on.square", size: 28, tint: .moraMint)
                     Text("Сохранить копию плейлистов").foregroundStyle(.white)
+                    Spacer()
                 }
-            }.disabled(busy)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(MoraRowPressStyle())
+            .disabled(busy)
             Button { importing = true } label: {
                 HStack(spacing: 12) {
                     NativeIconBadge(symbol: "square.and.arrow.down", size: 28, tint: .moraGold)
                     Text("Восстановить из файла").foregroundStyle(.white)
+                    Spacer()
                 }
-            }.disabled(busy)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(MoraRowPressStyle())
+            .disabled(busy)
             if let backup {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(backup.name)
@@ -221,7 +246,16 @@ struct NativeSettingsView: View {
                 }
             } else if healthFailure == nil { ProgressView("Загружаем сведения…") }
             if let healthFailure { Text("Не удалось обновить сведения: \(healthFailure)").foregroundStyle(.secondary) }
-            Button { exportDiagnostics() } label: { Label("Экспорт диагностики (ZIP)", systemImage: "square.and.arrow.up") }.disabled(busy || !MoraPlaybackJournal.enabled)
+            Button { exportDiagnostics() } label: {
+                HStack(spacing: 12) {
+                    NativeIconBadge(symbol: "square.and.arrow.up", size: 28, tint: .moraMint)
+                    Text("Экспорт диагностики (ZIP)").foregroundStyle(.white)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(MoraRowPressStyle())
+            .disabled(busy || !MoraPlaybackJournal.enabled)
             Button("Очистить кэш звука", role: .destructive) { clearCache = true }.disabled(busy)
         }.listRowBackground(Color.moraSurface)
         Section { link("Как сводятся треки", "/diagnostics", "waveform.path.ecg", detail: "Диагностика AutoMix", tint: .moraGold) }
@@ -232,7 +266,9 @@ struct NativeSettingsView: View {
         VStack(alignment: .leading, spacing: 4) { Text(title); Text(detail).font(.caption).foregroundStyle(.secondary) }
     }
     private func toggle(_ title: String, _ group: String, _ key: String, _ fallback: Bool, _ detail: String, disabled: Bool = false) -> some View {
-        Toggle(isOn: Binding(get: { settings?.bool(group, key, fallback: fallback) ?? fallback }, set: { save(group, key, $0) })) { label(title, detail) }.disabled(busy || disabled)
+        Toggle(isOn: Binding(get: { settings?.bool(group, key, fallback: fallback) ?? fallback }, set: { save(group, key, $0) })) { label(title, detail) }
+            .disabled(busy || disabled)
+            .opacity(disabled ? 0.48 : 1)
     }
     private func picker(_ title: String, _ group: String, _ key: String, _ fallback: String, _ options: [(String, String)], _ detail: String, disabled: Bool = false, numeric: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -251,6 +287,7 @@ struct NativeSettingsView: View {
             Text(detail).font(.caption).foregroundStyle(.secondary)
         }
         .disabled(busy || disabled)
+        .opacity(disabled ? 0.48 : 1)
     }
     private func slider(_ title: String, _ key: String, _ fallback: Double, _ range: ClosedRange<Double>, _ step: Double, _ unit: String, _ detail: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -260,7 +297,9 @@ struct NativeSettingsView: View {
                 if !editing { save("automix", key, settings?.number("automix", key, fallback: fallback) ?? fallback) }
             }).accessibilityLabel(title)
             Text(detail).font(.caption).foregroundStyle(.secondary)
-        }.disabled(busy || off)
+        }
+        .disabled(busy || off)
+        .opacity(off ? 0.48 : 1)
     }
     private func link(_ title: String, _ path: String, _ symbol: String, detail: String? = nil, tint: Color = .moraMint) -> some View {
         Button { store.go(path) } label: {
@@ -273,7 +312,9 @@ struct NativeSettingsView: View {
                 Spacer()
                 Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.35))
             }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(MoraRowPressStyle())
     }
     private func integer(_ value: Any?) -> Int { (value as? NSNumber)?.intValue ?? 0 }
     private func megabytes(_ value: Any?) -> String { String(format: "%.0f МБ", ((value as? NSNumber)?.doubleValue ?? 0) / (1024 * 1024)) }

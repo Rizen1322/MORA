@@ -48,6 +48,7 @@ enum NativePickedFile {
 
 /// Draws row descriptions from the Swift library snapshots or the remaining web pages.
 struct NativePageView: View {
+    var routePath: String? = nil
     var waveSource: Binding<NativeWaveSource>? = nil
     @EnvironmentObject private var store: NativeShellStore
     @Environment(\.dismiss) private var dismiss
@@ -69,13 +70,19 @@ struct NativePageView: View {
     @State private var importPick: NativeImportPick?
     @State private var heroVisible = true
 
+    private var activePath: String { routePath ?? store.path }
+
     var body: some View {
         let current = resolvePage()
-        NavigationStack { dialogs(pageList(current), refresh: current?.refresh) }
+        dialogs(pageList(current), refresh: current?.refresh)
             .sheet(item: $importPick, onDismiss: { reload &+= 1 }) { target in
                 NativeImportPicker(target: target) { choice in
                     if let act = NativePageAct(["name": "resolveImport", "args": ["job": target.job, "position": target.position, "choice": choice]]) { run(act) }
-                }.environmentObject(store)
+                }
+                .environmentObject(store)
+                .presentationBackground(Color.moraBackground)
+                .tint(.moraMint)
+                .preferredColorScheme(.dark)
             }
     }
 
@@ -83,7 +90,7 @@ struct NativePageView: View {
     private func resolvePage() -> NativePage? {
         if let page { return page }
         guard failure == nil, waveSource == nil else { return nil }
-        return (try? store.libraryPage()).flatMap(NativePage.init)
+        return (try? store.libraryPage(for: activePath)).flatMap(NativePage.init)
     }
     private func isCatalog(_ current: NativePage?) -> Bool { current?.style == "catalog" }
     private func hasHero(_ current: NativePage?) -> Bool {
@@ -91,8 +98,8 @@ struct NativePageView: View {
         return false
     }
     private var currentPlaylistId: String? {
-        guard store.path.hasPrefix("/playlist/") else { return nil }
-        let raw = String(store.path.dropFirst("/playlist/".count))
+        guard activePath.hasPrefix("/playlist/") else { return nil }
+        let raw = String(activePath.dropFirst("/playlist/".count))
         guard !raw.isEmpty, !raw.contains("/") else { return nil }
         let decoded = raw.removingPercentEncoding ?? raw
         return decoded.isEmpty ? nil : decoded
@@ -102,11 +109,11 @@ struct NativePageView: View {
         if reduceMotion { heroVisible = visible }
         else { withAnimation(.easeInOut(duration: 0.18)) { heroVisible = visible } }
     }
-    private var nativeImport: Bool { waveSource == nil && store.sharedLibrary && NativeImportState.handles(store.path) }
+    private var nativeImport: Bool { waveSource == nil && store.sharedLibrary && NativeImportState.handles(activePath) }
     /// Smart playlists, duplicates and statistics are native data screens: a shell snapshot must not reload them.
-    private var nativeSmart: Bool { waveSource == nil && store.sharedLibrary && NativeSmartState.handles(store.path) }
+    private var nativeSmart: Bool { waveSource == nil && store.sharedLibrary && NativeSmartState.handles(activePath) }
     /// AutoMix diagnostics reads the JSC API directly: a shell snapshot must not reload and reset its selection.
-    private var nativeDiagnostics: Bool { waveSource == nil && store.sharedLibrary && NativeDiagnosticsState.handles(store.path) }
+    private var nativeDiagnostics: Bool { waveSource == nil && store.sharedLibrary && NativeDiagnosticsState.handles(activePath) }
 
     private func pageList(_ current: NativePage?) -> some View {
         let catalog = isCatalog(current)
@@ -128,8 +135,9 @@ struct NativePageView: View {
                 ContentUnavailableView("Не удалось открыть", systemImage: "exclamationmark.triangle", description: Text(failure))
                     .listRowBackground(Color.clear)
                 Button("Повторить") { reload &+= 1 }
-            } else if waveSource == nil && NativeCatalogState.handles(store.path) {
-                MoraCatalogSkeleton(preview: store.catalogPreview?.path == store.path ? store.catalogPreview : nil)
+                    .listRowBackground(Color.moraSurface)
+            } else if waveSource == nil && NativeCatalogState.handles(activePath) {
+                MoraCatalogSkeleton(preview: store.catalogPreview?.path == activePath ? store.catalogPreview : nil)
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
@@ -166,18 +174,17 @@ struct NativePageView: View {
                         .foregroundStyle(Color.moraBackground)
                         .background(Color.moraMint.opacity(action.enabled ? 1 : 0.4), in: Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(MoraPressStyle())
                 .disabled(!action.enabled || running)
                 .accessibilityIdentifier("wave.play")
             }.padding(.vertical, 6)
         } footer: { Text("Изменения сохраняются автоматически.") }
+            .listRowBackground(Color.moraSurface)
     }
 
     @ToolbarContentBuilder private func toolbar(_ current: NativePage?) -> some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            if waveSource == nil {
-                Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") }
-            } else {
+        if waveSource != nil {
+            ToolbarItem(placement: .topBarLeading) {
                 Button { reload &+= 1 } label: { Label("Обновить", systemImage: "arrow.clockwise") }.disabled(running)
             }
         }
@@ -196,7 +203,7 @@ struct NativePageView: View {
                                 .frame(width: 28, height: 28)
                                 .background(Color.moraMint, in: Circle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(MoraPressStyle())
                         .accessibilityLabel("Слушать")
                         .disabled(running)
                     }
@@ -270,13 +277,13 @@ struct NativePageView: View {
     private func dialogs(_ list: some View, refresh: Double?) -> some View {
         list
             .refreshable {
-                if ["/catalog/", "/public/", "/soundcloud/"].contains(where: { store.path.hasPrefix($0) }) {
+                if ["/catalog/", "/public/", "/soundcloud/"].contains(where: { activePath.hasPrefix($0) }) {
                     if store.sharedLibrary { store.catalog.invalidate() }
                     else { _ = try? await store.call("catalogRefresh") }
                 }
                 await load()
             }
-            .task(id: "\(store.path)|\(nativeImport || nativeSmart || nativeDiagnostics ? 0 : store.revision)|\(reload)|\(waveSource?.wrappedValue.rawValue ?? "")") { await load() }
+            .task(id: "\(activePath)|\(nativeImport || nativeSmart || nativeDiagnostics ? 0 : store.revision)|\(reload)|\(waveSource?.wrappedValue.rawValue ?? "")") { await load() }
             .task(id: refresh) {
                 guard let seconds = refresh else { return }
                 while !Task.isCancelled {
@@ -295,13 +302,13 @@ struct NativePageView: View {
             }
             .onAppear {
                 heroVisible = true
-                if page == nil, waveSource == nil, let local = try? store.libraryPage(), let built = NativePage(local) {
+                if page == nil, waveSource == nil, let local = try? store.libraryPage(for: activePath), let built = NativePage(local) {
                     page = built
                 }
             }
-            .onChange(of: store.path) {
+            .onChange(of: activePath) {
                 heroVisible = true
-                if waveSource == nil, let local = try? store.libraryPage(), let built = NativePage(local) {
+                if waveSource == nil, let local = try? store.libraryPage(for: activePath), let built = NativePage(local) {
                     page = built
                 } else {
                     page = nil
@@ -311,10 +318,15 @@ struct NativePageView: View {
             .onChange(of: waveSource?.wrappedValue) { failure = nil; pendingToggles = [:]; pendingChoices = [:] }
             .safeAreaInset(edge: .bottom) {
                 if waveSource != nil, let text = store.banner {
-                    Text(text).font(.footnote).padding().frame(maxWidth: .infinity)
-                        .background(.ultraThinMaterial).accessibilityIdentifier("wave.message")
+                    Text(text).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
+                        .padding(.horizontal, 16).padding(.vertical, 10)
+                        .moraGlass(Capsule())
+                        .padding(.horizontal, 20).padding(.bottom, 10)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .accessibilityIdentifier("wave.message")
                 }
             }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: store.banner)
     }
 
     @ViewBuilder private func styled(_ list: some View, catalog: Bool) -> some View {
@@ -337,10 +349,12 @@ struct NativePageView: View {
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.45))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(MoraPressStyle())
+                .transition(.opacity)
                 .accessibilityLabel("Очистить поиск")
             }
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: query.isEmpty)
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(Color.moraSurfaceElevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -465,9 +479,9 @@ struct NativePageView: View {
                                 Text(options[index].label).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
                                     .frame(maxWidth: .infinity, minHeight: 44).padding(.horizontal, 6).padding(.vertical, 4)
                                     .foregroundStyle(selected ? Color.moraMint : Color.white.opacity(0.8))
-                                    .background(selected ? Color.moraMint.opacity(0.15) : Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
-                                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? Color.moraMint.opacity(0.5) : Color.white.opacity(0.08)))
-                            }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
+                                    .background(selected ? Color.moraMint.opacity(0.15) : Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(selected ? Color.moraMint.opacity(0.5) : Color.white.opacity(0.08)))
+                            }.buttonStyle(MoraPressStyle()).accessibilityAddTraits(selected ? .isSelected : [])
                         }
                     }.disabled(disabled || running)
                 }.padding(.vertical, 6)
@@ -490,7 +504,7 @@ struct NativePageView: View {
 
         case .button(let title, let symbol, let act, let style, let disabled, let confirmRow, let promptRow):
             let primary = style == "primary", destructive = style == "destructive"
-            Button(role: destructive ? .destructive : nil) {
+            let btn = Button(role: destructive ? .destructive : nil) {
                 if let confirmRow { confirm = (confirmRow, act) }
                 else if let promptRow { promptText = promptRow.initial; prompt = (promptRow, act) }
                 else { run(act, ["form": form]) }
@@ -518,7 +532,13 @@ struct NativePageView: View {
                         .contentShape(Rectangle())
                 }
             }
-            .buttonStyle(.plain)
+            Group {
+                if primary {
+                    btn.buttonStyle(MoraPressStyle())
+                } else {
+                    btn.buttonStyle(MoraRowPressStyle())
+                }
+            }
             .listRowBackground(primary ? Color.clear : (catalog ? Color.moraBackground : Color.moraSurface))
             .listRowInsets(primary ? EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0) : EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
             .disabled(disabled || running)
@@ -534,7 +554,7 @@ struct NativePageView: View {
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MoraRowPressStyle())
 
         case .url(let title, let url):
             Link(destination: url) {
@@ -571,7 +591,7 @@ struct NativePageView: View {
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MoraRowPressStyle())
             .disabled(running)
 
         case .progress(let title, let value, let detail):
@@ -584,14 +604,18 @@ struct NativePageView: View {
             .tint(.moraMint)
 
         case .hero(let style, let title, let subtitle, let detail, let cover, let play, let shuffle):
-            let width = UIScreen.main.bounds.width
             if style == "artist" {
                 ZStack(alignment: .bottom) {
-                    NativeCover(url: cover, size: width, radius: 0, monogram: title)
-                        .frame(width: width, height: 310)
-                        .clipped()
-                        .blur(radius: 34)
-                        .opacity(0.5)
+                    Color.clear.frame(height: 310).overlay {
+                        GeometryReader { geo in
+                            NativeCover(url: cover, size: max(geo.size.width, 310), radius: 0, monogram: title)
+                                .frame(width: geo.size.width, height: 310)
+                                .clipped()
+                                .blur(radius: 34)
+                                .opacity(0.5)
+                        }
+                    }
+                    .clipped()
                     LinearGradient(
                         colors: [Color.moraBackground.opacity(0.1), Color.moraBackground.opacity(0.65), Color.moraBackground],
                         startPoint: .top,
@@ -629,11 +653,16 @@ struct NativePageView: View {
                 let showCollage = playlistId != nil && collage.count >= 4
                 ZStack(alignment: .top) {
                     ZStack(alignment: .bottom) {
-                        NativeCover(url: cover ?? collage.first, size: width, radius: 0, monogram: title)
-                            .frame(width: width, height: 320)
-                            .clipped()
-                            .blur(radius: 44)
-                            .opacity(0.38)
+                        Color.clear.frame(height: 320).overlay {
+                            GeometryReader { geo in
+                                NativeCover(url: cover ?? collage.first, size: max(geo.size.width, 320), radius: 0, monogram: title)
+                                    .frame(width: geo.size.width, height: 320)
+                                    .clipped()
+                                    .blur(radius: 44)
+                                    .opacity(0.38)
+                            }
+                        }
+                        .clipped()
                         LinearGradient(
                             colors: [Color.moraBackground.opacity(0.1), Color.moraBackground.opacity(0.75), Color.moraBackground],
                             startPoint: .top,
@@ -831,32 +860,32 @@ struct NativePageView: View {
     @MainActor private func load() async {
         do {
             let value: Any?
-            if waveSource == nil, store.sharedLibrary, NativeImportState.handles(store.path) {
-                value = try await store.imports.page(store.path, request: { try await NativeServerApp.request($0, $1, body: $2) })
+            if waveSource == nil, store.sharedLibrary, NativeImportState.handles(activePath) {
+                value = try await store.imports.page(activePath, request: { try await NativeServerApp.request($0, $1, body: $2) })
             }
-            else if waveSource == nil, store.sharedLibrary, NativeSmartState.handles(store.path) {
-                value = try await store.smart.page(store.path, request: { try await NativeServerApp.request($0, $1, body: $2) })
+            else if waveSource == nil, store.sharedLibrary, NativeSmartState.handles(activePath) {
+                value = try await store.smart.page(activePath, request: { try await NativeServerApp.request($0, $1, body: $2) })
             }
-            else if waveSource == nil, store.sharedLibrary, NativeDiagnosticsState.handles(store.path) {
-                value = try await store.diagnostics.page(store.path, name: { store.byId[$0]?.title }, automix: store.ui.playback.automix,
+            else if waveSource == nil, store.sharedLibrary, NativeDiagnosticsState.handles(activePath) {
+                value = try await store.diagnostics.page(activePath, name: { store.byId[$0]?.title }, automix: store.ui.playback.automix,
                                                          request: { try await NativeServerApp.request($0, $1, body: $2) })
             }
             else if let waveSource, store.sharedLibrary {
                 value = try await store.wave.settingsPage(waveSource.wrappedValue.rawValue, request: { try await NativeServerApp.request($0, $1, body: $2) })
             }
-            else if waveSource == nil, store.sharedLibrary, NativeWaveState.handles(store.path) {
+            else if waveSource == nil, store.sharedLibrary, NativeWaveState.handles(activePath) {
                 value = try await store.wave.page(source: store.waveSource?.rawValue, ui: store.ui, byId: store.byId, libraryCount: store.library.count,
                                                   request: { try await NativeServerApp.request($0, $1, body: $2) })
             }
-            else if waveSource == nil, store.sharedLibrary, NativeCatalogState.handles(store.path) {
-                value = try await store.catalog.page(store.path,
+            else if waveSource == nil, store.sharedLibrary, NativeCatalogState.handles(activePath) {
+                value = try await store.catalog.page(activePath,
                                                      request: { try await NativeServerApp.request($0, $1, body: $2) },
                                                      localLookup: { store.localCatalogTrack(provider: $0, externalId: $1) })
             }
-            else if waveSource == nil, NativeRoute.screen(store.path) != .page || (store.sharedLibrary && NativeShellStore.ownScreens.contains(store.path)) {
+            else if waveSource == nil, NativeRoute.screen(activePath) != .page || (store.sharedLibrary && NativeShellStore.ownScreens.contains(activePath)) {
                 return // the shell already replaced this view with its own screen for that route
             }
-            else if waveSource == nil, let local = try store.libraryPage() { value = local }
+            else if waveSource == nil, let local = try store.libraryPage(for: activePath) { value = local }
             else { value = try await store.call(waveSource == nil ? "page" : "waveSettings", waveSource.map { ["source": $0.wrappedValue.rawValue] } ?? [:]) }
             guard !Task.isCancelled else { return }
             page = NativePage(value)
@@ -874,13 +903,13 @@ struct NativePageView: View {
         guard !running else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         let args = act.args.merging(extra) { _, new in new }
-        if store.sharedLibrary, NativeImportState.handles(store.path), act.name == "pickImport" {
+        if store.sharedLibrary, NativeImportState.handles(activePath), act.name == "pickImport" {
             do { importPick = try store.imports.pick(args["position"] as? Int ?? -1) }
             catch { store.show(error.localizedDescription) }
             return
         }
         if act.name == "playlistSort", let id = args["id"] as? String, let value = args["value"] as? String,
-           (try? store.libraryPage()) != nil {
+           (try? store.libraryPage(for: activePath)) != nil {
             store.playlistSort[id] = value
             reload &+= 1
             return
@@ -889,7 +918,7 @@ struct NativePageView: View {
         Task { @MainActor in
             defer { running = false; loadingRowTitle = nil; reload &+= 1 }
             do {
-                if store.sharedLibrary, NativeImportState.handles(store.path), NativeImportState.supports(act.name) {
+                if store.sharedLibrary, NativeImportState.handles(activePath), NativeImportState.supports(act.name) {
                     let result = try await store.imports.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2, timeout: 120) })
                     if result.mutated {
                         do { try await store.refreshLibraryAfterMutation() }
@@ -899,7 +928,7 @@ struct NativePageView: View {
                     if let path = result.path { store.go(path) }
                     return
                 }
-                if store.sharedLibrary, NativeSmartState.handles(store.path), NativeSmartState.supports(act.name) {
+                if store.sharedLibrary, NativeSmartState.handles(activePath), NativeSmartState.supports(act.name) {
                     let result = try await store.smart.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2, timeout: 120) })
                     if result.mutated {
                         do { try await store.refreshLibraryAfterMutation() }
@@ -909,11 +938,11 @@ struct NativePageView: View {
                     if let path = result.path { store.go(path) }
                     return
                 }
-                if store.sharedLibrary, NativeDiagnosticsState.handles(store.path), NativeDiagnosticsState.supports(act.name) {
+                if store.sharedLibrary, NativeDiagnosticsState.handles(activePath), NativeDiagnosticsState.supports(act.name) {
                     _ = try await store.diagnostics.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2) })
                     return
                 }
-                if store.sharedLibrary, (waveSource != nil || NativeWaveState.handles(store.path)) {
+                if store.sharedLibrary, (waveSource != nil || NativeWaveState.handles(activePath)) {
                     if NativeWaveState.supports(act.name) {
                         if let message = try await store.wave.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2) }) {
                             store.show(message)
@@ -941,7 +970,7 @@ struct NativePageView: View {
                         }
                     }
                 }
-                if store.sharedLibrary, NativeCatalogState.handles(store.path), NativeCatalogState.supports(act.name) {
+                if store.sharedLibrary, NativeCatalogState.handles(activePath), NativeCatalogState.supports(act.name) {
                     try await store.catalog.execute(act.name, args, request: { try await NativeServerApp.request($0, $1, body: $2) })
                     return
                 }
@@ -1064,6 +1093,7 @@ private struct NativePageSlider: View {
 
 struct NativeStatisticsView: View {
     @EnvironmentObject private var store: NativeShellStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var loaded = false
     @State private var failure: String?
     @State private var plays = 0
@@ -1086,51 +1116,52 @@ struct NativeStatisticsView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    if let failure {
-                        VStack(spacing: 12) {
-                            Text(failure).font(.subheadline).foregroundStyle(.white.opacity(0.75)).multilineTextAlignment(.center)
-                            Button("Повторить") { Task { await load() } }
-                                .buttonStyle(.borderedProminent).tint(.moraMint).foregroundStyle(Color.moraBackground)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(24)
-                        .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    } else if !loaded {
-                        ProgressView("Загружаем статистику…")
-                            .tint(.moraMint)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 72)
-                    } else if plays == 0 && topTracks.isEmpty && topArtists.isEmpty {
-                        ContentUnavailableView(
-                            "Пока нет прослушиваний",
-                            systemImage: "chart.bar",
-                            description: Text("Включите волну или любимую музыку — итоги за 30 дней появятся здесь.")
-                        )
-                        .padding(.top, 48)
-                    } else {
-                        summaryCards
-                        if !topArtists.isEmpty { artistsSection }
-                        if !topTracks.isEmpty { tracksSection }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                if let failure {
+                    VStack(spacing: 12) {
+                        Text(failure).font(.subheadline).foregroundStyle(.white.opacity(0.75)).multilineTextAlignment(.center)
+                        Button("Повторить") { Task { await load() } }
+                            .buttonStyle(.borderedProminent).tint(.moraMint).foregroundStyle(Color.moraBackground)
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(24)
+                    .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                } else if !loaded {
+                    VStack(alignment: .leading, spacing: 18) {
+                        HStack(spacing: 10) {
+                            ForEach(0..<3, id: \.self) { _ in
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .fill(Color.moraSurface)
+                                    .frame(height: 86)
+                            }
+                        }
+                        .modifier(MoraShimmer())
+                        MoraSearchSkeleton(rows: 5)
+                    }
+                } else if plays == 0 && topTracks.isEmpty && topArtists.isEmpty {
+                    ContentUnavailableView(
+                        "Пока нет прослушиваний",
+                        systemImage: "chart.bar",
+                        description: Text("Включите волну или любимую музыку — итоги за 30 дней появятся здесь.")
+                    )
+                    .padding(.top, 48)
+                } else {
+                    summaryCards
+                    if !topArtists.isEmpty { artistsSection }
+                    if !topTracks.isEmpty { tracksSection }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
             }
-            .scrollContentBackground(.hidden)
-            .background(Color.moraBackground)
-            .navigationTitle("Статистика")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { store.back() } label: { Label("Назад", systemImage: "chevron.backward") }
-                }
-            }
-            .refreshable { await load() }
-            .task { await load() }
+            .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: loaded)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.moraBackground)
+        .navigationTitle("Статистика")
+        .navigationBarTitleDisplayMode(.large)
+        .refreshable { await load() }
+        .task { await load() }
         .accessibilityIdentifier("native-statistics-screen")
     }
 
@@ -1196,7 +1227,8 @@ struct NativeStatisticsView: View {
                                         Capsule().fill(Color.white.opacity(0.08))
                                         Capsule()
                                             .fill(LinearGradient(colors: [.moraMint, .moraMint.opacity(0.5)], startPoint: .leading, endPoint: .trailing))
-                                            .frame(width: max(8, geo.size.width * ratio))
+                                            .frame(width: loaded ? max(8, geo.size.width * ratio) : 8)
+                                            .animation(reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.85), value: loaded)
                                     }
                                 }
                                 .frame(height: 5)
@@ -1207,7 +1239,7 @@ struct NativeStatisticsView: View {
                         .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.07), lineWidth: 1))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(MoraRowPressStyle())
                 }
             }
         }
@@ -1255,7 +1287,7 @@ struct NativeStatisticsView: View {
                         .background(Color.moraSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.07), lineWidth: 1))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(MoraRowPressStyle())
                     .disabled(track == nil)
                 }
             }

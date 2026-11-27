@@ -6,17 +6,212 @@ import UIKit
 
 /// iPhone full player over the WebView while NativeMixHost plays. It reads native state only,
 /// so it keeps working while WebContent is suspended or reloading.
+final class NativePlayerHostingController: UIHostingController<NativePlayerView> {
+    fileprivate var transitionController: NativePlayerTransitionController?
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isBeingDismissed || presentingViewController == nil {
+            rootView.model.finish()
+        }
+    }
+}
+
+private final class NativePlayerTransitionController: NSObject, UIViewControllerTransitioningDelegate, UIViewControllerAnimatedTransitioning, UIGestureRecognizerDelegate {
+    weak var sourceView: UIView?
+    private weak var presented: UIViewController?
+    private var presenting = true
+    private var interactive: UIPercentDrivenInteractiveTransition?
+
+    init(sourceView: UIView) {
+        self.sourceView = sourceView
+        super.init()
+    }
+
+    func attachDismissGesture(to controller: UIViewController) {
+        self.presented = controller
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        pan.delegate = self
+        pan.maximumNumberOfTouches = 1
+        controller.view.addGestureRecognizer(pan)
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer, let view = pan.view else { return false }
+        let velocity = pan.velocity(in: view)
+        guard velocity.y > 0, velocity.y > abs(velocity.x) * 1.25 else { return false }
+        let hit = view.hitTest(pan.location(in: view), with: nil)
+        var cursor: UIView? = hit
+        while let current = cursor, current !== view {
+            if current is UISlider { return false }
+            if let scroll = current as? UIScrollView, scroll.contentOffset.y > -scroll.adjustedContentInset.top + 2 {
+                return false
+            }
+            cursor = current.superview
+        }
+        return true
+    }
+
+    @objc private func handlePan(_ pan: UIPanGestureRecognizer) {
+        guard let presented else { return }
+        let dy = max(0, pan.translation(in: pan.view).y)
+        let vy = pan.velocity(in: pan.view).y
+        let height = max(320, pan.view?.bounds.height ?? 700)
+        let progress = min(1, dy / (height * 0.45))
+        switch pan.state {
+        case .began:
+            let driver = UIPercentDrivenInteractiveTransition()
+            interactive = driver
+            presented.presentingViewController?.dismiss(animated: true)
+        case .changed:
+            interactive?.update(progress)
+        case .ended, .cancelled, .failed:
+            guard let driver = interactive else { break }
+            interactive = nil
+            if pan.state == .ended && (progress > 0.28 || vy > 700) {
+                driver.finish()
+            } else {
+                driver.cancel()
+            }
+        default:
+            break
+        }
+    }
+
+    func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        self.presenting = true
+        return self
+    }
+
+    func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        self.presenting = false
+        return self
+    }
+
+    func interactionControllerForDismissal(using animator: UIViewControllerAnimatedTransitioning) -> UIViewControllerInteractiveTransitioning? {
+        interactive
+    }
+
+    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
+        0.44
+    }
+
+    func animateTransition(using ctx: UIViewControllerContextTransitioning) {
+        let container = ctx.containerView
+        guard let fromVC = ctx.viewController(forKey: .from),
+              let toVC = ctx.viewController(forKey: .to) else {
+            ctx.completeTransition(false)
+            return
+        }
+        let reduce = UIAccessibility.isReduceMotionEnabled
+        let targetFrame = ctx.finalFrame(for: toVC)
+        let pillFrame: CGRect = {
+            if let sourceView, sourceView.window != nil {
+                return sourceView.convert(sourceView.bounds, to: container)
+            }
+            return CGRect(x: 14, y: container.bounds.height - 130, width: max(120, container.bounds.width - 28), height: 56)
+        }()
+
+        if presenting {
+            guard let toView = ctx.view(forKey: .to) else { ctx.completeTransition(false); return }
+            let dim = UIView(frame: container.bounds)
+            dim.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+            dim.alpha = 0
+            container.addSubview(dim)
+            toView.frame = reduce ? targetFrame : pillFrame
+            toView.layer.cornerCurve = .continuous
+            toView.layer.cornerRadius = reduce ? 0 : pillFrame.height / 2
+            toView.layer.masksToBounds = true
+            if reduce { toView.alpha = 0 }
+            container.addSubview(toView)
+            let snapshot = sourceView?.snapshotView(afterScreenUpdates: false)
+            if !reduce, let snapshot {
+                snapshot.frame = toView.bounds
+                snapshot.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                toView.addSubview(snapshot)
+            }
+            sourceView?.isHidden = true
+
+            let animator = UIViewPropertyAnimator(duration: reduce ? 0.2 : 0.44, dampingRatio: reduce ? 1.0 : 0.88) {
+                dim.alpha = 1
+                toView.frame = targetFrame
+                toView.layer.cornerRadius = 0
+                toView.alpha = 1
+                snapshot?.alpha = 0
+                if !reduce { fromVC.view.transform = CGAffineTransform(scaleX: 0.95, y: 0.95) }
+            }
+            animator.addCompletion { _ in
+                dim.removeFromSuperview()
+                snapshot?.removeFromSuperview()
+                fromVC.view.transform = .identity
+                let completed = !ctx.transitionWasCancelled
+                if !completed { self.sourceView?.isHidden = false }
+                ctx.completeTransition(completed)
+            }
+            animator.startAnimation()
+        } else {
+            guard let fromView = ctx.view(forKey: .from) else { ctx.completeTransition(false); return }
+            let dim = UIView(frame: container.bounds)
+            dim.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+            container.insertSubview(dim, belowSubview: fromView)
+            fromView.layer.cornerCurve = .continuous
+            fromView.layer.masksToBounds = true
+            let animator = UIViewPropertyAnimator(duration: reduce ? 0.18 : 0.40, dampingRatio: reduce ? 1.0 : 0.9) {
+                dim.alpha = 0
+                fromVC.view.transform = .identity
+                toVC.view.transform = .identity
+                if reduce {
+                    fromView.alpha = 0
+                } else {
+                    fromView.frame = pillFrame
+                    fromView.layer.cornerRadius = pillFrame.height / 2
+                    fromView.alpha = 0.2
+                }
+            }
+            animator.addCompletion { _ in
+                dim.removeFromSuperview()
+                toVC.view.transform = .identity
+                let completed = !ctx.transitionWasCancelled
+                if completed {
+                    self.sourceView?.isHidden = false
+                } else {
+                    fromView.frame = container.bounds
+                    fromView.layer.cornerRadius = 0
+                    fromView.alpha = 1
+                }
+                ctx.completeTransition(completed)
+            }
+            animator.startAnimation()
+        }
+    }
+}
+
 enum NativePlayerSheet {
     /// `finished` receives "close" or "more" («Ещё»: the page opens its own full player).
-    static func present(host: NativeMixHost, from parent: UIViewController, finished: @escaping (String) -> Void) {
+    static func present(host: NativeMixHost, from parent: UIViewController, sourceView: UIView? = nil, finished: @escaping (String) -> Void) {
+        let resolvedSource = sourceView ?? (parent as? MoraRootViewController)?.miniPlayerSourceView
         let model = NativePlayerModel(host: host)
-        let controller = UIHostingController(rootView: NativePlayerView(model: model))
+        let controller = NativePlayerHostingController(rootView: NativePlayerView(model: model))
         model.controller = controller
         model.onFinish = finished
-        controller.modalPresentationStyle = .pageSheet
-        controller.sheetPresentationController?.prefersGrabberVisible = true
         controller.overrideUserInterfaceStyle = .dark
         controller.view.backgroundColor = UIColor(red: 5 / 255, green: 13 / 255, blue: 10 / 255, alpha: 1)
+        if #available(iOS 18.0, *), let resolvedSource {
+            let options = UIViewController.Transition.ZoomOptions()
+            options.dimmingColor = UIColor.black.withAlphaComponent(0.45)
+            controller.preferredTransition = .zoom(options: options) { [weak parent, weak resolvedSource] _ in
+                resolvedSource ?? (parent as? MoraRootViewController)?.miniPlayerSourceView
+            }
+        } else if let resolvedSource {
+            let delegate = NativePlayerTransitionController(sourceView: resolvedSource)
+            controller.transitionController = delegate
+            controller.modalPresentationStyle = .custom
+            controller.transitioningDelegate = delegate
+            delegate.attachDismissGesture(to: controller)
+        } else {
+            controller.modalPresentationStyle = .pageSheet
+            controller.sheetPresentationController?.prefersGrabberVisible = true
+        }
         parent.present(controller, animated: true)
     }
 }
@@ -48,9 +243,40 @@ final class NativePlayerModel: ObservableObject {
 
     init(host: NativeMixHost) {
         self.host = host
-        NativeShellStore.shared?.$ui.map(\.playback).removeDuplicates().assign(to: &$modes)
-        NativeShellStore.shared?.$banner.assign(to: &$banner)
-        NativeShellStore.shared?.$offline.assign(to: &$offline)
+        if let store = NativeShellStore.shared {
+            self.modes = store.ui.playback
+            self.banner = store.banner
+            self.offline = store.offline
+            if store.nativePlaying {
+                let p = store.player
+                self.state = NativePlayerState([
+                    "active": true,
+                    "playing": p.playing,
+                    "position": store.playbackProgress.position,
+                    "duration": store.playbackProgress.duration,
+                    "entryId": p.entryId,
+                    "currentTrack": ["trackId": p.trackId, "title": p.title, "artist": p.artist],
+                ])
+                self.artwork = store.artwork ?? store.byId[p.trackId]?.cover.flatMap { NativeCovers.cached($0) }
+                self.reaction = store.reaction(p.trackId)
+                if !p.trackId.isEmpty { loadNavigation(p.trackId) }
+            } else if let now = store.ui.now {
+                self.state = NativePlayerState([
+                    "active": true,
+                    "playing": now.playing,
+                    "position": now.position,
+                    "duration": now.duration,
+                    "entryId": now.entryId,
+                    "currentTrack": ["trackId": now.id, "title": now.title, "artist": now.artist],
+                ])
+                self.artwork = now.cover.flatMap { NativeCovers.cached($0) }
+                self.reaction = store.reaction(now.id)
+                if !now.id.isEmpty { loadNavigation(now.id) }
+            }
+            store.$ui.map(\.playback).removeDuplicates().assign(to: &$modes)
+            store.$banner.assign(to: &$banner)
+            store.$offline.assign(to: &$offline)
+        }
     }
     #if DEBUG
     var visualCheck = false
@@ -627,23 +853,37 @@ private struct HorizontalCoverSwipe: UIViewRepresentable {
 }
 
 struct NativePlayerView: View {
+    private enum PlayerPanel { case cover, lyrics, queue }
+
     @ObservedObject var model: NativePlayerModel
     @ObservedObject private var sleep = NativeSleepTimer.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var queueOpen = false
-    @State private var showLyrics = false
+    @State private var panel: PlayerPanel = .cover
     @State private var lyricsRefreshToken = 0
     @State private var coverDragOffset: CGFloat = 0
+    @State private var swipeDirection: Int = 0
+    @State private var prevTapCount = 0
+    @State private var nextTapCount = 0
     @State private var showLikeBurst = false
     @State private var likeBurstGeneration = 0
     @Namespace private var playerLayout
 
+    private var queueOpen: Bool { panel == .queue }
+    private var showLyrics: Bool { panel == .lyrics }
+
     var body: some View {
         let s = model.state
         VStack(spacing: 0) {
+            Capsule()
+                .fill(Color.white.opacity(0.28))
+                .frame(width: 36, height: 5)
+                .padding(.top, 2)
+                .padding(.bottom, 6)
+                .accessibilityHidden(true)
             if !showLyrics {
                 HStack {
                     IconButton(symbol: "chevron.down", label: "Свернуть плеер") { model.close("close") }
+                        .buttonStyle(MoraPressStyle(scale: 0.88))
                     Spacer()
                     VStack(spacing: 3) {
                         Text(model.offline ? "Нет сети" : "Сейчас играет").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
@@ -660,7 +900,7 @@ struct NativePlayerView: View {
                                 .background(Color.moraMint.opacity(0.14), in: Capsule())
                                 .overlay(Capsule().stroke(Color.moraMint.opacity(0.24), lineWidth: 0.6))
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(MoraPressStyle(scale: 0.94))
                             .accessibilityLabel("Источник: \(badge.text). Выбрать другую версию")
                         }
                     }
@@ -669,21 +909,25 @@ struct NativePlayerView: View {
                         trackMenuItems(s)
                     } label: {
                         Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
-                    }.accessibilityLabel("Действия с треком")
+                    }
+                    .buttonStyle(MoraPressStyle(scale: 0.88))
+                    .accessibilityLabel("Действия с треком")
                 }
                 .padding(.horizontal, -10)
             }
             if showLyrics {
                 compactLyricsHeader(s)
-                    .padding(.top, 8)
+                    .padding(.top, 4)
                     .padding(.bottom, 6)
                 NativeLyricsView(model: model, externalRefresh: lyricsRefreshToken)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .transition(.opacity)
+                    .transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : 16)))
             } else if queueOpen {
                 Spacer(minLength: 12)
                 HStack(spacing: 12) {
-                    NativeCover(url: nil, size: 64, radius: 10, image: model.artwork, monogram: s.title).matchedGeometryEffect(id: "cover", in: playerLayout)
+                    NativeCover(url: nil, radius: 10, image: model.artwork, monogram: s.title, aspectSquare: true)
+                        .frame(width: 64, height: 64)
+                        .matchedGeometryEffect(id: "cover", in: playerLayout)
                     metadata.matchedGeometryEffect(id: "metadata", in: playerLayout)
                 }
                 NativeQueueContent(model: model).frame(maxHeight: .infinity)
@@ -701,8 +945,9 @@ struct NativePlayerView: View {
             NativeSystemVolume().frame(height: 32).padding(.top, showLyrics ? 6 : 12)
             HStack {
                 IconButton(symbol: showLyrics ? "quote.bubble.fill" : "quote.bubble", label: showLyrics ? "Скрыть текст песни" : "Текст песни") {
-                    queueOpen = false; showLyrics.toggle()
+                    panel = (panel == .lyrics) ? .cover : .lyrics
                 }
+                .buttonStyle(MoraPressStyle(scale: 0.88))
                 .foregroundStyle(showLyrics ? .white : .white.opacity(0.7))
                 .background(Circle().fill(Color.white.opacity(showLyrics ? 0.18 : 0)).frame(width: 42, height: 42))
                 Spacer()
@@ -711,15 +956,16 @@ struct NativePlayerView: View {
                 RoutePicker().frame(width: 44, height: 44)
                 Spacer()
                 IconButton(symbol: "list.bullet", label: queueOpen ? "Показать обложку" : "Очередь") {
-                    showLyrics = false; queueOpen.toggle()
+                    panel = (panel == .queue) ? .cover : .queue
                 }
+                .buttonStyle(MoraPressStyle(scale: 0.88))
                 .foregroundStyle(queueOpen ? Color.moraMint : .white.opacity(0.7))
                 .background(Circle().fill(Color.moraMint.opacity(queueOpen ? 0.2 : 0)).frame(width: 42, height: 42))
             }
             .padding(.top, 10)
         }
         .padding(.horizontal, 24)
-        .padding(.top, 16)
+        .padding(.top, 8)
         .padding(.bottom, 8)
         .foregroundStyle(.white)
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
@@ -732,36 +978,51 @@ struct NativePlayerView: View {
             }
         }
         .animation(.easeOut(duration: 0.25), value: model.banner)
-        .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.48, dampingFraction: 0.86), value: queueOpen)
-        .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.46, dampingFraction: 0.86), value: showLyrics)
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.44, dampingFraction: 0.85), value: panel)
         .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.84), value: s.blending)
-        .onChange(of: queueOpen) { _, open in if open { coverDragOffset = 0 } }
-        .onChange(of: showLyrics) { _, open in if open { coverDragOffset = 0 } }
+        .onChange(of: panel) { _, next in if next != .cover { coverDragOffset = 0 } }
+        .onChange(of: s.entryId) { _, _ in
+            if swipeDirection != 0 {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(450))
+                    swipeDirection = 0
+                }
+            }
+        }
         .transaction { if reduceMotion { $0.animation = nil; $0.disablesAnimations = true } }
         .alert("Не удалось выполнить действие", isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })) { Button("Понятно", role: .cancel) {} } message: { Text(model.actionError ?? "") }
         .sheet(isPresented: Binding(get: { !model.playlistTarget.isEmpty }, set: { if !$0 { model.playlistTarget = [] } })) {
             if let store = NativeShellStore.shared {
                 NativePlaylistPicker(tracks: model.playlistTarget).environmentObject(store)
+                    .presentationBackground(Color.moraBackground)
+                    .presentationDragIndicator(.visible)
+                    .tint(.moraMint)
+                    .preferredColorScheme(.dark)
             } else {
                 NavigationStack {
                     Text("Медиатека недоступна").foregroundStyle(.secondary)
                         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { model.playlistTarget = [] } } }
                 }
+                .presentationBackground(Color.moraBackground)
+                .preferredColorScheme(.dark)
             }
         }
         .onAppear {
             model.start()
             #if DEBUG
-            if model.visualCheck { Task { @MainActor in try? await Task.sleep(for: .seconds(4)); if !model.visualShowLyrics { queueOpen = true } } }
+            if model.visualCheck { Task { @MainActor in try? await Task.sleep(for: .seconds(4)); if !model.visualShowLyrics { panel = .queue } } }
             #endif
         }
         #if DEBUG
         .onChange(of: model.visualShowLyrics) { _, value in
-            if value { queueOpen = false }
-            showLyrics = value
+            panel = value ? .lyrics : .cover
         }
         #endif
-        .onDisappear { model.finish() }
+        .onDisappear {
+            if !(model.controller is NativePlayerHostingController) {
+                model.finish()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in model.stop() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in model.start() }
 
@@ -814,12 +1075,13 @@ struct NativePlayerView: View {
 
     private func compactLyricsHeader(_ s: NativePlayerState) -> some View {
         HStack(spacing: 12) {
-            Button { showLyrics = false } label: {
-                NativeCover(url: nil, size: 54, radius: 10, image: model.artwork, monogram: s.title)
+            Button { panel = .cover } label: {
+                NativeCover(url: nil, radius: 10, image: model.artwork, monogram: s.title, aspectSquare: true)
+                    .frame(width: 56, height: 56)
                     .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.16), lineWidth: 0.75))
                     .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MoraPressStyle(scale: 0.94))
             .matchedGeometryEffect(id: "cover", in: playerLayout)
             .accessibilityLabel("Показать обложку")
             VStack(alignment: .leading, spacing: 2) {
@@ -836,12 +1098,14 @@ struct NativePlayerView: View {
             .matchedGeometryEffect(id: "metadata", in: playerLayout)
             Button { model.react(1) } label: {
                 Image(systemName: model.reaction > 0 ? "heart.fill" : "heart")
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.bounce, value: model.reaction > 0)
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(model.reaction > 0 ? Color.moraMint : .white.opacity(0.85))
                     .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MoraPressStyle(scale: 0.88))
             .accessibilityLabel(model.reaction > 0 ? "Убрать лайк" : "Нравится")
             Menu {
                 trackMenuItems(s)
@@ -891,9 +1155,13 @@ struct NativePlayerView: View {
                 artistLine
             }.frame(maxWidth: .infinity, alignment: .leading)
             IconButton(symbol: model.reaction > 0 ? "heart.fill" : "heart", label: model.reaction > 0 ? "Убрать лайк" : "Нравится") { model.react(1) }
+                .buttonStyle(MoraPressStyle(scale: 0.88))
+                .symbolEffect(.bounce, value: model.reaction > 0)
                 .foregroundStyle(model.reaction > 0 ? Color.moraMint : .white)
                 .accessibilityValue(model.reaction > 0 ? "Включено" : "Выключено")
             IconButton(symbol: model.reaction < 0 ? "hand.thumbsdown.fill" : "hand.thumbsdown", label: "Не нравится") { model.react(-1) }
+                .buttonStyle(MoraPressStyle(scale: 0.88))
+                .symbolEffect(.bounce, value: model.reaction < 0)
                 .foregroundStyle(model.reaction < 0 ? Color.moraGold : .white.opacity(0.7))
                 .accessibilityValue(model.reaction < 0 ? "Включено" : "Выключено")
         }
@@ -913,7 +1181,7 @@ struct NativePlayerView: View {
     }
     @ViewBuilder private var artistLine: some View {
         if model.artists.isEmpty {
-            Button { model.open("artist") } label: { Text(model.state.artist).font(.title3).foregroundStyle(.white.opacity(0.65)).lineLimit(1) }.buttonStyle(.plain)
+            Button { model.open("artist") } label: { Text(model.state.artist).contentTransition(.opacity).font(.title3).foregroundStyle(.white.opacity(0.65)).lineLimit(1) }.buttonStyle(.plain)
         } else {
             Text(artistText).font(.title3).lineLimit(1).contentTransition(.opacity)
                 .environment(\.openURL, OpenURLAction { url in
@@ -969,7 +1237,7 @@ struct NativePlayerView: View {
                         .resizable()
                         .scaledToFill()
                         .saturation(showLyrics ? 1.2 : 1.0)
-                        .blur(radius: showLyrics ? 80 : 60)
+                        .blur(radius: 64)
                         .opacity(showLyrics ? 0.36 : 0.28)
                         .id(ObjectIdentifier(image))
                         .transition(.opacity)
@@ -985,14 +1253,22 @@ struct NativePlayerView: View {
                 LinearGradient(colors: [Color.black.opacity(0.14), Color.black.opacity(0.40)], startPoint: .top, endPoint: .bottom)
             }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: model.artwork.map(ObjectIdentifier.init))
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.62), value: model.artwork.map(ObjectIdentifier.init))
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: showLyrics)
     }
 
     private func cover(playing: Bool) -> some View {
-        Color.clear.aspectRatio(1, contentMode: .fit).frame(maxWidth: 430)
+        let artId = "\(model.state.entryId)|\(model.artwork.map { ObjectIdentifier($0).hashValue } ?? 0)"
+        let coverTransition: AnyTransition = {
+            if reduceMotion || swipeDirection == 0 { return .opacity }
+            return .asymmetric(
+                insertion: .move(edge: swipeDirection > 0 ? .trailing : .leading).combined(with: .opacity),
+                removal: .move(edge: swipeDirection > 0 ? .leading : .trailing).combined(with: .opacity)
+            )
+        }()
+        return Color.clear.aspectRatio(1, contentMode: .fit).frame(maxWidth: 430)
             .overlay {
-                Group {
+                ZStack {
                     if let image = model.artwork {
                         Image(uiImage: image).resizable().scaledToFill().accessibilityHidden(true)
                     } else {
@@ -1003,13 +1279,14 @@ struct NativePlayerView: View {
                         .accessibilityHidden(true)
                     }
                 }
-                .transition(.opacity)
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: model.artwork.map(ObjectIdentifier.init))
+                .id(artId)
+                .transition(coverTransition)
+                .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.85), value: artId)
             }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(0.6), radius: playing ? 30 : 14, y: playing ? 20 : 10)
-            .scaleEffect(playing || reduceMotion ? 1 : 0.94)
+            .scaleEffect(playing || reduceMotion ? 1 : 0.87)
             .offset(x: reduceMotion ? 0 : coverDragOffset)
             .overlay {
                 ZStack {
@@ -1022,9 +1299,13 @@ struct NativePlayerView: View {
                         onEnd: { dx, vx in
                             if dx < -60 || vx < -420 {
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                swipeDirection = 1
+                                nextTapCount &+= 1
                                 model.transport("nexttrack")
                             } else if dx > 60 || vx > 420 {
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                swipeDirection = -1
+                                prevTapCount &+= 1
                                 model.transport("previoustrack")
                             }
                             withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.78)) {
@@ -1060,27 +1341,44 @@ struct NativePlayerView: View {
                     }
                 }
             }
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: playing)
+            .animation(reduceMotion ? nil : .spring(response: 0.44, dampingFraction: 0.72), value: playing)
             .layoutPriority(-1)
     }
 
     private func transport(playing: Bool) -> some View {
         HStack {
             Spacer()
-            Button { model.transport("previoustrack") } label: {
-                Image(systemName: "backward.fill").font(.system(size: 34)).frame(width: 64, height: 64)
+            Button {
+                swipeDirection = -1
+                prevTapCount &+= 1
+                model.transport("previoustrack")
+            } label: {
+                Image(systemName: "backward.fill")
+                    .symbolEffect(.bounce, value: prevTapCount)
+                    .font(.system(size: 34))
+                    .frame(width: 64, height: 64)
             }
+            .buttonStyle(MoraPressStyle(scale: 0.88))
             .accessibilityLabel("Предыдущий")
             Spacer()
             Button { model.transport(playing ? "pause" : "play") } label: {
                 Image(systemName: playing ? "pause.fill" : "play.fill").contentTransition(.symbolEffect(.replace)).font(.system(size: 48, weight: .semibold))
                     .frame(width: 80, height: 80)
             }
+            .buttonStyle(MoraPressStyle(scale: 0.88))
             .accessibilityLabel(playing ? "Пауза" : "Играть")
             Spacer()
-            Button { model.transport("nexttrack") } label: {
-                Image(systemName: "forward.fill").font(.system(size: 34)).frame(width: 64, height: 64)
+            Button {
+                swipeDirection = 1
+                nextTapCount &+= 1
+                model.transport("nexttrack")
+            } label: {
+                Image(systemName: "forward.fill")
+                    .symbolEffect(.bounce, value: nextTapCount)
+                    .font(.system(size: 34))
+                    .frame(width: 64, height: 64)
             }
+            .buttonStyle(MoraPressStyle(scale: 0.88))
             .accessibilityLabel("Следующий")
             Spacer()
         }
@@ -1227,11 +1525,12 @@ private struct NativeLyricsView: View {
                             }
                             .overlay(Capsule().stroke(Color.white.opacity(0.16), lineWidth: 0.75))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(MoraPressStyle(scale: 0.94))
                     .padding(.bottom, 10)
-                    .transition(.opacity)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
             }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: follow)
             .overlay(alignment: .bottomTrailing) {
                 if synced {
                     HStack(spacing: 8) {
@@ -1498,7 +1797,7 @@ private struct NativeQueueModes: View {
             mode("automix", symbol: "waveform", label: "AutoMix", on: model.modes.automix)
         }
         .disabled(model.changingMode)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.modes)
+        .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.78), value: model.modes)
     }
     private func mode(_ mode: String, symbol: String, label: String, on: Bool, disabled: Bool = false) -> some View {
         Button { model.playbackMode(mode) } label: {
@@ -1515,7 +1814,7 @@ private struct NativeQueueModes: View {
             .background(on ? Color.moraMint : Color.white.opacity(0.1), in: Capsule())
             .opacity(disabled ? 0.35 : 1)
         }
-        .buttonStyle(.plain).disabled(disabled)
+        .buttonStyle(MoraPressStyle(scale: 0.94)).disabled(disabled)
         .accessibilityLabel(label).accessibilityValue(on ? "Включено" : "Выключено")
         .accessibilityAddTraits(on ? .isSelected : [])
         .accessibilityHint(disabled ? "В волне порядок подбирается автоматически" : "Изменить режим воспроизведения")
@@ -1605,6 +1904,7 @@ private struct NativeScrubber: View {
                                 .frame(width: 18, height: 18)
                                 .shadow(color: .black.opacity(0.35), radius: 4, y: 1)
                                 .offset(x: min(max(0, x - 9), max(0, width - 18)))
+                                .transition(.scale(scale: 0.35).combined(with: .opacity))
                         }
                     }
                     .frame(width: width, height: 44)
@@ -1638,7 +1938,7 @@ private struct NativeScrubber: View {
                     }
                 }
                 .font(.caption.monospacedDigit().weight(.medium))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.white.opacity(isDragging ? 0.88 : 0.55))
                 .accessibilityHidden(true)
             }
             .accessibilityElement()

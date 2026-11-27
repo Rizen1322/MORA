@@ -158,13 +158,14 @@ import UIKit
         if elapsed >= T.maxWait || ((still || elapsed >= T.hold) && ready()) { finish(); return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.wait() }
     }
-    @objc private func skip() { if built { finish() } }
+    @objc private func skip() { if built { finish(immediateFade: true) } }
 
     /// Ink breaks through from the period and a few spots at once, takes the sheet, then the app shows through.
-    private func finish() {
+    private func finish(immediateFade: Bool = false) {
         guard !ending else { return }
         ending = true
-        let flood = UIAccessibility.isReduceMotionEnabled ? 0 : T.flood
+        let reduce = UIAccessibility.isReduceMotionEnabled
+        let flood = (reduce || immediateFade) ? 0 : T.flood
         let reach = hypot(bounds.width, bounds.height) * 0.62
         for (n, (u, v, delay)) in Self.erode.enumerated() where flood > 0 {
             let center = n == 0 ? period : CGPoint(x: u * bounds.width, y: v * bounds.height)
@@ -183,12 +184,9 @@ import UIKit
             // native screens lay out under the night first, then fade in
             NativeDeepLink.finishSplash()
             NativeShellStore.shared?.objectWillChange.send()
-            if UIAccessibility.isReduceMotionEnabled {
-                self.alpha = 0
-                self.removeFromSuperview()
-            } else {
-                UIView.animate(withDuration: 0.3, delay: 0.05, options: [.curveEaseOut]) { self.alpha = 0 } completion: { _ in self.removeFromSuperview() }
-            }
+            let duration = (reduce || immediateFade) ? 0.2 : 0.3
+            let delay = (reduce || immediateFade) ? 0.0 : 0.05
+            UIView.animate(withDuration: duration, delay: delay, options: [.curveEaseOut]) { self.alpha = 0 } completion: { _ in self.removeFromSuperview() }
         }
     }
 }

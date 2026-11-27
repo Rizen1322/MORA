@@ -93,38 +93,47 @@ final class NativeMediaHTTP: NSObject, URLSessionDataDelegate, URLSessionTaskDel
                   ticket: NativePreparationTicket, sink: ((Data) -> Void)? = nil) async throws {
         guard valid(url), limit > 0 else { throw Failure.invalidURL }
         if ticket.cancelled { throw Failure.cancelled }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            delegateQueue.addOperation {
-                do {
-                    guard !ticket.cancelled else { throw Failure.cancelled }
-                    guard !FileManager.default.fileExists(atPath: destination.path) else { throw Failure.network }
-                    let partial = destination.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).download")
-                    guard FileManager.default.createFile(atPath: partial.path, contents: nil, attributes: NativePreparationFiles.attributes) else { throw Failure.network }
-                    let file = try FileHandle(forWritingTo: partial)
-                    var request = URLRequest(url: url); request.cachePolicy = .reloadIgnoringLocalCacheData
-                    request.allHTTPHeaderFields = headers
-                    let task = self.session.dataTask(with: request)
-                    self.transfers[task.taskIdentifier] = Transfer(destination: destination, partial: partial, file: file, limit: limit,
-                        ticket: ticket, sink: sink, completion: { continuation.resume(with: $0) })
-                    ticket.add(task); task.resume()
-                } catch { continuation.resume(throwing: error) }
+        try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                delegateQueue.addOperation {
+                    do {
+                        guard !ticket.cancelled else { throw Failure.cancelled }
+                        guard !FileManager.default.fileExists(atPath: destination.path) else { throw Failure.network }
+                        let partial = destination.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).download")
+                        guard FileManager.default.createFile(atPath: partial.path, contents: nil, attributes: NativePreparationFiles.attributes) else { throw Failure.network }
+                        let file = try FileHandle(forWritingTo: partial)
+                        var request = URLRequest(url: url); request.cachePolicy = .reloadIgnoringLocalCacheData
+                        request.allHTTPHeaderFields = headers
+                        let task = self.session.dataTask(with: request)
+                        self.transfers[task.taskIdentifier] = Transfer(destination: destination, partial: partial, file: file, limit: limit,
+                            ticket: ticket, sink: sink, completion: { continuation.resume(with: $0) })
+                        ticket.add(task); task.resume()
+                    } catch { continuation.resume(throwing: error) }
+                }
             }
-        }
+        }, onCancel: {
+            ticket.cancel()
+        })
     }
     func data(_ url: URL, headers: [String: String] = [:], limit: Int = 1024 * 1024,
-              ticket: NativePreparationTicket) async throws -> Data {
+              ticket: NativePreparationTicket, timeout: TimeInterval? = nil) async throws -> Data {
         guard valid(url), limit > 0 else { throw Failure.invalidURL }
         if ticket.cancelled { throw Failure.cancelled }
-        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-            delegateQueue.addOperation {
-                guard !ticket.cancelled else { continuation.resume(throwing: Failure.cancelled); return }
-                var request = URLRequest(url: url); request.cachePolicy = .reloadIgnoringLocalCacheData
-                request.allHTTPHeaderFields = headers
-                let task = self.session.dataTask(with: request)
-                self.memoryTransfers[task.taskIdentifier] = MemoryTransfer(limit: limit, ticket: ticket, completion: { continuation.resume(with: $0) })
-                ticket.add(task); task.resume()
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+                delegateQueue.addOperation {
+                    guard !ticket.cancelled else { continuation.resume(throwing: Failure.cancelled); return }
+                    var request = URLRequest(url: url); request.cachePolicy = .reloadIgnoringLocalCacheData
+                    if let timeout { request.timeoutInterval = max(1, timeout) }
+                    request.allHTTPHeaderFields = headers
+                    let task = self.session.dataTask(with: request)
+                    self.memoryTransfers[task.taskIdentifier] = MemoryTransfer(limit: limit, ticket: ticket, completion: { continuation.resume(with: $0) })
+                    ticket.add(task); task.resume()
+                }
             }
-        }
+        }, onCancel: {
+            ticket.cancel()
+        })
     }
     private func finishMemory(_ task: URLSessionTask, _ result: Result<Data, Error>) {
         guard let transfer = memoryTransfers.removeValue(forKey: task.taskIdentifier) else { return }
