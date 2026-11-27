@@ -22,14 +22,16 @@ private final class NativePlayerTransitionController: NSObject, UIViewController
     private weak var presented: UIViewController?
     private var presenting = true
     private var interactive: UIPercentDrivenInteractiveTransition?
+    private var drivesDismissal = false
 
-    init(sourceView: UIView) {
+    init(sourceView: UIView?) {
         self.sourceView = sourceView
         super.init()
     }
 
-    func attachDismissGesture(to controller: UIViewController) {
+    func attachDismissGesture(to controller: UIViewController, interactive drivesDismissal: Bool) {
         self.presented = controller
+        self.drivesDismissal = drivesDismissal
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         pan.delegate = self
         pan.maximumNumberOfTouches = 1
@@ -37,11 +39,15 @@ private final class NativePlayerTransitionController: NSObject, UIViewController
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard let pan = gestureRecognizer as? UIPanGestureRecognizer, let view = pan.view else { return false }
+        guard let presented, presented.presentedViewController == nil, !presented.isBeingDismissed,
+              let pan = gestureRecognizer as? UIPanGestureRecognizer, let view = pan.view else { return false }
         let velocity = pan.velocity(in: view)
-        guard velocity.y > 0, velocity.y > abs(velocity.x) * 1.25 else { return false }
-        let hit = view.hitTest(pan.location(in: view), with: nil)
-        var cursor: UIView? = hit
+        return velocity.y > 0 && velocity.y > abs(velocity.x) * 1.2
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        let view = gestureRecognizer.view
+        var cursor = touch.view
         while let current = cursor, current !== view {
             if current is UISlider { return false }
             if let scroll = current as? UIScrollView, scroll.contentOffset.y > -scroll.adjustedContentInset.top + 2 {
@@ -52,10 +58,27 @@ private final class NativePlayerTransitionController: NSObject, UIViewController
         return true
     }
 
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        // Let a scroll view at the top give way to dismissal. With system zoom, its own pan can still lead.
+        if let scroll = other.view as? UIScrollView, other === scroll.panGestureRecognizer { return true }
+        return !drivesDismissal && other is UIPanGestureRecognizer
+    }
+
     @objc private func handlePan(_ pan: UIPanGestureRecognizer) {
         guard let presented else { return }
-        let dy = max(0, pan.translation(in: pan.view).y)
+        let translation = pan.translation(in: pan.view)
+        let dy = max(0, translation.y)
         let vy = pan.velocity(in: pan.view).y
+        if !drivesDismissal {
+            // UIKit handles its interactive zoom first. This path covers drags its recognizer misses.
+            guard pan.state == .ended, dy > abs(translation.x) * 1.2,
+                  (dy >= 64 && vy > -100) || (dy >= 18 && vy >= 480),
+                  presented.presentedViewController == nil, !presented.isBeingDismissed,
+                  presented.transitionCoordinator == nil else { return }
+            presented.presentingViewController?.dismiss(animated: true)
+            return
+        }
         let height = max(320, pan.view?.bounds.height ?? 700)
         let progress = min(1, dy / (height * 0.45))
         switch pan.state {
@@ -196,21 +219,23 @@ enum NativePlayerSheet {
         model.onFinish = finished
         controller.overrideUserInterfaceStyle = .dark
         controller.view.backgroundColor = UIColor(red: 5 / 255, green: 13 / 255, blue: 10 / 255, alpha: 1)
+        let delegate = NativePlayerTransitionController(sourceView: resolvedSource)
+        controller.transitionController = delegate
         if #available(iOS 18.0, *), let resolvedSource {
             let options = UIViewController.Transition.ZoomOptions()
             options.dimmingColor = UIColor.black.withAlphaComponent(0.45)
             controller.preferredTransition = .zoom(options: options) { [weak parent, weak resolvedSource] _ in
                 resolvedSource ?? (parent as? MoraRootViewController)?.miniPlayerSourceView
             }
-        } else if let resolvedSource {
-            let delegate = NativePlayerTransitionController(sourceView: resolvedSource)
-            controller.transitionController = delegate
+            delegate.attachDismissGesture(to: controller, interactive: false)
+        } else if resolvedSource != nil {
             controller.modalPresentationStyle = .custom
             controller.transitioningDelegate = delegate
-            delegate.attachDismissGesture(to: controller)
+            delegate.attachDismissGesture(to: controller, interactive: true)
         } else {
             controller.modalPresentationStyle = .pageSheet
             controller.sheetPresentationController?.prefersGrabberVisible = true
+            delegate.attachDismissGesture(to: controller, interactive: false)
         }
         parent.present(controller, animated: true)
     }
