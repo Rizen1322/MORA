@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { ArrowBendDownRight, ArrowClockwise, ArrowSquareOut, Clock, DotsThree, DownloadSimple, Heart, ListPlus, MagnifyingGlass, Play, Plus, Radio, SpinnerGap, Swap, X } from '@phosphor-icons/react';
 import { useIntentWarmup } from '../lib/intent-warmup.ts';
 import { startRadio } from '../lib/radio.ts';
@@ -8,7 +8,7 @@ import { fmtTime } from '../lib/format.ts';
 import { publicAlbumHref, publicTrackArtistLinks, useRoute } from '../lib/router.ts';
 import { controller, useApp } from '../store/app.ts';
 import { publicPlayer, usePublicPlayback } from '../store/catalog.ts';
-import { Cover } from '../components/common.tsx';
+import { Cover, Menu } from '../components/common.tsx';
 import { react } from '../components/TrackList.tsx';
 import { TrackMenu } from '../components/TrackMenu.tsx';
 import { openVersionPanel } from '../components/VersionPanel.tsx';
@@ -18,18 +18,34 @@ const REMOTE: PublicSource[] = ['ytmusic', 'youtube', 'soundcloud'];
 export const SOURCE_LABEL: Record<PublicSource, string> = { ytmusic: 'YouTube Music', youtube: 'YouTube', soundcloud: 'SoundCloud' };
 const FILTERS: [Filter, string][] = [['all', 'Все'], ['ytmusic', 'YouTube Music'], ['youtube', 'YouTube'], ['soundcloud', 'SoundCloud'], ['local', 'Моя музыка']];
 const RECENT_KEY = 'mora.search.recent';
+const LEGACY_CATALOG_RECENT_KEY = 'automix.catalog.searches';
 const TAG_TEXT: Record<string, string> = {
   explicit: 'E', clean: 'Clean', remix: 'Ремикс', live: 'Live', acoustic: 'Акустика', slowed: 'Slowed', 'sped-up': 'Sped up', reverb: 'Reverb',
   nightcore: 'Nightcore', instrumental: 'Инструментал', karaoke: 'Караоке', cover: 'Кавер', remaster: 'Ремастер', extended: 'Extended',
   'radio-edit': 'Radio edit', demo: 'Демо', mashup: 'Мэшап', 'bass-boosted': 'Bass boosted', '8d': '8D', uncensored: 'Uncensored',
 };
 
-interface Slot { status: 'loading' | 'done' | 'error'; items: PublicTrack[]; error?: string }
+interface Slot { status: 'loading' | 'done' | 'error'; items: PublicTrack[]; displayedQuery: string; error?: string }
 
-function readRecent(): string[] {
-  try { const v = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, 12) : []; } catch { return []; }
+function readRecent(key: string): string[] {
+  try { const v = JSON.parse(localStorage.getItem(key) ?? '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, 12) : []; } catch { return []; }
 }
-function writeRecent(v: string[]): void { try { localStorage.setItem(RECENT_KEY, JSON.stringify(v)); } catch { /* storage unavailable */ } }
+
+export function useRecentSearches() {
+  const [recent, setRecent] = useState(() => [...new Set([...readRecent(RECENT_KEY), ...readRecent(LEGACY_CATALOG_RECENT_KEY)])].slice(0, 12));
+  const save = (next: string[]) => {
+    setRecent(next);
+    try {
+      localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+      localStorage.removeItem(LEGACY_CATALOG_RECENT_KEY);
+    } catch { /* storage unavailable */ }
+  };
+  const remember = (query: string) => {
+    const value = query.trim();
+    if (value) save([value, ...recent.filter((x) => x !== value)].slice(0, 12));
+  };
+  return { recent, remember, clear: () => save([]) };
+}
 
 /** CatalogPlayer works on the Yandex catalog shape; public results map onto it one-to-one. */
 export const asCatalog = (t: PublicTrack): CatalogTrack & { audioProvider: PublicTrack['audioProvider'] } => ({
@@ -61,7 +77,7 @@ export function SearchPage() {
   const [filter, setFilter] = useState<Filter>(routeFilter);
   const [settled, setSettled] = useState(query.trim());
   const [slots, setSlots] = useState<Partial<Record<PublicSource, Slot>>>({});
-  const [recent, setRecent] = useState(readRecent);
+  const { recent, remember, clear } = useRecentSearches();
   const [selected, setSelected] = useState<string | null>(null);
   const controllers = useRef(new Map<PublicSource, AbortController>());
   const input = useRef<HTMLInputElement>(null);
@@ -71,25 +87,24 @@ export function SearchPage() {
 
   useEffect(() => { input.current?.focus(); }, []);
   useEffect(() => { setQuery(routeQuery); setSettled(routeQuery.trim()); setFilter(routeFilter); }, [route.query]);
-  useEffect(() => { const t = setTimeout(() => setSettled(query.trim()), 300); return () => clearTimeout(t); }, [query]);
+  useEffect(() => { const t = setTimeout(() => setSettled(query.trim()), 220); return () => clearTimeout(t); }, [query]);
 
   const run = (src: PublicSource, q: string) => {
     controllers.current.get(src)?.abort();
     const ctl = new AbortController();
     controllers.current.set(src, ctl);
-    setSlots((s) => ({ ...s, [src]: { status: 'loading', items: s[src]?.items ?? [] } }));
+    setSlots((s) => ({ ...s, [src]: { displayedQuery: q, items: [], ...s[src], status: 'loading', error: undefined } }));
     api.publicSearch(src, q, ctl.signal)
-      .then((r) => { if (!ctl.signal.aborted) setSlots((s) => ({ ...s, [src]: { status: 'done', items: r.items } })); })
-      .catch((e) => { if (!ctl.signal.aborted) setSlots((s) => ({ ...s, [src]: { status: 'error', items: [], error: (e as Error).message } })); });
+      .then((r) => { if (!ctl.signal.aborted) setSlots((s) => ({ ...s, [src]: { status: 'done', items: r.items, displayedQuery: q } })); })
+      .catch((e) => { if (!ctl.signal.aborted) setSlots((s) => ({ ...s, [src]: { status: 'error', items: [], displayedQuery: q, error: (e as Error).message } })); });
   };
 
   useEffect(() => {
     for (const c of controllers.current.values()) c.abort();
     controllers.current.clear();
-    setSlots({});
     setSelected(null);
     history.replaceState(null, '', `#/search?${new URLSearchParams({ q: settled, src: filter })}`);
-    if (!settled) return;
+    if (!settled) { setSlots({}); return; }
     for (const src of filter === 'all' ? REMOTE : REMOTE.includes(filter as PublicSource) ? [filter as PublicSource] : []) run(src, settled);
   }, [settled, filter]);
   useEffect(() => () => { for (const c of controllers.current.values()) c.abort(); }, []);
@@ -100,24 +115,20 @@ export function SearchPage() {
     return order.map((id) => tracks.get(id)!).filter((t) => t && parts.every((p) => `${t.title} ${t.artist} ${t.album}`.toLocaleLowerCase('ru').replace(/ё/g, 'е').includes(p)));
   }, [settled, filter, order, tracks]);
 
-  const remember = (q = query.trim()) => {
-    if (!q) return;
-    const next = [q, ...recent.filter((x) => x !== q)].slice(0, 12);
-    setRecent(next); writeRecent(next);
-  };
-
   // One flat list for the keyboard, in the same fixed section order as on screen.
   const limit = filter === 'all' ? 6 : 50;
   const localShown = filter === 'all' ? local.slice(0, 4) : local;
-  const sections = REMOTE.filter((s) => slots[s]).map((s) => ({ src: s, slot: slots[s]!, items: slots[s]!.items.slice(0, limit) }));
-  const keys = [...localShown.map((t) => `local:${t.id}`), ...sections.flatMap((s) => s.items.map((i) => `${s.src}:${i.externalId}`))];
+  const sections = REMOTE.filter((s) => settled && slots[s] && (filter === 'all' || filter === s))
+    .map((s) => ({ src: s, slot: slots[s]!, items: slots[s]!.items.slice(0, limit) }));
+  const keys = [...localShown.map((t) => `local:${t.id}`),
+    ...sections.flatMap(({ src, slot, items }) => slot.displayedQuery === settled ? items.filter((t) => t.playable).map((t) => `${src}:${t.externalId}`) : [])];
 
   const playPublic = (src: PublicSource, i: number) => {
-    remember();
-    const list = slots[src]!.items;
-    void publicPlayer.play(list.map(asCatalog), i, { type: 'search', label: `${SOURCE_LABEL[src]} · ${settled}` });
+    const slot = slots[src]!;
+    remember(slot.displayedQuery);
+    void publicPlayer.play(slot.items.map(asCatalog), i, { type: 'search', label: `${SOURCE_LABEL[src]} · ${slot.displayedQuery}` });
   };
-  const playLocal = (i: number) => { remember(); void controller.playTracks(localShown.map((t) => t.id), i, { type: 'search', label: settled }); };
+  const playLocal = (i: number) => { remember(settled); void controller.playTracks(localShown.map((t) => t.id), i, { type: 'search', label: settled }); };
   const activate = (key: string) => {
     const [src, id] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
     if (src === 'local') playLocal(localShown.findIndex((t) => t.id === id));
@@ -140,18 +151,18 @@ export function SearchPage() {
       <MagnifyingGlass size={22} aria-hidden="true" />
       <input ref={input} type="search" maxLength={200} placeholder="Исполнитель, трек или ссылка" aria-label="Поиск музыки" value={query}
         onChange={(e) => setQuery(e.target.value)} onKeyDown={onKey} aria-controls="search-results" aria-activedescendant={selected ? `sr-${selected}` : undefined} />
-      {query && <button type="button" className="icon-btn" aria-label="Очистить" onClick={() => { setQuery(''); input.current?.focus(); }}><X size={18} /></button>}
+      {query && <button type="button" className="icon-btn" aria-label="Очистить" onClick={() => { setQuery(''); setSettled(''); input.current?.focus(); }}><X size={18} /></button>}
     </form>
     {preparation.phase === 'starting' && <div role="status" className="setting"><span>Подготавливаем «{preparation.title}»…</span><button className="btn btn-ghost btn-sm" onClick={() => publicPlayer.cancel()}>Отмена</button></div>}
     {preparation.error && <div role="alert" className="setting"><span className="error-text">{preparation.error}</span><button className="btn btn-ghost btn-sm" onClick={() => publicPlayer.dismissError()}>Закрыть</button></div>}
     <div className="search-filters" role="group" aria-label="Где искать">
-      {FILTERS.map(([f, label]) => <button key={f} className={`chip ${filter === f ? 'on' : ''}`} aria-pressed={filter === f} onClick={() => setFilter(f)}>{label}</button>)}
       {yandex && <a className="chip" href={`#/yandex?${new URLSearchParams({ q: query, type: 'all' })}`}>Яндекс Музыка</a>}
+      {FILTERS.map(([f, label]) => <button key={f} className={`chip ${filter === f ? 'on' : ''}`} aria-pressed={filter === f} onClick={() => { setFilter(f); setSettled(query.trim()); }}>{label}</button>)}
     </div>
 
     {!settled && <section className="search-recent">
       {recent.length > 0 ? <>
-        <div className="search-section-head"><h2>Недавно искали</h2><button className="btn btn-ghost btn-sm" onClick={() => { setRecent([]); writeRecent([]); }}>Очистить</button></div>
+        <div className="search-section-head"><h2>Недавно искали</h2><button className="btn btn-ghost btn-sm" onClick={clear}>Очистить</button></div>
         <div className="search-recent-list">{recent.map((r) => <button key={r} onClick={() => setQuery(r)}><Clock size={15} aria-hidden="true" />{r}</button>)}</div>
       </> : <p className="muted">Найдите любую песню: результаты YouTube Music, YouTube и SoundCloud играют сразу, без аккаунта. Ссылку на трек тоже можно вставить.</p>}
     </section>}
@@ -198,6 +209,24 @@ function LocalRow({ t, id, active, onPlay }: { t: Track; id: string; active: boo
   </div>;
 }
 
+export function TrackActionsMenu({ title, className = '', children }: { title: string; className?: string; children: ReactNode }) {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const close = useCallback(() => {
+    setPosition(null);
+    trigger.current?.focus({ preventScroll: true });
+  }, []);
+  return <div className={className}>
+    <button type="button" ref={trigger} className="icon-btn" aria-label={`Действия: ${title}`} aria-haspopup="menu" aria-expanded={!!position}
+      onClick={(event) => {
+        if (position) { close(); return; }
+        const rect = event.currentTarget.getBoundingClientRect();
+        setPosition({ x: rect.right - 230, y: rect.bottom + 4 });
+      }}><DotsThree size={20} weight="bold" /></button>
+    {position && <Menu {...position} onClose={close}>{children}</Menu>}
+  </div>;
+}
+
 export function PublicRow({ t, id, active, onPlay, compact = false }: { t: PublicTrack; id: string; active: boolean; onPlay: () => void; compact?: boolean }) {
   const warmup = useIntentWarmup(t.audioProvider, t.externalId, active);
   const prep = usePublicPlayback();
@@ -220,7 +249,7 @@ export function PublicRow({ t, id, active, onPlay, compact = false }: { t: Publi
     <div className="search-row-actions">
       <button className={`icon-btn ${lib && lib.reaction > 0 ? 'liked' : ''}`} aria-pressed={!!lib && lib.reaction > 0} aria-label={`Нравится: ${t.title}`} onClick={() => withTrack((x) => react(x, x.reaction > 0 ? 0 : 1))}><Heart size={18} weight={lib && lib.reaction > 0 ? 'fill' : 'regular'} /></button>
       {!compact && <button className="icon-btn" aria-label={`В очередь: ${t.title}`} title="В очередь" onClick={() => void publicPlayer.enqueue(asCatalog(t))}><ListPlus size={18} /></button>}
-      <details className="search-row-menu"><summary className="icon-btn" aria-label={`Действия: ${t.title}`}><DotsThree size={20} weight="bold" /></summary><div role="menu">
+      <TrackActionsMenu title={t.title}>
         {((t.source === 'ytmusic' && /^UC[\w-]{22}$/.test(t.artistId ?? '')) || (t.source === 'soundcloud' && /^\d{1,20}$/.test(t.artistId ?? ''))) && credits[0] && <a role="menuitem" href={credits[0].href}>Открыть исполнителя</a>}
         {albumLink && <a role="menuitem" href={albumLink}>Открыть альбом</a>}
         <button role="menuitem" onClick={() => void publicPlayer.enqueue(asCatalog(t), true)}><ArrowBendDownRight size={17} /> Играть следующим</button>
@@ -230,7 +259,7 @@ export function PublicRow({ t, id, active, onPlay, compact = false }: { t: Publi
         <button role="menuitem" onClick={() => void startRadio({ title: t.title, artist: t.artist })}><Radio size={17} /> Радио по треку</button>
         <button role="menuitem" onClick={() => openVersionPanel({ title: t.title, artist: t.artist, duration: t.duration })}><Swap size={17} /> Найти другую версию</button>
         {t.pageUrl && <a role="menuitem" href={t.pageUrl} target="_blank" rel="noreferrer noopener"><ArrowSquareOut size={17} /> Открыть в {SOURCE_LABEL[t.source]}</a>}
-      </div></details>
+      </TrackActionsMenu>
     </div>
   </div>;
 }

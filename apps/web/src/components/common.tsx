@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { MusicNotesSimple } from '@phosphor-icons/react';
 import { seedColors } from '../lib/color.ts';
-import { desktop } from '../lib/desktop.ts';
 import { useApp } from '../store/app.ts';
 
 export function Cover({ url, seed, alt = '', className = '', round = false, size }: { url: string | null | undefined; seed: string; alt?: string; className?: string; round?: boolean; size?: number }) {
@@ -158,12 +157,14 @@ export function ConfirmModal({ title, text, confirm, danger, onConfirm, onClose 
 export function Menu({ x, y, onClose, children }: { x: number; y: number; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x, y });
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
     if (el) {
       setPos({ x: Math.max(8, Math.min(x, innerWidth - el.offsetWidth - 8)), y: Math.max(8, Math.min(y, innerHeight - el.offsetHeight - 8)) });
       el.querySelector<HTMLElement>('button:not(:disabled), a')?.focus();
     }
+  }, [x, y]);
+  useEffect(() => {
     const close = (e: Event) => {
       if (e instanceof KeyboardEvent && e.key !== 'Escape') return;
       if (e instanceof MouseEvent && ref.current?.contains(e.target as Node)) return;
@@ -180,7 +181,7 @@ export function Menu({ x, y, onClose, children }: { x: number; y: number; onClos
       window.removeEventListener('keydown', close);
       window.removeEventListener('resize', onClose);
     };
-  }, [x, y, onClose]);
+  }, [onClose]);
   const onKey = (e: React.KeyboardEvent) => {
     const items = Array.from(ref.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a') ?? []);
     const i = items.indexOf(document.activeElement as HTMLElement);
@@ -200,7 +201,7 @@ export function Menu({ x, y, onClose, children }: { x: number; y: number; onClos
 }
 
 export function useReducedMotion(): boolean {
-  const preference=useApp(s=>s.settings?.ui.motion??(desktop?'full':'system'));
+  const preference = useApp((s) => s.settings?.ui.motion ?? 'system');
   const [r, setR] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches);
   // iPhone app: a hot phone or Low Power Mode (html[data-power=saver], apps/mobile) stills the canvases
   const saver = () => document.documentElement.dataset.power === 'saver';

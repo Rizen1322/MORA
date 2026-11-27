@@ -105,6 +105,7 @@ export interface NativeQueueEntry {
 
 export interface NativeRadioConfig {
   kind: 'own' | 'yandex' | 'online';
+  offline?: boolean;
   seed?: { title: string; artist: string };
   anchor?: 'seed';
   yandexSessionId?: string;

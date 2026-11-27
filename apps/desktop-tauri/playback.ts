@@ -11,13 +11,15 @@ import { PlaybackRecovery, audioPreferences, audioOutputSettings } from '../desk
 /** The renderer can invoke only these playback operations; PCM credentials stay here. */
 export async function createPlaybackHost(app: FastifyInstance, profile: string, resources: string,
   backend: () => { origin: string; accessToken: string; pcmToken: string }, services: Pick<Services, 'events' | 'lib'>) {
-  const clients = new Set<import('node:http').ServerResponse>();
+  const clients = new Map<import('node:http').ServerResponse, 'control' | 'waveform' | 'all'>();
   const emit = (event: { type?: string }) => {
-    const line = `data: ${JSON.stringify(event)}\n\n`;
-    for (const client of clients) {
+    const waveform = event.type === 'waveform';
+    let line: string | undefined;
+    for (const [client, stream] of clients) {
+      if (waveform ? stream === 'control' : stream === 'waveform') continue;
       if (client.destroyed || client.writableLength > 256 * 1024) { client.destroy(); clients.delete(client); continue; }
       // Waveforms are disposable telemetry; backpressure is not a lost connection.
-      if (event.type !== 'waveform' || !client.writableNeedDrain) client.write(line);
+      if (!waveform || !client.writableNeedDrain) client.write(line ??= `data: ${JSON.stringify(event)}\n\n`);
     }
   };
   const file = path.join(profile, 'desktop.json');
@@ -119,11 +121,12 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
   const timer = setInterval(() => { void checkpoint(); }, 2000);
   timer.unref();
 
-  app.get('/api/desktop/audio-events', async (request, reply) => {
+  app.get<{ Querystring: { stream?: string } }>('/api/desktop/audio-events', async (request, reply) => {
+    const stream = request.query.stream;
     reply.hijack();
     reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
     reply.raw.write(': connected\n\n');
-    clients.add(reply.raw);
+    clients.set(reply.raw, stream === 'control' || stream === 'waveform' ? stream : 'all');
     reply.raw.on('close', () => clients.delete(reply.raw));
   });
   app.get('/api/desktop/audio-devices', async () => audio.devices());
@@ -209,7 +212,7 @@ export async function createPlaybackHost(app: FastifyInstance, profile: string, 
       unsubscribeReactions(); clearTimeout(reactionTimer);
       clearInterval(timer);
       artworkAbort?.abort();
-      for (const client of clients) client.end();
+      for (const client of clients.keys()) client.end();
       if (preserve) {
         await checkpoint(true);
         if (playback.recoverySnapshot()) {

@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 const bootstrap = vi.hoisted(() => ({ start: vi.fn(), render: vi.fn(), controller: {}, root: {} }));
 vi.mock('../src/lib/native-ui.ts', () => ({ startNativeUi: bootstrap.start }));
+vi.mock('../src/lib/offline-wave.ts', () => ({ watchNetwork: vi.fn() }));
 vi.mock('react-dom/client', () => ({ createRoot: (root: unknown) => {
   expect(root).toBe(bootstrap.root);
   return { render: bootstrap.render };

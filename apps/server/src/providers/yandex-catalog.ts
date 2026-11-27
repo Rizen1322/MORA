@@ -4,10 +4,11 @@ import type {
   ReactionValue,
 } from '@automix/core';
 import type { Library } from '../library.ts';
+import { SharedPreparation } from '../public/shared-preparation.ts';
 import { isYandexTrackId, validateYandexMediaUrl } from './yandex-audio.ts';
 
 type ObjectValue = Record<string, unknown>;
-type CatalogApi = <T>(method: 'GET' | 'POST', path: string, body?: unknown, form?: boolean) => Promise<T>;
+type CatalogApi = <T>(method: 'GET' | 'POST', path: string, body?: unknown, form?: boolean, signal?: AbortSignal) => Promise<T>;
 const object = (value: unknown): ObjectValue => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as ObjectValue : {};
 const list = (value: unknown, limit = 50): unknown[] => Array.isArray(value) ? value.slice(0, limit) : [];
 const text = (value: unknown, max = 300): string => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max) : '';
@@ -24,7 +25,9 @@ export class CatalogError extends Error {
  * Cache entries contain only our DTOs, never OAuth credentials or signed audio URLs. */
 export class YandexCatalog {
   private cache = new Map<string, { expires: number; value: unknown }>();
-  private pending = new Map<string, Promise<unknown>>();
+  private pending = new SharedPreparation<unknown>();
+  private inFlight = 0;
+  private connection = new AbortController();
   private generation = 0;
   private readonly cacheLimit = 40;
   private readonly ttl = 120000;
@@ -35,10 +38,16 @@ export class YandexCatalog {
 
   constructor(private api: CatalogApi, private connected: () => boolean, private lib: Library, private apiBase: string) {}
 
-  clear(): void { this.generation++; this.cache.clear(); this.pending.clear(); this.reactionReadFailedAt = 0; }
+  clear(): void {
+    this.generation++;
+    this.connection.abort();
+    this.connection = new AbortController();
+    this.invalidate();
+  }
   invalidate(): void { this.cache.clear(); this.reactionReadFailedAt = 0; }
 
-  private async cached<T>(key: string, work: () => Promise<T>): Promise<T> {
+  private async cached<T>(key: string, signal: AbortSignal | undefined, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    signal?.throwIfAborted();
     if (!this.connected()) throw new CatalogError(409, 'Подключите аккаунт Яндекс Музыки');
     const hit = this.cache.get(key);
     if (hit && hit.expires > Date.now()) {
@@ -46,26 +55,28 @@ export class YandexCatalog {
       return hit.value as T;
     }
     if (hit) this.cache.delete(key);
-    const existing = this.pending.get(key);
-    if (existing) return existing as Promise<T>;
-    if (this.pending.size >= 24) throw new CatalogError(502, 'Каталог занят. Повторите запрос немного позже');
     const generation = this.generation;
-    const job = (async () => {
+    const connection = this.connection.signal;
+    return this.pending.run(`${generation}:${key}`, { signal }, async (worker) => {
+      if (this.inFlight >= 24) throw new CatalogError(502, 'Каталог занят. Повторите запрос немного позже');
+      this.inFlight++;
+      const upstream = AbortSignal.any([worker, connection]);
       try {
-        const value = await work();
+        const value = await work(upstream);
         if (generation !== this.generation || !this.connected()) throw new CatalogError(409, 'Подключение Яндекс Музыки изменилось. Повторите запрос');
+        upstream.throwIfAborted();
         this.cache.set(key, { value, expires: Date.now() + this.ttl });
         while (this.cache.size > this.cacheLimit) this.cache.delete(this.cache.keys().next().value!);
         return value;
       } catch (error) {
         if (error instanceof CatalogError) throw error;
+        if (connection.aborted) throw new CatalogError(409, 'Подключение Яндекс Музыки изменилось. Повторите запрос');
+        worker.throwIfAborted();
         throw new CatalogError(502, 'Не удалось загрузить каталог Яндекс Музыки. Повторите запрос');
       } finally {
-        if (generation === this.generation) this.pending.delete(key);
+        this.inFlight--;
       }
-    })();
-    this.pending.set(key, job);
-    return job;
+    }) as Promise<T>;
   }
 
   private image(value: unknown): string | null {
@@ -166,9 +177,9 @@ export class YandexCatalog {
     return total !== null && perPage !== null && perPage > 0 ? (page + 1) * perPage < total : false;
   }
 
-  async search(query: string, page = 0, type: CatalogSearchType = 'all'): Promise<CatalogSearchResult> {
-    const result = await this.cached(`search:${type}:${page}:${query}`, async () => {
-      const raw = object(await this.api('GET', `/search?${new URLSearchParams({ text: query, type, page: String(page), 'playlist-in-best': 'false' })}`));
+  async search(query: string, page = 0, type: CatalogSearchType = 'all', signal?: AbortSignal): Promise<CatalogSearchResult> {
+    const result = await this.cached(`search:${type}:${page}:${query}`, signal, async (upstream) => {
+      const raw = object(await this.api('GET', `/search?${new URLSearchParams({ text: query, type, page: String(page), 'playlist-in-best': 'false' })}`, undefined, false, upstream));
       const tracks = compact(list(object(raw.tracks).results).map((track) => this.track(track)));
       const artists = compact(list(object(raw.artists).results).map((artist) => this.artist(artist)));
       const albums = compact(list(object(raw.albums).results).map((album) => this.album(album)));
@@ -190,17 +201,17 @@ export class YandexCatalog {
     return { ...result, tracks: await this.markKnown(result.tracks) };
   }
 
-  async home(): Promise<CatalogSearchResult> {
-    const result = await this.cached('home', async () => {
-      const account = object(await this.api('GET', '/account/status'));
+  async home(signal?: AbortSignal): Promise<CatalogSearchResult> {
+    const result = await this.cached('home', signal, async (upstream) => {
+      const account = object(await this.api('GET', '/account/status', undefined, false, upstream));
       const uid = numericId(object(account.account).uid);
       if (!uid) throw new CatalogError(502, 'Не удалось загрузить медиатеку Яндекс Музыки');
-      const likes = object(await this.api('GET', `/users/${uid}/likes/tracks`));
+      const likes = object(await this.api('GET', `/users/${uid}/likes/tracks`, undefined, false, upstream));
       const ids = list(object(likes.library).tracks, 60).map((value) => {
         const item = object(value), id = String(item.id ?? ''), albumId = numericId(item.albumId);
         return albumId ? `${id}:${albumId}` : id;
       }).filter((id) => isYandexTrackId(id)).slice(0, 20);
-      const rawTracks = ids.length ? list(await this.api('POST', '/tracks', { 'track-ids': ids.join(',') }, true), 20) : [];
+      const rawTracks = ids.length ? list(await this.api('POST', '/tracks', { 'track-ids': ids.join(',') }, true, upstream), 20) : [];
       const tracks = compact(rawTracks.map((track) => this.track(track)));
       const artists = unique(compact(rawTracks.flatMap((track) => list(object(track).artists, 20)).map((artist) => this.artist(artist))), (artist) => artist.id, 8);
       const albums = unique(compact(rawTracks.flatMap((track) => list(object(track).albums, 10)).map((album) => this.album(album))), (album) => album.id, 8);
@@ -209,11 +220,11 @@ export class YandexCatalog {
     return { ...result, tracks: await this.markKnown(result.tracks, true) };
   }
 
-  async artistPage(id: string, page = 0): Promise<CatalogArtistPage> {
-    const result = await this.cached(`artist:${id}:${page}`, async () => {
+  async artistPage(id: string, page = 0, signal?: AbortSignal): Promise<CatalogArtistPage> {
+    const result = await this.cached(`artist:${id}:${page}`, signal, async (upstream) => {
       const [briefResult, albumsResult] = await Promise.allSettled([
-        this.api('GET', `/artists/${id}/brief-info`),
-        this.api('GET', `/artists/${id}/direct-albums?${new URLSearchParams({ page: String(page), 'page-size': '20', 'sort-by': 'year' })}`),
+        this.api('GET', `/artists/${id}/brief-info`, undefined, false, upstream),
+        this.api('GET', `/artists/${id}/direct-albums?${new URLSearchParams({ page: String(page), 'page-size': '20', 'sort-by': 'year' })}`, undefined, false, upstream),
       ]);
       if (briefResult.status === 'rejected') throw briefResult.reason;
       const brief = object(briefResult.value), artist = this.artist(brief.artist, brief.stats);
@@ -228,9 +239,9 @@ export class YandexCatalog {
     return { ...result, popularTracks: await this.markKnown(result.popularTracks) };
   }
 
-  async albumPage(id: string): Promise<CatalogAlbumPage> {
-    const result = await this.cached(`album:${id}`, async () => {
-      const raw = object(await this.api('GET', `/albums/${id}/with-tracks`)), album = this.album(raw);
+  async albumPage(id: string, signal?: AbortSignal): Promise<CatalogAlbumPage> {
+    const result = await this.cached(`album:${id}`, signal, async (upstream) => {
+      const raw = object(await this.api('GET', `/albums/${id}/with-tracks`, undefined, false, upstream)), album = this.album(raw);
       if (!album) throw new CatalogError(404, 'Альбом не найден');
       // The endpoint returns volumes, not a flat catalog ranking. Keep disc order.
       const tracks = compact(list(raw.volumes, 30).flatMap((volume, disc) => list(volume, 300).map((track, position) => this.track(track, raw, disc + 1, position + 1))));

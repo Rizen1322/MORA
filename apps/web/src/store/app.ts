@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { flushSync } from 'react-dom';
 import { PlayerController, type PlayerSnapshot } from '../audio/controller.ts';
 import { api, type AppSettings, type PlaylistSummary, type ProviderInfo, type Track } from '../lib/api.ts';
 import { sanitizePlayback, type PlaybackSettings, type ToneSettings } from '@automix/core';
@@ -7,6 +8,8 @@ import { throttleClock } from '../lib/clockThrottle.ts';
 import { desktop } from '../lib/desktop.ts';
 import { nativePlaybackControls } from '../lib/playback-trace.ts';
 import { presentNativePlayer } from '../lib/native-player.ts';
+
+let playerTransition: ViewTransition | undefined;
 
 export interface Toast {
   id: number;
@@ -200,6 +203,26 @@ export const useApp = create<AppState>((set, get) => ({
   setPanel: (p) => set(p ? { panel: p, queueOpen: false } : { panel: null }),
   setFullPlayer: (v) => {
     if (v && phone && presentNativePlayer(nativePlaybackControls(), () => set({ fullPlayer: true }))) return;
+    if (desktop && document.startViewTransition) {
+      if (playerTransition) {
+        playerTransition.skipTransition();
+        playerTransition = undefined;
+      }
+      if (get().fullPlayer === v) return;
+      const motion = get().settings?.ui.motion ?? 'system';
+      if (motion !== 'reduced' && (motion === 'full' || !matchMedia('(prefers-reduced-motion: reduce)').matches)
+          && !document.documentElement.classList.contains('compact')
+          && Array.from(document.querySelectorAll('[data-player-cover]')).some((cover) => cover.getClientRects().length)) {
+        const transition = document.startViewTransition(() => {
+          if (playerTransition === transition) flushSync(() => set({ fullPlayer: v }));
+        });
+        playerTransition = transition;
+        void transition.finished.finally(() => {
+          if (playerTransition === transition) playerTransition = undefined;
+        }).catch(() => {});
+        return;
+      }
+    }
     set({ fullPlayer: v });
   },
 }));
@@ -213,8 +236,8 @@ useApp.setState({ player: controller.state });
 // Phone: the engine's ~20 clock ticks a second re-rendered the whole player; 5 a second is enough there.
 export const phone = typeof document !== 'undefined' && document.documentElement.classList.contains('mora-mobile');
 // With the screen locked or the window minimized nobody sees the clock: hidden pages get real changes
-// only, the latest state on return. The desktop keeps every visible tick (interval 0).
-controller.subscribe(throttleClock((s) => useApp.setState({ player: s }), () => controller.state, phone ? 200 : 0, () => typeof document !== 'undefined' && document.hidden));
+// only, the latest state on return.
+controller.subscribe(throttleClock((s) => useApp.setState({ player: s }), () => controller.state, phone ? 200 : desktop ? 100 : 0, () => typeof document !== 'undefined' && document.hidden));
 if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => { if (!document.hidden) useApp.setState({ player: controller.state }); });
 
 export function trackOf(id: string | undefined | null): Track | undefined {

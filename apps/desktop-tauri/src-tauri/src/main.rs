@@ -3,6 +3,8 @@
 mod secrets;
 mod profile;
 mod power;
+mod process;
+use process::ManagedChild;
 use serde_json::{json, Value};
 use std::{env, fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc, Mutex}, time::{Duration, Instant}};
 use std::os::windows::process::CommandExt;
@@ -11,7 +13,7 @@ use tauri::{menu::MenuBuilder, tray::{TrayIconBuilder, TrayIconEvent, MouseButto
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 struct Session {
-    child: Mutex<Child>,
+    child: Mutex<ManagedChild>,
     transport: mpsc::SyncSender<&'static str>,
     close_to_tray: Mutex<bool>,
     compact: Mutex<Option<(tauri::PhysicalPosition<i32>, tauri::PhysicalSize<u32>)>>,
@@ -26,6 +28,7 @@ struct Session {
     maintenance: AtomicBool,
     power: AtomicUsize,
     restart_generation: AtomicUsize,
+    webview_visible: Mutex<Option<bool>>,
     prefs: Mutex<Value>,
     window_bounds: Mutex<Option<(Instant, Value)>>,
 }
@@ -108,7 +111,7 @@ fn import_paths_overlap(source: &Path, data: &Path) -> Result<bool, String> {
     let source = future_path(source)?; let data = future_path(data)?; let staging = future_path(&PathBuf::from(name))?;
     Ok(source.starts_with(&data) || data.starts_with(&source) || source.starts_with(&staging) || staging.starts_with(&source))
 }
-fn spawn_backend(profile: &Path, resources: &Path, token: &str, pcm: &str, port: u16) -> Result<(Child, u16, bool), String> {
+fn spawn_backend(profile: &Path, resources: &Path, token: &str, pcm: &str, port: u16) -> Result<(ManagedChild, u16, bool), String> {
     let node = env::var_os("AUTOMIX_NODE_PATH").map(PathBuf::from).unwrap_or_else(|| resources.join("node/node.exe"));
     let entry = env::var_os("AUTOMIX_BACKEND_ENTRY").map(PathBuf::from).unwrap_or_else(|| resources.join("backend/tauri-backend.mjs"));
     let network = env::var_os("AUTOMIX_NETWORK_RUST").map(PathBuf::from).unwrap_or_else(|| resources.join("network/mora-network.exe"));
@@ -127,9 +130,12 @@ fn spawn_backend(profile: &Path, resources: &Path, token: &str, pcm: &str, port:
         .env("FFMPEG_PATH", resources.join("ffmpeg/ffmpeg.exe")).env("FFPROBE_PATH", resources.join("ffmpeg/ffprobe.exe"))
         .env("YTDLP_PATH", resources.join("yt-dlp/yt-dlp.exe")).env("STEMS_PYTHON", "")
         .env("AUTOMIX_LAUNCH_TOKEN", token).env("AUTOMIX_DESKTOP_PCM_TOKEN", pcm).env("AUTOMIX_SECRET_KEY", key)
+        .env("AUTOMIX_SHELL_HANDSHAKE", "1")
         .env("AUTOMIX_PORT", port.to_string()).env("AUTOMIX_KEEP_PORT", if port == 0 { "0" } else { "1" })
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).creation_flags(0x08000000);
-    let mut child = command.spawn().map_err(|e| format!("backend launch: {e}"))?;
+    let mut child = ManagedChild::spawn(&mut command).map_err(|e| format!("backend launch: {e}"))?;
+    child.stdin.as_mut().ok_or("backend input unavailable")?
+        .write_all(b"{\"type\":\"launch\"}\n").map_err(|e| format!("backend launch: {e}"))?;
     let stdout = child.stdout.take().ok_or("backend output unavailable")?;
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -148,7 +154,7 @@ fn spawn_backend(profile: &Path, resources: &Path, token: &str, pcm: &str, port:
             }
             Ok(message) => break message,
             Err(error) => {
-                let _ = child.kill();
+                child.close_job();
                 let _ = child.wait();
                 return Err(match error {
                     mpsc::RecvTimeoutError::Timeout => "Локальный сервис превысил время запуска",
@@ -159,19 +165,23 @@ fn spawn_backend(profile: &Path, resources: &Path, token: &str, pcm: &str, port:
     };
     let port = message["port"].as_u64().and_then(|n| u16::try_from(n).ok()).filter(|n| *n != 0);
     if message["type"] != "ready" || port.is_none() {
-        let _ = child.kill();
+        child.close_job();
         let _ = child.wait();
         return Err(message["message"].as_str().unwrap_or("Локальный сервис вернул неверный ответ").to_owned());
     }
     Ok((child, port.unwrap(), message["recovery"].as_bool().unwrap_or(false)))
 }
-fn stop_child(child: &mut Child, preserve: bool) {
+fn stop_child(child: &mut ManagedChild, preserve: bool) {
     if let Some(stdin) = child.stdin.as_mut() { let _ = stdin.write_all(if preserve { b"{\"type\":\"restart\"}\n" } else { b"{\"type\":\"shutdown\"}\n" }); }
     let deadline = Instant::now() + Duration::from_secs(8);
-    while Instant::now() < deadline { if matches!(child.try_wait(), Ok(Some(_))) { return; } std::thread::sleep(Duration::from_millis(50)); }
-    let _ = child.kill(); let _ = child.wait();
+    while Instant::now() < deadline {
+        if matches!(child.try_wait(), Ok(Some(_))) { break; }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    child.close_job();
+    let _ = child.wait();
 }
-fn launch_update(child: &mut Child, installer: &Path, recover: impl FnOnce(&mut Child) -> Result<(), String>) -> Result<(), String> {
+fn launch_update(child: &mut ManagedChild, installer: &Path, recover: impl FnOnce(&mut ManagedChild) -> Result<(), String>) -> Result<(), String> {
     stop_child(child, true);
     if let Err(error) = Command::new(installer).args(["--updated", "/S", "--force-run"]).spawn() {
         let message = format!("Не удалось запустить установщик: {error}");
@@ -185,6 +195,7 @@ fn restart_child(state: &Session, stop: bool) -> Result<(), String> {
     if state.maintenance.load(Ordering::Acquire) { return Err("Дождитесь окончания переноса медиатеки".into()); }
     if stop { stop_child(&mut child, true); }
     else if !matches!(child.try_wait(), Ok(Some(_))) { return Ok(()); }
+    else { child.close_job(); }
     let (mut replacement, _, recovery) = spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port)?;
     if stop && recovery {
         if let Some(stdin) = replacement.stdin.as_mut() { let _ = writeln!(stdin, "{}", json!({"type":"recovery", "restore":true})); }
@@ -209,8 +220,16 @@ fn validate_export(contents: &str) -> Result<(), String> {
     serde_json::from_str::<Value>(contents).map(|_| ()).map_err(|_| "Некорректный JSON экспорта".into())
 }
 #[tauri::command]
-async fn desktop_action(window: tauri::WebviewWindow, state: tauri::State<'_, Session>, action: String, value: Option<Value>) -> Result<Value, String> {
-    match action.as_str() {
+async fn desktop_action(window: tauri::WebviewWindow, action: String, value: Option<Value>) -> Result<Value, String> {
+    if matches!(action.as_str(), "save-export" | "pick-folder" | "close-to-tray" | "install-update" | "restart-backend" | "import-library") {
+        return tauri::async_runtime::spawn_blocking(move || run_desktop_action(&window, &action, value))
+            .await.map_err(|error| error.to_string())?;
+    }
+    run_desktop_action(&window, &action, value)
+}
+fn run_desktop_action(window: &tauri::WebviewWindow, action: &str, value: Option<Value>) -> Result<Value, String> {
+    let state = window.state::<Session>();
+    match action {
         "save-export" => {
             let data = value.ok_or("Нет данных экспорта")?;
             let contents = data["contents"].as_str().ok_or("Некорректный экспорт")?;
@@ -279,8 +298,8 @@ async fn desktop_action(window: tauri::WebviewWindow, state: tauri::State<'_, Se
             let _guard = Maintenance(&state.maintenance);
             let mut child = state.child.lock().unwrap(); stop_child(&mut child, false);
             let node = env::var_os("AUTOMIX_NODE_PATH").map(PathBuf::from).unwrap_or_else(|| state.resources.join("node/node.exe"));
-            let mut worker = Command::new(node).arg(state.resources.join("backend/import.mjs")).arg(&source).arg(&state.data_dir)
-                .env_remove("AUTOMIX_SECRET_KEY").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).creation_flags(0x08000000).spawn();
+            let mut worker = ManagedChild::spawn(Command::new(node).arg(state.resources.join("backend/import.mjs")).arg(&source).arg(&state.data_dir)
+                .env_remove("AUTOMIX_SECRET_KEY").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).creation_flags(0x08000000));
             let mut result = json!({"status":"error", "message":"Не удалось запустить импорт"});
             if let Ok(worker) = worker.as_mut() {
                 if let Some(mut stdin) = worker.stdin.take() { let _ = writeln!(stdin, "{}", json!({"source": source_key, "destination": destination_key})); }
@@ -298,6 +317,7 @@ async fn desktop_action(window: tauri::WebviewWindow, state: tauri::State<'_, Se
                     }
                 }
                 if !matches!(worker.wait(), Ok(status) if status.success()) && result["status"] == "done" { result = json!({"status":"error", "message":"Импорт прерван"}); }
+                worker.close_job();
             }
             match spawn_backend(&state.profile, &state.resources, &state.token, &state.pcm, state.port) {
                 Ok((replacement, _, _)) => *child = replacement,
@@ -343,8 +363,8 @@ mod tests {
     }
     #[test]
     fn installer_launch_failure_recovers_backend() {
-        let mut child = std::process::Command::new("cmd.exe").args(["/C", "exit", "0"])
-            .stdin(std::process::Stdio::piped()).creation_flags(0x08000000).spawn().unwrap();
+        let mut child = super::ManagedChild::spawn(std::process::Command::new("cmd.exe").args(["/C", "pause"])
+            .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::null()).creation_flags(0x08000000)).unwrap();
         let missing = std::env::temp_dir().join(format!("mora-missing-installer-{}.exe", super::random_hex().unwrap()));
         let mut recovered = false;
         let error = super::launch_update(&mut child, &missing, |stopped| {
@@ -356,11 +376,15 @@ mod tests {
     }
 }
 fn set_webview_visible(window: &tauri::WebviewWindow, visible: bool) {
-    let _ = window.with_webview(move |webview| unsafe { let _ = webview.controller().SetIsVisible(visible); });
+    let state = window.state::<Session>();
+    let previous = state.webview_visible.lock().unwrap().replace(visible);
+    if previous != Some(visible) {
+        let _ = window.with_webview(move |webview| unsafe { let _ = webview.controller().SetIsVisible(visible); });
+    }
 }
 fn show_window(window: &tauri::WebviewWindow) {
-    set_webview_visible(window, true);
     let _ = window.show(); let _ = window.unminimize(); let _ = window.set_focus();
+    set_webview_visible(window, true);
 }
 fn start_session() -> Result<(Session, Value, mpsc::Receiver<&'static str>), String> {
     let profile = match env::var_os("AUTOMIX_PROFILE_DIR") {
@@ -384,7 +408,8 @@ fn start_session() -> Result<(Session, Value, mpsc::Receiver<&'static str>), Str
     let (transport, commands) = mpsc::sync_channel(8);
     Ok((Session { child: Mutex::new(child), transport, close_to_tray: Mutex::new(close_to_tray), compact: Mutex::new(None),
         profile, data_dir, resources, token, pcm, port, quitting: AtomicBool::new(false), exit_ready: AtomicBool::new(false),
-        maintenance: AtomicBool::new(false), power: AtomicUsize::new(0), restart_generation: AtomicUsize::new(0), prefs: Mutex::new(saved.clone()),
+        maintenance: AtomicBool::new(false), power: AtomicUsize::new(0), restart_generation: AtomicUsize::new(0),
+        webview_visible: Mutex::new(None), prefs: Mutex::new(saved.clone()),
         window_bounds: Mutex::new(None) }, saved, commands))
 }
 fn open_main(app: &tauri::AppHandle, session: Session, saved: Value, commands: mpsc::Receiver<&'static str>) -> Result<(), Box<dyn std::error::Error>> {
@@ -399,6 +424,7 @@ fn open_main(app: &tauri::AppHandle, session: Session, saved: Value, commands: m
     let hidden = env::var_os("AUTOMIX_TEST").is_some();
     let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(format!("{origin}/").parse()?))
         .title("MORA").decorations(false).inner_size(1280.0, 820.0).min_inner_size(960.0, 680.0).visible(false)
+        .background_color(tauri::window::Color(5, 13, 10, 255))
         .data_directory(profile.join("webview2")).initialization_script(script)
         // Tauri's native file-drop handler swallows HTML5 drag-and-drop in WebView2 (queue, playlists).
         .disable_drag_drop_handler()

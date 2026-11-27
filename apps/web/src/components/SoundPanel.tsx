@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { FloppyDisk, Trash, X } from '@phosphor-icons/react';
 import { BUILTIN_PRESETS, EQ_BANDS, EQ_MAX_DB, FLAT_TONE, eqPeakDb, type ToneSettings } from '@automix/core';
 import { controller, useApp } from '../store/app.ts';
@@ -7,6 +7,8 @@ import { desktop } from '../lib/desktop.ts';
 
 const bandLabel = (f: number) => (f >= 1000 ? `${f / 1000}k` : String(f));
 const fmtDb = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1).replace('.', ',')}`;
+const rangeFill = (value: number, min: number, max: number) =>
+  ({ '--fill': `${(value - min) / (max - min) * 100}%` } as CSSProperties);
 
 /**
  * "Звук": 10-band EQ, presets, pre-gain with measured headroom, balance, mono,
@@ -39,9 +41,9 @@ export function SoundPanel() {
       <div className="queue-scroll sound-scroll">
         <div className="sound-field">
           <div className="sound-row"><span>Скорость</span><span className="tnum small">{settings.sound.playback.speed.toFixed(2).replace('.', ',')}×</span></div>
-          <input className="range" type="range" min={.8} max={1.2} step={.01} value={settings.sound.playback.speed} aria-label="Скорость воспроизведения" onChange={(e) => setPlayback({ ...settings.sound.playback, speed: Number(e.target.value) })} onDoubleClick={() => setPlayback({ ...settings.sound.playback, speed: 1 })} />
+          <input className="range" type="range" min={.8} max={1.2} step={.01} value={settings.sound.playback.speed} style={rangeFill(settings.sound.playback.speed, .8, 1.2)} aria-label="Скорость воспроизведения" onChange={(e) => setPlayback({ ...settings.sound.playback, speed: Number(e.target.value) })} onDoubleClick={() => setPlayback({ ...settings.sound.playback, speed: 1 })} />
           <div className="sound-row"><span>Высота тона</span><span className="tnum small">{settings.sound.playback.semitones > 0 ? '+' : ''}{settings.sound.playback.semitones} пт</span></div>
-          <input className="range" type="range" min={-6} max={6} step={.5} value={settings.sound.playback.semitones} aria-label="Высота тона" onChange={(e) => setPlayback({ ...settings.sound.playback, semitones: Number(e.target.value) })} onDoubleClick={() => setPlayback({ ...settings.sound.playback, semitones: 0 })} />
+          <input className="range" type="range" min={-6} max={6} step={.5} value={settings.sound.playback.semitones} style={rangeFill(settings.sound.playback.semitones, -6, 6)} aria-label="Высота тона" onChange={(e) => setPlayback({ ...settings.sound.playback, semitones: Number(e.target.value) })} onDoubleClick={() => setPlayback({ ...settings.sound.playback, semitones: 0 })} />
           <div className="sound-row"><span className="caption muted">Независимые настройки · вместе с AutoMix</span><button className="btn btn-ghost btn-sm" onClick={() => setPlayback({ speed: 1, semitones: 0 })}>Сбросить</button></div>
         </div>
         <div className="sound-row"><span>Эквалайзер</span><Switch checked={tone.enabled} onChange={(v) => update({ enabled: v })} label="Эквалайзер" /></div>
@@ -69,18 +71,18 @@ export function SoundPanel() {
         <div className="sound-row"><button className="btn btn-ghost btn-sm" onClick={() => update({ gains: [...FLAT_TONE.gains] })}>Сбросить в ровный</button></div>
         <div className="sound-field">
           <div className="sound-row"><span>Предусиление</span><span className="tnum small">{fmtDb(tone.preampDb)} дБ</span></div>
-          <input className="range" type="range" min={-12} max={6} step={0.5} value={tone.preampDb} aria-label="Предусиление" onChange={(e) => update({ preampDb: Number(e.target.value) })} onDoubleClick={() => update({ preampDb: 0 })} />
+          <input className="range" type="range" min={-12} max={6} step={0.5} value={tone.preampDb} style={rangeFill(tone.preampDb, -12, 6)} aria-label="Предусиление" onChange={(e) => update({ preampDb: Number(e.target.value) })} onDoubleClick={() => update({ preampDb: 0 })} />
         </div>
         <div className="sound-row"><span>Автоматический запас<br /><span className="caption muted">{tone.autoHeadroom && peak > 0.05 ? `снижает на ${peak.toFixed(1).replace('.', ',')} дБ — по измеренной кривой` : 'перед финальным ограничителем'}</span></span>
           <Switch checked={tone.autoHeadroom} onChange={(v) => update({ autoHeadroom: v })} label="Автоматический запас" /></div>
         <div className="sound-field">
           <div className="sound-row"><span>Баланс</span><span className="small tnum">{tone.balance === 0 ? 'центр' : tone.balance < 0 ? `левее ${Math.round(-tone.balance * 100)}%` : `правее ${Math.round(tone.balance * 100)}%`}</span></div>
-          <input className="range" type="range" min={-1} max={1} step={0.05} value={tone.balance} aria-label="Баланс" onChange={(e) => update({ enabled: true, balance: Number(e.target.value) })} onDoubleClick={() => update({ balance: 0 })} />
+          <input className="range" type="range" min={-1} max={1} step={0.05} value={tone.balance} style={rangeFill(tone.balance, -1, 1)} aria-label="Баланс" onChange={(e) => update({ enabled: true, balance: Number(e.target.value) })} onDoubleClick={() => update({ balance: 0 })} />
         </div>
         <div className="sound-row"><span>Моно</span><Switch checked={tone.mono} onChange={(v) => update({ enabled: true, mono: v })} label="Моно" /></div>
         <div className="sound-field">
           <div className="sound-row"><span>Пространство</span><span className="small tnum">{Math.round((tone.reverbMix ?? 0) * 100)} %</span></div>
-          <input className="range" type="range" min={0} max={.35} step={.01} value={tone.reverbMix ?? 0} aria-label="Реверберация" onChange={(e) => update({ enabled: true, reverbMix: Number(e.target.value) })} onDoubleClick={() => update({ reverbMix: 0 })} />
+          <input className="range" type="range" min={0} max={.35} step={.01} value={tone.reverbMix ?? 0} style={rangeFill(tone.reverbMix ?? 0, 0, .35)} aria-label="Реверберация" onChange={(e) => update({ enabled: true, reverbMix: Number(e.target.value) })} onDoubleClick={() => update({ reverbMix: 0 })} />
           <p className="caption muted">Небольшая стереокомната. На нуле исходный звук; ограничитель пиков остаётся последним в цепи.</p>
         </div>
         <div className="sound-row"><span>Выравнивание громкости</span>

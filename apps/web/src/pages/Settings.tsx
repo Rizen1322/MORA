@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { ClockCounterClockwise, GearSix, Plugs, ChartLine, Waveform, DownloadSimple } from '@phosphor-icons/react';
 import { desktop } from '../lib/desktop.ts';
 import { HOTKEY_ACTIONS, comboLabel, comboOf, hotkeys, reservedCombo, resetHotkeys, setHotkey, type HotkeyAction } from '../lib/hotkeys.ts';
@@ -280,7 +281,10 @@ export function SettingsPage() {
   const s = useApp((st) => st.settings);
   const save = useApp((st) => st.saveSettings);
   const toast = useApp((st) => st.toast);
-  const player = useApp((st) => st.player);
+  const player = useApp(useShallow((st) => ({
+    plan: st.player.transition?.plan ?? st.player.nextPlan,
+    active: st.player.transition?.active,
+  })));
   const [health, setHealth] = useState<Awaited<ReturnType<typeof api.health>> | null>(null);
   const [healthOffline, setHealthOffline] = useState(false);
   // Vocal separation needs a configured local model; the iPhone and desktop apps ship none.
@@ -448,7 +452,7 @@ export function SettingsPage() {
         </details>
       </div>
       <aside className="settings-context">
-        {player.transition?.plan || player.nextPlan ? <TransitionSummary plan={(player.transition?.plan ?? player.nextPlan)!} active={player.transition?.active} details /> : <div className="mix-explainer"><Waveform size={26} aria-hidden="true" /><h2>Переход начинается с музыки</h2><p>AutoMix ищет подходящий участок следующего трека и может начать с него, пропустив часть вступления.</p><p>Включите несколько треков — здесь появятся реальные точки входа и выхода.</p></div>}
+        {player.plan ? <TransitionSummary plan={player.plan} active={player.active} details /> : <div className="mix-explainer"><Waveform size={26} aria-hidden="true" /><h2>Переход начинается с музыки</h2><p>AutoMix ищет подходящий участок следующего трека и может начать с него, пропустив часть вступления.</p><p>Включите несколько треков — здесь появятся реальные точки входа и выхода.</p></div>}
         <a className="context-link" href="#/diagnostics"><ChartLine size={17} aria-hidden="true" /> Посмотреть, как сводятся треки</a>
       </aside>
       </div>

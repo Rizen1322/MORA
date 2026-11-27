@@ -346,7 +346,7 @@ export class PlayerController {
     this.nativeStarting = true;
     this.set({ waveLoading: true, waveRefillError: null, error: null });
     try {
-      const state = await desktop.nativeMix.startStation(station, { sampleRate: NATIVE_SR, position: 0, ...this.nativeSettings() });
+      const state = await desktop.nativeMix.startStation({ ...station, offline: this.offlineOnly || undefined }, { sampleRate: NATIVE_SR, position: 0, ...this.nativeSettings() });
       // Pause, seek or a settings save also bump previewRevision; only a newer native start supersedes this one.
       if (nativeRevision !== this.nativeRevision) return;
       await this.refreshLibrary();
@@ -388,6 +388,7 @@ export class PlayerController {
   private nativeQueueEditRevision = 0;
   private nativeSkip = false;
   private nativeStation: NativeRadioConfig | null = null;
+  private desktopStationSync?: Promise<void>;
   private nativeLibraryRefresh: Promise<void> | null = null;
   /** Plans behind each native track's blend (page-side only, for the player UI). */
   private nativePlans = new WeakMap<NativeItem, TransitionPlan>();
@@ -665,7 +666,10 @@ export class PlayerController {
     if (s.queue && s.queue.some(e => !this.track(e.trackId))) {
       this.nativeLibraryRefresh ??= this.refreshLibrary().catch(() => {}).finally(() => { this.nativeLibraryRefresh = null; });
     }
-    if (s.station !== undefined) this.nativeStation = s.station;
+    if (s.station !== undefined) {
+      this.nativeStation = s.station;
+      this.syncDesktopStationNetwork();
+    }
     if (s.queue) this.nativeQueuePollRevision = s.queueRevision;
     const previousEntryId = this.state.queue[this.state.index]?.entryId;
     let queue = s.queue && s.station ? s.queue.map(e => ({ ...e, origin: e.origin ?? 'wave' as const })) : this.state.queue;
@@ -1703,9 +1707,21 @@ export class PlayerController {
 
   /** No usable network (lib/offline-wave.ts): «Моя волна» picks only songs that play from this device. */
   offlineOnly = false;
+  private syncDesktopStationNetwork(): void {
+    const mix = desktop?.nativeMix;
+    const station = this.nativeStation;
+    if (!mix?.setStation || !station || !!station.offline === this.offlineOnly || this.desktopStationSync) return;
+    this.desktopStationSync = mix.setStation({ ...station, offline: this.offlineOnly }, this.state.context)
+      .then(() => {}, () => {}).finally(() => { this.desktopStationSync = undefined; });
+  }
+
   setOfflineOnly(on: boolean): void {
     if (this.offlineOnly === on) return;
     this.offlineOnly = on;
+    if (this.autonomousRadio) {
+      this.syncDesktopStationNetwork();
+      return;
+    }
     // A refill that failed for lack of network may try again at once with what the device has.
     this.waveRetryAt = 0; this.waveFailures = 0;
     if (this.isWave()) void this.topUpWave();
@@ -2589,6 +2605,7 @@ export class PlayerController {
   }
 
   private focusAnalysis(): void {
+    if (desktop?.nativeMix) return;
     if (this.native && this.nativeMix.prepareQueue) {
       // The native producer owns MIR and downloading; do not duplicate that work in WebContent.
       void api.focus({ current: null, next: [], candidates: [] }).catch(() => {});

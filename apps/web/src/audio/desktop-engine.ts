@@ -21,18 +21,33 @@ export class DesktopAnalyser {
   private fft = new FFT(2048);
   private re = new Float64Array(2048);
   private im = new Float64Array(2048);
+  private window = Float64Array.from({ length: this.fftSize }, (_, i) => {
+    const angle = 2 * Math.PI * i / this.fftSize;
+    return .42 - .5 * Math.cos(angle) + .08 * Math.cos(2 * angle);
+  });
+  private spectrumDirty = false;
   constructor(readonly context: DesktopAudioContext) {}
   feed(samples: number[]) {
     if (samples.length !== this.fftSize || !samples.every(Number.isFinite)) return;
     this.waveform.set(samples);
-    for (let i = 0; i < this.fftSize; i++) this.re[i] = samples[i] * (.42 - .5 * Math.cos(2 * Math.PI * i / this.fftSize) + .08 * Math.cos(4 * Math.PI * i / this.fftSize));
+    this.spectrumDirty = true;
+  }
+  private updateSpectrum() {
+    if (!this.spectrumDirty) return;
+    this.spectrumDirty = false;
+    for (let i = 0; i < this.fftSize; i++) this.re[i] = this.waveform[i] * this.window[i];
     this.im.fill(0);
     this.fft.forward(this.re, this.im);
     for (let i = 0; i < this.bins.length; i++) this.bins[i] = 20 * Math.log10(Math.max(1e-12, Math.hypot(this.re[i], this.im[i]) / this.fftSize));
   }
-  getFloatFrequencyData(out: Float32Array) { out.fill(-Infinity); out.set(this.bins.subarray(0, out.length)); }
+  getFloatFrequencyData(out: Float32Array) {
+    this.updateSpectrum();
+    out.fill(-Infinity);
+    out.set(this.bins.subarray(0, out.length));
+  }
   getFloatTimeDomainData(out: Float32Array) { out.fill(0); out.set(this.waveform.subarray(0, out.length)); }
   getByteFrequencyData(out: Uint8Array) {
+    this.updateSpectrum();
     out.fill(0);
     for (let i = 0; i < Math.min(out.length, this.bins.length); i++) out[i] = Math.round(Math.max(0, Math.min(255, (this.bins[i] + 100) / 70 * 255)));
   }

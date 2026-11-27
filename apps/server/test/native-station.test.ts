@@ -3,6 +3,24 @@ import { expect, it, vi } from 'vitest';
 import type { Services } from '../src/app.ts';
 import { registerNativeStationRoutes } from '../src/routes/native-station.ts';
 
+it('uses only local wave candidates offline while preserving the requested station', async () => {
+  const app = Fastify();
+  const next = vi.fn(() => [{ id: 'downloaded' }]);
+  const wave = vi.fn();
+  const services = { cfg: { desktopPlaybackToken: 'secret' }, db: { prepare: () => ({ get: () => undefined }) },
+    wave: { next }, providers: { yandex: { wave } } } as unknown as Services;
+  registerNativeStationRoutes(app, services);
+  try {
+    const response = await app.inject({ method: 'POST', url: '/internal/desktop/station-next',
+      headers: { 'x-mora-desktop-token': 'secret' },
+      payload: { kind: 'yandex', offline: true, session: ['played', 'current'], currentId: 'current', exclude: ['queued'], count: 1 } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ context: { type: 'yandex-wave' }, entries: [{ trackId: 'downloaded', origin: 'wave' }] });
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ offline: true, session: ['played', 'current'], exclude: ['queued', 'current'] }));
+    expect(wave).not.toHaveBeenCalled();
+  } finally { await app.close(); }
+});
+
 it('replaces a restricted station candidate without discarding playable recommendations', async () => {
   const app = Fastify();
   const item = (id: string) => ({ externalId: id, title: id, artist: id, playable: true, audioProvider: 'youtube' });

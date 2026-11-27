@@ -39,19 +39,6 @@
 .search-row-actions { display: flex; align-items: center; gap: 2px; }
 .search-row-actions .icon-btn { width: 34px; height: 34px; color: var(--text-3); }
 .search-row-actions .icon-btn:hover { color: var(--text); }
-.search-row-menu { position: relative; }
-.search-row-menu > summary { list-style: none; cursor: pointer; }
-.search-row-menu > summary::-webkit-details-marker { display: none; }
-.search-row-menu > div {
-  position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 230px; padding: 6px;
-  border-radius: 14px; background: var(--surface-3); box-shadow: var(--shadow-lg), inset 0 0 0 1px var(--line-strong);
-  display: flex; flex-direction: column;
-}
-.search-row-menu > div > button, .search-row-menu > div > a {
-  display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 9px; font-size: 13px; color: var(--text); text-align: left; text-decoration: none;
-}
-.search-row-menu > div > button:hover, .search-row-menu > div > a:hover { background: rgba(196, 240, 214, 0.07); }
-.search-row-menu > div > button:disabled { opacity: 0.5; }
 .search-skeleton { display: flex; flex-direction: column; gap: 8px; }
 .search-skeleton i { display: block; height: 52px; border-radius: 12px; background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2)); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
 @keyframes shimmer { to { background-position: -200% 0; } }
@@ -66,7 +53,7 @@
 .version-tag.explicit { color: var(--on-accent); background: var(--text-2); padding: 0 5px; }
 
 .version-panel {
-  position: fixed; z-index: 35; top: calc(var(--titlebar-h, 0px) + 8px); right: 8px; bottom: calc(var(--player-h) + 8px);
+  position: fixed; z-index: 45; top: calc(var(--titlebar-h, 0px) + 8px); right: 8px; bottom: calc(var(--player-h) + 8px);
   width: min(460px, calc(100vw - 16px)); display: flex; flex-direction: column; gap: 10px; padding: 16px;
   border-radius: 22px; background: var(--surface-1); box-shadow: var(--shadow-lg), inset 0 0 0 1px var(--line-strong);
   animation: slide-in 260ms var(--ease);

@@ -107,6 +107,19 @@
   display: none;
 }
 
+.desktop .full-player { animation: none; }
+.desktop:has(.full-player) .full-player [data-player-cover],
+.desktop:not(:has(.full-player)) :is(.player-bar, .mini-player) [data-player-cover] {
+  view-transition-name: now-playing-cover;
+}
+::view-transition-group(now-playing-cover) {
+  animation-duration: 360ms;
+  animation-timing-function: cubic-bezier(.2, .75, .24, 1);
+}
+::view-transition-old(root), ::view-transition-new(root) {
+  animation-duration: 260ms;
+}
+
 .desktop .fp-top {
   min-height: var(--titlebar-h);
   padding-top: 6px;
@@ -127,6 +140,19 @@
     top: calc(var(--titlebar-h) + 4px);
   }
 }
+
+@media (min-width: 1281px) {
+  .desktop .app {
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr) 0px;
+    transition: grid-template-columns 260ms var(--ease);
+  }
+  .desktop .app:has(> .queue-panel) {
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr) calc(var(--queue-w) + 10px);
+  }
+}
+
+.desktop .sleep-menu[open] > div { animation: page-in 160ms var(--ease) both; }
+.desktop .history-row button.t-main { text-align: left; }
 
 @media (max-width: 767px) {
   .desktop .app {
@@ -201,7 +227,7 @@
 .desktop .fp-more > div > button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; border-radius: 8px; text-align: left; }
 .desktop .fp-more > div > button:hover, .desktop .fp-more > div > button:focus-visible { background: rgba(196, 240, 214, .1); }
 .desktop .fp-more > div > button:disabled { opacity: .5; }
-.desktop .playlist-preparation { display:flex; flex-wrap:wrap; align-items:center; gap:12px 20px; margin:12px 0 24px; padding:18px; border:1px solid var(--line); border-radius:16px; background:var(--surface); }
+.desktop .playlist-preparation { display:flex; flex-wrap:wrap; align-items:center; gap:12px 20px; margin:12px 0 24px; padding:18px; border:1px solid var(--line); border-radius:16px; background:var(--surface-2); }
 .desktop .playlist-preparation>div:first-child { flex:1; min-width:220px; }
 .desktop .playlist-preparation p { margin:6px 0 0; }
 .desktop .preparation-progress { width:100%; display:flex; align-items:center; gap:12px; font-size:12px; }

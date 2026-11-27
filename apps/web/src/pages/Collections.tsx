@@ -252,13 +252,14 @@ export function HistoryPage() {
             if (!t) return null;
             return (
               <div key={h.id} className="track-row history-row">
-                <span className="t-main">
+                <button type="button" className="t-main" aria-label={`Слушать: ${t.title}`}
+                  onClick={() => void controller.playTracks([t.id], 0, { type: 'library', label: 'История' })}>
                   <Cover className="thumb" url={t.coverUrl} seed={t.album || t.id} size={40} />
                   <span style={{ minWidth: 0 }}>
                     <div className="t-title ellipsis">{t.title}</div>
                     <div className="t-artist ellipsis">{t.artist}</div>
                   </span>
-                </span>
+                </button>
                 <span className="small col-album">{fmtDate(h.startedAt)}</span>
                 <span className="small col-bpm">
                   <span className={`tag ${h.endReason === 'skip' ? 'warn' : h.endReason === 'transition' ? 'accent' : ''}`}>{END_LABEL[h.endReason ?? ''] ?? 'играл'}</span>

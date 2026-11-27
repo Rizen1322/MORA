@@ -16,6 +16,7 @@ describe('Yandex catalog metadata through a local authenticated API fixture', ()
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'automix-yandex-catalog-'));
   const oldApiBase = process.env.YANDEX_API_BASE;
   const seen: SeenRequest[] = [];
+  let cancelledSearches = 0;
   let fixture: Server, base: string, a: App;
   let libraryTrackId: string;
   const artist = (id = 7) => ({
@@ -72,6 +73,12 @@ describe('Yandex catalog metadata through a local authenticated API fixture', ()
       }
       if (url.pathname === '/search') {
         const text = url.searchParams.get('text') ?? '';
+        if (text === 'cancelled-search') {
+          res.once('close', () => { cancelledSearches++; });
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.write('{"result":');
+          return;
+        }
         if (text === 'upstream-error') {
           res.writeHead(503, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ error: { name: 'FixtureFailure', message: `${TOKEN} ${base}/private?access_token=${TOKEN}` } }));
@@ -147,6 +154,24 @@ describe('Yandex catalog metadata through a local authenticated API fixture', ()
     expect(countTracks()).toBe(before);
     expect(seen.some((request) => /\/download-info|\/tracks(?:\?|$)|get-mp3/.test(request.path))).toBe(false);
     expect(response.body).not.toContain(TOKEN);
+  });
+
+  it('cancels the upstream response when the last listener leaves a shared search', async () => {
+    const catalog = a.services.providers.yandex.catalog;
+    const first = new AbortController(), second = new AbortController();
+    const firstResult = catalog.search('cancelled-search', 0, 'all', first.signal);
+    const secondResult = catalog.search('cancelled-search', 0, 'all', second.signal);
+    const firstCancelled = expect(firstResult).rejects.toMatchObject({ name: 'AbortError' });
+    const secondCancelled = expect(secondResult).rejects.toMatchObject({ name: 'AbortError' });
+    try {
+      await vi.waitFor(() => expect(searchRequests('cancelled-search')).toHaveLength(1));
+      first.abort();
+      await firstCancelled;
+      expect(cancelledSearches).toBe(0);
+      second.abort();
+      await secondCancelled;
+      await vi.waitFor(() => expect(cancelledSearches).toBe(1));
+    } finally { first.abort(); second.abort(); await Promise.allSettled([firstCancelled, secondCancelled]); }
   });
 
   it.each(['track', 'artist', 'album'] as const)('forwards search type %s and maps its best result', async (type) => {

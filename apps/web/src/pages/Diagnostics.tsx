@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { CheckCircle, Info, Play, WarningCircle } from '@phosphor-icons/react';
 import { keyNameRu, type TrackAnalysis, type TransitionPlan } from '@automix/core';
 import { api, type HealthStatus, type TransitionLogItem } from '../lib/api.ts';
@@ -513,7 +514,10 @@ function HealthSummary({ checks }: { checks: Check[] }) {
 export function DiagnosticsPage() {
   const { query } = useRoute();
   const trackId = query.get('track');
-  const p = useApp((s) => s.player);
+  const p = useApp(useShallow(({ player }) => ({
+    livePlan: player.transition?.plan ?? player.nextPlan, active: player.transition?.active,
+    lastTransition: player.lastTransition, audioHealth: player.audioHealth,
+  })));
   const [log, setLog] = useState<TransitionLogItem[]>([]);
   const [sel, setSel] = useState<string>('next');
   const [showHistory, setShowHistory] = useState(false);
@@ -543,7 +547,7 @@ export function DiagnosticsPage() {
         <TrackAnalysisView trackId={trackId} />
       </div>
     );
-  const livePlan = p.transition?.plan ?? p.nextPlan;
+  const livePlan = p.livePlan;
   const lastCompleted=p.lastTransition??(log[0]?{plan:log[0].plan,outcome:log[0].outcome,logId:log[0].id}:null);
   const chosen: { plan: TransitionPlan; outcome?: Record<string, unknown>; logId?: number } | null =
     sel === 'next' ? (livePlan ? { plan: livePlan } : lastCompleted) : (() => {
@@ -563,7 +567,7 @@ export function DiagnosticsPage() {
       <h2 className="pref-group-title">Переходы</h2>
       <div className="tabs diag-picker" aria-label="Какой переход показать">
         <button className="chip" aria-pressed={sel === 'next'} onClick={() => setSel('next')}>
-          {p.transition?.active ? 'Идёт сейчас' : livePlan ? 'Запланирован' : 'Последний'}
+          {p.active ? 'Идёт сейчас' : livePlan ? 'Запланирован' : 'Последний'}
         </button>
         {log.slice(0, showHistory ? 30 : 3).map((l) => (
           <button key={l.id} className="chip" aria-pressed={sel === String(l.id)} onClick={() => setSel(String(l.id))} title={fmtDate(l.executedAt)}>
@@ -584,7 +588,7 @@ export function DiagnosticsPage() {
         }}><Play size={17} weight="fill" aria-hidden="true" />{previewing ? 'Готовим прослушивание…' : 'Послушать переход'}</button>
         <p>Рассчитывает пару по текущим настройкам и начинает музыку перед переходом. Очередь заменится этими двумя треками.</p>
       </div>}
-      {chosen ? <TransitionView plan={chosen.plan} outcome={chosen.outcome} active={sel==='next'&&p.transition?.active} rate={rate} /> : <div className="empty"><h2>Послушайте пару треков</h2><p>Выберите музыку в медиатеке и включите AutoMix. Здесь появятся выбранные точки входа и выхода, реальные волны и причины перехода.</p><a href="#/library" className="btn btn-primary">Открыть медиатеку</a></div>}
+      {chosen ? <TransitionView plan={chosen.plan} outcome={chosen.outcome} active={sel === 'next' && p.active} rate={rate} /> : <div className="empty"><h2>Послушайте пару треков</h2><p>Выберите музыку в медиатеке и включите AutoMix. Здесь появятся выбранные точки входа и выхода, реальные волны и причины перехода.</p><a href="#/library" className="btn btn-primary">Открыть медиатеку</a></div>}
       <details className="pref-more">
         <summary>
           <span className="pref-title">Технические подробности</span>

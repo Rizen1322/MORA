@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowClockwise, MagnifyingGlass, Play, SpinnerGap, X } from '@phosphor-icons/react';
 import { api, type PublicCatalogPage as PageData, type PublicTrack } from '../lib/api.ts';
+import { useCatalogResource, type CatalogCacheEntry } from '../lib/catalog-resource.ts';
 import { useApp } from '../store/app.ts';
 import { LikeAllButton, likeLibraryTrack } from '../components/LikeAll.tsx';
 import { publicAlbumHref, publicArtistHref, useRoute } from '../lib/router.ts';
@@ -9,6 +9,8 @@ import { Cover } from '../components/common.tsx';
 import { PublicRow, asCatalog } from './Search.tsx';
 import '../styles/catalog.css';
 import '../styles/public-catalog.css';
+
+const pageCache = new Map<string, CatalogCacheEntry<PageData>>();
 
 /** "Like all" for YouTube Music and SoundCloud: a like belongs to a library song, so each one is
  * prepared (downloaded) first, two at a time to keep the phone cool. */
@@ -22,22 +24,13 @@ export function PublicLikeAll({ tracks }: { tracks: PublicTrack[] }) {
 
 export function PublicCatalogPage() {
   const { parts } = useRoute(), kind = parts[1], id = parts[2] ?? '';
-  const [state, setState] = useState<{ key: string; data?: PageData; error?: string }>({ key: '' });
-  const [attempt, setAttempt] = useState(0), prep = usePublicPlayback();
-  const key = `${kind}:${id}`, valid = kind === 'artist' || kind === 'album';
-  useEffect(() => {
-    if (!valid) return;
-    const ctl = new AbortController();
-    setState({ key });
-    void api.publicCatalog(kind, id, ctl.signal).then(data => { if (!ctl.signal.aborted) setState({ key, data }); })
-      .catch(e => { if (!ctl.signal.aborted) setState({ key, error: (e as Error).message }); });
-    return () => ctl.abort();
-  }, [key, attempt, valid, kind, id]);
-  const page = state.key === key ? state.data : undefined, error = state.key === key ? state.error : undefined;
+  const prep = usePublicPlayback();
+  const valid = kind === 'artist' || kind === 'album';
+  const { data: page, error, retry } = useCatalogResource(valid ? `${kind}:${id}` : null, (signal) => api.publicCatalog(kind === 'artist' ? 'artist' : 'album', id, signal), pageCache);
   const play = (index = 0) => { if (page) void publicPlayer.play(page.tracks.map(asCatalog), index, { type: page.type, label: `${page.title} · YouTube Music`, id: page.id }); };
   return <div className="main-inner catalog-page public-catalog-page">
     <nav className="catalog-nav"><button className="icon-btn" aria-label="Назад" onClick={() => history.back()}><ArrowLeft size={21} /></button><a href="#/search"><MagnifyingGlass size={17} />Поиск</a><span>YouTube Music</span></nav>
-    {!valid || error ? <div className="catalog-error" role="alert"><h1>Не удалось открыть страницу</h1><p>{error ?? 'Неизвестный раздел каталога'}</p>{valid && <button className="btn btn-ghost" onClick={() => setAttempt(x => x + 1)}><ArrowClockwise size={18} />Повторить</button>}<a href="#/search">Найти музыку</a></div>
+    {!valid || error ? <div className="catalog-error" role="alert"><h1>Не удалось открыть страницу</h1><p>{error ?? 'Неизвестный раздел каталога'}</p>{valid && <button className="btn btn-ghost" onClick={retry}><ArrowClockwise size={18} />Повторить</button>}<a href="#/search">Найти музыку</a></div>
       : !page ? <div className="catalog-skeleton" role="status"><SpinnerGap size={28} className="spin" /><p>Открываем {kind === 'artist' ? 'исполнителя' : 'альбом'}…</p><div className="catalog-skeleton-hero" aria-hidden="true" /></div>
         : <>
           <header className="catalog-hero">

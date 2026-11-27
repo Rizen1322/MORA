@@ -15,8 +15,21 @@ function active(path: string, prefix: string, exact = false): 'page' | undefined
   return path === prefix || path.startsWith(`${prefix}/`) ? 'page' : undefined;
 }
 
+const defaultSearchPath = (state: ReturnType<typeof useApp.getState>) =>
+  desktop && state.providers.some((provider) => provider.id === 'yandex' && provider.status === 'connected') ? '/yandex' : '/search';
+
+export function openSearch() {
+  const path = location.hash.slice(1).split('?')[0];
+  if (path === '/search' || path === '/yandex') {
+    document.querySelector<HTMLInputElement>('main [role="search"] input[type="search"]')?.focus();
+    return;
+  }
+  location.hash = defaultSearchPath(useApp.getState());
+}
+
 export function Sidebar() {
   const { path } = useRoute();
+  const searchPath = useApp(defaultSearchPath);
   const playlists = useApp((s) => s.playlists);
   const contextType = useApp((s) => s.player.context?.type);
   const [creating, setCreating] = useState(false);
@@ -32,7 +45,12 @@ export function Sidebar() {
           <House size={22} weight={path === '/' ? 'fill' : 'regular'} />
           <span className="label-text">Главная</span>
         </a>
-        <a href="#/search" aria-current={path.startsWith('/search') || path.startsWith('/catalog') || path.startsWith('/yandex') ? 'page' : undefined}>
+        <a href={`#${searchPath}`} onClick={(event) => {
+          if ((!event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) && (path === '/search' || path === '/yandex')) {
+            event.preventDefault();
+            openSearch();
+          }
+        }} aria-current={path.startsWith('/search') || path.startsWith('/catalog') || path.startsWith('/yandex') ? 'page' : undefined}>
           <MagnifyingGlass size={22} /><span className="label-text">Поиск</span>
         </a>
         <a href="#/wave" aria-current={active(path, '/wave')}>
@@ -111,7 +129,7 @@ export function TitleBar() {
         <CaretRight size={16} weight="bold" />
       </button>
       <span className="compact-only titlebar-compact"><CompactToggle /></span>
-      <button className="titlebar-search" onClick={() => (location.hash = '/search')}>
+      <button className="titlebar-search" onClick={openSearch}>
         <MagnifyingGlass size={15} aria-hidden="true" />
         <span>Поиск музыки</span>
         <kbd>/</kbd>
@@ -123,12 +141,13 @@ export function TitleBar() {
 
 export function TabBar() {
   const { path } = useRoute();
+  const searchPath = useApp(defaultSearchPath);
   const items = [
     // The wave starts from the large card on Home, so its page belongs to that tab.
     { href: '#/', label: 'Главная', Icon: House, on: path === '/' || path === '/wave' },
     { href: '#/liked', label: 'Любимое', Icon: Heart, on: path === '/liked' },
     { href: '#/library', label: 'Медиатека', Icon: Books, on: (path.startsWith('/library') && path !== '/library/search') || path.startsWith('/playlist') || path.startsWith('/album') || path.startsWith('/artist') },
-    { href: '#/search', label: 'Поиск', Icon: MagnifyingGlass, on: path === '/library/search' || path === '/search' || path.startsWith('/catalog') },
+    { href: `#${searchPath}`, label: 'Поиск', Icon: MagnifyingGlass, on: path === '/library/search' || path === '/search' || path === '/yandex' || path.startsWith('/catalog') },
     { href: '#/more', label: 'Ещё', Icon: DotsThreeCircle, on: path === '/more' || SETTINGS_PATHS.includes(path) },
   ];
   return (

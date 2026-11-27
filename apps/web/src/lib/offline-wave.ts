@@ -53,6 +53,7 @@ export function check(now = Date.now()): void {
   else if (now - stuckSince > WEAK_MS) { weakUntil = now + WEAK_HOLD_MS; stuckSince = 0; }
   const offline = reported || globalThis.navigator?.onLine === false || now < weakUntil;
   controller.setOfflineOnly(offline);
+  if (controller.autonomousRadio) return;
   if (held && ctx !== held.as) held = null; // the listener chose something else meanwhile
   if (offline) {
     if (held || !ctx || !station) return;
@@ -76,6 +77,7 @@ let watching = false;
 export function watchNetwork(): void {
   if (watching) return;
   watching = true;
+  check();
   controller.subscribe(() => check());
   globalThis.addEventListener?.('online', () => check());
   globalThis.addEventListener?.('offline', () => check());

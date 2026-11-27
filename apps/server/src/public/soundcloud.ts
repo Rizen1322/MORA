@@ -1,8 +1,11 @@
+import { SharedPreparation } from './shared-preparation.ts';
+
 /** Metadata only: public SoundCloud web search; audio stays in the existing resolver. */
 const ORIGIN = 'https://soundcloud.com';
 const API = 'https://api-v2.soundcloud.com/search/tracks';
 let transport: typeof fetch = (...args) => fetch(...args);
 let client: { id: string; until: number } | null = null;
+let clientLookup = new SharedPreparation<string>();
 let retryAt = 0;
 let artistRetryAt = 0;
 
@@ -10,8 +13,17 @@ let artistRetryAt = 0;
 export function setSoundCloudTransport(fetcher: typeof fetch): void {
   transport = fetcher;
   client = null;
+  clientLookup = new SharedPreparation();
   retryAt = 0;
   artistRetryAt = 0;
+}
+
+class SoundCloudStatusError extends Error {
+  constructor(readonly status: number) { super(`SoundCloud: HTTP ${status}`); }
+}
+
+function hasOutage(error: unknown, attempt: AbortSignal): boolean {
+  return attempt.aborted || error instanceof SoundCloudStatusError && (error.status === 429 || error.status >= 500);
 }
 
 async function text(url: string, signal: AbortSignal, maxBytes: number): Promise<string> {
@@ -19,7 +31,7 @@ async function text(url: string, signal: AbortSignal, maxBytes: number): Promise
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) client = null;
     await res.body?.cancel();
-    throw new Error(`SoundCloud: HTTP ${res.status}`);
+    throw new SoundCloudStatusError(res.status);
   }
   if (Number(res.headers.get('content-length') ?? 0) > maxBytes) {
     await res.body?.cancel();
@@ -46,16 +58,23 @@ async function text(url: string, signal: AbortSignal, maxBytes: number): Promise
 
 async function clientId(signal: AbortSignal): Promise<string> {
   if (client && client.until > Date.now()) return client.id;
-  const html = await text(`${ORIGIN}/`, signal, 1 << 20);
-  const scripts = [...html.matchAll(/<script[^>]+src=["']([^"']+)["']/g)]
-    .map((m) => m[1]).filter((url) => /^https:\/\/a-v2\.sndcdn\.com\/assets\/[\w.-]+\.js$/.test(url));
-  // Only official assets, bounded independently of whatever the remote HTML contains.
-  for (const url of [...new Set(scripts)].slice(-3).reverse()) {
-    const js = await text(url, signal, 4 << 20);
-    const id = /client_id\s*:\s*["']([0-9a-zA-Z]{32})["']/.exec(js)?.[1];
-    if (id) { client = { id, until: Date.now() + 30 * 60_000 }; return id; }
-  }
-  throw new Error('SoundCloud: изменился формат публичного поиска');
+  const lookup = clientLookup;
+  return lookup.run('client', { signal }, async worker => {
+    const html = await text(`${ORIGIN}/`, worker, 1 << 20);
+    const scripts = [...html.matchAll(/<script[^>]+src=["']([^"']+)["']/g)]
+      .map((m) => m[1]).filter((url) => /^https:\/\/a-v2\.sndcdn\.com\/assets\/[\w.-]+\.js$/.test(url));
+    // Only official assets, bounded independently of whatever the remote HTML contains.
+    for (const url of [...new Set(scripts)].slice(-3).reverse()) {
+      const js = await text(url, worker, 4 << 20);
+      const id = /client_id\s*:\s*["']([0-9a-zA-Z]{32})["']/.exec(js)?.[1];
+      if (id) {
+        worker.throwIfAborted();
+        if (lookup === clientLookup) client = { id, until: Date.now() + 30 * 60_000 };
+        return id;
+      }
+    }
+    throw new Error('SoundCloud: изменился формат публичного поиска');
+  });
 }
 
 type Json = Record<string, unknown>;
@@ -126,7 +145,7 @@ export async function getSoundCloudArtist(id: string, signal?: AbortSignal): Pro
     return { id, permalink, title: typeof user.username === 'string' ? user.username.slice(0, 300) : '',
       description: typeof user.description === 'string' ? user.description.slice(0, 4000) : '', coverUrl: image(user.avatar_url), tracks };
   } catch (e) {
-    if (!signal?.aborted) artistRetryAt = Date.now() + 30_000;
+    if (!signal?.aborted && hasOutage(e, ctl.signal)) artistRetryAt = Date.now() + 30_000;
     throw signal?.aborted ? new Error('Отменено') : e;
   } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
 }
@@ -149,7 +168,7 @@ export async function searchSoundCloud(query: string, limit = 15, signal?: Abort
     retryAt = 0;
     return result;
   } catch (e) {
-    if (!signal?.aborted) retryAt = Date.now() + 30_000;
+    if (!signal?.aborted && hasOutage(e, ctl.signal)) retryAt = Date.now() + 30_000;
     throw signal?.aborted ? new Error('Отменено') : e;
   } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
 }

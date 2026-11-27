@@ -255,13 +255,22 @@ export class ApiError extends Error {
 }
 
 async function req<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(url, {
-    method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    signal,
-  });
-  const text = await res.text();
+  const timeout = method === 'GET' ? AbortSignal.timeout(30000) : undefined;
+  let res: Response, text: string;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: signal && timeout ? AbortSignal.any([signal, timeout]) : signal ?? timeout,
+    });
+    text = await res.text();
+  } catch (error) {
+    if (signal?.aborted && (signal.reason as Error)?.name !== 'TimeoutError') throw error;
+    if (timeout?.aborted || (error as Error)?.name === 'TimeoutError') throw new ApiError('Сервер не ответил вовремя. Повторите попытку.', 0);
+    if (error instanceof TypeError) throw new ApiError('Нет связи с сервером', 0);
+    throw error;
+  }
   let data: unknown = null;
   try {
     data = text ? JSON.parse(text) : null;

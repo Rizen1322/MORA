@@ -107,18 +107,30 @@ export function WaveHero() {
   );
 }
 
+function HomeSessionProgress() {
+  const progress = useApp(({ player }) => player.duration ? player.position / player.duration : 0);
+  return <div className="home-session-progress" aria-hidden="true"><i style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%` }} /></div>;
+}
+
+function HomeSessionTime() {
+  const time = useApp(({ player }) => `${fmtTime(player.position)} / ${fmtTime(player.duration)}`);
+  return <span className="caption dim tnum">{time}</span>;
+}
+
 export function HomePage() {
   const order = useApp((s) => s.order);
   const tracksMap = useApp((s) => s.tracks);
   const playlists = useApp((s) => s.playlists);
   const loaded = useApp((s) => s.loaded);
-  const player = useApp((s) => s.player);
-  const current = trackOf(player.queue[player.index]?.trackId);
+  const player = useApp(useShallow((s) => ({
+    trackId: s.player.queue[s.player.index]?.trackId, status: s.player.status, context: s.player.context,
+  })));
+  const current = trackOf(player.trackId);
   const setFull = useApp((s) => s.setFullPlayer);
   const playing = player.status === 'playing' || player.status === 'buffering';
   const all = useMemo(() => order.map((id) => tracksMap.get(id)!).filter(Boolean), [order, tracksMap]);
   const recent = all.slice(0, 16);
-  const liked = all.filter((t) => t.reaction > 0).slice(0, 16);
+  const liked = useMemo(() => all.filter((t) => t.reaction > 0).slice(0, 16), [all]);
   const forgotten = useMemo(
     () =>
       all
@@ -155,9 +167,9 @@ export function HomePage() {
                 <p className="small muted ellipsis"><Swap k={current.id}>{current.artist || 'Неизвестный исполнитель'}</Swap></p>
               </div>
             </div>
-            <div className="home-session-progress" aria-hidden="true"><i style={{ width: `${player.duration ? Math.min(100, Math.max(0, player.position / player.duration * 100)) : 0}%` }} /></div>
+            <HomeSessionProgress />
             <div className="home-session-footer">
-              <span className="caption dim tnum">{fmtTime(player.position)} / {fmtTime(player.duration)}</span>
+              <HomeSessionTime />
               <button className="play-circle" aria-label={playing ? 'Пауза' : 'Продолжить слушать'} onClick={() => controller.toggle()}>{playing ? <Pause size={21} weight="fill" /> : <Play size={21} weight="fill" />}</button>
             </div>
           </section>

@@ -8,13 +8,15 @@ import { radioIdentity, rankRadio, tasteSeeds } from '../../../web/src/lib/radio
 import type { PublicTrack } from '../public/provider.ts';
 import { hasNativeInternalAuth } from '../native-sources.ts';
 
-type Body = { kind: 'own' | 'yandex' | 'online'; seed?: { title: string; artist: string }; anchor?: 'seed'; currentId?: string; exclude: string[]; count?: number; yandexSessionId?: string };
+type Body = { kind: 'own' | 'yandex' | 'online'; offline?: boolean; session?: string[]; seed?: { title: string; artist: string }; anchor?: 'seed'; currentId?: string; exclude: string[]; count?: number; yandexSessionId?: string };
 
 export function registerNativeStationRoutes(app: FastifyInstance, s: Services): void {
   const advance = async (req: FastifyRequest<{ Body: Body }>, reply: FastifyReply, mobile: boolean) => {
     const b = req.body;
     const validId = (id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= 256;
     if (!b || !['own', 'yandex', 'online'].includes(b.kind) || (mobile && b.kind !== 'online') || !Array.isArray(b.exclude) || b.exclude.length > 2000 || b.exclude.some(id => !validId(id)) ||
+      (b.offline !== undefined && (mobile || typeof b.offline !== 'boolean')) ||
+      (b.session !== undefined && (mobile || !Array.isArray(b.session) || b.session.length > 200 || b.session.some(id => !validId(id)))) ||
       (b.currentId !== undefined && !validId(b.currentId)) || (b.yandexSessionId !== undefined && !validId(b.yandexSessionId)) ||
       (b.anchor !== undefined && (b.anchor !== 'seed' || !b.seed)) ||
       (b.count !== undefined && (!Number.isInteger(b.count) || b.count < 1 || b.count > 6)) ||
@@ -25,15 +27,18 @@ export function registerNativeStationRoutes(app: FastifyInstance, s: Services): 
     try {
       const count = b.count ?? 3, excluded = new Set([...b.exclude, ...(b.currentId ? [b.currentId] : [])]);
       const settings = getSettings(s.db).wave;
-      if (b.kind === 'own') {
-        const picks = s.wave.next({ currentId: b.currentId ?? null, session: b.exclude, exclude: [...excluded], mood: settings.mood, diversity: settings.diversity, mix: settings.mode === 'mix', count });
+      if (b.kind === 'own' || b.offline) {
+        const picks = s.wave.next({ currentId: b.currentId ?? null, session: b.session ?? b.exclude, exclude: [...excluded], mood: settings.mood, diversity: settings.diversity, mix: settings.mode === 'mix', count, offline: b.offline });
         if (!picks.length) throw new Error('Пока нет рекомендаций');
-        return { entries: picks.map(p => ({ trackId: p.id, entryId: randomUUID(), origin: 'wave' })), context: { type: 'wave', label: 'Моя волна' } };
+        const context = b.kind === 'yandex' ? { type: 'yandex-wave', label: 'Моя волна Яндекса' }
+          : b.kind === 'online' ? { type: 'online-radio', label: 'Онлайн-радио · Моя волна' }
+          : { type: 'wave', label: 'Моя волна' };
+        return { entries: picks.map(p => ({ trackId: p.id, entryId: randomUUID(), origin: 'wave' })), context };
       }
       if (b.kind === 'yandex') {
         const queue = [...excluded].flatMap(id => s.lib.sources(id).filter(src => src.provider === 'yandex' && src.kind === 'remote' && isYandexTrackId(src.external_id ?? '')).map(src => src.external_id!)).slice(-200);
         // Two full imports run in parallel; a third would add a second serial round before anything plays.
-        const result = await s.providers.yandex.wave(b.yandexSessionId, queue, { count: Math.min(count, 2), exclude: queue, seeds: settings.yandexSeeds });
+        const result = await s.providers.yandex.wave(b.yandexSessionId, queue, { count: Math.min(count, 2), exclude: queue, seeds: settings.yandexSeeds, signal: abort.signal });
         abort.signal.throwIfAborted();
         const disliked = new Set(s.lib.listDTO().filter(t => t.reaction < 0).map(t => t.id));
         const entries = result.items.filter(item => item.trackId && !excluded.has(item.trackId) && !disliked.has(item.trackId)).slice(0, count).map(item => ({ trackId: item.trackId!, entryId: randomUUID(), origin: 'yandex', yandexId: item.yandexId, yandexSessionId: result.sessionId, yandexBatchId: result.batchId }));

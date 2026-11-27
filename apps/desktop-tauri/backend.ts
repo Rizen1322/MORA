@@ -30,10 +30,17 @@ const shutdown = (code = 0, preserve = false) => {
   return closing;
 };
 const input = createInterface({ input: process.stdin });
+// The shell assigns the process to its Windows job before any helpers can launch.
+let begin: (() => void) | undefined;
+const launch = process.env.AUTOMIX_SHELL_HANDSHAKE === '1'
+  ? new Promise<void>(resolve => { begin = resolve; })
+  : Promise.resolve();
+delete process.env.AUTOMIX_SHELL_HANDSHAKE;
 input.on('line', line => {
   try {
     const message = JSON.parse(line);
-    if (message.type === 'shutdown') void shutdown();
+    if (message.type === 'launch') { begin?.(); begin = undefined; }
+    else if (message.type === 'shutdown') void shutdown();
     else if (message.type === 'restart') void shutdown(0, true);
     else if (message.type === 'power') analysis?.setPower({ idle: message.idle === true, onBattery: message.onBattery === true });
     else if (message.type === 'transport' && typeof message.command === 'string') playback?.transport(message.command);
@@ -44,6 +51,7 @@ input.on('line', line => {
 input.on('close', () => void shutdown());
 
 try {
+  await launch;
   if (token.length < 32 || !desktopPlaybackToken || desktopPlaybackToken.length < 32) throw new Error('launch token missing');
   if (!Number.isInteger(wanted) || wanted < 0 || wanted > 65535) throw new Error('invalid port');
   const executable = process.env.AUTOMIX_NETWORK_RUST;

@@ -3,7 +3,6 @@
 .public-catalog-credits a:hover { color:var(--accent-soft); text-decoration:underline; }
 .public-catalog-note { margin-top:18px; max-width:70ch; }
 .public-catalog-page .catalog-section:last-child { padding-bottom:24px; }
-.public-catalog-page .search-row-menu a { min-height:44px; }
 .public-track-title { text-align:left; font:inherit; color:inherit; }
 .public-track-credits a:hover, .public-track-credits a:focus-visible { color:var(--accent-soft); text-decoration:underline; }
 @media(max-width:600px) {

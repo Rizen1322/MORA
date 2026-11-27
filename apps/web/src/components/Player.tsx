@@ -3,6 +3,7 @@ import { TrackArtists } from './TrackArtists.tsx';
 import { Radio } from '@phosphor-icons/react';
 import { startSimilar } from '../lib/radio.ts';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   CaretDown,
   CaretRight,
@@ -111,14 +112,14 @@ export function useArtColor(url: string | null | undefined, nextUrl?: string | n
 }
 
 /** Covers and colour of the current moment: during a blend, from A to B by its progress. */
-export function useBlend(p: PlayerSnapshot) {
+export function useBlend(p: Pick<PlayerSnapshot, 'queue' | 'index' | 'transition'>) {
   const tr = p.transition?.active ? p.transition : null;
   const from = tr ? trackOf(tr.plan.fromTrackId) : trackOf(p.queue[p.index]?.trackId);
   const to = tr ? trackOf(tr.plan.toTrackId) : undefined;
   return { from, to: to && to.id !== from?.id ? to : undefined, k: tr ? tr.progress : 0 };
 }
 
-export function Seekbar({ p, compact = false }: { p: PlayerSnapshot; compact?: boolean }) {
+export function Seekbar({ p, compact = false }: { p: Pick<PlayerSnapshot, 'duration' | 'position' | 'nextPlan' | 'transition'>; compact?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<number | null>(null);
   const dur = p.duration || 0;
@@ -209,7 +210,7 @@ export function AutoMixStatus({ p }: { p: PlayerSnapshot }) {
   );
 }
 
-function Volume({ p }: { p: PlayerSnapshot }) {
+function Volume({ p }: { p: Pick<PlayerSnapshot, 'volume' | 'muted'> }) {
   if (systemVolume) return null;
   const v = p.muted ? 0 : p.volume;
   const Icon = v === 0 ? SpeakerSlash : v < 0.5 ? SpeakerLow : SpeakerHigh;
@@ -234,7 +235,7 @@ function Volume({ p }: { p: PlayerSnapshot }) {
   );
 }
 
-function Controls({ p, big = false }: { p: PlayerSnapshot; big?: boolean }) {
+function Controls({ p, big = false }: { p: Pick<PlayerSnapshot, 'index' | 'status' | 'repeat' | 'shuffle' | 'context' | 'transition' | 'nextPlan'>; big?: boolean }) {
   const mixOnNext = useApp((s) => (s.settings?.automix.enabled ?? true) && (s.settings?.automix.mixOnNext ?? true));
   const playing = p.status === 'playing' || p.status === 'buffering';
   const size = big ? 28 : 20;
@@ -276,11 +277,31 @@ export function CompactToggle() {
 
 function SleepMenu() {
   const mode = useSleep((s) => s.mode);
-  useApp((s) => s.player.position); // re-render for the countdown
+  const [open, setOpen] = useState(false);
+  const details = useRef<HTMLDetailsElement>(null);
+  const [, setClock] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!details.current?.contains(event.target as Node) && details.current) details.current.open = false;
+    };
+    document.addEventListener('pointerdown', dismiss);
+    const tick = mode && mode.kind !== 'queue' ? setInterval(() => setClock(Date.now()), 1000) : undefined;
+    return () => {
+      document.removeEventListener('pointerdown', dismiss);
+      clearInterval(tick);
+    };
+  }, [open, mode]);
   const left = sleepLeft(mode);
   const [custom, setCustom] = useState(false);
   const close = (e: React.MouseEvent) => (e.currentTarget.closest('details') as HTMLDetailsElement | null)?.removeAttribute('open');
-  return <details className="sleep-menu">
+  return <details className="sleep-menu" ref={details} onToggle={(e) => setOpen(e.currentTarget.open)}
+    onKeyDown={(e) => {
+      if (e.key !== 'Escape' || !e.currentTarget.open) return;
+      e.stopPropagation();
+      e.currentTarget.open = false;
+      e.currentTarget.querySelector('summary')?.focus();
+    }}>
     <summary className={`icon-btn ${mode ? 'on' : ''}`} aria-label={mode ? 'Таймер сна включён' : 'Таймер сна'} title={mode ? (left !== null ? `Сон через ${fmtTime(left)}` : 'Сон в конце очереди') : 'Таймер сна'}><MoonStars size={19} weight={mode ? 'fill' : 'regular'} /></summary>
     <div role="menu">
       <p className="caption muted">{mode ? (left !== null ? `Музыка затихнет через ${fmtTime(left)}` : 'Затихнет в конце очереди') : 'Плавно остановить музыку'}</p>
@@ -296,7 +317,11 @@ function SleepMenu() {
 }
 
 export function PlayerBar() {
-  const p = useApp((s) => s.player);
+  const p = useApp(useShallow(({ player }) => ({
+    queue: player.queue, index: player.index, status: player.status, repeat: player.repeat,
+    shuffle: player.shuffle, context: player.context, transition: player.transition?.active ? player.transition : null,
+    nextPlan: player.nextPlan, volume: player.volume, muted: player.muted, continuation: player.continuation,
+  })));
   const queueOpen = useApp((s) => s.queueOpen);
   const setQueueOpen = useApp((s) => s.setQueueOpen);
   const panel = useApp((s) => s.panel);
@@ -311,7 +336,7 @@ export function PlayerBar() {
       <div className="pb-left">
         {t ? (
           <>
-            <button onClick={() => setFull(true)} aria-label="Открыть полноэкранный плеер" style={{ flex: 'none' }}>
+            <button data-player-cover onClick={() => setFull(true)} aria-label="Открыть полноэкранный плеер" style={{ flex: 'none' }}>
               <Swap k={t.id}><Cover className="thumb" url={t.coverUrl} seed={t.album || t.id} size={56} /></Swap>
             </button>
             <div className="pb-track-info" style={{ minWidth: 0 }}>
@@ -331,7 +356,7 @@ export function PlayerBar() {
       </div>
       <div className="pb-center">
         <Controls p={p} />
-        <Seekbar p={p} />
+        <PlayerBarSeekbar />
       </div>
       <div className="pb-right">
         <button className="pb-next-preview" onClick={() => setQueueOpen(!queueOpen)} aria-label={upcoming ? `Дальше: ${upcoming.title}. Открыть очередь` : 'Открыть очередь'}>
@@ -363,10 +388,27 @@ export function PlayerBar() {
   );
 }
 
+function PlayerBarSeekbar() {
+  const p = useApp(useShallow(({ player }) => ({
+    duration: player.duration, position: player.position, nextPlan: player.nextPlan,
+    transition: player.transition?.active ? player.transition : null,
+  })));
+  return <Seekbar p={p} />;
+}
+
+function MiniProgress() {
+  const progress = useApp(({ player }) => player.duration ? player.position / player.duration : 0);
+  return <div className="mini-progress" aria-hidden="true"><i style={{ width: `${progress * 100}%` }} /></div>;
+}
+
 export function MiniPlayer() {
-  const p = useApp((s) => s.player);
+  const p = useApp(useShallow((s) => ({
+    trackId: s.player.queue[s.player.index]?.trackId,
+    status: s.player.status,
+    plan: s.player.transition?.active ? s.player.transition.plan : undefined,
+  })));
   const setFull = useApp((s) => s.setFullPlayer);
-  const t = trackOf(p.queue[p.index]?.trackId);
+  const t = useApp((s) => p.trackId ? s.tracks.get(p.trackId) : undefined);
   // In the desktop mini-player the cover brings the full window back.
   const open = () => (document.documentElement.classList.contains('compact') ? void desktop?.setCompact(false) : setFull(true));
   const swipe = useSwipe(() => ({ left: () => void controller.nextTrack(), right: () => void controller.prevTrack(), up: open }));
@@ -374,14 +416,14 @@ export function MiniPlayer() {
   const playing = p.status === 'playing' || p.status === 'buffering';
   return (
     <div className="mini-player" {...swipe}>
-      <button onClick={open} aria-label="Открыть плеер">
+      <button data-player-cover onClick={open} aria-label="Открыть плеер">
         <Swap k={t.id}><Cover url={t.coverUrl} seed={t.album || t.id} size={44} /></Swap>
       </button>
       <button onClick={open} style={{ minWidth: 0, textAlign: 'left' }}>
         <div className="t-title ellipsis" style={{ fontSize: 14 }}>
           <Swap k={t.id}>{t.title}</Swap>
         </div>
-        <div className="caption muted ellipsis"><Swap k={p.transition?.active ? 'mix' : t.id}>{p.transition?.active ? `AutoMix · ${methodShort(p.transition.plan)}` : t.artist}</Swap></div>
+        <div className="caption muted ellipsis"><Swap k={p.plan ? 'mix' : t.id}>{p.plan ? `AutoMix · ${methodShort(p.plan)}` : t.artist}</Swap></div>
       </button>
       <div style={{ display: 'flex', alignItems: 'center' }}>
         <button className={`icon-btn ${t.reaction > 0 ? 'liked' : ''}`} aria-label="Нравится" aria-pressed={t.reaction > 0} onClick={() => void react(t, t.reaction > 0 ? 0 : 1)}>
@@ -393,9 +435,7 @@ export function MiniPlayer() {
         </button>
         <button className="icon-btn compact-only" aria-label="Следующий" onClick={() => void controller.nextTrack()}><SkipForward size={20} weight="fill" /></button>
       </div>
-      <div className="mini-progress" aria-hidden="true">
-        <i style={{ width: `${p.duration ? (p.position / p.duration) * 100 : 0}%` }} />
-      </div>
+      <MiniProgress />
     </div>
   );
 }
@@ -521,7 +561,9 @@ export function FullPlayer() {
         <div className={`fp-art-stage ${showLyrics ? 'shows-lyrics' : ''}`}>
           <div className={`fp-art ${p.transition?.active ? 'is-mixing' : ''} ${p.status === 'playing' ? 'is-playing' : ''}`} inert={showLyrics} aria-hidden={showLyrics} onPointerMove={tilt} onPointerLeave={untilt} {...(showLyrics ? {} : swipeCover)}>
             <div className="fp-vinyl" aria-hidden="true" />
-            <CoverStack current={t} from={blend.from} to={blend.to} k={blend.k} />
+            <div className="fp-cover-transition" data-player-cover>
+              <CoverStack current={t} from={blend.from} to={blend.to} k={blend.k} />
+            </div>
           </div>
           {lyricsOpened && <div className="fp-lyrics-layer" inert={!showLyrics} aria-hidden={!showLyrics}><LyricsPanel embedded onClose={() => setShowLyrics(false)} /></div>}
         </div>

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { copyDirectory } from './copy-directory.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../..');
@@ -21,7 +22,7 @@ export function preparePayload(source, destination) {
   fs.mkdirSync(destination, { recursive: true });
   fs.copyFileSync(executable, path.join(destination, 'MORA.exe'));
   fs.copyFileSync(path.join(source, 'WebView2Loader.dll'), path.join(destination, 'WebView2Loader.dll'));
-  fs.cpSync(path.join(source, 'resources'), path.join(destination, 'resources'), { recursive: true });
+  copyDirectory(path.join(source, 'resources'), path.join(destination, 'resources'));
 }
 export function withInstallerPayload(source, output, build, stagingRoot = output) {
   fs.mkdirSync(output, { recursive: true });
@@ -66,7 +67,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const temp = path.dirname(payload);
     const artifacts = path.join(temp, 'artifacts');
     const assets = path.join(temp, 'assets');
-    fs.cpSync(path.join(root, 'apps/desktop/assets'), assets, { recursive: true });
+    copyDirectory(path.join(root, 'apps/desktop/assets'), assets);
     const config = unifiedConfig(legacy, version, artifacts, assets);
     const file = path.join(temp, 'electron-builder-unified.json');
     fs.writeFileSync(file, JSON.stringify(config, null, 2));

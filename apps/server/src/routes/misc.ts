@@ -229,7 +229,7 @@ export function registerMiscRoutes(app: FastifyInstance, s: Services): void {
         FROM plays p
         JOIN track_sources ts ON ts.track_id = p.track_id
         WHERE ts.provider = 'yandex' AND ts.kind = 'remote' AND p.started_at >= ?
-          AND (p.played_ms IS NULL OR p.played_ms >= 15000 OR p.end_reason IN ('transition', 'ended'))
+          AND (p.played_ms >= 15000 OR p.end_reason IN ('transition', 'finished', 'ended'))
         ORDER BY p.id DESC LIMIT 40
       `).all(cutoff) as { external_id: string | null }[])
         .map((row) => String(row.external_id ?? ''))

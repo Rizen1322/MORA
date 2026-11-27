@@ -29,6 +29,34 @@ function setup() {
   return { host, requests, fetcher, audio };
 }
 
+it('continues offline after a provider failure and retries its original station when the network returns', async () => {
+  const { host, requests, fetcher } = setup();
+  const original = fetcher.getMockImplementation()!;
+  let providerUp = false;
+  const remoteReady = vi.fn();
+  fetcher.mockImplementation(async (url, init) => {
+    if (String(url).endsWith('/internal/desktop/station-next')) {
+      const body = JSON.parse(String(init?.body));
+      if (!body.offline && !providerUp) return Response.json({ error: 'Источник недоступен' }, { status: 502 });
+      if (!body.offline) remoteReady();
+    }
+    return original(url, init);
+  });
+  try {
+    await host.startStation({ kind: 'online' }, { position: 0, sampleRate: 48000 });
+    expect(host.state().station?.kind).toBe('online');
+    await vi.waitFor(() => expect(host.state().nextTrack).toBeDefined());
+    const offlineRequests = requests.filter(r => r.path === '/internal/desktop/station-next');
+    expect(offlineRequests.length).toBeGreaterThan(1);
+    expect(offlineRequests.every(r => r.body.offline === true)).toBe(true);
+    expect(offlineRequests.at(-1)?.body.session).toContain(host.state().currentTrack?.trackId);
+    providerUp = true;
+    await host.setStation({ kind: 'online', offline: false });
+    await host.command('nexttrack');
+    await vi.waitFor(() => expect(remoteReady).toHaveBeenCalled());
+  } finally { await host.stop(); }
+});
+
 it('skips a login-only opening recommendation and excludes it from later refills', async () => {
   const { host, requests, fetcher } = setup();
   const original = fetcher.getMockImplementation()!;

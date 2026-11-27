@@ -32,6 +32,12 @@ interface Options {
   fetch?: typeof fetch;
 }
 
+interface StationBatch {
+  entries: NativeQueueEntry[];
+  context: NativeRecoverySnapshot['context'];
+  yandexSessionId?: string;
+}
+
 /** Main-process producer: the window sends queue edits, Rust confirms what is actually audible. */
 export class DesktopPlayback {
   private generation = 0;
@@ -72,6 +78,8 @@ export class DesktopPlayback {
   private stationStarts = 0;
   private stationLoading = false;
   private stationRetryAt = 0;
+  private stationOfflineUntil = 0;
+  private offlineSkipping = false;
   private stationSkipped = new Set<string>();
   private dislikes = new Set<string>();
   private resumeAfterDislike = false;
@@ -115,7 +123,7 @@ export class DesktopPlayback {
 
   private resetStation(): void {
     this.stationRevision++; this.stationAbort.abort(); this.stationAbort = new AbortController();
-    this.station = null; this.stationLoading = false; this.stationRetryAt = 0;
+    this.station = null; this.stationLoading = false; this.stationRetryAt = 0; this.stationOfflineUntil = 0;
     this.cachedQueue = undefined;
     this.stationSkipped.clear();
   }
@@ -171,15 +179,42 @@ export class DesktopPlayback {
         ...(station.seed ? { seed: station.seed } : {}),
         ...(station.anchor ? { anchor: station.anchor } : {}),
         ...(station.yandexSessionId !== undefined ? { yandexSessionId: station.yandexSessionId } : {}),
+        ...(station.offline !== undefined ? { offline: station.offline } : {}),
       };
       if (station.seed && !station.anchor) delete next.anchor;
     }
     if (JSON.stringify(next) !== JSON.stringify(this.station)) {
+      const skipped = this.station?.kind === next?.kind ? new Set(this.stationSkipped) : null;
       this.resetStation(); this.station = next ? { ...next } : null;
+      if (skipped) this.stationSkipped = skipped;
     }
     if (context) this.context = { ...context };
     void this.refillStation();
+    this.advanceOfflineIfStarved();
     return this.state();
+  }
+  private advanceOfflineIfStarved(): void {
+    if (!this.station || (!this.station.offline && Date.now() >= this.stationOfflineUntil) ||
+        !this.current || this.starting || this.paused || this.waiting || this.preparing || this.offlineSkipping ||
+        !this.incoming || this.incoming === this.current || this.tick?.transition?.active ||
+        !this.tick?.decks.find(deck => deck.token === this.current?.token)?.starved) return;
+    this.offlineSkipping = true;
+    void this.advance(false).catch(error => this.preparationError(error)).finally(() => { this.offlineSkipping = false; });
+  }
+  private async stationBatch(station: NativeRadioConfig, options: { currentId?: string; exclude: string[]; session?: string[]; count: number }, revision: number): Promise<StationBatch> {
+    const signal = this.stationAbort.signal;
+    const get = (offline: boolean, deadline = signal) => this.request<StationBatch>(
+      '/internal/desktop/station-next', { ...station, ...options, ...(offline ? { offline } : {}) }, deadline);
+    if (station.offline || Date.now() < this.stationOfflineUntil) return get(true);
+    if (station.kind === 'own') return get(false);
+    try {
+      return await get(false, AbortSignal.any([signal, AbortSignal.timeout(20000)]));
+    } catch (error) {
+      if (revision !== this.stationRevision || signal.aborted ||
+          (!(error instanceof TypeError) && (error as Error).name !== 'TimeoutError' && (error as { statusCode?: number }).statusCode !== 502)) throw error;
+      this.stationOfflineUntil = Date.now() + 60000;
+      try { return await get(true); } catch { throw error; }
+    }
   }
   async startStation(station: NativeRadioConfig, config: NativeSourceConfig): Promise<NativeMixState> {
     if (!station || !['own', 'yandex', 'online'].includes(station.kind)) throw Error('Неизвестный источник волны');
@@ -189,13 +224,14 @@ export class DesktopPlayback {
       let revision = this.stationRevision;
       const skipped: string[] = [];
       for (let attempt = 0; attempt < 6; attempt++) {
-        const result = await this.request<{ entries: NativeQueueEntry[]; context: NativeRecoverySnapshot['context']; yandexSessionId?: string }>(
-          '/internal/desktop/station-next', { ...station, exclude: skipped, count: 1 }, this.stationAbort.signal);
+        const result = await this.stationBatch(station, { exclude: skipped, count: 1 }, revision);
         if (revision !== this.stationRevision) throw Error('Запуск отменён');
         const first = result.entries[0];
         if (!first) throw Error('Нет доступных рекомендаций');
+        const offlineUntil = this.stationOfflineUntil;
         const started = this.startSource(first, config);
         revision = this.stationRevision;
+        this.stationOfflineUntil = offlineUntil;
         try { await started; }
         catch (error) {
           if (revision !== this.stationRevision || ![404, 409, 410, 502].includes((error as { statusCode?: number }).statusCode ?? 0) || attempt === 5) throw error;
@@ -219,11 +255,14 @@ export class DesktopPlayback {
     if (!station || !current || this.starting || this.stationLoading || this.future.length >= reserve || Date.now() < this.stationRetryAt) return;
     this.stationLoading = true;
     try {
-      const result = await this.request<{ entries: NativeQueueEntry[]; context: NativeRecoverySnapshot['context']; yandexSessionId?: string }>(
-        '/internal/desktop/station-next', { ...station, currentId: this.future.at(-1)?.trackId ?? current.trackId,
-          exclude: [...new Set([...(station.kind === 'own' ? [current] : this.history.slice(-200)), ...this.future].map(e => e.trackId).concat([...this.stationSkipped]))], count: Math.min(3, reserve - this.future.length) }, this.stationAbort.signal);
+      const recent = this.history.slice(-200);
+      const result = await this.stationBatch(station, { currentId: this.future.at(-1)?.trackId ?? current.trackId,
+        session: [...recent, ...this.future].slice(-200).map(e => e.trackId),
+        exclude: [...new Set([...(station.kind === 'own' ? [current] : recent), ...this.future].map(e => e.trackId).concat([...this.stationSkipped]))],
+        count: Math.min(3, reserve - this.future.length) }, revision);
       if (revision !== this.stationRevision || station !== this.station) return;
-      const have = new Set([...(station.kind === 'own' ? [this.current!] : this.history.slice(-200)), ...this.future].map(e => e.trackId));
+      const offline = station.offline || Date.now() < this.stationOfflineUntil;
+      const have = new Set([...(station.kind === 'own' || offline ? [this.current!] : this.history.slice(-200)), ...this.future].map(e => e.trackId));
       let added = 0;
       for (const entry of result.entries) {
         this.valid(entry);
@@ -244,9 +283,10 @@ export class DesktopPlayback {
     if (!this.current) return null;
     const queue = this.queue().entries;
     const index = this.current.index;
+    const station = this.station ? { ...this.station, offline: undefined } : undefined;
     return { queue, index: queue[index]?.entryId === this.current.entryId ? index : Math.max(0, queue.findIndex(e => e.entryId === this.current!.entryId)),
       position: this.position(), settings: this.values,
-      device: this.device, loop: this.loop, ...(this.station ? { station: this.station } : {}), ...(this.context ? { context: this.context } : {}) };
+      device: this.device, loop: this.loop, ...(station ? { station } : {}), ...(this.context ? { context: this.context } : {}) };
   }
   async restoreRecovery(snapshot: NativeRecoverySnapshot): Promise<void> {
     const next = snapshot.queue.findIndex((e, i) => i >= snapshot.index && !this.dislikes.has(e.trackId));
@@ -286,7 +326,7 @@ export class DesktopPlayback {
         this.sampleRate = ready.sampleRate; this.options.ready(this.sampleRate);
       }
       const deck = this.current ? 1 - this.current.deck : 0;
-      const item = await this.load(entry, 0, deck, generation, config.gainDb ?? 0, config.position);
+      const item = await this.load(entry, 0, deck, generation, config.gainDb ?? 0, config.position, 1.5);
       if (generation !== this.generation) throw Error('Запуск отменён');
       await this.settings(this.values);
       if (generation !== this.generation) throw Error('Запуск отменён');
@@ -303,7 +343,6 @@ export class DesktopPlayback {
       this.listening.start({ ...item, binding: item.source.track.binding }, this.position());
       this.focus();
       this.retireUntil[1 - deck] = Date.now() + 150;
-      await this.settings(this.values);
       return this.state();
     } catch (error) {
       if (generation === this.generation) { this.error = (error as Error).message; this.failed = !this.current; }
@@ -348,9 +387,10 @@ export class DesktopPlayback {
     return this.state();
   }
 
-  private async load(entry: NativeQueueEntry, index: number, deck: number, generation: number, gainDb = 0, position = 0): Promise<Item> {
+  private async load(entry: NativeQueueEntry, index: number, deck: number, generation: number, gainDb = 0, position = 0, bufferSeconds = 3): Promise<Item> {
     const started = Date.now();
-    const source = await this.source(entry, this.current ? 'next' : 'current', Math.floor(position * this.sampleRate / CHUNK_FRAMES) * CHUNK_FRAMES);
+    const initialChunk = Math.floor(position * this.sampleRate / CHUNK_FRAMES);
+    const source = await this.source(entry, this.current ? 'next' : 'current', initialChunk * CHUNK_FRAMES);
     if (generation !== this.generation) throw Error('Подготовка отменена');
     const delay = this.retireUntil[deck] - Date.now();
     if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
@@ -366,19 +406,22 @@ export class DesktopPlayback {
     await this.audio.command({ cmd: 'load', deck, token: item.token, totalFrames: item.totalFrames, gainDb,
       cueFrame: Math.round(position * this.sampleRate) });
     const first = Math.max(0, Math.floor((position * this.sampleRate - 4096) / CHUNK_FRAMES));
-    const last = Math.min(Math.ceil(item.totalFrames / CHUNK_FRAMES), first + Math.ceil(3 * this.sampleRate / CHUNK_FRAMES));
-    await Promise.all(Array.from({ length: last - first }, (_, i) => this.feed(item, first + i)));
+    const last = Math.min(Math.ceil(item.totalFrames / CHUNK_FRAMES), Math.ceil((position + bufferSeconds) * this.sampleRate / CHUNK_FRAMES));
+    await Promise.all(Array.from({ length: last - first }, (_, i) => {
+      const chunk = first + i;
+      return this.feed(item, chunk, chunk === initialChunk ? source : undefined);
+    }));
     return item;
   }
 
-  private feed(item: Item, chunk: number): Promise<void> {
+  private feed(item: Item, chunk: number, ready?: Source): Promise<void> {
     const existing = item.feeds.get(chunk);
     if (existing) return existing;
     const work = (async () => {
       if (item.abort.signal.aborted || this.slots[item.deck] !== item) return;
       const start = chunk * CHUNK_FRAMES;
       if (start >= item.totalFrames) return;
-      const source = await this.source(item, item === this.current ? 'current' : 'next', start, item.source.complete ? Math.min(CHUNK_FRAMES, item.totalFrames - start) : CHUNK_FRAMES,
+      const source = ready ?? await this.source(item, item === this.current ? 'current' : 'next', start, item.source.complete ? Math.min(CHUNK_FRAMES, item.totalFrames - start) : CHUNK_FRAMES,
         AbortSignal.any([this.abort.signal, item.abort.signal]));
       if (item.abort.signal.aborted || this.slots[item.deck] !== item) return;
       const completed = !item.source.complete && source.complete;
@@ -571,6 +614,7 @@ export class DesktopPlayback {
       }
       this.listening.tick(this.position(), !event.paused && !!this.current && !event.decks[this.current.deck]?.starved);
       void this.refillStation();
+      this.advanceOfflineIfStarved();
     } else if (event.type === 'swap' && this.incoming?.token === event.token && this.slots[this.incoming.deck] === this.incoming) this.adopt(this.incoming);
     else if (event.type === 'transitionEnd' && this.incoming?.token === event.token && this.slots[this.incoming.deck] === this.incoming) {
       const item = this.incoming;

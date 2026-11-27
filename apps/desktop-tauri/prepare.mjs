@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import os from 'node:os';
 import { writeRustLicenses } from '../../tools/rust-licenses.mjs';
+import { copyDirectory } from './copy-directory.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../..');
@@ -12,20 +13,11 @@ const source = path.join(root, 'apps/desktop/build');
 const output = path.join(here, 'build');
 const node = spawnSync(process.execPath, [path.join(here, 'fetch-node.mjs')], { stdio: 'inherit', windowsHide: true });
 if (node.status !== 0) throw Error('Unable to prepare Node runtime');
-// Node 22 cannot reliably copy directory trees with non-ASCII Windows paths.
-function copy(from, to) {
-  fs.mkdirSync(to, { recursive: true });
-  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
-    const src = path.join(from, entry.name), dest = path.join(to, entry.name);
-    if (entry.isDirectory()) copy(src, dest);
-    else if (entry.isFile()) fs.copyFileSync(src, dest);
-  }
-}
 for (const name of ['web', 'audio', 'decoder', 'network', 'ffmpeg', 'yt-dlp']) {
   if (!fs.existsSync(path.join(source, name))) throw Error(`Missing desktop build resource: ${name}`);
 }
 fs.rmSync(output, { recursive: true, force: true });
-for (const name of ['web', 'audio', 'decoder', 'network', 'ffmpeg', 'yt-dlp']) copy(path.join(source, name), path.join(output, name));
+for (const name of ['web', 'audio', 'decoder', 'network', 'ffmpeg', 'yt-dlp']) copyDirectory(path.join(source, name), path.join(output, name));
 fs.mkdirSync(path.join(output, 'node'), { recursive: true });
 const nodeDir = path.join(here, 'toolchain/node-v22.23.4-win-x64');
 for (const name of ['node.exe', 'LICENSE']) fs.copyFileSync(path.join(nodeDir, name), path.join(output, 'node', name));

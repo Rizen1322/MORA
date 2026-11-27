@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { ArrowLeft, ArrowSquareOut, BookmarkSimple, Check, Clock, DotsThree, Heart, ListPlus, MagnifyingGlass, Play, Plus, Shuffle, SpinnerGap, ThumbsDown, X } from '@phosphor-icons/react';
+import { ArrowLeft, ArrowSquareOut, BookmarkSimple, Check, Clock, Heart, ListPlus, MagnifyingGlass, Play, Plus, Shuffle, SpinnerGap, ThumbsDown, X } from '@phosphor-icons/react';
 import type { CatalogAlbum, CatalogAlbumPage as AlbumData, CatalogArtist, CatalogArtistPage as ArtistData, CatalogArtistRef, CatalogSearchResult, CatalogSearchType, CatalogTrack } from '@automix/core';
 import { api } from '../lib/api.ts';
 import { fmtTime, fmtTotal, tracksWord } from '../lib/format.ts';
@@ -15,9 +15,10 @@ import type { PlayContext } from '../audio/controller.ts';
 import { Radio } from '@phosphor-icons/react';
 import { LikeAllButton, likeLibraryTrack } from '../components/LikeAll.tsx';
 import { startArtistRadio } from '../lib/radio.ts';
+import { useCatalogResource, type CatalogCacheEntry } from '../lib/catalog-resource.ts';
+import { TrackActionsMenu, useRecentSearches } from './Search.tsx';
 import '../styles/catalog.css';
 
-const RECENT_KEY = 'automix.catalog.searches';
 const SAVED_KEY = 'automix.catalog.artists';
 const useReactions = create<{ values: Record<string, { value: number; sync?: ReactionSync }> }>(() => ({ values: {} }));
 const reactionRevisions = new Map<string, number>();
@@ -81,20 +82,23 @@ function shuffled<T>(items: T[]): T[] {
   return result;
 }
 
-function useResource<T>(key: string | null, load: (signal: AbortSignal) => Promise<T>) {
-  const loader = useRef(load); loader.current = load;
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<{ key: string | null; data: T | null; error: string | null; loading: boolean }>({ key: null, data: null, error: null, loading: false });
-  useEffect(() => {
-    if (!key) return;
-    const abort = new AbortController();
-    setState({ key, data: null, error: null, loading: true });
-    void loader.current(abort.signal).then((data) => { if (!abort.signal.aborted) setState({ key, data, error: null, loading: false }); })
-      .catch((e) => { if (!abort.signal.aborted) setState({ key, data: null, error: (e as Error).message, loading: false }); });
-    return () => abort.abort();
-  }, [key, attempt]);
-  return { data: state.key === key ? state.data : null, error: state.key === key ? state.error : null,
-    loading: !!key && (state.key !== key || state.loading), retry: () => setAttempt((v) => v + 1) };
+const searchCache = new Map<string, CatalogCacheEntry<CatalogSearchResult>>();
+const artistCache = new Map<string, CatalogCacheEntry<ArtistData>>();
+const albumCache = new Map<string, CatalogCacheEntry<AlbumData>>();
+const yandexAccount = (state: ReturnType<typeof useApp.getState>) => {
+  const provider = state.providers.find((entry) => entry.id === 'yandex');
+  return provider?.status === 'connected' ? provider.account ?? '' : null;
+};
+useApp.subscribe((state, prev) => {
+  if (state.providers === prev.providers || yandexAccount(state) === yandexAccount(prev)) return;
+  searchCache.clear();
+  artistCache.clear();
+  albumCache.clear();
+});
+
+function useResource<T>(key: string | null, load: (signal: AbortSignal) => Promise<T>, cache: Map<string, CatalogCacheEntry<T>>, retainPrefix?: string) {
+  const scope = useApp(yandexAccount);
+  return useCatalogResource(key, load, cache, { scope, retainPrefix });
 }
 
 function ConnectionCard() {
@@ -124,8 +128,8 @@ function ArtistLinks({ artists, fallback }: { artists: CatalogArtistRef[]; fallb
   return <>{artists.map((artist, i) => <span key={artist.id}>{i > 0 && ', '}<a href={catalogArtistHref(artist.id)}>{artist.name}</a></span>)}</>;
 }
 function CatalogNav() {
-  return <div className="catalog-nav"><button className="icon-btn" aria-label="Назад" onClick={() => history.length > 1 ? history.back() : go('/search')}><ArrowLeft size={21} /></button>
-    <a href="#/search"><MagnifyingGlass size={17} />Поиск</a><span>Яндекс Музыка</span></div>;
+  return <div className="catalog-nav"><button className="icon-btn" aria-label="Назад" onClick={() => history.length > 1 ? history.back() : go('/yandex')}><ArrowLeft size={21} /></button>
+    <a href="#/yandex"><MagnifyingGlass size={17} />Поиск</a><span>Яндекс Музыка</span></div>;
 }
 function Section({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
   return <section className="catalog-section"><div className="catalog-section-heading"><h2>{title}</h2>{action}</div>{children}</section>;
@@ -140,12 +144,13 @@ function AlbumCard({ album, onVisit }: { album: CatalogAlbum; onVisit?: () => vo
     <p className="catalog-card-artists">{album.artists.map((a) => a.name).join(', ')}</p></a>;
 }
 
-function CatalogTracks({ tracks, label, artwork = true, albums = true, queueTracks = tracks, context = { type: 'search', label } }: { tracks: CatalogTrack[]; label: string; artwork?: boolean; albums?: boolean; queueTracks?: CatalogTrack[]; context?: PlayContext }) {
+function CatalogTracks({ tracks, label, artwork = true, albums = true, queueTracks = tracks, context = { type: 'search', label }, onPlay }: { tracks: CatalogTrack[]; label: string; artwork?: boolean; albums?: boolean; queueTracks?: CatalogTrack[]; context?: PlayContext; onPlay?: () => void }) {
   const preparation = useCatalogPlayback();
   const library = useApp((s) => s.tracks);
   const player = useApp(useShallow((s) => ({ queue: s.player.queue, index: s.player.index })));
   const reactions = useReactions((s) => s.values);
   const current = player.queue[player.index]?.trackId;
+  const play = (track: CatalogTrack) => { onPlay?.(); void catalogPlayer.play(queueTracks, queueTracks.indexOf(track), context); };
   return <div className={`catalog-track-list ${artwork ? '' : 'no-art'} ${albums ? '' : 'no-album'}`} role="list" aria-label={label}>
     {tracks.map((track, i) => {
       const known = catalogPlayer.known(track), busy = preparation.pending.includes(track.externalId);
@@ -156,10 +161,10 @@ function CatalogTracks({ tracks, label, artwork = true, albums = true, queueTrac
       const sync = local?.reactionSync ?? reactions[track.externalId]?.sync;
       return <div className={`catalog-track ${available ? '' : 'unavailable'} ${active ? 'playing' : ''}`} role="listitem" key={track.externalId}>
         <button className="catalog-track-play" aria-label={`Слушать: ${track.title}`} disabled={!available || preparation.phase === 'starting' && preparation.externalId === track.externalId}
-          onClick={() => void catalogPlayer.play(queueTracks, queueTracks.indexOf(track), context)}>
+          onClick={() => play(track)}>
           <span className="catalog-track-number">{i + 1}</span><Play size={18} weight="fill" /></button>
         {artwork && <Cover url={track.coverUrl} seed={track.externalId} size={42} />}
-        <div className="catalog-track-name"><button disabled={!available} onClick={() => void catalogPlayer.play(queueTracks, queueTracks.indexOf(track), context)}>{track.title}</button>
+        <div className="catalog-track-name"><button disabled={!available} onClick={() => play(track)}>{track.title}</button>
           <div className="catalog-track-meta">{track.explicit && <abbr title="Ненормативная лексика" className="catalog-explicit">E</abbr>}<span><ArtistLinks artists={track.artists} fallback={track.artist} /></span><span className="catalog-mobile-time"> · {fmtTime(track.duration)}</span></div>
           {busy ? <span className="catalog-track-state">Подготавливается…</span> : !available ? <span className="catalog-track-state">Недоступно</span> : sync?.status === 'pending' ? <span className="catalog-track-state">Отправляю реакцию в Яндекс…</span>
             : sync?.status === 'error' ? <span className="catalog-track-state error" title={sync.error}>Яндекс не принял реакцию · повторю автоматически</span>
@@ -172,11 +177,11 @@ function CatalogTracks({ tracks, label, artwork = true, albums = true, queueTrac
           <button className="icon-btn catalog-save-button" aria-label={known ? `В медиатеке: ${track.title}` : `Добавить в медиатеку: ${track.title}`} title={known ? 'В медиатеке' : 'Добавить в медиатеку'} disabled={!!known || busy || !available} onClick={() => void catalogPlayer.save(track)}>
           {busy ? <SpinnerGap className="catalog-spin" size={18} /> : known ? <Check size={18} /> : <Plus size={18} />}</button>
           <button className="icon-btn catalog-queue-button" aria-label={`В очередь: ${track.title}`} title="Добавить в очередь" disabled={busy || !available} onClick={() => void catalogPlayer.enqueue(track)}><ListPlus size={19} /></button>
-          <details className="catalog-options"><summary className="icon-btn" aria-label={`Действия: ${track.title}`}><DotsThree size={22} weight="bold" /></summary><div>
-            <button disabled={busy || !available} onClick={() => void catalogPlayer.enqueue(track)}><ListPlus size={19} />Добавить в очередь</button>
-            <button disabled={!!known || busy || !available} onClick={() => void catalogPlayer.save(track)}><Plus size={19} />{known ? 'Уже в медиатеке' : 'Добавить в медиатеку'}</button>
-            <button onClick={() => void catalogReact(track, reaction < 0 ? 0 : -1)}><ThumbsDown size={19} weight={reaction < 0 ? 'fill' : 'regular'} />{reaction < 0 ? 'Убрать дизлайк' : 'Не нравится'}</button>
-          </div></details></div>
+          <TrackActionsMenu className="catalog-options" title={track.title}>
+            <button role="menuitem" disabled={busy || !available} onClick={() => void catalogPlayer.enqueue(track)}><ListPlus size={19} />Добавить в очередь</button>
+            <button role="menuitem" disabled={!!known || busy || !available} onClick={() => void catalogPlayer.save(track)}><Plus size={19} />{known ? 'Уже в медиатеке' : 'Добавить в медиатеку'}</button>
+            <button role="menuitem" onClick={() => void catalogReact(track, reaction < 0 ? 0 : -1)}><ThumbsDown size={19} weight={reaction < 0 ? 'fill' : 'regular'} />{reaction < 0 ? 'Убрать дизлайк' : 'Не нравится'}</button>
+          </TrackActionsMenu></div>
       </div>;
     })}
   </div>;
@@ -195,31 +200,51 @@ export function YandexSearchPage() {
   const [query, setQuery] = useState(route.query.get('q') ?? '');
   const [scope, setScope] = useState<Scope>(SCOPES.some(([s]) => s === initialScope) ? initialScope : 'all');
   const [settled, setSettled] = useState(query.trim());
-  const [recent, setRecent] = useState(() => stored<string>(RECENT_KEY).filter((q) => typeof q === 'string'));
+  const { recent, remember: rememberQuery, clear } = useRecentSearches();
   const [saved] = useState(() => stored<CatalogArtist>(SAVED_KEY).filter((a) => a && typeof a.id === 'string' && typeof a.name === 'string'));
   const [more, setMore] = useState<{ key: string; result: CatalogSearchResult } | null>(null);
   const [moreBusy, setMoreBusy] = useState(false);
   const [moreError, setMoreError] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
   const providers = useApp((s) => s.providers), tracks = useApp((s) => s.tracks);
   const connected = providers.find((p) => p.id === 'yandex')?.status === 'connected';
-  useEffect(() => { setQuery(route.query.get('q') ?? ''); const s = route.query.get('type') as Scope; setScope(SCOPES.some(([v]) => s === v) ? s : 'all'); }, [route.path, route.query.toString()]);
-  useEffect(() => { const timer = setTimeout(() => setSettled(query.trim()), 350); return () => clearTimeout(timer); }, [query]);
-  const key = connected && scope !== 'local' ? settled ? `search:${scope}:${settled}` : 'home' : null;
+  const routeQuery = route.query.get('q') ?? '';
+  useEffect(() => { searchRef.current?.focus(); }, []);
+  useEffect(() => { setQuery(routeQuery); setSettled(routeQuery.trim()); setScope(SCOPES.some(([v]) => initialScope === v) ? initialScope : 'all'); }, [routeQuery, initialScope]);
+  useEffect(() => { const timer = setTimeout(() => setSettled(query.trim()), 220); return () => clearTimeout(timer); }, [query]);
+  const prefix = `search:${scope}:`;
+  const key = connected && scope !== 'local' ? settled ? prefix + settled : 'home' : null;
   const keyRef = useRef(key); keyRef.current = key;
   useEffect(() => { setMoreBusy(false); setMoreError(null); }, [key]);
-  const resource = useResource(key, (signal) => settled ? api.catalogSearch(settled, scope as CatalogSearchType, 0, signal) : api.catalogHome(signal));
-  const result = resource.data ? more?.key === key ? mergeSearch(resource.data, more.result) : resource.data : null;
+  const resource = useResource(key, (signal) => settled ? api.catalogSearch(settled, scope as CatalogSearchType, 0, signal) : api.catalogHome(signal), searchCache, prefix);
+  const result = resource.data ? more && more.key === resource.dataKey ? mergeSearch(resource.data, more.result) : resource.data : null;
+  const shownQuery = resource.dataKey?.startsWith(prefix) ? resource.dataKey.slice(prefix.length) : '';
   const waiting = scope !== 'local' && (query.trim() !== settled || resource.loading);
   const local = useMemo(() => [...tracks.values()].filter((t) => query.trim().toLowerCase().split(/\s+/).every((part) => `${t.title} ${t.artist} ${t.album}`.toLowerCase().includes(part))), [tracks, query]);
-  const remember = () => {
-    const value = query.trim(); if (!value) return;
-    const next = [value, ...recent.filter((q) => q !== value)].slice(0, 8); setRecent(next); persist(RECENT_KEY, next);
+  const remember = () => rememberQuery(shownQuery);
+  const moveResultFocus = (event: KeyboardEvent) => {
+    if (waiting || event.nativeEvent.isComposing || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return;
+    const items = [...resultsRef.current?.querySelectorAll<HTMLElement>('.catalog-track-play:enabled, .track-art-play:enabled, a.catalog-card, a.catalog-best, .catalog-best button:enabled') ?? []];
+    const index = items.indexOf(event.target as HTMLElement);
+    if (event.target !== searchRef.current && index < 0) return;
+    const next = items[index + (event.key === 'ArrowDown' ? 1 : -1)] ?? (index === 0 && event.key === 'ArrowUp' ? searchRef.current : null);
+    if (next) { event.preventDefault(); next.focus(); }
   };
-  const updateQuery = (q: string) => { setQuery(q); history.replaceState(null, '', searchHref(q, scope)); };
-  const changeScope = (s: Scope) => { setScope(s); setMoreError(null); go(`/yandex?${new URLSearchParams({ q: query, type: s })}`); };
+  const updateQuery = (q: string) => {
+    setQuery(q);
+    if (!q.trim()) setSettled('');
+    history.replaceState(null, '', searchHref(q, scope));
+  };
+  const changeScope = (s: Scope) => {
+    if (s === scope) return;
+    setScope(s);
+    setSettled(query.trim());
+    setMoreError(null);
+    go(`/yandex?${new URLSearchParams({ q: query, type: s })}`);
+  };
   const moreResults = async () => {
-    if (!result || !key || scope === 'local') return;
+    if (!result || !key || scope === 'local' || waiting || resource.dataKey !== key) return;
     setMoreBusy(true); setMoreError(null); const requested = key;
     try {
       const page = await api.catalogSearch(settled, scope, result.page + 1);
@@ -231,37 +256,42 @@ export function YandexSearchPage() {
   const bestAlbum = result?.best?.type === 'album' ? result.albums.find((a) => a.id === result.best!.id) : undefined;
   const bestTrack = result?.best?.type === 'track' ? result.tracks.find((a) => a.externalId === result.best!.id) : undefined;
   const hasResults = !!result && !!(result.tracks.length + result.artists.length + result.albums.length);
-  return <div className="main-inner catalog-page catalog-search-page">
+  return <div className="main-inner catalog-page catalog-search-page" onKeyDown={moveResultFocus}>
     <header className="catalog-search-header"><div><p className="catalog-eyebrow">Каталог музыки</p><h1 className="page-title">Поиск</h1></div><span className="catalog-source-label">{scope === 'local' ? 'Ваша медиатека' : 'Яндекс Музыка'}</span></header>
-    <div className="catalog-search-tools"><form className="catalog-search-field" role="search" onSubmit={(e) => { e.preventDefault(); remember(); setSettled(query.trim()); }}>
-      <MagnifyingGlass size={22} /><input ref={searchRef} type="search" maxLength={300} placeholder="Трек, исполнитель или альбом" aria-label="Поиск музыки" value={query} onChange={(e) => updateQuery(e.target.value)} />
+    <div className="catalog-search-tools"><form className="catalog-search-field" role="search" onSubmit={(e) => { e.preventDefault(); rememberQuery(query); setSettled(query.trim()); }}>
+      {waiting && resource.data ? <SpinnerGap size={22} className="catalog-spin" role="status" aria-label="Обновляю результаты" /> : <MagnifyingGlass size={22} aria-hidden="true" />}
+      <input ref={searchRef} type="search" maxLength={300} placeholder="Трек, исполнитель или альбом" aria-label="Поиск музыки" aria-controls="catalog-search-results" value={query} onChange={(e) => updateQuery(e.target.value)} />
       {query && <button className="icon-btn" type="button" aria-label="Очистить поиск" onClick={() => { updateQuery(''); searchRef.current?.focus(); }}><X size={19} /></button>}
     </form>
-    <div className="catalog-scopes" aria-label="Тип результатов">{SCOPES.map(([id, label]) => <button className={`chip ${scope === id ? 'on' : ''}`} key={id} aria-pressed={scope === id} onClick={() => changeScope(id)}>{label}</button>)}</div></div>
-    {!query && recent.length > 0 && <section className="catalog-recent"><div className="catalog-section-heading"><h2>Недавно искали</h2><button onClick={() => { setRecent([]); persist(RECENT_KEY, []); }}>Очистить</button></div><div>{recent.map((q) => <button key={q} onClick={() => updateQuery(q)}><Clock size={15} />{q}</button>)}</div></section>}
-    {scope === 'local' ? <Section title={query ? `В медиатеке · ${local.length}` : 'Ваша музыка'}><TrackList tracks={local} emptyText="В медиатеке ничего не нашлось" onPlay={(i) => void controller.playTracks(local.map((t) => t.id), i, { type: 'search', label: query || 'Медиатека' })} /></Section>
+    <div className="catalog-scopes" aria-label="Тип результатов">{SCOPES.map(([id, label]) => <button className={`chip ${scope === id ? 'on' : ''}`} key={id} aria-pressed={scope === id} onClick={() => changeScope(id)}>{label}</button>)}
+      <a className="chip" href={`#/search?${new URLSearchParams({ q: query })}`}>Другие источники</a></div></div>
+    {!query && recent.length > 0 && <section className="catalog-recent"><div className="catalog-section-heading"><h2>Недавно искали</h2><button onClick={clear}>Очистить</button></div><div>{recent.map((q) => <button key={q} onClick={() => { updateQuery(q); setSettled(q.trim()); }}><Clock size={15} />{q}</button>)}</div></section>}
+    <div id="catalog-search-results" ref={resultsRef} aria-busy={waiting}>
+    {scope === 'local' ? <Section title={query ? `В медиатеке · ${local.length}` : 'Ваша музыка'}><TrackList tracks={local} emptyText="В медиатеке ничего не нашлось" onPlay={(i) => { rememberQuery(query); void controller.playTracks(local.map((t) => t.id), i, { type: 'search', label: query || 'Медиатека' }); }} /></Section>
       : !connected ? providers.length ? <ConnectionCard /> : <Skeleton />
-      : waiting ? <Skeleton /> : resource.error ? <Failure message={resource.error} retry={resource.retry} />
-      : result && !hasResults && query ? <div className="catalog-empty"><MagnifyingGlass size={32} /><h2>Ничего не нашлось</h2><p>Проверьте название или попробуйте имя исполнителя. Можно также поискать в своей медиатеке.</p><button className="btn btn-ghost" onClick={() => changeScope('local')}>Искать в медиатеке</button></div>
-      : result && <>
-        {settled && scope === 'all' && (bestArtist || bestAlbum || bestTrack) && <div className="catalog-search-leading"><Section title="Лучшее совпадение">
+      : resource.error ? <Failure message={resource.error} retry={resource.retry} />
+      : (!result || waiting && !hasResults) ? <Skeleton />
+      : !hasResults && query ? <div className="catalog-empty"><MagnifyingGlass size={32} /><h2>Ничего не нашлось</h2><p>Проверьте название или попробуйте имя исполнителя. Можно также поискать в своей медиатеке.</p><button className="btn btn-ghost" onClick={() => changeScope('local')}>Искать в медиатеке</button></div>
+      : <>
+        {shownQuery && scope === 'all' && (bestArtist || bestAlbum || bestTrack) && <Section title="Лучшее совпадение">
           {bestArtist ? <a className="catalog-best" href={catalogArtistHref(bestArtist.id)} onClick={remember}><Cover url={bestArtist.imageUrl} seed={bestArtist.id} round size={104} /><div><span>Исполнитель</span><h3>{bestArtist.name}</h3><span>Открыть страницу →</span></div></a>
             : bestAlbum ? <a className="catalog-best" href={catalogAlbumHref(bestAlbum.id)} onClick={remember}><Cover url={bestAlbum.imageUrl} seed={bestAlbum.id} size={104} /><div><span>{albumKind(bestAlbum.type)}</span><h3>{bestAlbum.title}</h3><span>{bestAlbum.artists.map((a) => a.name).join(', ')}</span></div></a>
-            : bestTrack && <div className="catalog-best"><Cover url={bestTrack.coverUrl} seed={bestTrack.externalId} size={104} /><div><span>Трек</span><h3>{bestTrack.title}</h3><span>{bestTrack.artist}</span><button className="btn btn-primary btn-sm" onClick={() => { remember(); void catalogPlayer.play(result.tracks, result.tracks.indexOf(bestTrack), { type: 'search', label: query }); }}><Play size={15} weight="fill" />Слушать</button></div></div>}
-        </Section>{result.tracks.length > 0 && <Section title="Треки" action={<button onClick={() => changeScope('track')}>Все треки</button>}><CatalogTracks tracks={result.tracks.slice(0, 4)} queueTracks={result.tracks} label={`Поиск «${query}»`} artwork={false} albums={false} /></Section>}</div>}
+            : bestTrack && <div className="catalog-best"><Cover url={bestTrack.coverUrl} seed={bestTrack.externalId} size={104} /><div><span>Трек</span><h3>{bestTrack.title}</h3><span>{bestTrack.artist}</span><button className="btn btn-primary btn-sm" onClick={() => { remember(); void catalogPlayer.play(result.tracks, result.tracks.indexOf(bestTrack), { type: 'search', label: shownQuery }); }}><Play size={15} weight="fill" />Слушать</button></div></div>}
+        </Section>}
         {!query && saved.length > 0 && <Section title="Сохранённые исполнители"><div className="catalog-card-grid">{saved.map((a) => <ArtistCard key={a.id} artist={a} />)}</div></Section>}
-        {(scope === 'track' || !settled || scope === 'all' && !bestArtist && !bestAlbum && !bestTrack) && result.tracks.length > 0 && <Section title={settled ? 'Треки' : 'Ваши любимые треки'}><CatalogTracks tracks={result.tracks} label={settled ? `Поиск «${query}»` : 'Любимые треки Яндекса'} /></Section>}
-        {(scope === 'all' || scope === 'artist') && result.artists.length > 0 && <Section title={settled ? 'Исполнители' : 'Исполнители из вашей коллекции'} action={scope === 'all' && settled ? <button onClick={() => changeScope('artist')}>Показать всех</button> : undefined}><div className="catalog-card-grid">{(scope === 'all' ? result.artists.slice(0, 8) : result.artists).map((a) => <ArtistCard key={a.id} artist={a} onVisit={remember} />)}</div></Section>}
-        {(scope === 'all' || scope === 'album') && result.albums.length > 0 && <Section title="Альбомы и синглы" action={scope === 'all' && settled ? <button onClick={() => changeScope('album')}>Показать все</button> : undefined}><div className="catalog-card-grid">{(scope === 'all' ? result.albums.slice(0, 8) : result.albums).map((a) => <AlbumCard key={a.id} album={a} onVisit={remember} />)}</div></Section>}
-        {scope !== 'all' && result.hasMore[scope === 'track' ? 'tracks' : scope === 'artist' ? 'artists' : 'albums'] && <button className="btn btn-ghost catalog-load-more" onClick={() => void moreResults()} disabled={moreBusy}>{moreBusy ? 'Загружаю…' : 'Показать ещё'}</button>}
+        {(scope === 'track' || !shownQuery || scope === 'all') && result.tracks.length > 0 && <Section title={shownQuery ? 'Треки' : 'Ваши любимые треки'} action={scope === 'all' && shownQuery && result.hasMore.tracks ? <button onClick={() => changeScope('track')}>Больше треков</button> : undefined}><CatalogTracks tracks={result.tracks} label={shownQuery ? `Поиск «${shownQuery}»` : 'Любимые треки Яндекса'} onPlay={remember} /></Section>}
+        {(scope === 'all' || scope === 'artist') && result.artists.length > 0 && <Section title={shownQuery ? 'Исполнители' : 'Исполнители из вашей коллекции'} action={scope === 'all' && shownQuery ? <button onClick={() => changeScope('artist')}>Показать всех</button> : undefined}><div className="catalog-card-grid">{(scope === 'all' ? result.artists.slice(0, 8) : result.artists).map((a) => <ArtistCard key={a.id} artist={a} onVisit={remember} />)}</div></Section>}
+        {(scope === 'all' || scope === 'album') && result.albums.length > 0 && <Section title="Альбомы и синглы" action={scope === 'all' && shownQuery ? <button onClick={() => changeScope('album')}>Показать все</button> : undefined}><div className="catalog-card-grid">{(scope === 'all' ? result.albums.slice(0, 8) : result.albums).map((a) => <AlbumCard key={a.id} album={a} onVisit={remember} />)}</div></Section>}
+        {scope !== 'all' && result.hasMore[scope === 'track' ? 'tracks' : scope === 'artist' ? 'artists' : 'albums'] && <button className="btn btn-ghost catalog-load-more" onClick={() => void moreResults()} disabled={moreBusy || waiting}>{moreBusy ? 'Загружаю…' : 'Показать ещё'}</button>}
         {moreError && <Failure message={moreError} retry={() => void moreResults()} />}
       </>}
+    </div>
   </div>;
 }
 
 export function CatalogArtistPage() {
   const { parts } = useRoute(); const id = parts[2] ?? '';
-  const resource = useResource<ArtistData>(`artist:${id}`, (signal) => api.catalogArtist(id, 0, signal));
+  const resource = useResource<ArtistData>(`artist:${id}`, (signal) => api.catalogArtist(id, 0, signal), artistCache);
   const [saved, setSaved] = useState(() => stored<CatalogArtist>(SAVED_KEY).filter((a) => a && typeof a.id === 'string' && typeof a.name === 'string'));
   const [showTracks, setShowTracks] = useState(false);
   const [more, setMore] = useState<{ id: string; albums: CatalogAlbum[]; page: number; hasMore: boolean } | null>(null);
@@ -303,7 +333,7 @@ export function CatalogArtistPage() {
 
 export function CatalogAlbumPage() {
   const { parts } = useRoute(); const id = parts[2] ?? '';
-  const resource = useResource<AlbumData>(`album:${id}`, (signal) => api.catalogAlbum(id, signal));
+  const resource = useResource<AlbumData>(`album:${id}`, (signal) => api.catalogAlbum(id, signal), albumCache);
   const data = resource.data;
   const play = (shuffle = false) => {
     if (!data) return; const tracks = shuffle ? shuffled(data.tracks) : data.tracks;

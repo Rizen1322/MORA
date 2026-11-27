@@ -13,11 +13,13 @@ import { controller, trackOf, useApp } from './store/app.ts';
 import { desktop } from './lib/desktop.ts';
 import { startNativeUi } from './lib/native-ui.ts';
 import { playSplash, splashEnabled } from './lib/splash.ts';
+import { watchNetwork } from './lib/offline-wave.ts';
 
 // handle for debugging from the browser console: automix.state
 (window as unknown as { automix: typeof controller }).automix = controller;
 
 if (desktop) {
+  watchNetwork();
   document.documentElement.classList.add('desktop');
   desktop.onCompact((on) => document.documentElement.classList.toggle('compact', on));
   let updateNotice = '';

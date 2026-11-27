@@ -89,7 +89,7 @@ export class YandexProvider implements Provider {
     ff = new FfmpegTools(cfg.ffmpeg, cfg.ffprobe, cfg.decoderRust),
   ) {
     this.audio = new YandexAudio(cfg, ff, this.base, (id) => this.call<YandexDownloadVariant[]>('GET', `/tracks/${encodeURIComponent(id)}/download-info`));
-    this.catalog = new YandexCatalog((method, path, body, form) => this.call(method, path, body, undefined, form), () => !!this.token(), lib, this.base);
+    this.catalog = new YandexCatalog((method, path, body, form, signal) => this.call(method, path, body, undefined, form, signal), () => !!this.token(), lib, this.base);
   }
 
   capabilities(): Capabilities {
@@ -232,10 +232,11 @@ export class YandexProvider implements Provider {
     finally { if (this.reactionRead?.promise === promise) this.reactionRead = null; }
   }
 
-  private async call<T>(method: 'GET' | 'POST', p: string, body?: unknown, token = this.token(), form = false): Promise<T> {
+  private async call<T>(method: 'GET' | 'POST', p: string, body?: unknown, token = this.token(), form = false, signal?: AbortSignal): Promise<T> {
     if (!token) throw new Error('нужен токен');
     const r = await httpJson<{ result: T; error?: { name: string; message: string } }>(`${this.base}${p}`, {
       method,
+      signal,
       redirect: 'error',
       headers: {
         Authorization: `OAuth ${token}`,
@@ -314,7 +315,8 @@ export class YandexProvider implements Provider {
   }
 
   /** Prepare only a small playable batch, never the whole recommendation catalog. */
-  private async prepareWave(items: YandexWaveItem[], count = 2, tracks: YTrack[] = []): Promise<YandexWaveItem[]> {
+  private async prepareWave(items: YandexWaveItem[], count = 2, tracks: YTrack[] = [], signal?: AbortSignal): Promise<YandexWaveItem[]> {
+    signal?.throwIfAborted();
     let ready = items.filter((item) => item.trackId).length;
     let attempts = 0, cursor = 0;
     const pending = items.filter((item) => !item.trackId);
@@ -332,12 +334,15 @@ export class YandexProvider implements Provider {
           ready++;
         } catch (e) { item.error = (e as Error).message; }
       }));
+      signal?.throwIfAborted();
     }
     return items;
   }
 
   /** «Моя волна» Яндекса, сопоставленная с вашей медиатекой. */
-  async wave(sessionId?: string | null, queue: string[] = [], options?: { count?: number; exclude?: string[]; seeds?: string[] }): Promise<{ sessionId: string; batchId: string | null; items: YandexWaveItem[] }> {
+  async wave(sessionId?: string | null, queue: string[] = [], options?: { count?: number; exclude?: string[]; seeds?: string[]; signal?: AbortSignal }): Promise<{ sessionId: string; batchId: string | null; items: YandexWaveItem[] }> {
+    const signal = options?.signal;
+    signal?.throwIfAborted();
     const m = this.matcher();
     const count = Math.max(1, Math.min(4, Math.trunc(options?.count ?? 2)));
     const excluded = new Set((options?.exclude ?? []).map((id) => id.split(':')[0]));
@@ -352,10 +357,10 @@ export class YandexProvider implements Provider {
     };
     const prepare = (sequence: { track: YTrack }[]) => {
       const items = filterSequence(sequence);
-      return this.prepareWave(items, count, sequence.map(s => s.track));
+      return this.prepareWave(items, count, sequence.map(s => s.track), signal);
     };
     if (sessionId) {
-      const r = await this.call<{ sequence?: { track: YTrack }[]; batchId?: string; unknownSession?: boolean }>('POST', `/rotor/session/${encodeURIComponent(sessionId)}/tracks`, { queue });
+      const r = await this.call<{ sequence?: { track: YTrack }[]; batchId?: string; unknownSession?: boolean }>('POST', `/rotor/session/${encodeURIComponent(sessionId)}/tracks`, { queue }, undefined, false, signal);
       if (!r.unknownSession) return { sessionId, batchId: r.batchId ?? null, items: await prepare(r.sequence ?? []) };
       // Sessions expire server-side; preserve exclusions when opening a replacement.
     }
@@ -363,7 +368,7 @@ export class YandexProvider implements Provider {
       seeds: ['user:onyourwave', ...(options?.seeds ?? [])],
       includeTracksInResponse: true,
       ...(queue.length ? { queue } : {}),
-    });
+    }, undefined, false, signal);
     let sequence = r.sequence ?? [];
     let batchId = r.batchId ?? null;
     if (!sessionId && r.radioSessionId && excluded.size > 0 && filterSequence(sequence).length < count) {
@@ -377,12 +382,16 @@ export class YandexProvider implements Provider {
           'POST',
           `/rotor/session/${encodeURIComponent(r.radioSessionId)}/tracks`,
           { queue: nextQueue },
+          undefined,
+          false,
+          signal,
         );
         if (!next.unknownSession && Array.isArray(next.sequence) && next.sequence.length) {
           sequence = [...sequence, ...next.sequence];
           if (next.batchId) batchId = next.batchId;
         }
       } catch {
+        signal?.throwIfAborted();
         // Keep the initial sequence if follow-up tracks lookup fails.
       }
     }

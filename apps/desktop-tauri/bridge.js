@@ -16,7 +16,7 @@
   const importListeners = new Set();
   let importing = false;
   let failedTimer;
-  const events = new EventSource('/api/desktop/audio-events');
+  const events = new EventSource('/api/desktop/audio-events?stream=control');
   events.onopen = () => { clearTimeout(failedTimer); failedTimer = undefined; for (const fn of backendListeners) fn('ready'); };
   events.onerror = () => {
     if (importing) return;
@@ -25,9 +25,23 @@
       failedTimer = setTimeout(() => { for (const fn of backendListeners) fn('failed'); }, 30000);
     }
   };
-  events.onmessage = e => {
+  const dispatchAudio = e => {
     try { const value = JSON.parse(e.data); for (const fn of audioListeners) fn(value); } catch { /* invalid event */ }
   };
+  events.onmessage = dispatchAudio;
+  let waveforms;
+  const updateWaveforms = () => {
+    if (!document.hidden && audioListeners.size > 0) {
+      if (!waveforms) {
+        waveforms = new EventSource('/api/desktop/audio-events?stream=waveform');
+        waveforms.onmessage = dispatchAudio;
+      }
+    } else if (waveforms) {
+      waveforms.close();
+      waveforms = undefined;
+    }
+  };
+  document.addEventListener('visibilitychange', updateWaveforms);
   const shell = (action, value) => window.__TAURI_INTERNALS__.invoke('desktop_action', { action, value });
   document.addEventListener('mousedown', event => {
     if (event.button !== 0 || !(event.target instanceof Element) || !event.target.closest('.titlebar, .fp-top') ||
@@ -74,7 +88,11 @@
     },
     audioStart: device => invoke('/api/desktop/audio-start', { device }),
     audioCommand: command => invoke('/api/desktop/audio-command', command), audioStop: () => invoke('/api/desktop/audio-stop', {}),
-    audioDevices: () => invoke('/api/desktop/audio-devices'), onAudio: subscribe(audioListeners),
+    audioDevices: () => invoke('/api/desktop/audio-devices'), onAudio: callback => {
+      const unsubscribe = subscribe(audioListeners)(callback);
+      updateWaveforms();
+      return () => { unsubscribe(); updateWaveforms(); };
+    },
     getSettings: async () => ({ ...await invoke('/api/desktop/settings'), ...await shell('window-settings') }),
     appUpdateStatus: () => invoke('/api/desktop/app-update'), appUpdateCheck: updateAction('check'), appUpdateDownload: updateAction('download'),
     appUpdateCancel: updateAction('cancel'), onAppUpdate: subscribe(updateListeners),

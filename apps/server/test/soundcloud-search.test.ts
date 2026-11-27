@@ -26,6 +26,29 @@ it('discovers the current public client once and returns complete metadata witho
   expect(fetcher.mock.calls.some(([url]) => String(url).includes('evil.example'))).toBe(false);
 });
 
+it('shares client discovery across concurrent searches when one caller cancels', async () => {
+  const fetcher = fakeApi();
+  const send = fetcher.getMockImplementation()!;
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  fetcher.mockImplementation(async (url, init) => {
+    if (String(url) === 'https://soundcloud.com/') await held;
+    return send(url, init);
+  });
+  setSoundCloudTransport(fetcher);
+  const abort = new AbortController();
+  const cancelled = expect(searchSoundCloud('old', 15, abort.signal)).rejects.toThrow('Отменено');
+  const current = searchSoundCloud('new');
+  try {
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    abort.abort();
+    await cancelled;
+    release();
+    await expect(current).resolves.toHaveLength(1);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  } finally { abort.abort(); release(); await Promise.allSettled([cancelled, current]); }
+});
+
 it('keeps only valid, full-length public tracks and bounds output', () => {
   expect(parseSoundCloudSearch({ collection: [null, entry, entry, { ...entry, id: 124, policy: 'SNIP' },
     { ...entry, id: 125, duration: 'NaN' }, { ...entry, id: 126, streamable: false }, { ...entry, id: 127, artwork_url: 'https://evil.example/a.jpg' }] }, 15))
@@ -82,6 +105,7 @@ it('invalidates a rejected client and rejects oversized streamed bodies', async 
   await searchSoundCloud('a');
   fetcher.mockResolvedValueOnce(new Response('', { status: 403 }));
   await expect(searchSoundCloud('b')).rejects.toThrow('403');
+  await expect(searchSoundCloud('retry')).resolves.toHaveLength(1);
   setSoundCloudTransport(async () => new Response('x'.repeat((1 << 20) + 1)));
   await expect(searchSoundCloud('c')).rejects.toThrow('большой');
 });

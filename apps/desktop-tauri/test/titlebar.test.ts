@@ -41,3 +41,36 @@ it('exports playlist JSON through the save dialog and propagates backend failure
   await expect(window.automixDesktop.exportPlaylists()).rejects.toThrow('Export failed');
   expect(invoke).toHaveBeenCalledTimes(1);
 });
+
+it('keeps control events connected while the hidden window drops waveform traffic', () => {
+  const streams: EventSource[] = [];
+  class EventSource {
+    onmessage?: (message: { data: string }) => void;
+    close = vi.fn();
+    constructor(readonly url: string) { streams.push(this); }
+  }
+  const window: any = {};
+  let visibilityChange: () => void;
+  const document = { hidden: true, addEventListener: (type: string, callback: () => void) => {
+    if (type === 'visibilitychange') visibilityChange = callback;
+  } };
+  vm.runInNewContext(readFileSync(new URL('../bridge.js', import.meta.url), 'utf8'), {
+    window, document, location: { origin: 'http://127.0.0.1:__MORA_PORT__' },
+    EventSource, setTimeout: () => 0, clearTimeout() {},
+  });
+  const listen = vi.fn();
+  const unsubscribe = window.automixDesktop.onAudio(listen);
+  expect(streams.map(stream => stream.url)).toEqual(['/api/desktop/audio-events?stream=control']);
+  document.hidden = false;
+  visibilityChange!();
+  expect(streams[1].url).toBe('/api/desktop/audio-events?stream=waveform');
+  streams[1].onmessage?.({ data: '{"type":"waveform","samples":[0]}' });
+  expect(listen).toHaveBeenLastCalledWith({ type: 'waveform', samples: [0] });
+  document.hidden = true;
+  visibilityChange!();
+  expect(streams[1].close).toHaveBeenCalledOnce();
+  expect(streams[0].close).not.toHaveBeenCalled();
+  streams[0].onmessage?.({ data: '{"type":"ended"}' });
+  expect(listen).toHaveBeenLastCalledWith({ type: 'ended' });
+  unsubscribe();
+});

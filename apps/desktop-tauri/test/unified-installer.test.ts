@@ -38,12 +38,12 @@ it.each([false, true])('removes the staged payload on success or failure (%s)', 
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-it('stages payloads in an external ASCII root without leaving temp dirs in output', () => {
+it('stages payloads from a Cyrillic path in an external ASCII root', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mora-nsis-ext-'));
-  const source = path.join(root, 'source'), output = path.join(root, 'output'), staging = path.join(root, 'staging');
+  const source = path.join(root, 'исходники'), output = path.join(root, 'output'), staging = path.join(root, 'staging');
   try {
     fs.mkdirSync(path.join(source, 'resources/backend'), { recursive: true });
-    fs.writeFileSync(path.join(source, 'resources/backend/tauri-backend.mjs'), '');
+    fs.writeFileSync(path.join(source, 'resources/backend/tauri-backend.mjs'), 'backend');
     fs.writeFileSync(path.join(source, 'WebView2Loader.dll'), '');
     const shell = Buffer.alloc(160);
     shell.writeUInt32LE(64, 0x3c);
@@ -53,6 +53,7 @@ it('stages payloads in an external ASCII root without leaving temp dirs in outpu
     withInstallerPayload(source, output, (payload: string) => {
       expect(payload.startsWith(staging)).toBe(true);
       expect(fs.existsSync(path.join(payload, 'MORA.exe'))).toBe(true);
+      expect(fs.readFileSync(path.join(payload, 'resources/backend/tauri-backend.mjs'), 'utf8')).toBe('backend');
     }, staging);
     expect(fs.readdirSync(staging)).toEqual([]);
     expect(fs.readdirSync(output)).toEqual([]);

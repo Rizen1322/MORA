@@ -87,7 +87,9 @@ export const NO_CAPS: Capabilities = {
 };
 
 export async function httpJson<T>(url: string, init: RequestInit & { timeoutMs?: number } = {}): Promise<{ status: number; body: T | null; text: string }> {
-  const res = await networkFetch(url, { ...init, signal: AbortSignal.timeout(init.timeoutMs ?? 12000) });
+  const { timeoutMs = 12000, signal, ...options } = init;
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const res = await networkFetch(url, { ...options, signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
   const text = await res.text();
   let body: T | null = null;
   try {

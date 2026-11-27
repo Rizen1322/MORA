@@ -3,7 +3,7 @@ import { WifiSlash } from '@phosphor-icons/react';
 import { useRoute } from './lib/router.ts';
 import { connectEvents, controller, trackOf, useApp } from './store/app.ts';
 import { systemVolume } from './audio/controller.ts';
-import { DropTarget, Sidebar, TabBar, TitleBar, Toasts, UploadCard } from './components/Layout.tsx';
+import { DropTarget, openSearch, Sidebar, TabBar, TitleBar, Toasts, UploadCard } from './components/Layout.tsx';
 import { desktop } from './lib/desktop.ts';
 import { actionFor, comboOf } from './lib/hotkeys.ts';
 import { FullPlayer, MiniPlayer, PlayerBar } from './components/Player.tsx';
@@ -28,8 +28,9 @@ import { LyricsPanel } from './components/LyricsPanel.tsx';
 
 function Page() {
   const { path } = useRoute();
-  if (!SETTINGS_PATHS.some((p) => path === p || path.startsWith(`${p}/`))) return <PageContent />;
-  return <div className="settings-shell"><SettingsTabs path={path} /><PageContent /></div>;
+  const content = <PageContent key={path} />;
+  if (!SETTINGS_PATHS.some((p) => path === p || path.startsWith(`${p}/`))) return content;
+  return <div className="settings-shell"><SettingsTabs path={path} />{content}</div>;
 }
 
 function PageContent() {
@@ -124,7 +125,7 @@ function useShortcuts() {
         }
         case 'queue': useApp.getState().setQueueOpen(!useApp.getState().queueOpen); break;
         case 'fullPlayer': useApp.getState().setFullPlayer(!useApp.getState().fullPlayer); break;
-        case 'search': location.hash = '/search'; break;
+        case 'search': openSearch(); break;
       }
     };
     window.addEventListener('keydown', onKey);
@@ -154,7 +155,7 @@ function OfflineNotice() {
 }
 
 export function App() {
-  const motion = useApp((s) => s.settings?.ui.motion ?? (desktop ? 'full' : 'system'));
+  const motion = useApp((s) => s.settings?.ui.motion ?? 'system');
   useEffect(() => { document.documentElement.dataset.motion = motion; }, [motion]);
   const queueOpen = useApp((s) => s.queueOpen);
   const panel = useApp((s) => s.panel);

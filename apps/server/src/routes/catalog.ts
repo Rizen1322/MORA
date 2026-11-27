@@ -26,6 +26,12 @@ async function respond(reply: FastifyReply, work: () => Promise<unknown>): Promi
   }
 }
 
+function readCatalog(reply: FastifyReply, work: (signal: AbortSignal) => Promise<unknown>): Promise<unknown> {
+  const request = new AbortController();
+  reply.raw.once('close', () => { if (!reply.raw.writableEnded) request.abort(); });
+  return respond(reply, () => work(request.signal));
+}
+
 export function registerCatalogRoutes(app: FastifyInstance, services: Services): void {
   const catalog = services.providers.yandex.catalog;
   app.get('/api/providers/yandex/playlists', async (_req, reply) => respond(reply, async () => ({ playlists: await services.providers.yandex.playlists() })));
@@ -40,7 +46,7 @@ export function registerCatalogRoutes(app: FastifyInstance, services: Services):
     services.events.emit({ type: 'playlists' }); services.events.emit({ type: 'library', reason: 'yandex-playlist' });
     return { id, count: playlist.ids.length, unavailable: playlist.unavailable };
   }));
-  app.get('/api/catalog/yandex/home', async (_req, reply) => respond(reply, () => catalog.home()));
+  app.get('/api/catalog/yandex/home', async (_req, reply) => readCatalog(reply, signal => catalog.home(signal)));
   app.get('/api/providers/yandex/reactions/sync', async (_req, reply) => { reply.header('Cache-Control', 'private, no-store'); return services.yandexReactions.stats(); });
   app.post<{ Params: { id: string }; Body: { value?: unknown } }>('/api/catalog/yandex/tracks/:id/reaction', async (req, reply) => respond(reply, async () => {
     if (!isYandexTrackId(req.params.id)) throw new CatalogError(400, 'Некорректный ID трека Яндекса');
@@ -52,12 +58,12 @@ export function registerCatalogRoutes(app: FastifyInstance, services: Services):
     services.events.emit({ type: 'library', reason: 'reaction' });
     return { value: raw, sync: await services.yandexReactions.settleExternal(externalId) };
   }));
-  app.get<{ Querystring: { q?: unknown; page?: unknown; type?: unknown } }>('/api/catalog/yandex/search', async (req, reply) => respond(reply, async () => {
+  app.get<{ Querystring: { q?: unknown; page?: unknown; type?: unknown } }>('/api/catalog/yandex/search', async (req, reply) => readCatalog(reply, async signal => {
     const { q, type = 'all' } = req.query;
     if (typeof q !== 'string' || !q.trim() || q.trim().length > 300 || /[\u0000-\u001f\u007f]/.test(q)) throw new CatalogError(400, 'Введите поисковый запрос длиной до 300 символов');
     if (typeof type !== 'string' || !['all', 'track', 'artist', 'album'].includes(type)) throw new CatalogError(400, 'Некорректный тип поиска');
-    return catalog.search(q.trim(), pageOf(req.query.page), type as CatalogSearchType);
+    return catalog.search(q.trim(), pageOf(req.query.page), type as CatalogSearchType, signal);
   }));
-  app.get<{ Params: { id: string }; Querystring: { page?: unknown } }>('/api/catalog/yandex/artists/:id', async (req, reply) => respond(reply, () => catalog.artistPage(idOf(req.params.id), pageOf(req.query.page))));
-  app.get<{ Params: { id: string } }>('/api/catalog/yandex/albums/:id', async (req, reply) => respond(reply, () => catalog.albumPage(idOf(req.params.id))));
+  app.get<{ Params: { id: string }; Querystring: { page?: unknown } }>('/api/catalog/yandex/artists/:id', async (req, reply) => readCatalog(reply, signal => catalog.artistPage(idOf(req.params.id), pageOf(req.query.page), signal)));
+  app.get<{ Params: { id: string } }>('/api/catalog/yandex/albums/:id', async (req, reply) => readCatalog(reply, signal => catalog.albumPage(idOf(req.params.id), signal)));
 }
